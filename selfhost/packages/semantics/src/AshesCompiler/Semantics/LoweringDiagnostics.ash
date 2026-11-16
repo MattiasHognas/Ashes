@@ -91,12 +91,22 @@ let unknownBindingDiagnostic (name: Str) =
 
 let printUnsupportedPrefix = "print does not support "
 
-// The builtin failures stage 0 words for the user; every other one keeps its structural form.
+let structuredTaskEscapeCode = "ASH043"
+
+// The builtin failures stage 0 words for the user: an unsupported `print`, a join handle escaping
+// its task scope (`ASH043`), and a fork outside an `async` body; every other one keeps its
+// structural form.
 let builtinFailureDiagnostic (text: Str) =
     if Ashes.Text.startsWith(text)(printUnsupportedPrefix)
     then
         unlocatedDiagnostic(None)("print() does not support type " + Ashes.Text.drop(text)(Ashes.Text.length(printUnsupportedPrefix)) + " yet.")
-    else None
+    else
+        if Ashes.Text.startsWith(text)("A JoinHandle cannot escape")
+        then unlocatedDiagnostic(Some(structuredTaskEscapeCode))(text)
+        else
+            if Ashes.Text.startsWith(text)("Ashes.Task.fork() must be used inside an async task")
+            then unlocatedDiagnostic(None)(text)
+            else None
 
 // The operator failures stage 0 words for the user: `+` over operands of two types, and a logical
 // negation of a type that supplies none.

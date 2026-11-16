@@ -24,6 +24,10 @@ export (
     value emitSleepTask,
     value emitCompositeTask,
     value emitSpawnTask,
+    value emitCreateTaskScope,
+    value emitCreateScopedTask,
+    value emitForkScopedTask,
+    value emitJoinScopedTask,
     value defineTaskRuntime,
     value emitRunTask,
 )
@@ -251,6 +255,8 @@ type TaskRuntime =
     | runTaskType: LLVMTypeRef
     | spawnEnqueueFn: LLVMValueRef
     | spawnEnqueueType: LLVMTypeRef
+    | forkScopedFn: LLVMValueRef
+    | forkScopedType: LLVMTypeRef
 
 type SchedulerGlobals =
     | readyQueueHead: LLVMValueRef
@@ -511,6 +517,51 @@ let schedWithTaskArena (sc: SchedulerContext) runFn task prefix emit =
                                                                                             let _ = schedAt(sc)(restoredBlock)
                                                                                             in result)
 
+// A cancelled scope composite cancels every child it forked, in fork order (a fork node is
+// `[child][joined][next]`), so cancellation reaches into nested scopes. Leaves the builder in the
+// block after the children.
+let emitCancelScopeChildren (sc: SchedulerContext) cancelFn cancelType task cursorSlot =
+    (let initBlock = appendBasicBlock(sc.schedContext)(cancelFn)("cancel_scope_init")
+    in
+        let loopBlock = appendBasicBlock(sc.schedContext)(cancelFn)("cancel_scope_loop")
+        in
+            let childBlock = appendBasicBlock(sc.schedContext)(cancelFn)("cancel_scope_child")
+            in
+                let afterBlock = appendBasicBlock(sc.schedContext)(cancelFn)("cancel_scope_done")
+                in
+                    let isScope =
+                        schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("cancel_scope_state"))(stateConst(sc.schedI64)(ScopeCompositeTaskState))("cancel_is_scope")
+                    in
+                        let _ = schedIf(sc)(isScope)(initBlock)(afterBlock)
+                        in
+                            let _ = schedAt(sc)(initBlock)
+                            in
+                                let _ =
+                                    "cancel_scope_head"
+                                    |> schedWord(sc)(schedWord(sc)(task)(offsetIoArgument1)("cancel_scope_token"))(0)
+                                    |> schedSet(sc)(cursorSlot)
+                                in
+                                    let _ = schedBr(sc)(loopBlock)
+                                    in
+                                        let _ = schedAt(sc)(loopBlock)
+                                        in
+                                            let node = schedLoad(sc)(cursorSlot)("cancel_scope_node")
+                                            in
+                                                let _ =
+                                                    schedIf(sc)(schedEq(sc)(node)(schedConst(sc)(0))("cancel_scope_end"))(afterBlock)(childBlock)
+                                                in
+                                                    let _ = schedAt(sc)(childBlock)
+                                                    in
+                                                        let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([schedWord(sc)(node)(0)("cancel_scope_child_task")])(1u32)("")
+                                                        in
+                                                            let _ =
+                                                                "cancel_scope_next"
+                                                                |> schedWord(sc)(node)(16)
+                                                                |> schedSet(sc)(cursorSlot)
+                                                            in
+                                                                let _ = schedBr(sc)(loopBlock)
+                                                                in schedAt(sc)(afterBlock))
+
 // Stage 0's `ashes_cancel_task`, without the socket close (no socket leaf is ported): an unfinished
 // task and the task it awaits complete with `Ok(0)`, so a race loser drops out of the run.
 let defineCancelTask module_ (sc: SchedulerContext) =
@@ -532,48 +583,52 @@ let defineCancelTask module_ (sc: SchedulerContext) =
                                 in
                                     let _ = schedAt(sc)(entryBlock)
                                     in
-                                        let _ =
-                                            schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("cancel_state"))(stateConst(sc.schedI64)(CompletedTaskState))("cancel_already_done"))(doneBlock)(workBlock)
+                                        let cursorSlot = schedSlot(sc)("cancel_scope_cursor")
                                         in
-                                            let _ = schedAt(sc)(workBlock)
+                                            let _ =
+                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("cancel_state"))(stateConst(sc.schedI64)(CompletedTaskState))("cancel_already_done"))(doneBlock)(workBlock)
                                             in
-                                                let awaited = schedWord(sc)(task)(offsetAwaitedTask)("cancel_awaited_task")
+                                                let _ = schedAt(sc)(workBlock)
                                                 in
-                                                    let _ =
-                                                        schedIf(sc)(schedEq(sc)(awaited)(schedConst(sc)(0))("cancel_no_awaited"))(finishBlock)(awaitedBlock)
+                                                    let _ = emitCancelScopeChildren(sc)(cancelFn)(cancelType)(task)(cursorSlot)
                                                     in
-                                                        let _ = schedAt(sc)(awaitedBlock)
+                                                        let awaited = schedWord(sc)(task)(offsetAwaitedTask)("cancel_awaited_task")
                                                         in
-                                                            let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([awaited])(1u32)("cancel_recurse")
+                                                            let _ =
+                                                                schedIf(sc)(schedEq(sc)(awaited)(schedConst(sc)(0))("cancel_no_awaited"))(finishBlock)(awaitedBlock)
                                                             in
-                                                                let _ =
-                                                                    0
-                                                                    |> schedConst(sc)
-                                                                    |> schedStore(sc)(task)(offsetAwaitedTask)
+                                                                let _ = schedAt(sc)(awaitedBlock)
                                                                 in
-                                                                    let _ = schedBr(sc)(finishBlock)
+                                                                    let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([awaited])(1u32)("cancel_recurse")
                                                                     in
-                                                                        let _ = schedAt(sc)(finishBlock)
+                                                                        let _ =
+                                                                            0
+                                                                            |> schedConst(sc)
+                                                                            |> schedStore(sc)(task)(offsetAwaitedTask)
                                                                         in
-                                                                            let _ =
-                                                                                "cancel_result"
-                                                                                |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
-                                                                                |> schedStore(sc)(task)(offsetResultSlot)
+                                                                            let _ = schedBr(sc)(finishBlock)
                                                                             in
-                                                                                let _ =
-                                                                                    CompletedTaskState
-                                                                                    |> stateConst(sc.schedI64)
-                                                                                    |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                let _ = schedAt(sc)(finishBlock)
                                                                                 in
-                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                    let _ =
+                                                                                        "cancel_result"
+                                                                                        |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
+                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
                                                                                     in
-                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                        let _ =
+                                                                                            CompletedTaskState
+                                                                                            |> stateConst(sc.schedI64)
+                                                                                            |> schedStore(sc)(task)(offsetStateIndex)
                                                                                         in
-                                                                                            let _ =
-                                                                                                0
-                                                                                                |> schedConst(sc)
-                                                                                                |> buildRet(sc.schedBuilder)
-                                                                                            in (cancelFn, cancelType))
+                                                                                            let _ = schedBr(sc)(doneBlock)
+                                                                                            in
+                                                                                                let _ = schedAt(sc)(doneBlock)
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        0
+                                                                                                        |> schedConst(sc)
+                                                                                                        |> buildRet(sc.schedBuilder)
+                                                                                                    in (cancelFn, cancelType))
 
 // The successful collection of `all`: the children's `Ok` values consed onto an accumulator in
 // list order, which leaves them reversed, then reversed back, and the composite completed with
@@ -673,13 +728,313 @@ let emitCompositeCollect (sc: SchedulerContext) stepFn task children cursorSlot 
                                                                                                                             |> buildRet(sc.schedBuilder)
                                                                                                                         in (stepFn, stepType))
 
+// Stage 0's `EmitStepScopeComposite`. The first step schedules the scoped parent task with the
+// composite as its waiter. The step after the parent completes cancels every child still running,
+// in fork order, and completes with the parent's result unless an unjoined child failed while the
+// parent succeeded, in which case the first such failure wins; the scope is then closed.
+let defineStepScope module_ (sc: SchedulerContext) cancelFn cancelType =
+    (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
+    in
+        let stepFn = addInternalFunction(module_)("__ashes_step_scope")(stepType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+            in
+                let entryBlock = block("entry")
+                in
+                    let startBlock = block("scope_start")
+                    in
+                        let finishBlock = block("scope_finish")
+                        in
+                            let loopBlock = block("scope_loop")
+                            in
+                                let childBlock = block("scope_child")
+                                in
+                                    let cancelBlock = block("scope_cancel")
+                                    in
+                                        let inspectBlock = block("scope_inspect")
+                                        in
+                                            let replaceBlock = block("scope_replace")
+                                            in
+                                                let nextBlock = block("scope_next")
+                                                in
+                                                    let completeBlock = block("scope_complete")
+                                                    in
+                                                        let task = getParam(stepFn)(0u32)
+                                                        in
+                                                            let _ = schedAt(sc)(entryBlock)
+                                                            in
+                                                                let resultSlot = schedSlot(sc)("scope_result")
+                                                                in
+                                                                    let cursorSlot = schedSlot(sc)("scope_cursor")
+                                                                    in
+                                                                        let _ =
+                                                                            schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData0)("scope_phase"))(schedConst(sc)(0))("scope_is_start"))(startBlock)(finishBlock)
+                                                                        in
+                                                                            let _ = schedAt(sc)(startBlock)
+                                                                            in
+                                                                                let _ =
+                                                                                    1
+                                                                                    |> schedConst(sc)
+                                                                                    |> schedStore(sc)(task)(offsetWaitData0)
+                                                                                in
+                                                                                    let parent = schedWord(sc)(task)(offsetAwaitedTask)("scope_parent")
+                                                                                    in
+                                                                                        let _ = schedStore(sc)(parent)(offsetWaiter)(task)
+                                                                                        in
+                                                                                            let _ =
+                                                                                                "scope_owner"
+                                                                                                |> schedWord(sc)(task)(offsetArenaOwner)
+                                                                                                |> schedStore(sc)(parent)(offsetArenaOwner)
+                                                                                            in
+                                                                                                let _ = schedEnqueue(sc)(parent)
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        0
+                                                                                                        |> schedConst(sc)
+                                                                                                        |> buildRet(sc.schedBuilder)
+                                                                                                    in
+                                                                                                        let _ = schedAt(sc)(finishBlock)
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                "scope_parent_result"
+                                                                                                                |> schedWord(sc)(task)(offsetResultSlot)
+                                                                                                                |> schedSet(sc)(resultSlot)
+                                                                                                            in
+                                                                                                                let scope = schedWord(sc)(task)(offsetIoArgument1)("scope_token")
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        "scope_head"
+                                                                                                                        |> schedWord(sc)(scope)(0)
+                                                                                                                        |> schedSet(sc)(cursorSlot)
+                                                                                                                    in
+                                                                                                                        let _ = schedBr(sc)(loopBlock)
+                                                                                                                        in
+                                                                                                                            let _ = schedAt(sc)(loopBlock)
+                                                                                                                            in
+                                                                                                                                let node = schedLoad(sc)(cursorSlot)("scope_node")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        schedIf(sc)(schedEq(sc)(node)(schedConst(sc)(0))("scope_children_done"))(completeBlock)(childBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ = schedAt(sc)(childBlock)
+                                                                                                                                        in
+                                                                                                                                            let child = schedWord(sc)(node)(0)("scope_child_task")
+                                                                                                                                            in
+                                                                                                                                                let _ =
+                                                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(child)(offsetStateIndex)("scope_child_state"))(stateConst(sc.schedI64)(CompletedTaskState))("scope_child_done"))(inspectBlock)(cancelBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ = schedAt(sc)(cancelBlock)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([child])(1u32)("")
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedBr(sc)(inspectBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = schedAt(sc)(inspectBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let childResult = schedWord(sc)(child)(offsetResultSlot)("scope_child_result")
+                                                                                                                                                                    in
+                                                                                                                                                                        let unjoined =
+                                                                                                                                                                            schedEq(sc)(schedWord(sc)(node)(8)("scope_joined"))(schedConst(sc)(0))("scope_unjoined")
+                                                                                                                                                                        in
+                                                                                                                                                                            let childFailed =
+                                                                                                                                                                                buildICmp(sc.schedBuilder)(intPredicateNe)(schedWord(sc)(childResult)(0)("scope_child_tag"))(schedConst(sc)(0))("scope_child_failed")
+                                                                                                                                                                            in
+                                                                                                                                                                                let currentOk =
+                                                                                                                                                                                    schedEq(sc)(schedWord(sc)(schedLoad(sc)(resultSlot)("scope_current"))(0)("scope_current_tag"))(schedConst(sc)(0))("scope_current_ok")
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ =
+                                                                                                                                                                                        schedIf(sc)(buildAnd(sc.schedBuilder)(unjoined)(buildAnd(sc.schedBuilder)(childFailed)(currentOk)("scope_failure_wins"))("scope_replace_result"))(replaceBlock)(nextBlock)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ = schedAt(sc)(replaceBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = schedSet(sc)(resultSlot)(childResult)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ = schedBr(sc)(nextBlock)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = schedAt(sc)(nextBlock)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            "scope_next_node"
+                                                                                                                                                                                                            |> schedWord(sc)(node)(16)
+                                                                                                                                                                                                            |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = schedBr(sc)(loopBlock)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let _ = schedAt(sc)(completeBlock)
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                        1
+                                                                                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                                                                                        |> schedStore(sc)(scope)(24)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            "scope_final_result"
+                                                                                                                                                                                                                            |> schedLoad(sc)(resultSlot)
+                                                                                                                                                                                                                            |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                CompletedTaskState
+                                                                                                                                                                                                                                |> stateConst(sc.schedI64)
+                                                                                                                                                                                                                                |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                    1
+                                                                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                                                                    |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                                                in (stepFn, stepType))
+
+// Stage 0's `EmitForkScopedTask`: the child joins the task scope its owning coroutine runs under
+// (the nearest explicit `Ashes.Task.scope` above the coroutine's own implicit scope, else that
+// implicit scope) as a fork node `[child][joined][next]`, is scheduled with no waiter, and the
+// fork answers a completed task holding `Ok(node)`, the join handle.
+let defineForkScoped module_ (sc: SchedulerContext) =
+    (let forkType = functionType(sc.schedI64)([sc.schedI64, sc.schedI64])(2u32)(false)
+    in
+        let forkFn = addInternalFunction(module_)("__ashes_fork_scoped")(forkType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(sc.schedContext)(forkFn)(name)
+            in
+                let entryBlock = block("entry")
+                in
+                    let checkBlock = block("fork_scope_check")
+                    in
+                        let outerBlock = block("fork_scope_outer")
+                        in
+                            let candidateBlock = block("fork_scope_candidate")
+                            in
+                                let selectBlock = block("fork_scope_select")
+                                in
+                                    let nextBlock = block("fork_scope_next")
+                                    in
+                                        let readyBlock = block("fork_scope_ready")
+                                        in
+                                            let firstBlock = block("fork_first")
+                                            in
+                                                let appendBlock = block("fork_append")
+                                                in
+                                                    let linkedBlock = block("fork_linked")
+                                                    in
+                                                        let owner = getParam(forkFn)(0u32)
+                                                        in
+                                                            let child = getParam(forkFn)(1u32)
+                                                            in
+                                                                let _ = schedAt(sc)(entryBlock)
+                                                                in
+                                                                    let compositeSlot = schedSlot(sc)("fork_composite_cursor")
+                                                                    in
+                                                                        let scopeSlot = schedSlot(sc)("fork_selected_scope")
+                                                                        in
+                                                                            let composite = schedWord(sc)(owner)(offsetWaiter)("fork_composite")
+                                                                            in
+                                                                                let nearest = schedWord(sc)(composite)(offsetIoArgument1)("fork_nearest_scope")
+                                                                                in
+                                                                                    let _ = schedSet(sc)(compositeSlot)(composite)
+                                                                                    in
+                                                                                        let _ = schedSet(sc)(scopeSlot)(nearest)
+                                                                                        in
+                                                                                            let _ =
+                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateNe)(schedWord(sc)(nearest)(32)("fork_nearest_explicit"))(schedConst(sc)(0))("fork_nearest_is_explicit"))(readyBlock)(checkBlock)
+                                                                                            in
+                                                                                                let _ = schedAt(sc)(checkBlock)
+                                                                                                in
+                                                                                                    let outer =
+                                                                                                        schedWord(sc)(schedLoad(sc)(compositeSlot)("fork_scope_cursor"))(offsetWaiter)("fork_outer_composite")
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            schedIf(sc)(schedEq(sc)(outer)(schedConst(sc)(0))("fork_no_outer_scope"))(readyBlock)(outerBlock)
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(outerBlock)
+                                                                                                            in
+                                                                                                                let _ =
+                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(outer)(offsetStateIndex)("fork_outer_state"))(stateConst(sc.schedI64)(ScopeCompositeTaskState))("fork_outer_is_scope"))(candidateBlock)(readyBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedAt(sc)(candidateBlock)
+                                                                                                                    in
+                                                                                                                        let outerScope = schedWord(sc)(outer)(offsetIoArgument1)("fork_outer_scope")
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateNe)(schedWord(sc)(outerScope)(32)("fork_outer_explicit"))(schedConst(sc)(0))("fork_outer_is_explicit"))(selectBlock)(nextBlock)
+                                                                                                                            in
+                                                                                                                                let _ = schedAt(sc)(selectBlock)
+                                                                                                                                in
+                                                                                                                                    let _ = schedSet(sc)(scopeSlot)(outerScope)
+                                                                                                                                    in
+                                                                                                                                        let _ = schedBr(sc)(readyBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ = schedAt(sc)(nextBlock)
+                                                                                                                                            in
+                                                                                                                                                let _ = schedSet(sc)(compositeSlot)(outer)
+                                                                                                                                                in
+                                                                                                                                                    let _ = schedBr(sc)(checkBlock)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedAt(sc)(readyBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let scope = schedLoad(sc)(scopeSlot)("fork_scope")
+                                                                                                                                                            in
+                                                                                                                                                                let node = emitArenaAlloc(sc.schedContext)(forkFn)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(24)("fork_node")
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = schedStore(sc)(node)(0)(child)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ =
+                                                                                                                                                                            0
+                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                            |> schedStore(sc)(node)(8)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                0
+                                                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                                                |> schedStore(sc)(node)(16)
+                                                                                                                                                                            in
+                                                                                                                                                                                let tail = schedWord(sc)(scope)(8)("fork_tail")
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ =
+                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(tail)(schedConst(sc)(0))("fork_empty"))(firstBlock)(appendBlock)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ = schedAt(sc)(firstBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = schedStore(sc)(scope)(0)(node)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ = schedBr(sc)(linkedBlock)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = schedAt(sc)(appendBlock)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = schedStore(sc)(tail)(16)(node)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = schedBr(sc)(linkedBlock)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let _ = schedAt(sc)(linkedBlock)
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = schedStore(sc)(scope)(8)(node)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            0
+                                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                                            |> schedStore(sc)(child)(offsetWaiter)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                "fork_owner"
+                                                                                                                                                                                                                                |> schedWord(sc)(composite)(offsetArenaOwner)
+                                                                                                                                                                                                                                |> schedStore(sc)(child)(offsetArenaOwner)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ = schedEnqueue(sc)(child)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let handleResult = schedOk(sc)(forkFn)(node)("fork_handle")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                            "fork_task"
+                                                                                                                                                                                                                                            |> emitCreateCompletedTask(sc.schedContext)(forkFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(handleResult)
+                                                                                                                                                                                                                                            |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                                                        in (forkFn, forkType))
+
 // Stage 0's `EmitStepComposite` for `all` and `race`. The first step schedules every child with the
 // composite as its waiter and counts them (`all` waits for that many completions, `race` for one);
 // an empty list completes at once, `all` with `Ok([])`. The step after the children finish
 // completes the composite: `race` already holds its winner's result, `all` collects, the first
 // failed child's result in list order or `Ok` of the children's values in order. Answers 1 when
 // the composite completed.
-let defineStepComposite module_ (sc: SchedulerContext) =
+let defineStepComposite module_ (sc: SchedulerContext) scopeFn scopeType =
     (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
     in
         let stepFn = addInternalFunction(module_)("__ashes_step_composite")(stepType)
@@ -731,135 +1086,151 @@ let defineStepComposite module_ (sc: SchedulerContext) =
                                                                                                 in
                                                                                                     let listSlot = schedSlot(sc)("composite_list")
                                                                                                     in
-                                                                                                        let isRace =
-                                                                                                            schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("composite_state"))(stateConst(sc.schedI64)(RaceCompositeTaskState))("composite_is_race")
+                                                                                                        let scopeBlock = appendBasicBlock(sc.schedContext)(stepFn)("composite_scope")
                                                                                                         in
-                                                                                                            let children = schedWord(sc)(task)(offsetIoArgument0)("composite_children")
+                                                                                                            let listCompositeBlock = appendBasicBlock(sc.schedContext)(stepFn)("composite_list_kind")
                                                                                                             in
                                                                                                                 let _ =
-                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetIoArgument1)("composite_phase"))(schedConst(sc)(0))("composite_is_first_step"))(enqueueLoop)(finishBlock)
+                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("composite_kind"))(stateConst(sc.schedI64)(ScopeCompositeTaskState))("composite_is_scope"))(scopeBlock)(listCompositeBlock)
                                                                                                                 in
-                                                                                                                    let _ = schedAt(sc)(enqueueLoop)
+                                                                                                                    let _ = schedAt(sc)(scopeBlock)
                                                                                                                     in
                                                                                                                         let _ =
-                                                                                                                            1
-                                                                                                                            |> schedConst(sc)
-                                                                                                                            |> schedStore(sc)(task)(offsetIoArgument1)
+                                                                                                                            "composite_scope_status"
+                                                                                                                            |> buildCall(sc.schedBuilder)(scopeType)(scopeFn)([task])(1u32)
+                                                                                                                            |> buildRet(sc.schedBuilder)
                                                                                                                         in
-                                                                                                                            let _ = schedSet(sc)(cursorSlot)(children)
+                                                                                                                            let _ = schedAt(sc)(listCompositeBlock)
                                                                                                                             in
-                                                                                                                                let _ =
-                                                                                                                                    0
-                                                                                                                                    |> schedConst(sc)
-                                                                                                                                    |> schedSet(sc)(countSlot)
+                                                                                                                                let isRace =
+                                                                                                                                    schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("composite_state"))(stateConst(sc.schedI64)(RaceCompositeTaskState))("composite_is_race")
                                                                                                                                 in
-                                                                                                                                    let enqueueCheck = block("composite_enqueue_check")
+                                                                                                                                    let children = schedWord(sc)(task)(offsetIoArgument0)("composite_children")
                                                                                                                                     in
-                                                                                                                                        let _ = schedBr(sc)(enqueueCheck)
+                                                                                                                                        let _ =
+                                                                                                                                            schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetIoArgument1)("composite_phase"))(schedConst(sc)(0))("composite_is_first_step"))(enqueueLoop)(finishBlock)
                                                                                                                                         in
-                                                                                                                                            let _ = schedAt(sc)(enqueueCheck)
+                                                                                                                                            let _ = schedAt(sc)(enqueueLoop)
                                                                                                                                             in
-                                                                                                                                                let cursor = schedLoad(sc)(cursorSlot)("composite_enqueue_cursor")
+                                                                                                                                                let _ =
+                                                                                                                                                    1
+                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                    |> schedStore(sc)(task)(offsetIoArgument1)
                                                                                                                                                 in
-                                                                                                                                                    let _ =
-                                                                                                                                                        schedIf(sc)(schedEq(sc)(cursor)(schedConst(sc)(0))("composite_enqueue_end"))(afterEnqueue)(enqueueBody)
+                                                                                                                                                    let _ = schedSet(sc)(cursorSlot)(children)
                                                                                                                                                     in
-                                                                                                                                                        let _ = schedAt(sc)(enqueueBody)
+                                                                                                                                                        let _ =
+                                                                                                                                                            0
+                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                            |> schedSet(sc)(countSlot)
                                                                                                                                                         in
-                                                                                                                                                            let child = schedWord(sc)(cursor)(0)("composite_child")
+                                                                                                                                                            let enqueueCheck = block("composite_enqueue_check")
                                                                                                                                                             in
-                                                                                                                                                                let _ =
-                                                                                                                                                                    "composite_child_tail"
-                                                                                                                                                                    |> schedWord(sc)(cursor)(8)
-                                                                                                                                                                    |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                let _ = schedBr(sc)(enqueueCheck)
                                                                                                                                                                 in
-                                                                                                                                                                    let _ = schedStore(sc)(child)(offsetWaiter)(task)
+                                                                                                                                                                    let _ = schedAt(sc)(enqueueCheck)
                                                                                                                                                                     in
-                                                                                                                                                                        let _ =
-                                                                                                                                                                            "composite_owner"
-                                                                                                                                                                            |> schedWord(sc)(task)(offsetArenaOwner)
-                                                                                                                                                                            |> schedStore(sc)(child)(offsetArenaOwner)
+                                                                                                                                                                        let cursor = schedLoad(sc)(cursorSlot)("composite_enqueue_cursor")
                                                                                                                                                                         in
-                                                                                                                                                                            let _ = schedEnqueue(sc)(child)
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                schedIf(sc)(schedEq(sc)(cursor)(schedConst(sc)(0))("composite_enqueue_end"))(afterEnqueue)(enqueueBody)
                                                                                                                                                                             in
-                                                                                                                                                                                let _ =
-                                                                                                                                                                                    "composite_count_next"
-                                                                                                                                                                                    |> buildAdd(sc.schedBuilder)(schedLoad(sc)(countSlot)("composite_count_now"))(schedConst(sc)(1))
-                                                                                                                                                                                    |> schedSet(sc)(countSlot)
+                                                                                                                                                                                let _ = schedAt(sc)(enqueueBody)
                                                                                                                                                                                 in
-                                                                                                                                                                                    let _ = schedBr(sc)(enqueueCheck)
+                                                                                                                                                                                    let child = schedWord(sc)(cursor)(0)("composite_child")
                                                                                                                                                                                     in
-                                                                                                                                                                                        let _ = schedAt(sc)(afterEnqueue)
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            "composite_child_tail"
+                                                                                                                                                                                            |> schedWord(sc)(cursor)(8)
+                                                                                                                                                                                            |> schedSet(sc)(cursorSlot)
                                                                                                                                                                                         in
-                                                                                                                                                                                            let count = schedLoad(sc)(countSlot)("composite_final_count")
+                                                                                                                                                                                            let _ = schedStore(sc)(child)(offsetWaiter)(task)
                                                                                                                                                                                             in
                                                                                                                                                                                                 let _ =
-                                                                                                                                                                                                    "composite_counter"
-                                                                                                                                                                                                    |> buildSelect(sc.schedBuilder)(isRace)(schedConst(sc)(0))(count)
-                                                                                                                                                                                                    |> schedStore(sc)(task)(offsetWaitData0)
+                                                                                                                                                                                                    "composite_owner"
+                                                                                                                                                                                                    |> schedWord(sc)(task)(offsetArenaOwner)
+                                                                                                                                                                                                    |> schedStore(sc)(child)(offsetArenaOwner)
                                                                                                                                                                                                 in
-                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(count)(schedConst(sc)(0))("composite_no_children"))(emptyBlock)(pendingBlock)
+                                                                                                                                                                                                    let _ = schedEnqueue(sc)(child)
                                                                                                                                                                                                     in
-                                                                                                                                                                                                        let _ = schedAt(sc)(pendingBlock)
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            "composite_count_next"
+                                                                                                                                                                                                            |> buildAdd(sc.schedBuilder)(schedLoad(sc)(countSlot)("composite_count_now"))(schedConst(sc)(1))
+                                                                                                                                                                                                            |> schedSet(sc)(countSlot)
                                                                                                                                                                                                         in
-                                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                                0
-                                                                                                                                                                                                                |> schedConst(sc)
-                                                                                                                                                                                                                |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                            let _ = schedBr(sc)(enqueueCheck)
                                                                                                                                                                                                             in
-                                                                                                                                                                                                                let _ = schedAt(sc)(emptyBlock)
+                                                                                                                                                                                                                let _ = schedAt(sc)(afterEnqueue)
                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                        "composite_empty_result"
-                                                                                                                                                                                                                        |> buildSelect(sc.schedBuilder)(isRace)(schedConst(sc)(0))(schedOk(sc)(stepFn)(schedConst(sc)(0))("composite_empty_ok"))
-                                                                                                                                                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                                                                    let count = schedLoad(sc)(countSlot)("composite_final_count")
                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                        let _ = schedBr(sc)(completeBlock)
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            "composite_counter"
+                                                                                                                                                                                                                            |> buildSelect(sc.schedBuilder)(isRace)(schedConst(sc)(0))(count)
+                                                                                                                                                                                                                            |> schedStore(sc)(task)(offsetWaitData0)
                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                            let _ = schedAt(sc)(finishBlock)
+                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(count)(schedConst(sc)(0))("composite_no_children"))(emptyBlock)(pendingBlock)
                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                let _ = schedIf(sc)(isRace)(completeBlock)(collectBlock)
+                                                                                                                                                                                                                                let _ = schedAt(sc)(pendingBlock)
                                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                                    let _ = schedAt(sc)(collectBlock)
+                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                        0
+                                                                                                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                                                                                                        |> buildRet(sc.schedBuilder)
                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                        let _ = schedSet(sc)(cursorSlot)(children)
+                                                                                                                                                                                                                                        let _ = schedAt(sc)(emptyBlock)
                                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                                            let _ = schedBr(sc)(failLoop)
+                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                "composite_empty_result"
+                                                                                                                                                                                                                                                |> buildSelect(sc.schedBuilder)(isRace)(schedConst(sc)(0))(schedOk(sc)(stepFn)(schedConst(sc)(0))("composite_empty_ok"))
+                                                                                                                                                                                                                                                |> schedStore(sc)(task)(offsetResultSlot)
                                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                                let _ = schedAt(sc)(failLoop)
+                                                                                                                                                                                                                                                let _ = schedBr(sc)(completeBlock)
                                                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                                                    let failCursor = schedLoad(sc)(cursorSlot)("composite_fail_cursor")
+                                                                                                                                                                                                                                                    let _ = schedAt(sc)(finishBlock)
                                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                                                                            schedIf(sc)(schedEq(sc)(failCursor)(schedConst(sc)(0))("composite_fail_end"))(buildLoop)(failBody)
+                                                                                                                                                                                                                                                        let _ = schedIf(sc)(isRace)(completeBlock)(collectBlock)
                                                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                                                            let _ = schedAt(sc)(failBody)
+                                                                                                                                                                                                                                                            let _ = schedAt(sc)(collectBlock)
                                                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                                                let childResult =
-                                                                                                                                                                                                                                                                    schedWord(sc)(schedWord(sc)(failCursor)(0)("composite_fail_child"))(offsetResultSlot)("composite_fail_result")
+                                                                                                                                                                                                                                                                let _ = schedSet(sc)(cursorSlot)(children)
                                                                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                                                                        "composite_fail_tail"
-                                                                                                                                                                                                                                                                        |> schedWord(sc)(failCursor)(8)
-                                                                                                                                                                                                                                                                        |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(failLoop)
                                                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                                                        let _ = schedSet(sc)(listSlot)(childResult)
+                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(failLoop)
                                                                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(childResult)(0)("composite_fail_tag"))(schedConst(sc)(0))("composite_child_ok"))(failLoop)(failedBlock)
+                                                                                                                                                                                                                                                                            let failCursor = schedLoad(sc)(cursorSlot)("composite_fail_cursor")
                                                                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(failedBlock)
+                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(failCursor)(schedConst(sc)(0))("composite_fail_end"))(buildLoop)(failBody)
                                                                                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                                                                                        "composite_failure"
-                                                                                                                                                                                                                                                                                        |> schedLoad(sc)(listSlot)
-                                                                                                                                                                                                                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(failBody)
                                                                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                                                                        let _ = schedBr(sc)(completeBlock)
+                                                                                                                                                                                                                                                                                        let childResult =
+                                                                                                                                                                                                                                                                                            schedWord(sc)(schedWord(sc)(failCursor)(0)("composite_fail_child"))(offsetResultSlot)("composite_fail_result")
                                                                                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(buildLoop)
-                                                                                                                                                                                                                                                                                            in emitCompositeCollect(sc)(stepFn)(task)(children)(cursorSlot)(listSlot)(buildLoop)(buildBody)(reverseLoop)(reverseBody)(succeededBlock)(completeBlock)(stepType))
+                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                "composite_fail_tail"
+                                                                                                                                                                                                                                                                                                |> schedWord(sc)(failCursor)(8)
+                                                                                                                                                                                                                                                                                                |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedSet(sc)(listSlot)(childResult)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(schedWord(sc)(childResult)(0)("composite_fail_tag"))(schedConst(sc)(0))("composite_child_ok"))(failLoop)(failedBlock)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(failedBlock)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                "composite_failure"
+                                                                                                                                                                                                                                                                                                                |> schedLoad(sc)(listSlot)
+                                                                                                                                                                                                                                                                                                                |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = schedBr(sc)(completeBlock)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(buildLoop)
+                                                                                                                                                                                                                                                                                                                    in emitCompositeCollect(sc)(stepFn)(task)(children)(cursorSlot)(listSlot)(buildLoop)(buildBody)(reverseLoop)(reverseBody)(succeededBlock)(completeBlock)(stepType))
 
 // Stage 0's aggregate wait with no socket leaf parked: sleep until the earliest timer among the
 // parked leaves (no time when none is a timer), count every parked timer down by that much, and
@@ -1030,6 +1401,8 @@ type SchedulerFunctions =
     | cancelType: LLVMTypeRef
     | dequeueFn: LLVMValueRef
     | dequeueType: LLVMTypeRef
+    | forkScopedFn: LLVMValueRef
+    | forkScopedType: LLVMTypeRef
 
 // Cancels every child of a resolved race but its winner.
 let emitCancelRaceLosers (sc: SchedulerContext) (fns: SchedulerFunctions) runFn cursorSlot race winner =
@@ -1164,7 +1537,7 @@ let emitSchedulerDispatch (sc: SchedulerContext) (fns: SchedulerFunctions) (bloc
                                                         let _ = schedAt(sc)(blocks.schedNotDoneBlock)
                                                         in
                                                             let isComposite =
-                                                                buildOr(sc.schedBuilder)(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(AllCompositeTaskState))("sched_is_all"))(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(RaceCompositeTaskState))("sched_is_race"))("sched_is_composite")
+                                                                buildOr(sc.schedBuilder)(buildOr(sc.schedBuilder)(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(AllCompositeTaskState))("sched_is_all"))(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(RaceCompositeTaskState))("sched_is_race"))("sched_is_list_composite"))(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(ScopeCompositeTaskState))("sched_is_scope"))("sched_is_composite")
                                                             in
                                                                 let _ = schedIf(sc)(isComposite)(blocks.schedCompositeBlock)(blocks.schedLeafOrCoroutineBlock)
                                                                 in
@@ -1413,7 +1786,7 @@ let defineSchedulerRun module_ (sc: SchedulerContext) (fns: SchedulerFunctions) 
                                                                                                                 "sched_result"
                                                                                                                 |> schedWord(sc)(mainTask)(offsetResultSlot)
                                                                                                                 |> buildRet(sc.schedBuilder)
-                                                                                                            in TaskRuntime(runTaskFn = runFn, runTaskType = runType, spawnEnqueueFn = sc.enqueueFn, spawnEnqueueType = sc.enqueueType))
+                                                                                                            in TaskRuntime(runTaskFn = runFn, runTaskType = runType, spawnEnqueueFn = sc.enqueueFn, spawnEnqueueType = sc.enqueueType, forkScopedFn = fns.forkScopedFn, forkScopedType = fns.forkScopedType))
 
 // The scheduler and its helpers, defined once per module that has a coroutine.
 let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType =
@@ -1440,20 +1813,24 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                         enqueueType = enqueueType
                     )
                 in
-                    match (defineReadyDequeue(module_)(context)(builder)(i64)(i8)(ptrType)(globals), defineStepComposite(module_)(sc), defineWaitParked(module_)(sc), defineCancelTask(module_)(sc)) with
-                        | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (cancelFn, cancelType)) ->
-                            closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
-                                stepCompositeFn = stepCompositeFn,
-                                stepCompositeType = stepCompositeType,
-                                waitParkedFn = waitParkedFn,
-                                waitParkedType = waitParkedType,
-                                cancelFn = cancelFn,
-                                cancelType = cancelType,
-                                dequeueFn = dequeueFn,
-                                dequeueType = dequeueType
-                            )))
-
-let emitRunTask builder (runtime: TaskRuntime) taskRef name = buildCall(builder)(runtime.runTaskType)(runtime.runTaskFn)([taskRef])(1u32)(name)
+                    match defineCancelTask(module_)(sc) with
+                        | (cancelFn, cancelType) ->
+                            match defineStepScope(module_)(sc)(cancelFn)(cancelType) with
+                                | (scopeFn, scopeType) ->
+                                    match (defineReadyDequeue(module_)(context)(builder)(i64)(i8)(ptrType)(globals), defineStepComposite(module_)(sc)(scopeFn)(scopeType), defineWaitParked(module_)(sc), defineForkScoped(module_)(sc)) with
+                                        | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (forkScopedFn, forkScopedType)) ->
+                                            closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
+                                                stepCompositeFn = stepCompositeFn,
+                                                stepCompositeType = stepCompositeType,
+                                                waitParkedFn = waitParkedFn,
+                                                waitParkedType = waitParkedType,
+                                                cancelFn = cancelFn,
+                                                cancelType = cancelType,
+                                                dequeueFn = dequeueFn,
+                                                dequeueType = dequeueType,
+                                                forkScopedFn = forkScopedFn,
+                                                forkScopedType = forkScopedType
+                                            )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
 // to the start of a fresh 4 MiB chunk that becomes its private arena, the copy is its own arena
@@ -1498,3 +1875,39 @@ let emitSpawnTask context function_ builder i64 i8 ptrType (runtime: TaskRuntime
                                                     |> wordConst(i64)
                                                     |> storeTaskWord(builder)(i64)(i8)(ptrType)(copyRef)(offsetWaiter)
                                                 in buildCall(builder)(runtime.spawnEnqueueType)(runtime.spawnEnqueueFn)([copyRef])(1u32)(name + "_enqueue"))
+
+let emitRunTask builder (runtime: TaskRuntime) taskRef name = buildCall(builder)(runtime.runTaskType)(runtime.runTaskFn)([taskRef])(1u32)(name)
+
+// A task scope, stage 0's `EmitCreateTaskScope`: `[head][tail][owning composite][closed][explicit]`,
+// the fork-node list of its children and whether `Ashes.Task.scope` introduced it.
+let emitCreateTaskScope context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (explicit: Bool) name =
+    (let scope = emitArenaAlloc(context)(function_)(builder)(i64)(arena)(40)(name)
+    in
+        let _ = storeZeroTaskWords(builder)(i64)(i8)(ptrType)(scope)([0, 8, 16, 24])
+        in
+            let _ =
+                (if explicit
+                then 1
+                else 0)
+                |> wordConst(i64)
+                |> storeTaskWord(builder)(i64)(i8)(ptrType)(scope)(32)
+            in scope)
+
+// A scope composite over the scoped task, stage 0's `EmitCreateScopedTask`.
+let emitCreateScopedTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime) parentRef scopeRef name =
+    (let task =
+        emitHeaderTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(taskStateCode(ScopeCompositeTaskState))([(offsetIoArgument0, parentRef), (offsetAwaitedTask, parentRef), (offsetIoArgument1, scopeRef)])(name)
+    in
+        let _ = storeTaskWord(builder)(i64)(i8)(ptrType)(scopeRef)(16)(task)
+        in task)
+
+let emitForkScopedTask builder (runtime: TaskRuntime) ownerRef childRef name = buildCall(builder)(runtime.forkScopedType)(runtime.forkScopedFn)([ownerRef, childRef])(2u32)(name)
+
+// `Ashes.Task.join(handle)`, stage 0's `EmitJoinScopedTask`: the fork node is marked joined and its
+// child task is the task the join awaits.
+let emitJoinScopedTask builder i64 i8 ptrType handleRef name =
+    (let _ =
+        1
+        |> wordConst(i64)
+        |> storeTaskWord(builder)(i64)(i8)(ptrType)(handleRef)(8)
+    in loadTaskWord(builder)(i64)(i8)(ptrType)(handleRef)(0)(name))

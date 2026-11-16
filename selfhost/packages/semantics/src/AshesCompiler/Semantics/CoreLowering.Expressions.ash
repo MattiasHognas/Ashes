@@ -1849,6 +1849,35 @@ let frameOwnedClosure (closureTemp: Int) (captureCount: Int) (state: CoreLowerin
             | FreshTemp { state = allocated, temp = copyTemp } ->
                 (emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), copyTemp)
 
+// Whether the lifted function `label` forks a child task.
+let recursive functionForks (label: Str) (functions: List(IrFunction)) =
+    match functions with
+        | [] -> false
+        | function_ :: rest ->
+            if function_.label == label
+            then instructionsFork(function_.instructions)
+            else functionForks(label)(rest)
+and instructionsFork (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ForkScopedTask(_target, _owner, _task) } :: _rest -> true
+        | _instruction :: rest -> instructionsFork(rest)
+
+// A coroutine that forks owns an implicit task scope, as stage 0 builds it: the task is wrapped in
+// a scope composite that cancels and drains the unjoined children once the task has its result.
+let scopeForkingTask (forks: Bool) (taskTemp: Int) (taskType: SemanticType) (state: CoreLoweringState) =
+    if forks
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = scopeState, temp = scopeTemp } ->
+                match freshTemp(scopeState) with
+                    | FreshTemp { state = scopedState, temp = scopedTemp } ->
+                        scopedState
+                        |> emit(CreateTaskScope(scopeTemp)(false))
+                        |> emit(CreateScopedTask(scopedTemp)(taskTemp)(scopeTemp))
+                        |> success(scopedTemp)(taskType)
+    else success(taskTemp)(taskType)(state)
+
 // Stage 0's `LowerAsyncTaskCoroutine`: an `async` body that awaits is a coroutine. The body is
 // lowered as a lambda returning `Ok(body)` whose awaits suspend, the lambda's function becomes a
 // coroutine over a task frame, and `CreateTask` builds the task from the lambda's closure, its
@@ -1879,13 +1908,46 @@ let lowerCoroutineTask body lower (state: CoreLoweringState) =
                                                         | FreshTemp { state = tempState, temp = taskTemp } ->
                                                             tempState
                                                             |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(None)(false))
-                                                            |> success(taskTemp)(taskType)
+                                                            |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
                     | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
+
+let recursive typeHoldsJoinHandle (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, arguments) -> name == "JoinHandle" || anyTypeHoldsJoinHandle(arguments)(state)
+        | SemTuple(elements) -> anyTypeHoldsJoinHandle(elements)(state)
+        | SemList(element) -> typeHoldsJoinHandle(element)(state)
+        | SemFunction(argument, result, _row) -> typeHoldsJoinHandle(argument)(state) || typeHoldsJoinHandle(result)(state)
+        | _ -> false
+and anyTypeHoldsJoinHandle (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | head :: rest -> typeHoldsJoinHandle(head)(state) || anyTypeHoldsJoinHandle(rest)(state)
+
+let joinHandleEscapeMessage = "A JoinHandle cannot escape in the result of an async task."
+
+// Stage 0's scope-escape check on an `async` task: its value may not hold a join handle, which
+// belongs to the task scope that ends with the task.
+let rejectEscapingJoinHandle (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, semanticType = taskType, error = None } ->
+            match resolveType(state)(taskType) with
+                | SemNamed(_symbolId, _name, _errorType :: valueType :: []) ->
+                    if typeHoldsJoinHandle(valueType)(state)
+                    then failure(state)(UnsupportedCoreBuiltinLowering(joinHandleEscapeMessage))
+                    else lowered
+                | _ -> lowered
+        | failed -> failed
 
 let lowerAsyncTask body lower (state: CoreLoweringState) =
     if exprContainsAwait(body)
-    then lowerCoroutineTask(body)(lower)(state)
-    else lowerCompletedAsyncTask(body)(lower)(state)
+    then
+        state
+        |> lowerCoroutineTask(body)(lower)
+        |> rejectEscapingJoinHandle
+    else
+        state
+        |> lowerCompletedAsyncTask(body)(lower)
+        |> rejectEscapingJoinHandle
 
 // The newest `RunTask` into `target` made an `AwaitTask`: inside an `async` body an `await`
 // suspends the task instead of running the awaited one inline.
@@ -1958,13 +2020,22 @@ let parallelCallRewrite expression =
             else None
         | _ -> None
 
+// `Ashes.Task.fork` outside an `async` body has no owning task scope.
+let forksOutsideAsync expression (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName) } -> moduleName == "Ashes.Task" && memberName == "fork" && stateCoroutineBody(state) == false
+        | _ -> false
+
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
         | None ->
             match parallelCallRewrite(expression) with
+                | None ->
+                    if forksOutsideAsync(expression)(state)
+                    then failure(state)(UnsupportedCoreBuiltinLowering("Ashes.Task.fork() must be used inside an async task."))
+                    else lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
                 | Some(rewritten) -> lower(rewritten)(state)
-                | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =

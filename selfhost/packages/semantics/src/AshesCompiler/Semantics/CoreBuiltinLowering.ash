@@ -151,13 +151,17 @@ type CoreBuiltinKind =
     | CoreProcessKill
     // `Ashes.Task.run` drives a task to its result; `Ashes.Task.fromResult` is a task already
     // completed with one; `sleep` is a timer task; `all` and `race` are composites over a task
-    // list; `spawn` detaches a task onto the run queue.
+    // list; `spawn` detaches a task onto the run queue; `scope`, `fork` and `join` are the
+    // structured task scope (`fork` reads its owning coroutine frame from local 0).
     | CoreTaskRun
     | CoreTaskFromResult
     | CoreTaskSleep
     | CoreTaskAll
     | CoreTaskRace
     | CoreTaskSpawn
+    | CoreTaskScope
+    | CoreTaskFork
+    | CoreTaskJoin
 
 type CoreBuiltinLayout =
     | moduleName: Str
@@ -433,6 +437,9 @@ let coreBuiltinKind moduleName memberName =
                 | "all" -> Some(CoreTaskAll)
                 | "race" -> Some(CoreTaskRace)
                 | "spawn" -> Some(CoreTaskSpawn)
+                | "scope" -> Some(CoreTaskScope)
+                | "fork" -> Some(CoreTaskFork)
+                | "join" -> Some(CoreTaskJoin)
                 | _ -> None
         | _ -> None
 
@@ -519,6 +526,8 @@ let stringTaskOf valueType = SemNamed(0)("Task")([SemString, valueType])
 let polymorphicTaskOf = SemNamed(0)("Task")([SemVariable(2), SemVariable(3)])
 
 let polymorphicResultOf = SemNamed(0)("Result")([SemVariable(2), SemVariable(3)])
+
+let joinHandleOf = SemNamed(0)("JoinHandle")([SemVariable(2), SemVariable(3)])
 
 let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(argument)(result)(None), constraints = [])
 
@@ -1080,6 +1089,16 @@ let standardBuiltinLayouts =
         unitType
         |> taskScheme(polymorphicTaskOf)
         |> standardBuiltinLayout("Ashes.Task")("spawn"),
+        polymorphicTaskOf
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("scope"),
+        [SemVariable(2), joinHandleOf]
+        |> SemNamed(0)("Task")
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("fork"),
+        polymorphicTaskOf
+        |> taskScheme(joinHandleOf)
+        |> standardBuiltinLayout("Ashes.Task")("join"),
         standardBuiltinLayout("Ashes.Net.Http")("get")(
             None
             |> SemFunction(SemString)(stringTaskOf(SemString))
@@ -1396,6 +1415,9 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreTaskAll, tasks :: [], _types) -> target1(start)(tasks)(AsyncAll)
         | (CoreTaskRace, tasks :: [], _types) -> target1(start)(tasks)(AsyncRace)
         | (CoreTaskSpawn, task :: [], _types) -> emitted([SpawnTask(start)(task)])(start + 1)(CoreBuiltinUnit)
+        | (CoreTaskScope, task :: [], _types) -> emitted([CreateTaskScope(start)(true), CreateScopedTask(start + 1)(task)(start)])(start + 2)(CoreBuiltinTemp(start + 1))
+        | (CoreTaskFork, task :: [], _types) -> emitted([LoadLocal(start)(0), ForkScopedTask(start + 1)(start)(task)])(start + 2)(CoreBuiltinTemp(start + 1))
+        | (CoreTaskJoin, joinHandle :: [], _types) -> target1(start)(joinHandle)(JoinScopedTask)
         | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
         | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
         | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)

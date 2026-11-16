@@ -1653,6 +1653,17 @@ let codegenInstructionKind cx builder kind state =
                                                     in
                                                         (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
                                                 | None -> Ashes.IO.panic("codegen: SpawnTask without the task scheduler")
+                                        | CreateTaskScope(target, explicit) ->
+                                            (bindTemp(target)(emitCreateTaskScope(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(explicit)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateScopedTask(target, parent, scope) ->
+                                            (bindTemp(target)(emitCreateScopedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(parent)(tempEnv))(lookupTemp(cx)(scope)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | ForkScopedTask(target, owner, task) ->
+                                            match taskRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(target)(emitForkScopedTask(builder)(runtime)(lookupTemp(cx)(owner)(tempEnv))(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ForkScopedTask without the task scheduler")
+                                        | JoinScopedTask(target, joinHandle) ->
+                                            (bindTemp(target)(emitJoinScopedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(joinHandle)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AsyncSleep(target, milliseconds) ->
                                             let taskRef =
                                                 emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))
