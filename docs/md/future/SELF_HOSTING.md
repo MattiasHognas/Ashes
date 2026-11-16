@@ -337,6 +337,41 @@ operator site, so for it lowering's own diagnostic is printed when lowering word
 
 ## Start here
 
+**Path forward (decided 2026-11-16; supersedes the order below where they differ).** Stage 1
+now compiles the whole compiler, so stage 2 exists; it is not yet correct. The goal is for stage 1
+to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
+
+1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
+   - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
+     builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
+     with stage 2 as the compiler under test, groups the crashes by function with
+     `cluster-crashes.sh`, and fixes the largest group in stage 1 with a reduced regression test.
+     Done when stage 2 compiles the compiler into a stage 3 that is byte-identical to stage 2.
+   - Parity: stage 1 behaves as stage 0 on every `tests/*.ash` (accept/reject, diagnostics,
+     output, exit code), measured by the same check against `selfhost/tests/behaviour/baseline.tsv`.
+     This includes missing features (`async` and `Ashes.Task`, static capability providers,
+     network tasks, vendored bitcode for openlibm, PCRE2 and Mbed TLS) and stage-0 bugs found on
+     the way. Leak counts are not part of this item.
+   - Stage 1 type-checks every program with the standalone inference before lowering and reports
+     its errors with stage 0's codes and wording; lowering does not read its results yet.
+2. **The standalone inference's remaining edge cases:** `deriving` on a recursive generic type, fork
+   outside `async`, the builtin integer argument it generalizes where stage 0 does not, and the
+   diagnostic wordings it cannot produce yet.
+3. **Lowering from the type table.** Finish step 7 of "Type inference before lowering" (typed
+   lowering on by default; generic bodies read through their instantiation; an identity for nodes
+   lowering synthesizes; the last open `Show.show` goals), then step 8 (rewrite the order-dependent
+   ownership rules listed under step 7 as rules over the final type, each with a lifetime test),
+   which retires the discovery and replay passes and body re-lowering. This is where compile
+   time drops.
+4. **Multithreading:** CG-17 parallel code generation and LNK-14 relocatable merge. LLVM is about
+   half of a stage-2 build.
+5. **Memory leaks last:** live-count parity with stage 0 and the leaks stage 1 shows while building
+   stage 2, resumed only after items 1 to 4.
+
+Work is verified in shared rounds: agents finish a batch, run only cheap checks (format, a
+whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
+behavioural check for all of them and the stage-2 round above.
+
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
 matching its output instruction for instruction.
