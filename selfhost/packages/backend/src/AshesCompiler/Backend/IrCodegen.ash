@@ -136,6 +136,23 @@ export (
 
 let externalLibraries (program: IrProgram) = collectExternalLibraries(program.externalFunctions)
 
+// The f64 intrinsics `Ashes.Number.Math` lowers to `FloatUnaryIntrinsic` (stage 0's
+// `EmitFloatUnaryIntrinsic` declares each on first use).
+let floatUnaryIntrinsicNames = ["llvm.sqrt.f64", "llvm.floor.f64", "llvm.ceil.f64", "llvm.round.f64", "llvm.trunc.f64"]
+
+let recursive declareFloatIntrinsics module_ floatUnaryType (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest -> (name, addFunction(module_)(name)(floatUnaryType)) :: declareFloatIntrinsics(module_)(floatUnaryType)(rest)
+
+let recursive lookupFloatIntrinsic (name: Str) (intrinsics: List((Str, LLVMValueRef))) =
+    match intrinsics with
+        | [] -> Ashes.IO.panic("codegen: undeclared float intrinsic " + name)
+        | (candidate, function_) :: rest ->
+            if candidate == name
+            then function_
+            else lookupFloatIntrinsic(name)(rest)
+
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
 // plus the `DirectoryExternals` bundle from `IrCodegen.Filesystem` — declared once per module, matching
@@ -151,6 +168,9 @@ type ExternalFunctions =
     | memcpyFn: LLVMValueRef
     | memcpyType: LLVMTypeRef
     | directoryExternals: DirectoryExternals
+    // The f64 LLVM intrinsics `FloatUnaryIntrinsic` names, each declared once, and their type.
+    | floatUnaryType: LLVMTypeRef
+    | floatIntrinsics: List((Str, LLVMValueRef))
     | rcRegion: RcRegionRuntime
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
@@ -165,21 +185,26 @@ let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
             in
                 let memcpyType = functionType(types.ptrType)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
                 in
-                    let region =
-                        defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)
+                    let floatUnaryType =
+                        functionType(doubleType(context))([doubleType(context)])(1u32)(false)
                     in
-                        ExternalFunctions(
-                            mallocFn = region.allocFn,
-                            mallocType = mallocType,
-                            freeFn = region.freeFn,
-                            freeType = freeType,
-                            rcRegion = region,
-                            memcmpFn = addFunction(module_)("memcmp")(memcmpType),
-                            memcmpType = memcmpType,
-                            memcpyFn = addFunction(module_)("memcpy")(memcpyType),
-                            memcpyType = memcpyType,
-                            directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types)
-                        ))
+                        let region =
+                            defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)
+                        in
+                            ExternalFunctions(
+                                mallocFn = region.allocFn,
+                                mallocType = mallocType,
+                                freeFn = region.freeFn,
+                                freeType = freeType,
+                                rcRegion = region,
+                                memcmpFn = addFunction(module_)("memcmp")(memcmpType),
+                                memcmpType = memcmpType,
+                                memcpyFn = addFunction(module_)("memcpy")(memcpyType),
+                                memcpyType = memcpyType,
+                                directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types),
+                                floatUnaryType = floatUnaryType,
+                                floatIntrinsics = declareFloatIntrinsics(module_)(floatUnaryType)(floatUnaryIntrinsicNames)
+                            ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
 // instead of an ever-growing parameter list; only `tempEnv` (in `codegenInstructionKind`'s own
@@ -559,6 +584,11 @@ let codegenInstructionKind cx builder kind state =
                                             (bindTemp(target)(buildBitCast(builder)(constReal(doubleType(context))(value))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | IntToFloat(target, value) ->
                                             (bindTemp(target)(buildBitCast(builder)(buildSIToFP(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("int_to_float"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | FloatUnaryIntrinsic(target, value, intrinsic) ->
+                                            let result =
+                                                buildCall(builder)(externals.floatUnaryType)(lookupFloatIntrinsic(intrinsic)(externals.floatIntrinsics))([buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_intrinsic_operand")])(1u32)("float_intrinsic")
+                                            in
+                                                (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | FloatToInt(target, value) ->
                                             (bindTemp(target)(buildFPToSI(builder)(buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_to_int_value"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AddFloat(target, left, right) ->
@@ -1294,6 +1324,12 @@ let codegenInstructionKind cx builder kind state =
                         // at EOF with nothing left unread.
                                         | ReadLine(target) ->
                                             let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | ReadExact(target, count) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(count)
+                                                |> emitReadExact(context)(function_)(i64)(i8)(ptrType)(builder)(arena)
                                             in (bindTemp(target)(resultValue)(tempEnv), terminated)
                         // `Ashes.IO.Console` — raw stdin mode over `TCGETS`/`TCSETS`, `ppoll` on stdin,
                         // and the monotonic clock.
