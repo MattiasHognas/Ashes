@@ -56,6 +56,8 @@ export (
     value enterInlineTypeVariables,
     value lowerLambdaParameterType,
     value bindingLambdaValue,
+    value annotatedValueType,
+    value bindLoweredAnnotation,
     value recordLetLambdaLabel,
 )
 
@@ -1285,6 +1287,40 @@ let bindingLambdaValue annotation value (state: CoreLoweringState) =
                 match annotationTypeVariableNames(expanded)([]) with
                     | [] -> annotateBindingLambdaChain(expanded)(value)
                     | _ -> value
+
+let recursive annotatedValueIsLambda (value: Expr) =
+    match value with
+        | ExprAt(_span, inner) -> annotatedValueIsLambda(inner)
+        | ExprNode(_node, inner) -> annotatedValueIsLambda(inner)
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | _ -> false
+
+// The closed type a `let`'s annotation gives a value that is not a function: stage 0 unifies the
+// value's type with its annotation (`let okLeft : Result(Str, Int) = Ok(1)` fixes the error type a
+// bare `Ok(1)` leaves open). A function's annotation reaches its parameters through
+// `bindingLambdaValue` instead, and an annotation naming type variables is left to inference.
+let annotatedValueType (annotation: Maybe(TypeExpr)) (value: Expr) (state: CoreLoweringState) =
+    match annotation with
+        | None -> None
+        | Some(typeExpr) ->
+            if annotatedValueIsLambda(value)
+            then None
+            else
+                let expanded =
+                    expandTypeAliases(stateTypeAliases(state))(32)(typeExpr)
+                in
+                    match annotationTypeVariableNames(expanded)([]) with
+                        | [] -> typeExprToSemanticType(expanded)([])
+                        | _ -> None
+
+// A lowered `let` value bound to the type its annotation gives it.
+let bindLoweredAnnotation (annotationType: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
+    match (annotationType, lowered) with
+        | (Some(expected), LoweredCoreValue { state = state, semanticType = valueType, error = None }) ->
+            match bindType(valueType)(expected)(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (boundState, None) -> lowered with state = boundState
+        | _ -> lowered
 
 // A let-bound lambda's generated label is remembered under the let's name, so a call through the
 // name can consult the function's recorded body placement.

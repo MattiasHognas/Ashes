@@ -53,6 +53,7 @@ export (
     value lowerArenaBracketedNestedLetWith,
     value collectPendingBorrowedOwners,
     value lowerLet,
+    value lowerAnnotatedLet,
     value listCellReuseConstructorName,
     value slotAtOrdinal,
     value finishPatternArm,
@@ -1948,6 +1949,25 @@ let lowerLet name value body lower state =
                 |> requestStackAllocatedConstructor
                 |> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)
             else lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
+
+// `lowerLet` for a value its annotation gives a closed type: the value, once lowered, is bound to
+// that type before the body is lowered against it.
+let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) lower state =
+    (let lowerValue =
+        given (valueExpression) ->
+            given (valueState) ->
+                valueState
+                |> lower(valueExpression)
+                |> bindLoweredAnnotation(annotationType)
+    in
+        match collectPendingBorrowedOwners(name)(value)(state) with
+            | CoreLoweringState { bindings = outerBindings } as collected ->
+                if constructorExpression(value)(collected) && immediateSingleArmDestructuringMatch(name)(body)
+                then
+                    collected
+                    |> requestStackAllocatedConstructor
+                    |> lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lowerValue)(outerBindings)
+                else lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lowerValue)(outerBindings)(collected))
 
 // Whether every arm leaves the matched cell dead: no guard, and no body mentioning the scrutinee.
 let recursive reuseCasesLeaveScrutineeDead (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =

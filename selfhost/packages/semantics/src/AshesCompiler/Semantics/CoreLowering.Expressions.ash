@@ -2291,7 +2291,10 @@ let lowerPossiblyConstrainedLet name value body annotation requirements lower (s
                     lowerArenaBracketedNestedLetWith(name)(value)(body)(lowerConstrainedNestedBody(name)(true)(plan.scheme)(state.bindings)(lower))(given (source) ->
                         given (entered) -> lowerConstrainedBindingValue(name)(plan)(source)(lower)(entered))(state.bindings)(state)
                 | None ->
-                    lowerLet(name)(bindingLambdaValue(annotation)(value)(state))(body)(lower)(state)
+                    match annotatedValueType(annotation)(value)(state) with
+                        | Some(annotationType) -> lowerAnnotatedLet(name)(value)(body)(Some(annotationType))(lower)(state)
+                        | None ->
+                            lowerLet(name)(bindingLambdaValue(annotation)(value)(state))(body)(lower)(state)
 
 let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
     match constrainedBindingPlan(name)(true)(value)(annotation)(requirements)(state) with
