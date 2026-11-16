@@ -39,6 +39,9 @@ import AshesCompiler.Semantics.ReuseResetSafety.ReuseResetSafety
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1020,6 +1023,41 @@ let recursive deferConstrainedGoals (goals: List((Str, SemanticType))) (resultTy
             |> withStatePendingTraitGoals((key, goalType) :: statePendingTraitGoals(state))
             |> deferConstrainedGoals(rest)(resultType)
 
+// A requirement whose type argument is still open takes the type the standalone inference recorded
+// for the same trait's dictionary at the reference, the first unused one of that trait in the
+// scheme's order, the way a later pass pins a proven goal.
+let recursive pinRecordedDictionaries (constraints: List(TraitConstraint)) (recorded: List((Str, SemanticType))) (state: CoreLoweringState) =
+    match constraints with
+        | [] -> state
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            match argument
+            |> resolveType(state)
+            |> freeTypeVariables with
+                | [] -> pinRecordedDictionaries(rest)(recorded)(state)
+                | _open ->
+                    match takeRecordedDictionary(traitName)(recorded)([]) with
+                        | (Some(recordedType), remaining) ->
+                            match bindType(argument)(recordedType)(state) with
+                                | (bound, None) ->
+                                    bound
+                                    |> observeLoweringEvent(0)
+                                    |> pinRecordedDictionaries(rest)(remaining)
+                                | (_failed, Some(_error)) -> pinRecordedDictionaries(rest)(remaining)(state)
+                        | (None, _remaining) -> pinRecordedDictionaries(rest)(recorded)(state)
+        | _constraint :: rest -> pinRecordedDictionaries(rest)(recorded)(state)
+and takeRecordedDictionary (traitName: Str) (recorded: List((Str, SemanticType))) (skipped: List((Str, SemanticType))) =
+    match recorded with
+        | [] -> (None, reverse(skipped))
+        | (name, recordedType) :: rest ->
+            if name == traitName
+            then
+                (Some(recordedType), appendRecorded(reverse(skipped))(rest))
+            else takeRecordedDictionary(traitName)(rest)((name, recordedType) :: skipped)
+and appendRecorded (left: List((Str, SemanticType))) (right: List((Str, SemanticType))) =
+    match left with
+        | [] -> right
+        | head :: rest -> head :: appendRecorded(rest)(right)
+
 let lowerConstrainedCallWithName expression name privateName (binding: CoreBinding) lower (state: CoreLoweringState) =
     match instantiatePreservingConstraintOrder(binding.scheme)(state.typeSupply) with
         | InstantiationResult { semanticType = sourceType, constraints = constraints, supply = supply } ->
@@ -1045,7 +1083,9 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                 | Some(expectedResult) -> bindType(resultType)(expectedResult)(inferred) with
                                                 | (failed, Some(error)) -> failure(failed)(error)
                                                 | (bound, None) ->
-                                                    match pinConstrainedGoals(0)(constraints)(bound) with
+                                                    match bound
+                                                    |> pinConstrainedGoals(0)(constraints)
+                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(nodeIdentityOf(inferenceSpine.root))(bound)) with
                                                         | settled ->
                                                             let goals =
                                                                 map((given (constraint: TraitConstraint) ->
@@ -1483,14 +1523,31 @@ let traitUnaryMethodCall (function: Expr) =
                 | _ -> None
         | _ -> None
 
+// An operand type still open takes the closed type the standalone inference recorded for the
+// operand node, the way a later pass pins a proven goal.
+let pinRecordedOperandType (operand: Expr) (operandType: SemanticType) (state: CoreLoweringState) =
+    match operandType
+    |> resolveType(state)
+    |> freeTypeVariables with
+        | [] -> (state, operandType)
+        | _open ->
+            match recordedClosedTypeAt(nodeIdentityOf(operand))(state) with
+                | Some(recorded) ->
+                    match bindType(operandType)(recorded)(state) with
+                        | (bound, None) -> (observeLoweringEvent(0)(bound), resolveType(bound)(operandType))
+                        | (_failed, Some(_error)) -> (state, operandType)
+                | None -> (state, operandType)
+
 let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: SemanticType) argument lower state =
     match state
     |> clearConsumerRequest
     |> lower(argument) with
-        | LoweredCoreValue { state = operandState, temp = operandTemp, semanticType = operandType, error = None } ->
-            operandState
-            |> withConsumerRequest(state.consumerRequest)
-            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resultType)(lower)(operandTemp)(resolveType(operandState)(operandType))
+        | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = loweredType, error = None } ->
+            match pinRecordedOperandType(argument)(loweredType)(loweredState) with
+                | (operandState, operandType) ->
+                    operandState
+                    |> withConsumerRequest(state.consumerRequest)
+                    |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resultType)(lower)(operandTemp)(resolveType(operandState)(operandType))
         | failed -> failed
 
 // The name a call spine is rooted at and the number of arguments applied to it.
