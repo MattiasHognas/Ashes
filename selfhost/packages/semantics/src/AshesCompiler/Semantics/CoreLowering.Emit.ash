@@ -529,6 +529,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 staticProviders = staticProviders,
                 capabilityGlobalCount = capabilityGlobalCount,
                 capabilityOperationSchemes = [],
+                handledCapabilities = [],
                 sourceContext = None,
                 topLevelNames = Ashes.Collection.Map.empty,
                 letLambdas = [],

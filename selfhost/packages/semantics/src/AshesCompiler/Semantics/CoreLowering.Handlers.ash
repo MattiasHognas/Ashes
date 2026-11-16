@@ -1,8 +1,10 @@
 // Capability operations: perform, handle, operation arms and result pipes. A part of
 // `AshesCompiler.Semantics.CoreLowering`.
 
+import Ashes.Collection.List.append
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
+import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreResultPipeLowering
@@ -25,6 +27,7 @@ import AshesCompiler.Semantics.CoreLowering.Constructors
 import AshesCompiler.Semantics.CoreLowering.Records
 export (
     value lowerPerform,
+    value operationEtaExpansion,
     value lowerHandle,
     value lowerResultPipe,
     value expressionName,
@@ -106,23 +109,83 @@ let recursive findCapabilityOperationScheme (capName: Str) (opName: Str) (scheme
             then Some(scheme)
             else findCapabilityOperationScheme(capName)(opName)(rest)
 
-// A perform site's result type: the operation's declared signature instantiated and unified with
-// the lowered arguments' types, or a fresh variable for an operation without a recorded scheme.
-let performResultType (capName: Str) (opName: Str) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+let recursive signatureArity (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> 1 + signatureArity(result)
+        | _ -> 0
+
+let recursive operationEtaCall (root: Expr) (parameters: List(Str)) =
+    match parameters with
+        | [] -> root
+        | parameter :: rest ->
+            operationEtaCall(ExprCall(root)(ExprVar(parameter))(false)(callArgumentsInline))(rest)
+
+let recursive operationEtaLambda (parameters: List(Str)) (body: Expr) =
+    match parameters with
+        | [] -> body
+        | parameter :: rest ->
+            ExprLambda(parameter)(operationEtaLambda(rest)(body))(None)
+
+let recursive operationEtaParameters (prefix: Str) (index: Int) (count: Int) =
+    if index >= count
+    then []
+    else prefix + Ashes.Text.fromInt(index) :: operationEtaParameters(prefix)(index + 1)(count)
+
+// Stage 0's `BuildOperationEtaLambda`: a first-class reference to an operation with a declared
+// signature, `Clock.now`, is `given a -> Clock.now(a)`, curried to the signature's arity, so the
+// operation is performed where the value is applied. None for anything else.
+let operationEtaExpansion (capName: Str) (opName: Str) (state: CoreLoweringState) =
+    match state
+    |> stateCapabilityLayouts
+    |> findCapabilityLayout(capName) with
+        | None -> None
+        | Some(_layout) ->
+            match state
+            |> stateCapabilityOperationSchemes
+            |> findCapabilityOperationScheme(capName)(opName) with
+                | Some(TypeScheme { body = SemTuple(_instance :: operationType :: []) }) ->
+                    let arity = signatureArity(operationType)
+                    in
+                        let parameters =
+                            operationEtaParameters("__op_arg_" + Ashes.Text.fromInt(state.nextTemp) + "_")(0)(if arity < 1
+                            then 1
+                            else arity)
+                        in
+                            parameters
+                            |> operationEtaCall(ExprQualifiedVar(capName)(opName))
+                            |> operationEtaLambda(parameters)
+                            |> Some
+                | _ -> None
+
+let recursive resolvedTypes (state: CoreLoweringState) (types: List(SemanticType)) =
+    match types with
+        | [] -> []
+        | head :: rest -> resolveType(state)(head) :: resolvedTypes(state)(rest)
+
+// A perform site's types: the operation's declared signature instantiated and unified with the
+// lowered arguments' types gives the result type, the instantiated signature, and the type
+// arguments of the capability instance the site performs (its scheme pairs the instance with the
+// signature). An operation without a recorded scheme gets a fresh result variable, no signature
+// and no type arguments.
+let performSiteTypes (capName: Str) (opName: Str) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
     match freshType(state) with
         | FreshType { state = resultState, semanticType = resultType } ->
             match state
             |> stateCapabilityOperationSchemes
             |> findCapabilityOperationScheme(capName)(opName) with
-                | None -> (resultState, resultType, None)
+                | None -> (resultState, resultType, [], None, None)
                 | Some(scheme) ->
                     match instantiate(scheme)(resultState.typeSupply) with
-                        | InstantiationResult { semanticType = operationType, supply = nextSupply } ->
+                        | InstantiationResult { semanticType = SemTuple(SemCapability(_instanceName, instanceArguments) :: operationType :: []), supply = nextSupply } ->
                             match resultState
                             |> withTypeSupply(nextSupply)
                             |> bindType(operationType)(curriedCallType(argumentTypes)(resultType)) with
-                                | (failedState, Some(error)) -> (failedState, resultType, Some(error))
-                                | (boundState, None) -> (boundState, resolveType(boundState)(resultType), None)
+                                | (failedState, Some(error)) -> (failedState, resultType, [], None, Some(error))
+                                | (boundState, None) ->
+                                    (boundState, resolveType(boundState)(resultType), resolvedTypes(boundState)(instanceArguments), operationType
+                                    |> resolveType(boundState)
+                                    |> Some, None)
+                        | _ -> (resultState, resultType, [], None, None)
 
 // A perform site whose result has a call copy-out adopted the arm's result (stage 0's
 // `PerformResultOwnership.Adopt`): it owns a reference-counted value on both branches, newly
@@ -131,6 +194,150 @@ let markPerformResultAdopted (resultTemp: Int) (resultType: SemanticType) (state
     match callCopyOutOf(resultType)(state) with
         | Some(_copyOut) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
         | None -> state
+
+let recursive capabilityHandled (name: Str) (handled: List(Str)) =
+    match handled with
+        | [] -> false
+        | candidate :: rest -> candidate == name || capabilityHandled(name)(rest)
+
+let recursive anyAbstractType (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | SemVariable(_id) :: _rest -> true
+        | SemParameter(_id, _name) :: _rest -> true
+        | _concrete :: rest -> anyAbstractType(rest)
+
+// Stage 0's `ResolveProvider`: the provider registered for the concrete instance a perform site
+// performs, none while a type argument is still a variable.
+let performSiteProvider (capName: Str) (instanceArguments: List(SemanticType)) (state: CoreLoweringState) =
+    if anyAbstractType(instanceArguments)
+    then None
+    else
+        state
+        |> stateStaticProviders
+        |> findStaticProviderExact(capName)(instanceArguments)
+
+let bindProviderImplementation (implementationType: SemanticType) (operationType: Maybe(SemanticType)) (state: CoreLoweringState) =
+    match operationType with
+        | None -> (state, None)
+        | Some(expected) -> bindType(implementationType)(expected)(state)
+
+// Stage 0's `EmitStaticProviderCall`: the provider's implementation of the operation lowered
+// against the operation's instantiated signature and applied to the arguments as an ordinary
+// curried call, with no handler evidence involved.
+let lowerStaticProviderCall (provider: CoreStaticProviderLayout) (capName: Str) (opName: Str) (argTemps: List(Int)) (resultType: SemanticType) (operationType: Maybe(SemanticType)) lower (state: CoreLoweringState) =
+    match findProviderOperation(opName)(provider.operations) with
+        | None ->
+            opName
+            |> CoreUnhandledCapabilityOperation(capName)
+            |> failure(state)
+        | Some(implementation) ->
+            match state
+            |> withOnlyExpectedType(operationType)
+            |> lower(implementation)
+            |> withLoweredConsumerRequest(consumerRequestOf(state)) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = implementationState, temp = implementationTemp, semanticType = implementationType, error = None } ->
+                    match bindProviderImplementation(implementationType)(operationType)(implementationState) with
+                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (boundState, None) ->
+                            match emitStaticProviderCall(provider)(opName)(implementationTemp)(boundState.nextTemp)(boundState.nextLocal)(argTemps)(resultType) with
+                                | CoreCapabilityPerformEmission { instructions = callInstructions, nextTemp = endTemp, nextLocal = endLocal, resultTemp = callResultTemp } ->
+                                    boundState
+                                    |> emitInstructions(callInstructions)
+                                    |> withNextTemp(endTemp)
+                                    |> withNextLocal(endLocal)
+                                    |> success(callResultTemp)(resolveType(boundState)(resultType))
+
+// The evidence-based perform of an operation a handler satisfies.
+let lowerDynamicPerform (layout: CoreCapabilityLayout) (capName: Str) (opName: Str) (opIndex: Int) (argTemps: List(Int)) (resType: SemanticType) (typedState: CoreLoweringState) =
+    match typedState with
+        | CoreLoweringState { programState = CoreProgramState { capabilityGlobalCount = globalCount } } ->
+            match internString("Unhandled capability operation '" + capName + "." + opName + "'.")(typedState) with
+                | StringInterning { state = internedState, label = panicLabel } ->
+                    match internedState with
+                        | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
+                            match internedState
+                            |> callCopyOutOf(resType)
+                            |> emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType)(panicLabel) with
+                                | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
+                                    let emittedState =
+                                        internedState
+                                        |> emitInstructions(performInstrs)
+                                        |> withNextTemp(endTemp)
+                                        |> withNextLocal(endLocal)
+                                        |> markPerformResultAdopted(resTemp)(resultSemType)
+                                    in
+                                        match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
+                                            | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                                            | LoweredCoreValue { state = postCollectedState, error = None } -> success(resTemp)(resultSemType)(postCollectedState)
+                                | _ ->
+                                    opName
+                                    |> CoreUnhandledCapabilityOperation(capName)
+                                    |> failure(internedState)
+
+let recursive bindInstanceArguments (arguments: List(SemanticType)) (providerArguments: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, providerArguments) with
+        | ([], []) -> Some(state)
+        | (argument :: rest, providerArgument :: providerRest) ->
+            match bindType(argument)(providerArgument)(state) with
+                | (_failed, Some(_error)) -> None
+                | (bound, None) -> bindInstanceArguments(rest)(providerRest)(bound)
+        | _ -> None
+
+let resolvedOperationType (state: CoreLoweringState) (operationType: Maybe(SemanticType)) =
+    match operationType with
+        | Some(semanticType) ->
+            semanticType
+            |> resolveType(state)
+            |> Some
+        | None -> None
+
+// Inside a concrete copy of a generic binding (stage 0 inlines such a binding at its concrete call
+// site) every quantified type is concrete, so an instance still open at a perform site is one this
+// lowering has not unified yet, such as an operation in a closure handed to a higher-order helper
+// before the helper's other arguments are lowered. When the capability is not handled here and
+// all its providers share one instance, the instance is that provider's: its type arguments are
+// bound to the provider's and the call resolves to it. Anything else stays a dynamic perform.
+let concreteCopyProvider (capName: Str) (instanceArguments: List(SemanticType)) (handled: Bool) (state: CoreLoweringState) =
+    if handled || stateConcreteDepth(state) == 0 || !anyAbstractType(instanceArguments)
+    then None
+    else
+        match state
+        |> stateStaticProviders
+        |> findStaticProvider(capName)([]) with
+            | None -> None
+            | Some(provider) ->
+                match bindInstanceArguments(instanceArguments)(provider.typeArguments)(state) with
+                    | Some(bound) -> Some((bound, provider))
+                    | None -> None
+
+// Stage 0's `LowerCapabilityOperationCallDispatch`, once the arguments pin the instance: an
+// operation of a capability an enclosing `handle` discharges resolves through the handler's
+// evidence, an operation with a provider for its concrete instance calls the provider directly,
+// and both at once is an ambiguity the type checker reports.
+let lowerCapabilityOperationCall (layout: CoreCapabilityLayout) (capName: Str) (opName: Str) (opIndex: Int) arguments lower (state: CoreLoweringState) =
+    match lowerCoreValues(arguments)(lower)(state) with
+        | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
+        | LoweredCoreValues { state = valuesState, temps = argTemps, semanticTypes = argTypes, error = None } ->
+            match performSiteTypes(capName)(opName)(argTypes)(valuesState) with
+                | (failedTypeState, _resType, _instance, _operationType, Some(error)) -> failure(failedTypeState)(error)
+                | (typedState, resType, instanceArguments, operationType, None) ->
+                    let handled =
+                        typedState
+                        |> stateHandledCapabilities
+                        |> capabilityHandled(capName)
+                    in
+                        match performSiteProvider(capName)(instanceArguments)(typedState) with
+                            | Some(provider) ->
+                                if handled
+                                then failure(typedState)(CoreAmbiguousCapabilitySatisfaction(capName))
+                                else lowerStaticProviderCall(provider)(capName)(opName)(argTemps)(resType)(operationType)(lower)(typedState)
+                            | None ->
+                                match concreteCopyProvider(capName)(instanceArguments)(handled)(typedState) with
+                                    | Some((boundState, provider)) ->
+                                        lowerStaticProviderCall(provider)(capName)(opName)(argTemps)(resolveType(boundState)(resType))(resolvedOperationType(boundState)(operationType))(lower)(boundState)
+                                    | None -> lowerDynamicPerform(layout)(capName)(opName)(opIndex)(argTemps)(resType)(typedState)
 
 let lowerPerform operation lower state =
     match collectCallSpine(operation) with
@@ -154,84 +361,20 @@ let lowerPerform operation lower state =
                             |> failure(state)
                 else failure(state)(UnknownLoweringBinding("Stop." + opName))
             else
-                match state with
-                    | CoreLoweringState { programState = CoreProgramState { capabilityLayouts = capLayouts, staticProviders = providers, capabilityGlobalCount = globalCount } } ->
-                        // No whole-program entry point wires real ProviderInfo into `providers` yet
-                        // (see docs/md/future/SELF_HOSTING.md's "generic capability evidence" item),
-                        // so this call site has no per-call-site type argument to disambiguate with
-                        // — `[]` correctly matches by capability name alone, ambiguous only when two
-                        // registered providers for the same name genuinely differ.
-                        match findStaticProvider(capName)([])(providers) with
-                            | Some(provider) ->
-                                match findProviderOperation(opName)(provider.operations) with
-                                    | Some(implExpr) ->
-                                        match lower(implExpr)(state) with
-                                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                                            | LoweredCoreValue { state = implState, temp = implTemp, error = None } ->
-                                                match lowerCoreValues(arguments)(lower)(implState) with
-                                                    | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
-                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, error = None } ->
-                                                        match valuesState with
-                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
-                                                                match []
-                                                                |> SemNamed(0)("Unit")
-                                                                |> emitStaticProviderCall(provider)(opName)(implTemp)(startTemp)(startLocal)(argTemps) with
-                                                                    | CoreCapabilityPerformEmission { instructions = callInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resType, error = None } ->
-                                                                        let emittedState =
-                                                                            valuesState
-                                                                            |> emitInstructions(callInstrs)
-                                                                            |> withNextTemp(endTemp)
-                                                                            |> withNextLocal(endLocal)
-                                                                        in success(resTemp)(resType)(emittedState)
-                                                                    | _ ->
-                                                                        opName
-                                                                        |> CoreUnhandledCapabilityOperation(capName)
-                                                                        |> failure(valuesState)
-                                    | None ->
-                                        opName
-                                        |> CoreUnhandledCapabilityOperation(capName)
-                                        |> failure(state)
+                match state
+                |> stateCapabilityLayouts
+                |> findCapabilityLayout(capName) with
+                    | Some(layout) ->
+                        match findCapabilityOperationIndex(opName)(layout.operations) with
+                            | Some(opIndex) -> lowerCapabilityOperationCall(layout)(capName)(opName)(opIndex)(arguments)(lower)(state)
                             | None ->
-                                match findCapabilityLayout(capName)(capLayouts) with
-                                    | Some(layout) ->
-                                        match findCapabilityOperationIndex(opName)(layout.operations) with
-                                            | Some(opIndex) ->
-                                                match lowerCoreValues(arguments)(lower)(state) with
-                                                    | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
-                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, semanticTypes = argTypes, error = None } ->
-                                                        match performResultType(capName)(opName)(argTypes)(valuesState) with
-                                                            | (failedTypeState, _resType, Some(error)) -> failure(failedTypeState)(error)
-                                                            | (typedState, resType, None) ->
-                                                                match internString("Unhandled capability operation '" + capName + "." + opName + "'.")(typedState) with
-                                                                    | StringInterning { state = internedState, label = panicLabel } ->
-                                                                        match internedState with
-                                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
-                                                                                match internedState
-                                                                                |> callCopyOutOf(resType)
-                                                                                |> emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType)(panicLabel) with
-                                                                                    | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
-                                                                                        let emittedState =
-                                                                                            internedState
-                                                                                            |> emitInstructions(performInstrs)
-                                                                                            |> withNextTemp(endTemp)
-                                                                                            |> withNextLocal(endLocal)
-                                                                                            |> markPerformResultAdopted(resTemp)(resultSemType)
-                                                                                        in
-                                                                                            match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
-                                                                                                | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
-                                                                                                | LoweredCoreValue { state = postCollectedState, error = None } -> success(resTemp)(resultSemType)(postCollectedState)
-                                                                                    | _ ->
-                                                                                        opName
-                                                                                        |> CoreUnhandledCapabilityOperation(capName)
-                                                                                        |> failure(internedState)
-                                            | None ->
-                                                opName
-                                                |> CoreUnhandledCapabilityOperation(capName)
-                                                |> failure(state)
-                                    | None ->
-                                        opName
-                                        |> CoreUnhandledCapabilityOperation(capName)
-                                        |> failure(state)
+                                opName
+                                |> CoreUnhandledCapabilityOperation(capName)
+                                |> failure(state)
+                    | None ->
+                        opName
+                        |> CoreUnhandledCapabilityOperation(capName)
+                        |> failure(state)
         | _ -> failure(state)(PerformTargetNotCapabilityOperation("'perform' must be applied to a capability operation call."))
 
 // An operation arm's body must call `resume` exactly once; only the tail-position form
@@ -270,6 +413,15 @@ let exprReferencesResume expr =
     []
     |> collectFree(expr)([])
     |> containsName("resume")
+
+// Stage 0's `TryRewriteResume` wording for an arm path it cannot rewrite: a `resume` in a
+// position other than the tail, a let value or a match scrutinee, or a path that never resumes.
+let armResumeDiagnostic (capName: Str) (opName: Str) (expression: Expr) =
+    (let reason =
+        if exprReferencesResume(expression)
+        then "'resume' is only supported in tail position, as the value of a let, or as the scrutinee of a match; bind its result with 'let' to move the work after it."
+        else "every path of an operation arm must call resume(...) (aborting arms need unwinding and are not supported)."
+    in CoreCapabilityDiagnostic("ASH020")("In handler arm '" + capabilityDisplayName(capName) + "." + opName + "': " + reason))
 
 // Pure, no lowering: does any case body or guard in a one-shot-scrutinee match reference `resume`
 // again — a one-shot `resume` may run at most once per path (matching stage-0's
@@ -391,8 +543,8 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                 | None ->
                     if exprReferencesResume(value)
                     then
-                        opName
-                        |> UnsupportedOperationArmResume(capName)
+                        value
+                        |> armResumeDiagnostic(capName)(opName)
                         |> failure(state)
                     else
                         match state with
@@ -495,8 +647,8 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
             match tailResumeArgument(body) with
                 | Some(resumedValue) -> lower(resumedValue)(state)
                 | None ->
-                    opName
-                    |> UnsupportedOperationArmResume(capName)
+                    body
+                    |> armResumeDiagnostic(capName)(opName)
                     |> failure(state)
 // Mirrors lowerMatchArm, except the guard (which must not reference resume, checked here) still
 // lowers via the arm's own ordinary `lower`, while the arm body lowers via a wrapper back into
@@ -612,26 +764,115 @@ let buildOperationArmClosure capName opName patterns armBody lower postRegisterI
             let placeholderBody = armBodyCapturePlaceholder(armBody)
             in lowerOperationArmParameters(patterns)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
 
-// Lowers every operation arm of the single handled capability to a closure and stores each one
-// into the handler frame at the same offset emitDynamicPerform reads from
-// ((globalCount + 1 + opIndex) * 8), so a perform inside the handled body finds a real closure
-// instead of the frame's uninitialized allocation.
-let recursive installOperationArmClosures capName ops opArms frameTemp globalCount lower state =
+let recursive layoutListed (name: Str) (layouts: List(CoreCapabilityLayout)) =
+    match layouts with
+        | [] -> false
+        | CoreCapabilityLayout { name = candidate } :: rest -> candidate == name || layoutListed(name)(rest)
+
+// Stage 0's `LowerHandleCollectArms` grouping: the distinct capabilities the operation arms
+// handle, in arm order. An arm naming no declared operation is the type checker's to report and
+// is skipped here.
+let recursive handledCapabilityLayouts (opArms: List((Str, Str, List(Pattern), Expr))) (layouts: List(CoreCapabilityLayout)) (handled: List(CoreCapabilityLayout)) =
     match opArms with
-        | [] -> success(-1)(SemNever)(state)
-        | (armCapName, opName, patterns, armBody) :: rest ->
-            if armCapName != capName
-            then installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
-            else
-                match findCapabilityOperationIndex(opName)(ops) with
-                    | None -> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
-                    | Some(opIndex) ->
-                        match withArmOwnResult(buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount))(state) with
-                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                            | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } ->
-                                closureState
-                                |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
-                                |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
+        | [] -> Ashes.Collection.List.reverse(handled)
+        | (capName, opName, _patterns, _body) :: rest ->
+            match findCapabilityLayout(capName)(layouts) with
+                | Some(layout) ->
+                    match findCapabilityOperationIndex(opName)(layout.operations) with
+                        | Some(_index) ->
+                            if layoutListed(capName)(handled)
+                            then handledCapabilityLayouts(rest)(layouts)(handled)
+                            else handledCapabilityLayouts(rest)(layouts)(layout :: handled)
+                        | None -> handledCapabilityLayouts(rest)(layouts)(handled)
+                | None -> handledCapabilityLayouts(rest)(layouts)(handled)
+
+// Stage 0's `HandlerOperationType`: an arm closure is lowered against its operation's declared
+// signature, freshly instantiated, so the arm's parameters have the operation's argument types
+// while the arm and its posts are lowered. An unsigned operation gives no expectation.
+let armExpectedType (capName: Str) (opName: Str) (state: CoreLoweringState) =
+    match state
+    |> stateCapabilityOperationSchemes
+    |> findCapabilityOperationScheme(capName)(opName) with
+        | Some(scheme) ->
+            match instantiate(scheme)(state.typeSupply) with
+                | InstantiationResult { semanticType = SemTuple(_instance :: operationType :: []), supply = nextSupply } -> (withTypeSupply(nextSupply)(state), Some(operationType))
+                | _ -> (state, None)
+        | None -> (state, None)
+
+// Stage 0's `LowerHandleLowerArmClosures`: every operation arm lowered to a closure, in arm order,
+// in the enclosing context. Each entry names the arm's capability index, the operation's index in
+// its declaration, and the closure's temp. An arm naming no declared operation is skipped.
+let recursive lowerOperationArmClosures (layouts: List(CoreCapabilityLayout)) (opArms: List((Str, Str, List(Pattern), Expr))) (globalCount: Int) lower (closures: List((Int, Int, Int))) (state: CoreLoweringState) =
+    match opArms with
+        | [] -> (state, Ashes.Collection.List.reverse(closures), None)
+        | (capName, opName, patterns, armBody) :: rest ->
+            match findCapabilityLayout(capName)(layouts) with
+                | None -> lowerOperationArmClosures(layouts)(rest)(globalCount)(lower)(closures)(state)
+                | Some(CoreCapabilityLayout { index = capIdx, operations = ops }) ->
+                    match findCapabilityOperationIndex(opName)(ops) with
+                        | None -> lowerOperationArmClosures(layouts)(rest)(globalCount)(lower)(closures)(state)
+                        | Some(opIndex) ->
+                            match armExpectedType(capName)(opName)(state) with
+                                | (typedState, expected) ->
+                                    match typedState
+                                    |> withOnlyExpectedType(expected)
+                                    |> withArmOwnResult(buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount))
+                                    |> withLoweredConsumerRequest(consumerRequestOf(state)) with
+                                        | LoweredCoreValue { state = failedState, error = Some(error) } -> (failedState, [], Some(error))
+                                        | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> lowerOperationArmClosures(layouts)(rest)(globalCount)(lower)((capIdx, opIndex, closureTemp) :: closures)(closureState)
+
+let recursive storeFrameArmClosures (capIdx: Int) (frameTemp: Int) (globalCount: Int) (closures: List((Int, Int, Int))) (state: CoreLoweringState) =
+    match closures with
+        | [] -> state
+        | (armCapIdx, opIndex, closureTemp) :: rest ->
+            (if armCapIdx == capIdx
+            then
+                emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))(state)
+            else state) |> storeFrameArmClosures(capIdx)(frameTemp)(globalCount)(rest)
+
+// Stage 0's `LowerHandleInstallFrames`: one frame per handled capability, each holding a snapshot of
+// every evidence global taken before any of this handle's frames is installed, the pointer to the
+// handle's shared posts-list head, and the capability's arm closures at
+// ((globalCount + 1 + opIndex) * 8), where emitDynamicPerform reads them. Returns each capability's
+// index with its frame.
+let recursive buildHandlerFrames (handled: List(CoreCapabilityLayout)) (postsHeadPtrTemp: Int) (globalCount: Int) (closures: List((Int, Int, Int))) (frames: List((Int, Int))) (state: CoreLoweringState) =
+    match handled with
+        | [] -> (state, Ashes.Collection.List.reverse(frames))
+        | CoreCapabilityLayout { index = capIdx, operations = ops } :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = frameAllocState, temp = frameTemp } ->
+                    frameAllocState
+                    |> emit(AllocStack(frameTemp)((globalCount + 1 + coreListLength(ops)) * 8))
+                    |> emitSnapshotGlobals(0)(globalCount)(frameTemp)
+                    |> emit(StoreMemOffset(frameTemp)(globalCount * 8)(postsHeadPtrTemp))
+                    |> storeFrameArmClosures(capIdx)(frameTemp)(globalCount)(closures)
+                    |> buildHandlerFrames(rest)(postsHeadPtrTemp)(globalCount)(closures)((capIdx, frameTemp) :: frames)
+
+let recursive installHandlerFrames (frames: List((Int, Int))) (state: CoreLoweringState) =
+    match frames with
+        | [] -> state
+        | (capIdx, frameTemp) :: rest ->
+            state
+            |> emit(StoreCapabilityHandler(capIdx)(frameTemp))
+            |> installHandlerFrames(rest)
+
+// Stage 0's `LowerHandleUninstallFrames`: each handled capability's global restored from its own
+// frame's snapshot slot.
+let recursive uninstallHandlerFrames (frames: List((Int, Int))) (state: CoreLoweringState) =
+    match frames with
+        | [] -> state
+        | (capIdx, frameTemp) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = unState, temp = prevTemp } ->
+                    unState
+                    |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
+                    |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
+                    |> uninstallHandlerFrames(rest)
+
+let recursive layoutNames (layouts: List(CoreCapabilityLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreCapabilityLayout { name = name } :: rest -> name :: layoutNames(rest)
 
 // The posts fold hands the handle's value to each post under the owned-argument contract when the
 // value it starts from is reference-counted and its type has a complete copy-out (stage 0's
@@ -815,72 +1056,57 @@ let lowerHandleReturnArm (leavesPost: Bool) returnPat returnExpr lower outerBind
                                         match closeOwnedLetBracket(loweredValueOwnedTypeName(bodyValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(armState) with
                                             | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
+// Stage 0's `LowerHandle`: the arms are lowered to closures in the enclosing context,
+// one frame per handled capability is built and installed, the body is lowered with those
+// capabilities discharged (so a provider for one of them is an ambiguity), the frames are
+// uninstalled, the return arm applied, and the collected one-shot posts folded over the result.
 let lowerHandleWithExpected body arms (request: ConsumerRequest) lower state =
     match splitHandlerArms(arms) with
         | ParsedHandlerArms { opArms = opArms, returnArm = returnArm } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings, programState = CoreProgramState { capabilityLayouts = capLayouts, capabilityGlobalCount = globalCount } } ->
-                    match freshTemp(state) with
-                        | FreshTemp { state = stackState, temp = postsHeadPtrTemp } ->
-                            let initPostsState =
-                                emit(AllocStack(postsHeadPtrTemp)(8))(stackState)
-                            in
-                                match freshTemp(initPostsState) with
-                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                                        let prepState =
-                                            zeroState
-                                            |> emit(LoadConstInt(zeroTemp)(0))
-                                            |> emit(StoreMemOffset(postsHeadPtrTemp)(0)(zeroTemp))
-                                        in
-                                            match opArms with
-                                                | [] ->
-                                                    prepState
-                                                    |> withConsumerRequest(request)
-                                                    |> lower(body)
-                                                | (capName, _opName, _pats, _armBody) :: _ ->
-                                                    match findCapabilityLayout(capName)(capLayouts) with
-                                                        | None ->
-                                                            prepState
-                                                            |> withConsumerRequest(request)
-                                                            |> lower(body)
-                                                        | Some(CoreCapabilityLayout { index = capIdx, operations = ops }) ->
-                                                            let opCount = coreListLength(ops)
+                    match handledCapabilityLayouts(opArms)(capLayouts)([]) with
+                        | [] ->
+                            state
+                            |> withConsumerRequest(request)
+                            |> lower(body)
+                        | handled ->
+                            match lowerOperationArmClosures(capLayouts)(opArms)(globalCount)(lower)([])(state) with
+                                | (armsFailedState, _closures, Some(error)) -> failure(armsFailedState)(error)
+                                | (armsState, closures, None) ->
+                                    match freshTemp(armsState) with
+                                        | FreshTemp { state = stackState, temp = postsHeadPtrTemp } ->
+                                            match freshTemp(stackState) with
+                                                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                                    match zeroState
+                                                    |> emit(AllocStack(postsHeadPtrTemp)(8))
+                                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                                    |> emit(StoreMemOffset(postsHeadPtrTemp)(0)(zeroTemp))
+                                                    |> buildHandlerFrames(handled)(postsHeadPtrTemp)(globalCount)(closures)([]) with
+                                                        | (framesState, frames) ->
+                                                            let enclosingHandled = stateHandledCapabilities(framesState)
                                                             in
-                                                                match freshTemp(prepState) with
-                                                                    | FreshTemp { state = frameAllocState, temp = frameTemp } ->
-                                                                        let frameSize = (globalCount + 1 + opCount) * 8
+                                                                match framesState
+                                                                |> installHandlerFrames(frames)
+                                                                |> withStateHandledCapabilities(append(layoutNames(handled))(enclosingHandled))
+                                                                |> withConsumerRequest(request)
+                                                                |> lower(body) with
+                                                                    | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
+                                                                        let uninstallState =
+                                                                            bodyState
+                                                                            |> withStateHandledCapabilities(enclosingHandled)
+                                                                            |> uninstallHandlerFrames(frames)
                                                                         in
-                                                                            let frameInitState =
-                                                                                frameAllocState
-                                                                                |> emit(AllocStack(frameTemp)(frameSize))
-                                                                                |> emitSnapshotGlobals(0)(globalCount)(frameTemp)
-                                                                                |> emit(StoreMemOffset(frameTemp)(globalCount * 8)(postsHeadPtrTemp))
-                                                                                |> emit(StoreCapabilityHandler(capIdx)(frameTemp))
+                                                                            let currentResultOutcome =
+                                                                                match returnArm with
+                                                                                    | None -> success(bodyTemp)(bodyType)(uninstallState)
+                                                                                    | Some((returnPat, returnExpr)) ->
+                                                                                        lowerHandleReturnArm(anyArmLeavesPost(opArms))(returnPat)(returnExpr)(lower)(outerBindings)(bodyTemp)(bodyType)(uninstallState)
                                                                             in
-                                                                                match installOperationArmClosures(capName)(ops)(opArms)(frameTemp)(globalCount)(lower)(frameInitState) with
-                                                                                    | LoweredCoreValue { state = _armsFailedState, error = Some(error) } -> failure(frameInitState)(error)
-                                                                                    | LoweredCoreValue { state = armsInstalledState, error = None } ->
-                                                                                        match armsInstalledState
-                                                                                        |> withConsumerRequest(request)
-                                                                                        |> lower(body) with
-                                                                                            | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
-                                                                                                let uninstallState =
-                                                                                                    match freshTemp(bodyState) with
-                                                                                                        | FreshTemp { state = unState, temp = prevTemp } ->
-                                                                                                            unState
-                                                                                                            |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
-                                                                                                            |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
-                                                                                                in
-                                                                                                    let currentResultOutcome =
-                                                                                                        match returnArm with
-                                                                                                            | None -> success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                            | Some((returnPat, returnExpr)) ->
-                                                                                                                lowerHandleReturnArm(anyArmLeavesPost(opArms))(returnPat)(returnExpr)(lower)(outerBindings)(bodyTemp)(bodyType)(uninstallState)
-                                                                                                    in
-                                                                                                        match currentResultOutcome with
-                                                                                                            | LoweredCoreValue { state = failedResultState, error = Some(error) } -> failure(failedResultState)(error)
-                                                                                                            | LoweredCoreValue { state = resultState, temp = resultTemp, semanticType = resultType, error = None } -> foldCapabilityPosts(postsHeadPtrTemp)(resultTemp)(resultType)(resultState)
-                                                                                            | failed -> failed
+                                                                                match currentResultOutcome with
+                                                                                    | LoweredCoreValue { state = failedResultState, error = Some(error) } -> failure(failedResultState)(error)
+                                                                                    | LoweredCoreValue { state = resultState, temp = resultTemp, semanticType = resultType, error = None } -> foldCapabilityPosts(postsHeadPtrTemp)(resultTemp)(resultType)(resultState)
+                                                                    | failed -> failed
 
 // The handled body inherits the context's expected type; the operation arms do not.
 let lowerHandle body arms lower state =

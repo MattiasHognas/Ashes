@@ -98,10 +98,13 @@ export (
     value stateCapabilityLayouts,
     value withStateCapabilityLayouts,
     value stateStaticProviders,
+    value withStateStaticProviders,
     value stateCapabilityGlobalCount,
     value withStateCapabilityGlobalCount,
     value stateCapabilityOperationSchemes,
     value withStateCapabilityOperationSchemes,
+    value stateHandledCapabilities,
+    value withStateHandledCapabilities,
     value stateSourceContext,
     value withStateSourceContext,
     value stateTopLevelNames,
@@ -838,6 +841,9 @@ type CoreProgramState =
     | staticProviders: List(CoreStaticProviderLayout)
     | capabilityGlobalCount: Int
     | capabilityOperationSchemes: List((Str, Str, TypeScheme))
+    // The capabilities an enclosing `handle` discharges where lowering stands: an operation of one
+    // resolves through handler evidence, never through a static provider.
+    | handledCapabilities: List(Str)
     | sourceContext: Maybe(SourceContext)
     | topLevelNames: MapTree(Str, Bool)
     | letLambdas: List((Str, List(Str), Expr))
@@ -1601,6 +1607,14 @@ let stateCapabilityOperationSchemes (state: CoreLoweringState) =
 let withStateCapabilityOperationSchemes value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with capabilityOperationSchemes = value))
+
+let stateHandledCapabilities (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.handledCapabilities)
+
+let withStateHandledCapabilities value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with handledCapabilities = value))
 
 let stateSourceContext (state: CoreLoweringState) =
     (let group = state.programState

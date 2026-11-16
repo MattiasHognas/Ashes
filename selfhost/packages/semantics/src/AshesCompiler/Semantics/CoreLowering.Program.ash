@@ -1279,9 +1279,16 @@ let recursive capabilityOperationLayouts (capabilityName: Str) (operations: List
                     |> Error
                 | None -> capabilityOperationLayouts(capabilityName)(rest)(index + 1)(CoreCapabilityOperationLayout(name = name, index = index) :: reversed)
 
+let recursive parameterTableTypes (parameterTypes: List((Str, SemanticType))) =
+    match parameterTypes with
+        | [] -> []
+        | (_name, parameterType) :: rest -> parameterType :: parameterTableTypes(rest)
+
 // An operation's declared signature as a scheme quantified over the capability's own type
 // parameters; an unsigned operation, or one whose signature this resolver cannot express, gets no
-// scheme and is typed by a fresh variable at each perform site.
+// scheme and is typed by a fresh variable at each perform site. The scheme's body pairs the
+// capability instance with the signature, `(Cap(params), signature)`, so one instantiation at a
+// perform site yields both the operation's type and the instance's type arguments.
 let recursive capabilityOperationSchemes (aliases: MapTree(Str, (List(Str), TypeExpr))) (capabilityName: Str) (operations: List(CapabilityOperation)) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) =
     match operations with
         | [] -> []
@@ -1291,7 +1298,12 @@ let recursive capabilityOperationSchemes (aliases: MapTree(Str, (List(Str), Type
                 | Some(typeExpr) ->
                     match typeExprToSemanticType(expandTypeAliases(aliases)(32)(typeExpr))(parameterTypes) with
                         | None -> capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
-                        | Some(operationType) -> (capabilityName, name, TypeScheme(quantified = quantified, body = operationType, constraints = [])) :: capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
+                        | Some(operationType) ->
+                            let instance =
+                                parameterTypes
+                                |> parameterTableTypes
+                                |> SemCapability(capabilityName)
+                            in (capabilityName, name, TypeScheme(quantified = quantified, body = SemTuple([instance, operationType]), constraints = [])) :: capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
 
 // Registers one `CoreCapabilityLayout` per top-level `capability` declaration, numbered in
 // declaration order: the number is the capability's handler-evidence global, and the operations
@@ -1324,8 +1336,56 @@ let registerTopLevelCapabilityDeclaration (declaration: CapabilityDecl) (state: 
                                             |> withStateCapabilityOperationSchemes(append(stateCapabilityOperationSchemes(state))(schemes))
                                             |> Ok
 
+let recursive providerBindingOperations (bindings: List(ProvideBinding)) =
+    match bindings with
+        | [] -> []
+        | ProvideBinding { operationName = operationName, implementation = implementation } :: rest -> (operationName, implementation) :: providerBindingOperations(rest)
+
+let recursive providerTypeArguments (aliases: MapTree(Str, (List(Str), TypeExpr))) (typeArguments: List(TypeExpr)) =
+    match typeArguments with
+        | [] -> Some([])
+        | typeArgument :: rest ->
+            match typeExprToSemanticType(expandTypeAliases(aliases)(32)(typeArgument))([]) with
+                | None -> None
+                | Some(argument) ->
+                    match providerTypeArguments(aliases)(rest) with
+                        | None -> None
+                        | Some(arguments) -> Some(argument :: arguments)
+
+// Registers a `provide` under its capability and concrete instance, as stage 0's
+// `RegisterProviderDeclarations` does. Whether the provider names a declared capability, supplies
+// every operation once and is the only provider of its instance is the type checker's to report;
+// a provider lowering cannot use (an unknown capability or type argument, a second provider of an
+// instance) is not registered.
+let registerProviderDeclaration (declaration: ProvideDecl) (state: CoreLoweringState) =
+    match declaration with
+        | ProvideDecl { capabilityName = name, typeArguments = typeArguments, bindings = bindings } ->
+            match (state
+            |> stateCapabilityLayouts
+            |> findCapabilityLayout(name), providerTypeArguments(stateTypeAliases(state))(typeArguments)) with
+                | (Some(_layout), Some(arguments)) ->
+                    match state
+                    |> stateStaticProviders
+                    |> findStaticProviderExact(name)(arguments) with
+                        | Some(_existing) -> state
+                        | None ->
+                            withStateStaticProviders(append(stateStaticProviders(state))([CoreStaticProviderLayout(capabilityName = name, typeArguments = arguments, operations = providerBindingOperations(bindings))]))(state)
+                | _ -> state
+
+let recursive registerProgramProviders (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match items with
+        | [] -> state
+        | TopLevelAt(_span, inner) :: rest -> registerProgramProviders(inner :: rest)(state)
+        | TopLevelProvide(declaration) :: rest ->
+            state
+            |> registerProviderDeclaration(declaration)
+            |> registerProgramProviders(rest)
+        | _other :: rest -> registerProgramProviders(rest)(state)
+
 // Every capability declaration is registered before any value is lowered: a perform site sizes
 // its handler frame and addresses the post registers by the program's total capability count.
+// The static providers are registered by `registerProgramProviders` once every capability and type
+// is known.
 let recursive registerProgramCapabilities (items: List(TopLevelItem)) (state: CoreLoweringState) =
     match items with
         | [] -> Ok(state)
@@ -1720,7 +1780,9 @@ let lowerProgramWithCapabilities items trailingBody environment state =
             match registerProgramTypes(items)(registered) with
                 | Error(error) -> failure(registered)(error)
                 | Ok(typed) ->
-                    match registerProgramExternals(items)(typed) with
+                    match typed
+                    |> registerProgramProviders(items)
+                    |> registerProgramExternals(items) with
                         | Error(error) -> failure(typed)(error)
                         | Ok(withExternals) ->
                             match registerProgramImplementations(items)(withExternals) with

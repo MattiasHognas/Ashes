@@ -85,6 +85,8 @@ type CoreLoweringError =
     | DuplicateCapabilityName(Str)
     | DuplicateCapabilityOperationName(Str, Str)
     | PerformTargetNotCapabilityOperation(Str)
+    // A capability, handler or provider diagnostic stage 0 reports: its code and message.
+    | CoreCapabilityDiagnostic(Str, Str)
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
     | ResourceDoubleClose(Str)

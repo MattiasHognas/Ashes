@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.CoreConstrainedBindings
 import AshesCompiler.Semantics.OperatorConstraintOrigins.mayOriginateOperatorConstraint
 import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.CoreCapabilityLowering
+import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitResolution.resolveTraitEvidence
@@ -1802,6 +1803,17 @@ let recursive concreteSourceMentionsCandidate names registry =
                 | Some(_candidate) -> true
                 | None -> concreteSourceMentionsCandidate(rest)(registry)
 
+// Stage 0's `BodyPerformsProvidedParameterizedCapability`: the value names an operation of a
+// parameterized capability that has a provider, so a copy at a concrete call site lets that
+// operation resolve to the provider (capability monomorphization).
+let recursive performsProvidedParameterizedCapability (value: Expr) (providers: List(CoreStaticProviderLayout)) =
+    match providers with
+        | [] -> false
+        | CoreStaticProviderLayout { capabilityName = name, typeArguments = arguments } :: rest ->
+            if arguments != [] && exprReadsName(name)(value)
+            then true
+            else performsProvidedParameterizedCapability(value)(rest)
+
 let registerConcreteSource name value isRecursive state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
@@ -1812,7 +1824,7 @@ let registerConcreteSource name value isRecursive state =
                 in
                     let registry = stateConcreteRegistry(state)
                     in
-                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry)
+                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state))
                         then
                             match lambdaParameterChain(value)([]) with
                                 | (parameters, _body) ->
@@ -2211,7 +2223,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprEqual(left, right) -> lowerCoreBinary(CoreEqualOperator)(left)(right)(lowerCore)(state)
         | ExprNotEqual(left, right) -> lowerCoreBinary(CoreNotEqualOperator)(left)(right)(lowerCore)(state)
         | ExprVar(name) -> lowerPossiblyConstrainedVariable(name)(lowerCore)(state)
-        | ExprQualifiedVar(receiverName, fieldName) -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
+        | ExprQualifiedVar(receiverName, fieldName) ->
+            match operationEtaExpansion(receiverName)(fieldName)(state) with
+                | Some(lambda) -> lowerCore(lambda)(state)
+                | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
         | ExprLet(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLet(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLetRecursive(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
