@@ -185,6 +185,10 @@ export (
     value withStateCurrentItem,
     value statePendingStackClosure,
     value withStatePendingStackClosure,
+    value stateCoroutineBody,
+    value withStateCoroutineBody,
+    value withStatePendingCoroutineBody,
+    value enterPendingCoroutineBody,
     value stateRuntimeAdtRequested,
     value withStateRuntimeAdtRequested,
     value statePendingOperatorDefaults,
@@ -966,6 +970,10 @@ type CoreFunctionState =
     | nextStringId: Int
     | currentItem: Int
     | pendingStackClosure: Bool
+    // Whether the function being lowered is an `async` body, where an `await` suspends, and
+    // whether the next lambda entered is one.
+    | coroutineBody: Bool
+    | pendingCoroutineBody: Bool
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     // The bindings the function being lowered was created among, the environment its scheme is
@@ -1997,6 +2005,24 @@ let statePendingStackClosure (state: CoreLoweringState) =
 let withStatePendingStackClosure value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with pendingStackClosure = value))
+
+let stateCoroutineBody (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.coroutineBody)
+
+let withStateCoroutineBody value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with coroutineBody = value))
+
+let withStatePendingCoroutineBody value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with pendingCoroutineBody = value))
+
+// A lambda's body is an `async` body exactly when the lambda was entered for one; a lambda nested
+// in an `async` body is an ordinary function, where an `await` runs its task to completion.
+let enterPendingCoroutineBody (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with coroutineBody = group.pendingCoroutineBody, pendingCoroutineBody = false))
 
 let stateRuntimeAdtRequested (state: CoreLoweringState) =
     (let group = state.functionState

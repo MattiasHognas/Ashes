@@ -585,6 +585,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 nextStringId = 0,
                 currentItem = 0,
                 pendingStackClosure = false,
+                coroutineBody = false,
+                pendingCoroutineBody = false,
                 runtimeAdtRequested = false,
                 pendingOperatorDefaults = [],
                 enclosingBindings = [],

@@ -269,6 +269,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                             |> enterRecursiveTcoLoop(name)(parameter)(parameterType)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
                             |> withStateLoweringBodyLabel(label)
+                            |> withStateCoroutineBody(false)
                             |> withPassthroughParameter(parameter)(body)(parameterType)
                             |> predictRuntimeManagedResult(label)(parameterType)
                             |> beginCurryStage(label)(body)

@@ -61,6 +61,9 @@ import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Handlers
 import AshesCompiler.Semantics.CoreLowering.TailCalls
 import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
+import AshesCompiler.Semantics.PerceusLifetimePlacement.placeFunctionLifetimes
+import AshesCompiler.Semantics.StateMachineTransform.transformStateMachine
+import AshesCompiler.Semantics.StateMachineTransform.StateMachineResult
 export (
     value recordCoverageOpenSchemes,
     value replaceConstrainedScheme,
@@ -1765,25 +1768,127 @@ let asyncTaskBody expression (state: CoreLoweringState) =
 let taskCall (memberName: Str) (argument: Expr) =
     ExprCall(ExprQualifiedVar("Ashes.Task")(memberName))(argument)(false)(callArgumentsInline)
 
+// A task's type, `Task(Str, a)` for the `a` an `Ok(body)` result carries: binds the result's
+// error type to `Str` and answers the task type.
+let asyncTaskTypeOf (resultType: SemanticType) (state: CoreLoweringState) =
+    match freshType(state) with
+        | FreshType { state = typeState, semanticType = valueType } ->
+            match bindType(resultType)(SemNamed(0)("Result")([SemString, valueType]))(typeState) with
+                | (failedState, Some(error)) -> (failedState, SemNever, Some(error))
+                | (boundState, None) -> (boundState, SemNamed(0)("Task")([SemString, valueType]), None)
+
 // Stage 0's `LowerAsyncTask` for a body with no `await`: a task already completed with
-// `Ok(body)`, of type `Task(Str, a)`. A body that awaits is a suspending coroutine, which this
-// lowering does not build yet.
+// `Ok(body)`, of type `Task(Str, a)`.
 let lowerCompletedAsyncTask body lower (state: CoreLoweringState) =
-    if exprContainsAwait(body)
-    then failure(state)(UnsupportedCoreLoweringExpression("async body that awaits"))
-    else
+    match state
+    |> clearConsumerRequest
+    |> lower(callArgumentsInline
+    |> ExprCall(ExprVar("Ok"))(body)(false)
+    |> taskCall("fromResult")) with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = loweredState, temp = temp, semanticType = taskType, error = None } ->
+            match freshType(loweredState) with
+                | FreshType { state = typeState, semanticType = valueType } ->
+                    match bindType(taskType)(SemNamed(0)("Task")([SemString, valueType]))(typeState) with
+                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (boundState, None) -> success(temp)(taskType)(boundState)
+
+// The environment size of the closure made for the lifted function `label`, in words.
+let recursive closureCaptureCount (label: Str) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = MakeClosure(_target, funcLabel, _env, envSizeBytes, _managed, _returns, _accepts, _owned) } :: rest ->
+            if funcLabel == label
+            then envSizeBytes / 8
+            else closureCaptureCount(label)(rest)
+        | _instruction :: rest -> closureCaptureCount(label)(rest)
+
+let largerOf (left: Int) (right: Int) =
+    if left > right
+    then left
+    else right
+
+// The lifted function `label` turned into a coroutine, as stage 0's coroutine build does: its
+// lifetimes are placed on the linear body, where an await is still an ordinary control-flow edge,
+// then the state-machine transform splits it at its awaits over the task frame. Answers the
+// functions and the frame size.
+let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (functions: List(IrFunction)) =
+    match functions with
+        | [] -> ([], 0)
+        | function_ :: rest ->
+            if function_.label == label
+            then
+                let placed = placeFunctionLifetimes(function_)
+                in
+                    match transformStateMachine(placed.instructions)(captureCount) with
+                        | StateMachineResult { instructions = instructions, stateCount = stateCount, stateStructSize = stateStructSize, maxTemp = maxTemp } ->
+                            let coroutine =
+                                CoroutineInfo(
+                                    stateCount = stateCount,
+                                    stateStructSize = stateStructSize,
+                                    captureCount = captureCount
+                                )
+                            in ((placed with instructions = instructions, tempCount = largerOf(placed.tempCount)(maxTemp + 1), coroutine = Some(coroutine)) :: rest, stateStructSize)
+            else
+                match transformCoroutineFunction(label)(captureCount)(rest) with
+                    | (transformed, stateStructSize) -> (function_ :: transformed, stateStructSize)
+
+// Stage 0's `LowerAsyncTaskCoroutine`: an `async` body that awaits is a coroutine. The body is
+// lowered as a lambda returning `Ok(body)` whose awaits suspend, the lambda's function becomes a
+// coroutine over a task frame, and `CreateTask` builds the task from the lambda's closure, its
+// captures copied into the frame.
+let lowerCoroutineTask body lower (state: CoreLoweringState) =
+    (let label = "lambda_" + Ashes.Text.fromInt(state.nextLambdaId)
+    in
         match state
         |> clearConsumerRequest
-        |> lower(callArgumentsInline
-        |> ExprCall(ExprVar("Ok"))(body)(false)
-        |> taskCall("fromResult")) with
+        |> withStatePendingCoroutineBody(true)
+        |> lowerLambda("__async_unit")(callArgumentsInline |> ExprCall(ExprVar("Ok"))(body)(false))(None)(false)(lower) with
             | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-            | LoweredCoreValue { state = loweredState, temp = temp, semanticType = taskType, error = None } ->
-                match freshType(loweredState) with
-                    | FreshType { state = typeState, semanticType = valueType } ->
-                        match bindType(taskType)(SemNamed(0)("Task")([SemString, valueType]))(typeState) with
-                            | (failedState, Some(error)) -> failure(failedState)(error)
-                            | (boundState, None) -> success(temp)(taskType)(boundState)
+            | LoweredCoreValue { state = loweredState, temp = closureTemp, semanticType = lambdaType, error = None } ->
+                match resolveType(loweredState)(lambdaType) with
+                    | SemFunction(_parameter, resultType, _row) ->
+                        match loweredState
+                        |> withStatePendingCoroutineBody(false)
+                        |> asyncTaskTypeOf(resultType) with
+                            | (failedState, _taskType, Some(error)) -> failure(failedState)(error)
+                            | (typedState, taskType, None) ->
+                                let captureCount = closureCaptureCount(label)(typedState.reversedInstructions)
+                                in
+                                    match transformCoroutineFunction(label)(captureCount)(typedState.functions) with
+                                        | (functions, stateStructSize) ->
+                                            match freshTemp((typedState with functions = functions)) with
+                                                | FreshTemp { state = tempState, temp = taskTemp } ->
+                                                    tempState
+                                                    |> emit(CreateTask(taskTemp)(closureTemp)(stateStructSize)(captureCount)(None)(false))
+                                                    |> success(taskTemp)(taskType)
+                    | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
+
+let lowerAsyncTask body lower (state: CoreLoweringState) =
+    if exprContainsAwait(body)
+    then lowerCoroutineTask(body)(lower)(state)
+    else lowerCompletedAsyncTask(body)(lower)(state)
+
+// The newest `RunTask` into `target` made an `AwaitTask`: inside an `async` body an `await`
+// suspends the task instead of running the awaited one inline.
+let recursive suspendRunTask (target: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RunTask(runTarget, task) } as wrapped) :: rest ->
+            if runTarget == target
+            then (wrapped with instruction = AwaitTask(runTarget)(task)) :: rest
+            else wrapped :: suspendRunTask(target)(rest)
+        | wrapped :: rest -> wrapped :: suspendRunTask(target)(rest)
+
+// Stage 0's `LowerAwait`: an `await` runs its task to completion outside an `async` body, as
+// `Ashes.Task.run` does, and is a suspension point inside one.
+let lowerAwait operand lower (state: CoreLoweringState) =
+    match lower(taskCall("run")(operand))(state) with
+        | LoweredCoreValue { state = loweredState, temp = temp, error = None } as lowered ->
+            if stateCoroutineBody(loweredState)
+            then lowered with state = (loweredState with reversedInstructions = suspendRunTask(temp)(loweredState.reversedInstructions))
+            else lowered
+        | failed -> failed
 
 let lowerNonAsyncCallExpression expression function argument lower state =
     match state
@@ -1813,7 +1918,7 @@ let lowerNonAsyncCallExpression expression function argument lower state =
 
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
-        | Some(body) -> lowerCompletedAsyncTask(body)(lower)(state)
+        | Some(body) -> lowerAsyncTask(body)(lower)(state)
         | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
@@ -2466,9 +2571,7 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)
         | ExprResultMapErrorPipe(left, right) -> lowerResultMapErrorPipe(left)(right)(lowerCore)(state)
-        // Outside a coroutine body an `await` runs its task to completion, as `Ashes.Task.run` does.
-        | ExprAwait(operand) ->
-            lowerCore(taskCall("run")(operand))(state)
+        | ExprAwait(operand) -> lowerAwait(operand)(lowerCore)(state)
         | unsupported ->
             unsupported
             |> expressionName

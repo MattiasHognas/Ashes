@@ -1208,6 +1208,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
                 |> enterLambdaTcoLoop(parameterType)
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
                 |> withStateLoweringBodyLabel("lambda_" + Ashes.Text.fromInt(lambdaId))
+                |> enterPendingCoroutineBody
                 |> withPassthroughParameter(parameter)(body)(parameterType)
                 |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> beginCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(body)

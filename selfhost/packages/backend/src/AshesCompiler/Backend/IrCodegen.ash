@@ -125,6 +125,7 @@ import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
 import AshesCompiler.Backend.IrCodegen.ForeignStrings
 import AshesCompiler.Backend.IrCodegen.Tasks
+import AshesCompiler.Semantics.TaskStructLayout.TaskStateKind
 import Ashes.Number.UInt
 import Ashes.Collection.Map
 import Ashes.Collection.Map.MapTree
@@ -232,6 +233,7 @@ type CodegenContext =
     | arenaRuntime: ArenaRuntime
     | copyRuntime: Maybe(CopyRuntime)
     | bigIntRuntime: Maybe(BigIntRuntime)
+    | taskRuntime: Maybe(TaskRuntime)
     | isEntry: Bool
 
 // A temp read in a block only dead code branches to, whose definition the optimizer's
@@ -272,6 +274,7 @@ type ModuleCodegen =
     | moduleArenaRuntime: ArenaRuntime
     | moduleCopyRuntime: Maybe(CopyRuntime)
     | moduleBigIntRuntime: Maybe(BigIntRuntime)
+    | moduleTaskRuntime: Maybe(TaskRuntime)
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -445,7 +448,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, taskRuntime = taskRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -1491,8 +1494,42 @@ let codegenInstructionKind cx builder kind state =
                                             let taskRef =
                                                 emitCreateCompletedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(result)(tempEnv))("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | CreateTask(target, closure, stateStructSize, captureCount, _frameDropper, _loopResetEligible) ->
+                                            let taskRef =
+                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
                                         | RunTask(target, task) ->
-                                            (bindTemp(target)(emitRunCompletedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                            let resultRef =
+                                                match taskRuntime with
+                                                    | Some(runtime) ->
+                                                        emitRunTask(builder)(runtime)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    | None ->
+                                                        emitRunCompletedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(resultRef)(tempEnv), terminated)
+                                        | SpawnTask(target, task) ->
+                                            match taskRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        emitSpawnTask(context)(function_)(builder)(i64)(i8)(ptrType)(runtime)(memcpyFn)(memcpyType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    in
+                                                        (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: SpawnTask without the task scheduler")
+                                        | AsyncSleep(target, milliseconds) ->
+                                            let taskRef =
+                                                emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | AsyncAll(target, tasks) ->
+                                            let taskRef =
+                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(AllCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | AsyncRace(target, tasks) ->
+                                            let taskRef =
+                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(RaceCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                        // The state-machine transform's own frame stores and loads carry a suspend and a
+                        // resume; the markers themselves emit nothing.
+                                        | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
+                                        | Resume(_stateStruct, _result, _restores) -> (tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
@@ -1756,11 +1793,11 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 |> allocateLocalSlots(builder)(types.i64)(localCount)
                                 |> indexIntEntries
                             in
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                         let _ =
                                             localSlots
                                             |> lookupIndexedInt(0)
@@ -1773,6 +1810,8 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             in Unit
                                     else Unit
                                 in
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                     let _ =
                                     // The entry receives the initial stack pointer in `rdi` (the
                                     // trampoline's `mov rdi, rsp`); the SysV layout there is
@@ -1795,8 +1834,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
@@ -1836,6 +1873,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                             arenaRuntime = arena,
                                                             copyRuntime = mc.moduleCopyRuntime,
                                                             bigIntRuntime = mc.moduleBigIntRuntime,
+                                                            taskRuntime = mc.moduleTaskRuntime,
                                                             isEntry = isEntry
                                                         )
                                                     in (cx, instructions)
@@ -1922,6 +1960,19 @@ let recursive instructionsUseBigInt instructions =
         | IrInstruction { instruction = BigIntBinary(_target, _left, _right, _operation, _managed) } :: _ -> true
         | IrInstruction { instruction = BigIntCompare(_target, _left, _right) } :: _ -> true
         | _ :: rest -> instructionsUseBigInt(rest)
+
+// Whether any instruction runs or spawns a task, so the module needs the task scheduler.
+let recursive instructionsUseRunTask instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RunTask(_target, _task) } :: _ -> true
+        | IrInstruction { instruction = SpawnTask(_target, _task) } :: _ -> true
+        | _ :: rest -> instructionsUseRunTask(rest)
+
+let recursive functionsUseRunTask functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseRunTask(instructions) || functionsUseRunTask(rest)
 
 let recursive functionsUseBigInt functions =
     match functions with
@@ -2106,6 +2157,12 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                             then
                                                                                 types.ptrType
                                                                                 |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
+                                                                                |> Some
+                                                                            else None,
+                                                                            moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
+                                                                            then
+                                                                                closureFnType
+                                                                                |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                                                                 |> Some
                                                                             else None,
                                                                             moduleBuilder = builder

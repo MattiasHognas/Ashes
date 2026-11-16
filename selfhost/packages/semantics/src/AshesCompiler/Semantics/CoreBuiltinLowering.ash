@@ -150,9 +150,14 @@ type CoreBuiltinKind =
     | CoreProcessWaitForExit
     | CoreProcessKill
     // `Ashes.Task.run` drives a task to its result; `Ashes.Task.fromResult` is a task already
-    // completed with one.
+    // completed with one; `sleep` is a timer task; `all` and `race` are composites over a task
+    // list; `spawn` detaches a task onto the run queue.
     | CoreTaskRun
     | CoreTaskFromResult
+    | CoreTaskSleep
+    | CoreTaskAll
+    | CoreTaskRace
+    | CoreTaskSpawn
 
 type CoreBuiltinLayout =
     | moduleName: Str
@@ -424,6 +429,10 @@ let coreBuiltinKind moduleName memberName =
             match memberName with
                 | "run" -> Some(CoreTaskRun)
                 | "fromResult" -> Some(CoreTaskFromResult)
+                | "sleep" -> Some(CoreTaskSleep)
+                | "all" -> Some(CoreTaskAll)
+                | "race" -> Some(CoreTaskRace)
+                | "spawn" -> Some(CoreTaskSpawn)
                 | _ -> None
         | _ -> None
 
@@ -1056,6 +1065,21 @@ let standardBuiltinLayouts =
         polymorphicTaskOf
         |> taskScheme(polymorphicResultOf)
         |> standardBuiltinLayout("Ashes.Task")("fromResult"),
+        standardBuiltinLayout("Ashes.Task")("sleep")(
+            None
+            |> SemFunction(SemInt)(stringTaskOf(SemInt))
+            |> monomorphicScheme
+        ),
+        [SemVariable(2), SemList(SemVariable(3))]
+        |> SemNamed(0)("Task")
+        |> taskScheme(SemList(polymorphicTaskOf))
+        |> standardBuiltinLayout("Ashes.Task")("all"),
+        polymorphicTaskOf
+        |> taskScheme(SemList(polymorphicTaskOf))
+        |> standardBuiltinLayout("Ashes.Task")("race"),
+        unitType
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("spawn"),
         standardBuiltinLayout("Ashes.Net.Http")("get")(
             None
             |> SemFunction(SemString)(stringTaskOf(SemString))
@@ -1368,6 +1392,10 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreRegexSubstitute, code :: subject :: replacement :: [], _types) -> rsub(start)(code)(subject)(replacement)
         | (CoreTaskRun, task :: [], _types) -> target1(start)(task)(RunTask)
         | (CoreTaskFromResult, result :: [], _types) -> target1(start)(result)(CreateCompletedTask)
+        | (CoreTaskSleep, milliseconds :: [], _types) -> target1(start)(milliseconds)(AsyncSleep)
+        | (CoreTaskAll, tasks :: [], _types) -> target1(start)(tasks)(AsyncAll)
+        | (CoreTaskRace, tasks :: [], _types) -> target1(start)(tasks)(AsyncRace)
+        | (CoreTaskSpawn, task :: [], _types) -> emitted([SpawnTask(start)(task)])(start + 1)(CoreBuiltinUnit)
         | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
         | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
         | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)
