@@ -503,7 +503,26 @@ let buildRodataImage objectBytes layouts =
             |> copyRodataSections(objectBytes)(layouts)
             |> Some
 
-let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset strtabOffset textSectionIndex bssSectionIndex rodataLayouts patchBaseOffset entryIndex entryCount functionAcc dataAcc =
+// The writable region at the end of the image: `.data`'s initialized bytes first, then `.bss`'s
+// zeros at `bssOffset`. An index of -1 is a section the object does not have.
+type WritableSections =
+    | dataIndex: Int
+    | bssIndex: Int
+    | bssOffset: Int
+
+let noWritableSections = WritableSections(dataIndex = -1, bssIndex = -1, bssOffset = 0)
+
+// The offset within the writable region of the section `sectionIndex` names, or -1 when it is
+// neither `.data` nor `.bss`.
+let writableTargetOffset (writable: WritableSections) (sectionIndex: Int) =
+    if sectionIndex >= 0 && sectionIndex == writable.bssIndex
+    then writable.bssOffset
+    else
+        if sectionIndex >= 0 && sectionIndex == writable.dataIndex
+        then 0
+        else -1
+
+let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset strtabOffset textSectionIndex writable rodataLayouts patchBaseOffset entryIndex entryCount functionAcc dataAcc =
     if entryIndex >= entryCount
     then Ok(CollectedTextRelocations(functionPatches = functionAcc, dataPatches = dataAcc))
     else
@@ -515,14 +534,14 @@ let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset 
                     in
                         if symbol.symSectionIndex == textSectionIndex && (relocationType == 4 || isRodataRelocationType(relocationType))
                         then
-                            collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(bssSectionIndex)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
+                            collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
                                 textTargetedPatch(patchBaseOffset + relocOffset)(relocationType)(symbol.symValue)(addend) :: dataAcc
                             )
                         else
-                            if symbol.symSectionIndex == bssSectionIndex && bssSectionIndex >= 0 && isRodataRelocationType(relocationType)
+                            if isRodataRelocationType(relocationType) && writableTargetOffset(writable)(symbol.symSectionIndex) >= 0
                             then
-                                collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(bssSectionIndex)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
-                                    bssTargetedPatch(patchBaseOffset + relocOffset)(relocationType)(symbol.symValue)(addend) :: dataAcc
+                                collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
+                                    bssTargetedPatch(patchBaseOffset + relocOffset)(relocationType)(symbol.symValue + writableTargetOffset(writable)(symbol.symSectionIndex))(addend) :: dataAcc
                                 )
                             else
                                 if relocationType == 4
@@ -535,7 +554,7 @@ let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset 
                                             match lookupImportLibrary(symbolName)(knownLibraries) with
                                                 | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
                                                 | Some(_) ->
-                                                    collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(bssSectionIndex)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(
+                                                    collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(
                                                         TextRelocationPatch(patchOffset = patchBaseOffset + relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: functionAcc
                                                     )(dataAcc)
                                 else
@@ -543,7 +562,7 @@ let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset 
                                     then
                                         match lookupRodataLayout(symbol.symSectionIndex)(rodataLayouts) with
                                             | Some(layoutOffset) ->
-                                                collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(bssSectionIndex)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
+                                                collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(patchBaseOffset)(entryIndex + 1)(entryCount)(functionAcc)(
                                                     rodataTargetedPatch(patchBaseOffset + relocOffset)(relocationType)(symbol.symValue + layoutOffset)(addend) :: dataAcc
                                                 )
                                             | None ->
@@ -555,25 +574,25 @@ let recursive collectRelaEntryPatches knownLibraries bytes section symtabOffset 
                                         |> unsupportedRelocationMessage
                                         |> Error
 
-let recursive collectTextPatches knownLibraries bytes shoff shentsize shnum textSectionIndex bssSectionIndex symtabOffset strtabOffset rodataLayouts index functionAcc dataAcc =
+let recursive collectTextPatches knownLibraries bytes shoff shentsize shnum textSectionIndex writable symtabOffset strtabOffset rodataLayouts index functionAcc dataAcc =
     if index >= shnum
     then Ok(CollectedTextRelocations(functionPatches = reverseList(functionAcc), dataPatches = reverseList(dataAcc)))
     else
         let section = readSectionHeader(bytes)(shoff)(shentsize)(index)
         in
             if section.sectionSize == 0
-            then collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(bssSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
+            then collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(writable)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
             else
                 if section.sectionInfo != textSectionIndex
-                then collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(bssSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
+                then collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(writable)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
                 else
                     match section.sectionType with
                         | 4 ->
-                            match collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(bssSectionIndex)(rodataLayouts)(0)(0)(section.sectionSize / 24)(functionAcc)(dataAcc) with
+                            match collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(0)(0)(section.sectionSize / 24)(functionAcc)(dataAcc) with
                                 | Error(message) -> Error(message)
-                                | Ok(CollectedTextRelocations { functionPatches = nextFunctionAcc, dataPatches = nextDataAcc }) -> collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(bssSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(nextFunctionAcc)(nextDataAcc)
+                                | Ok(CollectedTextRelocations { functionPatches = nextFunctionAcc, dataPatches = nextDataAcc }) -> collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(writable)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(nextFunctionAcc)(nextDataAcc)
                         | 9 -> Error("dynamic linker: SHT_REL (implicit-addend) .text relocations are not supported")
-                        | _ -> collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(bssSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
+                        | _ -> collectTextPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(writable)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(functionAcc)(dataAcc)
 
 // Every relocation whose patch site lies inside `.rodata` (the entries of a `switch` jump table:
 // `R_X86_64_64` against `.text`, occasionally a rodata-to-rodata reference), collected with the
@@ -601,10 +620,30 @@ let recursive collectRodataPatches knownLibraries bytes shoff shentsize shnum te
                         match lookupRodataLayout(section.sectionInfo)(rodataLayouts) with
                             | None -> collectRodataPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(dataAcc)
                             | Some(targetLayoutOffset) ->
-                                match collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(-1)(rodataLayouts)(targetLayoutOffset)(0)(section.sectionSize / 24)([])(dataAcc) with
+                                match collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(noWritableSections)(rodataLayouts)(targetLayoutOffset)(0)(section.sectionSize / 24)([])(dataAcc) with
                                     | Error(message) -> Error(message)
                                     | Ok(CollectedTextRelocations { functionPatches = [], dataPatches = nextDataAcc }) -> collectRodataPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(index + 1)(nextDataAcc)
                                     | Ok(_) -> Error("linker: an import relocation inside .rodata is not supported")
+
+// Every relocation whose patch site lies inside `.data`, offsets relative to `.data`'s own bytes,
+// validated as the `.text` relocations are. An import relocation (a libc function's address stored
+// in data) has no stub to resolve against here, so one is an `Error`.
+let recursive collectDataSectionPatches knownLibraries bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset rodataLayouts (writable: WritableSections) index dataAcc =
+    if writable.dataIndex < 0 || index >= shnum
+    then
+        dataAcc
+        |> reverseList
+        |> Ok
+    else
+        let section = readSectionHeader(bytes)(shoff)(shentsize)(index)
+        in
+            if section.sectionSize == 0 || section.sectionType != 4 || section.sectionInfo != writable.dataIndex
+            then collectDataSectionPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(writable)(index + 1)(dataAcc)
+            else
+                match collectRelaEntryPatches(knownLibraries)(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(writable)(rodataLayouts)(0)(0)(section.sectionSize / 24)([])(dataAcc) with
+                    | Error(message) -> Error(message)
+                    | Ok(CollectedTextRelocations { functionPatches = [], dataPatches = nextDataAcc }) -> collectDataSectionPatches(knownLibraries)(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataLayouts)(writable)(index + 1)(nextDataAcc)
+                    | Ok(_) -> Error("linker: an import relocation inside .data is not supported")
 
 let recursive lookupStubVa symbolName stubVas =
     match stubVas with
@@ -1235,7 +1274,47 @@ let appendBssBytes image bssFileOffset bssSize =
         |> Ashes.Byte.allocate
         |> Ashes.Byte.append(image)
 
-let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches rodataBytes bssSize =
+// `.data`'s initialized bytes and the relocations inside them (`.rela.data`: a function's or a
+// constant's address stored in a table), placed at the start of the trailing writable segment,
+// before `.bss`'s zeros. The vendored openlibm and PCRE2 payloads carry such a section; the
+// program's own code never does.
+type WritableImage =
+    | initializedBytes: Maybe(Bytes)
+    | initializedPatches: List(DataRelocationPatch)
+
+let noWritableImage = WritableImage(initializedBytes = None, initializedPatches = [])
+
+// The `.data` bytes with their relocations applied, the writable segment's own base address being
+// the place of each patch site.
+let initializedWritableBytes (writable: WritableImage) rodataVa bssVa textVa =
+    match writable.initializedBytes with
+        | None -> None
+        | Some(bytes) ->
+            bytes
+            |> applyDataPatches(writable.initializedPatches)(rodataVa)(bssVa)(textVa)(bssVa)
+            |> Some
+
+// The writable segment's file bytes: `.data`'s, when the object has one, then zeros to the
+// segment's end, `regionSize` bytes from `fileOffset` in all.
+let appendWritableBytes image fileOffset (initialized: Maybe(Bytes)) regionSize =
+    if regionSize == 0
+    then image
+    else
+        match initialized with
+            | None -> appendBssBytes(image)(fileOffset)(regionSize)
+            | Some(dataBytes) ->
+                let padded =
+                    fileOffset - Ashes.Byte.length(image)
+                    |> Ashes.Byte.allocate
+                    |> Ashes.Byte.append(image)
+                in
+                    let withData = Ashes.Byte.append(padded)(dataBytes)
+                    in
+                        fileOffset + regionSize - Ashes.Byte.length(withData)
+                        |> Ashes.Byte.allocate
+                        |> Ashes.Byte.append(withData)
+
+let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches rodataBytes bssSize (writable: WritableImage) =
     (let textVa = elfBaseVa + pageSize
     in
         let objectTextVa = textVa + linuxTrampolineLength
@@ -1263,7 +1342,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches ro
                                                 |> buildHeaderPage(entryPoint))
                                             in
                                                 bssSize
-                                                |> appendBssBytes(image)(bssFileOffset)
+                                                |> appendWritableBytes(image)(bssFileOffset)(initializedWritableBytes(writable)(0)(bssVa)(objectTextVa))
                                                 |> Ok
                             | Some(unpatchedRodata) ->
                                 let dataFileOffset = alignUp(textLoadSize)(pageSize)
@@ -1299,7 +1378,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches ro
                                                                         |> Ashes.Byte.append(padded)
                                                                         |> (given (image) ->
                                                                             bssSize
-                                                                            |> appendBssBytes(image)(bssFileOffset)
+                                                                            |> appendWritableBytes(image)(bssFileOffset)(initializedWritableBytes(writable)(dataVa)(bssVa)(objectTextVa))
                                                                             |> Ok))
 
 // Dynamic imports exist: `.text` gains a `jmp *got(%rip)` stub per import (placed right after the
@@ -1313,7 +1392,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches ro
 // page-aligned, read-only `PT_LOAD` right after the dynamic-linking data blob's own page — never
 // `R+W` and never executable — and patches every collected `.text` reference into it via the same
 // `applyDataPatches` the static-only path uses, absolute or PC-relative as each patch records.
-let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPatches rodataPatches imports rodataBytes bssSize =
+let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPatches rodataPatches imports rodataBytes bssSize (writable: WritableImage) =
     (let textVa = elfBaseVa + pageSize
     in
         let objectTextVa = textVa + linuxTrampolineLength
@@ -1421,7 +1500,7 @@ let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPat
                                                                                             match rodataBytes with
                                                                                                 | None ->
                                                                                                     bssSize
-                                                                                                    |> appendBssBytes(headerCodeAndDynamicData)(bssFileOffset)
+                                                                                                    |> appendWritableBytes(headerCodeAndDynamicData)(bssFileOffset)(initializedWritableBytes(writable)(rodataVa)(bssVa)(objectTextVa))
                                                                                                     |> Ok
                                                                                                 | Some(unpatchedRodata) ->
                                                                                                     let paddedToRodata =
@@ -1434,7 +1513,7 @@ let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPat
                                                                                                         |> Ashes.Byte.append(paddedToRodata)
                                                                                                         |> (given (image) ->
                                                                                                             bssSize
-                                                                                                            |> appendBssBytes(image)(bssFileOffset)
+                                                                                                            |> appendWritableBytes(image)(bssFileOffset)(initializedWritableBytes(writable)(rodataVa)(bssVa)(objectTextVa))
                                                                                                             |> Ok))
 
 // Links a relocatable object (produced by `targetMachineEmitToMemoryBuffer(...)(objectFileType)`)
@@ -1491,29 +1570,66 @@ let linkLinuxExecutableWithImports objectBytes entrySymbolName (declaredLibrarie
                                                                             | None -> (-1, 0)
                                                                             | Some((foundBssIndex, bssSection)) -> (foundBssIndex, bssSection.sectionSize) with
                                                                             | (bssSectionIndex, bssSize) ->
-                                                                                match collectTextPatches(knownLibraries)(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(bssSectionIndex)(symtabSection.sectionOffset)(
-                                                                                    strtabSection.sectionOffset
-                                                                                )(rodataLayouts)(0)([])([]) with
-                                                                                    | Error(message) -> Error(message)
-                                                                                    | Ok(CollectedTextRelocations { functionPatches = functionPatches, dataPatches = dataPatches }) ->
-                                                                                        match collectRodataPatches(knownLibraries)(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(strtabSection.sectionOffset)(rodataLayouts)(0)([]) with
-                                                                                            | Error(message) -> Error(message)
-                                                                                            | Ok(rodataPatches) ->
-                                                                                                let textBytes =
-                                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
-                                                                                                        textSection.sectionOffset
-                                                                                                    )(textSection.sectionSize)
+                                                                                let dataSection = findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".data")(0)
+                                                                                in
+                                                                                    let dataIndex =
+                                                                                        match dataSection with
+                                                                                            | Some((foundDataIndex, foundData)) ->
+                                                                                                if foundData.sectionSize > 0 && foundData.sectionType == 1
+                                                                                                then foundDataIndex
+                                                                                                else -1
+                                                                                            | None -> -1
+                                                                                    in
+                                                                                        let dataSize =
+                                                                                            match dataSection with
+                                                                                                | Some((_foundDataIndex, foundData)) ->
+                                                                                                    if dataIndex >= 0
+                                                                                                    then foundData.sectionSize
+                                                                                                    else 0
+                                                                                                | None -> 0
+                                                                                        in
+                                                                                            let bssOffset =
+                                                                                                if dataIndex >= 0
+                                                                                                then alignUp(dataSize)(16)
+                                                                                                else 0
+                                                                                            in
+                                                                                                let regionSize =
+                                                                                                    if bssSectionIndex >= 0
+                                                                                                    then bssOffset + bssSize
+                                                                                                    else dataSize
                                                                                                 in
-                                                                                                    let rodataBytes = buildRodataImage(objectBytes)(rodataLayouts)
+                                                                                                    let writable = WritableSections(dataIndex = dataIndex, bssIndex = bssSectionIndex, bssOffset = bssOffset)
                                                                                                     in
-                                                                                                        match functionPatches with
-                                                                                                            | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataPatches)(rodataBytes)(bssSize)
-                                                                                                            | _ ->
-                                                                                                                let imports =
-                                                                                                                    collectLinuxDynamicImports(knownLibraries)(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
-                                                                                                                        strtabSection.sectionOffset
-                                                                                                                    )
-                                                                                                                in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(dataPatches)(rodataPatches)(imports)(rodataBytes)(bssSize))
+                                                                                                        match collectTextPatches(knownLibraries)(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(writable)(symtabSection.sectionOffset)(strtabSection.sectionOffset)(rodataLayouts)(0)([])([]) with
+                                                                                                            | Error(message) -> Error(message)
+                                                                                                            | Ok(CollectedTextRelocations { functionPatches = functionPatches, dataPatches = dataPatches }) ->
+                                                                                                                match collectRodataPatches(knownLibraries)(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(strtabSection.sectionOffset)(rodataLayouts)(0)([]) with
+                                                                                                                    | Error(message) -> Error(message)
+                                                                                                                    | Ok(rodataPatches) ->
+                                                                                                                        match collectDataSectionPatches(knownLibraries)(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(strtabSection.sectionOffset)(rodataLayouts)(writable)(0)([]) with
+                                                                                                                            | Error(message) -> Error(message)
+                                                                                                                            | Ok(initializedPatches) ->
+                                                                                                                                let textBytes =
+                                                                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(textSection.sectionOffset)(textSection.sectionSize)
+                                                                                                                                in
+                                                                                                                                    let rodataBytes = buildRodataImage(objectBytes)(rodataLayouts)
+                                                                                                                                    in
+                                                                                                                                        let writableImage =
+                                                                                                                                            match dataSection with
+                                                                                                                                                | Some((_foundDataIndex, foundData)) ->
+                                                                                                                                                    if dataIndex >= 0
+                                                                                                                                                    then
+                                                                                                                                                        WritableImage(initializedBytes = dataSize
+                                                                                                                                                        |> Ashes.Byte.copyRange(Ashes.Byte.allocate(dataSize))(0)(objectBytes)(foundData.sectionOffset)
+                                                                                                                                                        |> Some, initializedPatches = initializedPatches)
+                                                                                                                                                    else noWritableImage
+                                                                                                                                                | None -> noWritableImage
+                                                                                                                                        in
+                                                                                                                                            match functionPatches with
+                                                                                                                                                | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataPatches)(rodataBytes)(regionSize)(writableImage)
+                                                                                                                                                | _ ->
+                                                                                                                                                    let imports = collectLinuxDynamicImports(knownLibraries)(objectBytes)(symtabSection.sectionOffset)(symbolCount)(strtabSection.sectionOffset)
+                                                                                                                                                    in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(dataPatches)(rodataPatches)(imports)(rodataBytes)(regionSize)(writableImage))
 
 // Compatibility entry for objects that only use the compiler runtime imports.
 let linkLinuxExecutable objectBytes entrySymbolName = linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)([])
