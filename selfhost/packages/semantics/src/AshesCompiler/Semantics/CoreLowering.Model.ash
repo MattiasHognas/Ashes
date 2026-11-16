@@ -94,6 +94,7 @@ type CoreLoweringError =
     | UnsupportedCoreTraitDispatch(Str, SemanticType)
     | UnsupportedCoreImplementationHead(Str)
     | UnsupportedCoreDerivingExpansion(Str)
+    | ResourcePatternAliasConflict(Str)
     deriving {Eq, Show}
 
 // How a resource binding stopped being its scope's responsibility: closed by an explicit close

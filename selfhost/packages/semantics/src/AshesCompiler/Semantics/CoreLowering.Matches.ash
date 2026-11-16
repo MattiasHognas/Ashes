@@ -16,6 +16,7 @@ import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
+import AshesCompiler.Semantics.TaglessAdtLayout.isResourceBearingType
 import AshesCompiler.Semantics.PatternBindingOwnership
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
@@ -620,6 +621,67 @@ let lowerRecordPattern name fields valueTemp valueType failLabel lowerPattern st
             |> instantiateConstructor(layout)
             |> finishRecordPattern(fields)(valueTemp)(valueType)(failLabel)(lowerPattern)
 
+// The names a pattern binds, the first alternative of an or-pattern standing for all of them.
+let recursive aliasCheckBoundNames (pattern: Pattern) (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> aliasCheckBoundNames(inner)(names)
+        | PatternVar(name) -> name :: names
+        | PatternCons(head, tail) ->
+            names
+            |> aliasCheckBoundNames(head)
+            |> aliasCheckBoundNames(tail)
+        | PatternTuple(patterns) -> aliasCheckBoundNamesIn(patterns)(names)
+        | PatternConstructor(_name, patterns) -> aliasCheckBoundNamesIn(patterns)(names)
+        | PatternRecord(_name, fields) -> aliasCheckFieldNames(fields)(names)
+        | PatternAs(inner, name) -> aliasCheckBoundNames(inner)(name :: names)
+        | PatternOr(first :: _rest) -> aliasCheckBoundNames(first)(names)
+        | _ -> names
+and aliasCheckBoundNamesIn (patterns: List(Pattern)) (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | pattern :: rest ->
+            names
+            |> aliasCheckBoundNames(pattern)
+            |> aliasCheckBoundNamesIn(rest)
+and aliasCheckFieldNames (fields: List((Str, Pattern))) (names: List(Str)) =
+    match fields with
+        | [] -> names
+        | (_field, pattern) :: rest ->
+            names
+            |> aliasCheckBoundNames(pattern)
+            |> aliasCheckFieldNames(rest)
+
+let recursive constructorLayoutSchemes (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { scheme = scheme } :: rest -> scheme :: constructorLayoutSchemes(rest)
+
+// Whether a value of the type transitively owns a resource (stage 0's `IsResourceBearing`).
+let isResourceBearingIn (semanticType: SemanticType) (state: CoreLoweringState) =
+    semanticType
+    |> resolveType(state)
+    |> isResourceBearingType(given (name) -> isResourceTypeNameIn(name)(state))(state
+    |> stateConstructorLayouts
+    |> constructorLayoutSchemes)([])
+
+let recursive anyResourceBearingBinding (names: List(Str)) (state: CoreLoweringState) =
+    match names with
+        | [] -> false
+        | name :: rest ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { scheme = TypeScheme { body = bindingType } }) -> isResourceBearingIn(bindingType)(state) || anyResourceBearingBinding(rest)(state)
+                | None -> anyResourceBearingBinding(rest)(state)
+
+// Stage 0's pattern-alias rule: an alias of a resource-bearing value cannot stand beside a nested
+// binding that also bears a resource, since both would own it.
+let checkResourceAlias name inner valueType (lowered: LoweredCorePattern) =
+    match lowered with
+        | LoweredCorePattern { error = Some(_error) } -> lowered
+        | LoweredCorePattern { state = state, error = None } ->
+            if isResourceBearingIn(valueType)(state) && anyResourceBearingBinding(aliasCheckBoundNames(inner)([]))(state)
+            then lowered with error = Some(ResourcePatternAliasConflict("Resource-bearing pattern alias '" + name + "' cannot coexist with a nested resource-bearing binding."))
+            else lowered
+
 let finishAsPattern name valueTemp valueType inner =
     match inner with
         | LoweredCorePattern { error = Some(_error) } -> inner
@@ -702,6 +764,7 @@ let recursive lowerPattern pattern valueTemp valueType failLabel state =
         | PatternAs(inner, name) ->
             state
             |> lowerPattern(inner)(valueTemp)(valueType)(failLabel)
+            |> checkResourceAlias(name)(inner)(valueType)
             |> finishAsPattern(name)(valueTemp)(valueType)
         | PatternOr(alternatives) -> lowerOrPattern(alternatives)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
         | PatternInt(value) ->
@@ -3101,6 +3164,13 @@ let recordBorrowedScrutinee (value: Expr) cases (lowered: LoweredCoreValue) =
                 | None -> lowered
         | _ -> lowered
 
+// A tuple literal matched on directly is the match's scrutinee: no consumer keeps it, which
+// `lowerTuple` reads when it chooses the tuple's placement.
+let markScrutineeTuple (value: Expr) (state: CoreLoweringState) =
+    match stripExprAt(value) with
+        | ExprTuple(_elements) -> withStateScrutineeTuple(true)(state)
+        | _ -> state
+
 let lowerMatch value cases lower state =
     state
     |> clearConsumerRequest
@@ -3108,6 +3178,7 @@ let lowerMatch value cases lower state =
         if stackAllocatableScrutineeCases(cases) && constructorExpression(value)(cleared)
         then requestStackAllocatedConstructor(cleared)
         else cleared)
+    |> markScrutineeTuple(value)
     |> lower(value)
     |> recordBorrowedScrutinee(value)(cases)
     |> noteLoweredValueBinders(matchCaseBinders(cases)([]))
@@ -3128,11 +3199,3 @@ let recursive lambdaParts expression =
         | ExprNode(_node, inner) -> lambdaParts(inner)
         | ExprLambda(parameter, body, annotation) -> Some((parameter, body, annotation))
         | _ -> None
-// A tuple literal matched on directly is the match's scrutinee: no consumer keeps it, which
-// `lowerTuple` reads when it chooses the tuple's placement.
-let markScrutineeTuple (value: Expr) (state: CoreLoweringState) =
-    match stripExprAt(value) with
-        | ExprTuple(_elements) -> withStateScrutineeTuple(true)(state)
-        | _ -> state
-
-    |> markScrutineeTuple(value)

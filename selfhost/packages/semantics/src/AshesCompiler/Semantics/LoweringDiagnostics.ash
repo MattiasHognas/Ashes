@@ -148,6 +148,7 @@ let loweringErrorDiagnostic (error: CoreLoweringError) =
         | CoreConstructorPatternArityMismatch(name, expected, actual) -> unlocatedDiagnostic(None)("Constructor '" + name + "' expects " + Ashes.Text.fromInt(expected) + " argument(s) but pattern has " + Ashes.Text.fromInt(actual) + ".")
         | UnknownCoreRecordPatternField(typeName, field) -> unlocatedDiagnostic(None)("Record type '" + typeName + "' has no field '" + field + "'.")
         | CoreCapabilityDiagnostic(code, message) -> unlocatedDiagnostic(Some(code))(message)
+        | ResourcePatternAliasConflict(message) -> unlocatedDiagnostic(None)(message)
         | _ -> None
 
 let loweringErrorLocation (error: CoreLoweringError) =
