@@ -68,6 +68,7 @@ export (
     value firstAmbiguousTraitRequirementUnder,
     value resolveWrittenTypeBinding,
     value requirementsLeftToWrite,
+    value defaultBuiltinArguments,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
@@ -3007,6 +3008,49 @@ let validateWrittenBindingRequirements inferred written semanticType substitutio
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
 
+// `Ashes.Text.fromInt` and `Ashes.Text.toHex` are typed `Int -> Str` and take an unsigned width
+// only where the argument is already known to be one, so a requirement of theirs on a variable the
+// binding would generalize over settles that variable to `Int` instead.
+let defaultsBuiltinArgumentToInt (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+
+let recursive variableListed (variableId: Int) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | head :: tail -> head == variableId || variableListed(variableId)(tail)
+
+let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List(Int)) =
+    match constraints with
+        | [] -> found
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            if defaultsBuiltinArgumentToInt(traitName)
+            then
+                match applySubstitution(substitution)(argument) with
+                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)(variableId :: found)
+                    | _ -> builtinArgumentCandidates(rest)(substitution)(found)
+            else builtinArgumentCandidates(rest)(substitution)(found)
+        | _ :: rest -> builtinArgumentCandidates(rest)(substitution)(found)
+
+let recursive bindBuiltinArgumentDefaults (candidates: List(Int)) (environmentVariables: List(Int)) substitution =
+    match candidates with
+        | [] -> substitution
+        | variableId :: rest ->
+            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(rest)
+            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(substitution)
+            else bindBuiltinArgumentDefaults(rest)(environmentVariables)((variableId, SemInt) :: substitution)
+
+// The substitution with every such variable bound to `Int`, under the program inference rules
+// only; the environment is scanned only when a candidate exists.
+let defaultBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    if environment.programInferenceRules
+    then
+        match builtinArgumentCandidates(constraints)(substitution)([]) with
+            | [] -> substitution
+            | candidates ->
+                bindBuiltinArgumentDefaults(candidates)(resolveEnvironmentVariables(substitution)(environment
+                |> inferenceEnvironmentSchemes
+                |> freeEnvironmentVariables)([]))(substitution)
+    else substitution
+
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
         | Some(traitName) ->
@@ -3019,9 +3063,18 @@ let validateSettledBindingRequirements requirements inferred written selected se
         | None ->
             match requirements with
                 | [] ->
-                    selected
-                    |> requirementsLeftToWrite(environment)
-                    |> bindingSignatureSuccess(semanticType)(substitution)(supply)
+                    if environment.programInferenceRules
+                    then
+                        let defaulted = defaultBuiltinArguments(environment)(selected)(substitution)
+                        in
+                            selected
+                            |> applyInferenceConstraints(defaulted)
+                            |> requirementsLeftToWrite(environment)
+                            |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
+                    else
+                        selected
+                        |> requirementsLeftToWrite(environment)
+                        |> bindingSignatureSuccess(semanticType)(substitution)(supply)
                 | _ ->
                     validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
 

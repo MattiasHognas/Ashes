@@ -12,6 +12,7 @@ export (
     value freeSchemeVariables,
     value schemeIsClosed,
     value freeEnvironmentVariables,
+    value resolveEnvironmentVariables,
     value generalize,
     value generalizeUnderSubstitution,
     value instantiate,

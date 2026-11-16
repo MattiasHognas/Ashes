@@ -147,12 +147,74 @@ let identifyStitchedProject project =
                 | ProjectInferenceUnits { units = units, body = unitBody, entryPackageId = Some(entryPackageId), error = None } -> IdentifiedStitchedProject(program = identifyProgramUnits(units)(unitBody), entryPackageId = entryPackageId)
                 | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = None, error = None } -> unidentifiedProject(body)(InvalidStitchedProgram("missing entry package"))
 
+// Each module region with its unit, in region order.
+let recursive regionUnits (regions: List(StitchedModuleRegion)) (units: List(ProgramInferenceUnit)) =
+    match (regions, units) with
+        | (region :: restRegions, unit :: restUnits) -> (region, unit) :: regionUnits(restRegions)(restUnits)
+        | _ -> []
+
+let isStandardTraitRegion (region: StitchedModuleRegion) = region.moduleName == "Ashes.Trait"
+
+let recursive pairCount (pairs: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match pairs with
+        | [] -> 0
+        | _head :: rest -> 1 + pairCount(rest)
+
+let recursive unitCount (units: List(ProgramInferenceUnit)) =
+    match units with
+        | [] -> 0
+        | _head :: rest -> 1 + unitCount(rest)
+
+let recursive regionUnitsNamed (wanted: Bool) (pairs: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match pairs with
+        | [] -> []
+        | (region, unit) :: rest ->
+            if isStandardTraitRegion(region) == wanted
+            then (region, unit) :: regionUnitsNamed(wanted)(rest)
+            else regionUnitsNamed(wanted)(rest)
+
+let recursive appendRegionUnits (left: List((StitchedModuleRegion, ProgramInferenceUnit))) (right: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match left with
+        | [] -> right
+        | head :: tail -> head :: appendRegionUnits(tail)(right)
+
+let recursive unitsOf (pairs: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match pairs with
+        | [] -> []
+        | (_region, unit) :: rest -> unit :: unitsOf(rest)
+
+let recursive regionsOf (pairs: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match pairs with
+        | [] -> []
+        | (region, _unit) :: rest -> region :: regionsOf(rest)
+
+// `Ashes.Trait` holds the standard implementations, and every implementation in a program is
+// visible to resolution wherever it is declared, so its unit is inferred first: a module the plan
+// orders ahead of it (an inline module's dependency) still sees the implementations when its
+// bindings' requirements are settled. The regions are reordered with the units, so an error still
+// names its own module. Node identities are not affected.
+let standardTraitsFirst (regions: List(StitchedModuleRegion)) (units: List(ProgramInferenceUnit)) =
+    (let pairs = regionUnits(regions)(units)
+    in
+        if pairCount(pairs) == unitCount(units)
+        then
+            let ordered =
+                pairs
+                |> regionUnitsNamed(false)
+                |> appendRegionUnits(regionUnitsNamed(true)(pairs))
+            in (regionsOf(ordered), unitsOf(ordered))
+        else (regions, units))
+
 let inferIdentifiedStitchedProjectFrom baseEnvironment project (identified: IdentifiedStitchedProject) =
     match project with
         | StitchedSyntaxProject { moduleRegions = regions } ->
-            identified.program
-            |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(identified.entryPackageId)
-            |> withErrorModule(regions)
+            let program = identified.program
+            in
+                match standardTraitsFirst(regions)(program.units) with
+                    | (orderedRegions, orderedUnits) ->
+                        (program with units = orderedUnits)
+                        |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(identified.entryPackageId)
+                        |> withErrorModule(orderedRegions)
 
 let inferStitchedProjectFrom baseEnvironment project =
     project

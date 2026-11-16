@@ -90,6 +90,10 @@ type ProgramInferenceError =
     | ProgramExternalAbiError(ExternalAbiError)
     | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
+    // A transparent alias whose expansion reaches itself, with the cycle written `A -> B -> A`.
+    | RecursiveTypeAlias(Str)
+    // A type, alias or zero-cost type declared under `Ashes` or a builtin type's name.
+    | ReservedTypeDeclaration(Str)
     // An error tagged with where it was raised while the program is being inferred. A finished
     // `ProgramInferenceResult` never carries it: the bare error is in `error` and the place in
     // `errorLocation`.
@@ -366,6 +370,16 @@ let inferSeededRecursiveBindings groupType pending environment boundaryEnvironme
             )
         | failure -> failure
 
+// The group's substitution with each builtin argument requirement on a variable the group would
+// generalize over settled to `Int`, as a single binding's is.
+let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substitution =
+    match bindings with
+        | [] -> substitution
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            substitution
+            |> defaultBuiltinArguments(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))
+            |> defaultRecursiveBuiltinArguments(tail)(outerEnvironment)
+
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
     match bindings with
         | [] -> resultEnvironment
@@ -406,14 +420,16 @@ let inferRecursiveGroup bindings state =
                                         ProgramExpressionError(AmbiguousTraitRequirement(traitName))
                                     ))
                                 | None ->
-                                    let finalEnvironment =
-                                        generalizeRecursiveBindings(
-                                            resolved,
-                                            outerEnvironment,
-                                            resolvedSubstitution,
-                                            outerEnvironment
-                                        )
-                                    in ProgramInferenceState(environment = finalEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                    let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
+                                    in
+                                        let finalEnvironment =
+                                            generalizeRecursiveBindings(
+                                                resolved,
+                                                outerEnvironment,
+                                                defaultedSubstitution,
+                                                outerEnvironment
+                                            )
+                                        in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)
@@ -1098,6 +1114,115 @@ let registerTypeAlias declaration state =
                                 ProgramTypeResolutionError(error)
                             ))
         | (_declaration, failedState) -> failedState
+
+// The type names a type expression mentions.
+let recursive typeExprNames (typeExpr: TypeExpr) (found: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprNames(inner)(found)
+        | TypeNamed(name) -> name :: found
+        | TypeApplied(name, arguments) -> typeExprNamesIn(arguments)(name :: found)
+        | TypeArrow(argument, result, _capabilities, _tail) -> typeExprNamesIn([argument, result])(found)
+        | TypeTuple(elements) -> typeExprNamesIn(elements)(found)
+        | TypeUnit -> found
+and typeExprNamesIn (typeExprs: List(TypeExpr)) (found: List(Str)) =
+    match typeExprs with
+        | [] -> found
+        | head :: tail ->
+            found
+            |> typeExprNames(head)
+            |> typeExprNamesIn(tail)
+
+let recursive isParameterName (name: Str) (parameters: List(TypeParameter)) =
+    match parameters with
+        | [] -> false
+        | TypeParameter { name = candidate } :: rest -> candidate == name || isParameterName(name)(rest)
+
+let recursive withoutParameterNames (parameters: List(TypeParameter)) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            if isParameterName(name)(parameters)
+            then withoutParameterNames(parameters)(rest)
+            else name :: withoutParameterNames(parameters)(rest)
+
+// Each alias a unit declares, with the type names its target mentions other than its own
+// parameters.
+let recursive aliasDependencies (items: List(TopLevelItem)) =
+    match items with
+        | [] -> []
+        | TopLevelAt(_span, inner) :: rest -> aliasDependencies(inner :: rest)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = parameters, target = target }) :: rest ->
+            (name, []
+            |> typeExprNames(target)
+            |> withoutParameterNames(parameters)) :: aliasDependencies(rest)
+        | _ :: rest -> aliasDependencies(rest)
+
+let recursive aliasDependenciesOf (name: Str) (dependencies: List((Str, List(Str)))) =
+    match dependencies with
+        | [] -> None
+        | (candidate, mentioned) :: rest ->
+            if candidate == name
+            then Some(mentioned)
+            else aliasDependenciesOf(name)(rest)
+
+// The path from the first occurrence of `name` on a walk, written in walking order and closed
+// with `name` again. `reversedPath` holds the walk most recent first.
+let recursive cyclePathFrom (name: Str) (reversedPath: List(Str)) (cycle: List(Str)) =
+    match reversedPath with
+        | [] -> cycle
+        | head :: rest ->
+            if head == name
+            then head :: cycle
+            else cyclePathFrom(name)(rest)(head :: cycle)
+
+let recursive joinCycle (names: List(Str)) =
+    match names with
+        | [] -> ""
+        | head :: [] -> head
+        | head :: rest -> head + " -> " + joinCycle(rest)
+
+let recursive aliasCycleThrough (dependencies: List((Str, List(Str)))) (reversedPath: List(Str)) (name: Str) =
+    if nameExists(name)(reversedPath)
+    then
+        [name]
+        |> cyclePathFrom(name)(reversedPath)
+        |> joinCycle
+        |> Some
+    else
+        match aliasDependenciesOf(name)(dependencies) with
+            | None -> None
+            | Some(mentioned) -> aliasCycleThroughAny(dependencies)(name :: reversedPath)(mentioned)
+and aliasCycleThroughAny (dependencies: List((Str, List(Str)))) (reversedPath: List(Str)) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | head :: rest ->
+            match aliasCycleThrough(dependencies)(reversedPath)(head) with
+                | Some(cycle) -> Some(cycle)
+                | None -> aliasCycleThroughAny(dependencies)(reversedPath)(rest)
+
+let recursive firstAliasCycle (dependencies: List((Str, List(Str)))) (remaining: List((Str, List(Str)))) =
+    match remaining with
+        | [] -> None
+        | (name, _mentioned) :: rest ->
+            match aliasCycleThrough(dependencies)([])(name) with
+                | Some(cycle) -> Some(cycle)
+                | None -> firstAliasCycle(dependencies)(rest)
+
+// A unit's aliases checked for a cycle before any is registered, so an alias that names one
+// declared after it in a cycle is reported as the cycle rather than as an unknown type. Applied
+// only under the program inference rules.
+let checkTypeAliasCycles (items: List(TopLevelItem)) (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            if environment.programInferenceRules
+            then
+                let dependencies = aliasDependencies(items)
+                in
+                    match firstAliasCycle(dependencies)(dependencies) with
+                        | Some(cycle) -> state with error = Some(RecursiveTypeAlias(cycle))
+                        | None -> state
+            else state
+        | _ -> state
 
 let recursive quantifiedTypeIds quantified =
     match quantified with
@@ -2461,15 +2586,31 @@ let recursive noteDeclarations (bindings: List(LetBindingSyntax)) (state: Progra
                         in noteDeclarations(rest)(next)
                 | _ -> noteDeclarations(rest)(state)
 
+// `Ashes` and the builtin runtime and primitive type names, which no declaration may take; the
+// same names lowering refuses.
+let isReservedDeclarationName (name: Str) = name == "Ashes" || name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle" || name == "Float" || name == "Bytes" || name == "Rune" || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+
+// Refuses a reserved declaration name under the program inference rules; otherwise registers.
+let refuseReservedDeclaration (name: Str) register (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            if environment.programInferenceRules && isReservedDeclarationName(name)
+            then state with error = Some(ReservedTypeDeclaration(name))
+            else register(state)
+        | _ -> register(state)
+
 let recursive inferTopLevelItem externalDeclarations item state =
     locateTopLevelItemError(
         item,
         match item with
             | TopLevelAt(_span, inner) -> inferTopLevelItem(externalDeclarations)(inner)(state)
             | TopLevelExport(_export) -> state
-            | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
-            | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
-            | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
+            | TopLevelType(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerTypeDeclaration(declaration))(state)
+            | TopLevelTypeAlias(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerTypeAlias(declaration))(state)
+            | TopLevelZeroCostType(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerZeroCostType(declaration))(state)
             | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
             | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
             | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
@@ -2557,6 +2698,7 @@ let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (
             else
                 progress
                 |> advanceProgramInference(stateWithInferencePackage(packageId))
+                |> advanceProgramInference(checkTypeAliasCycles(items))
                 |> inferTopLevelItems(items)(externalDeclarations)
                 |> locateProgressUnitError(unitIndex)
                 |> inferExpandedProgramUnitsAt(unitIndex + 1)(tail)(externalDeclarations)
