@@ -1097,6 +1097,7 @@ let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringSta
 let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (outer: Bool) (restarted: CoreLoweringState) =
     match restarted
     |> withStateResolvingCallsAgain(true)
+    |> observeLoweringEvent(2)
     |> prepare
     |> lower(body) with
         | LoweredCoreValue { state = againState, temp = temp, semanticType = semanticType, error = error } -> LoweredCoreValue(state = withStateResolvingCallsAgain(outer)(againState), temp = temp, semanticType = semanticType, error = error)

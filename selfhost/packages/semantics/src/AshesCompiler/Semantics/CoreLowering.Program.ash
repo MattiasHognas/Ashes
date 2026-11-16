@@ -80,6 +80,8 @@ import AshesCompiler.Semantics.CoreLowering.Expressions
 export (
     value allTopLevelBindingNames,
     value lowerProgramPasses,
+    type CoreProgramPassMeasurement(..),
+    value lowerProgramPassesMeasured,
     value buildProgram,
     value withProgramParameterOwnership,
     value withExpressionReachSummaries,
@@ -1982,6 +1984,39 @@ let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) 
                         |> withStateTraitGoalsPinned(true)
                         |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
                         |> refuseUnansweredGoals
+
+// The two passes lowerProgramPasses runs, each with the time `clock` reads around it in
+// milliseconds, and how many trait goals and structural equality goals the first left open.
+type CoreProgramPassMeasurement =
+    | first: LoweredCoreValue
+    | replay: Maybe(LoweredCoreValue)
+    | firstMillis: Int
+    | replayMillis: Int
+    | pendingGoals: Int
+    | equalityGoals: Int
+
+let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
+    (let started = clock(Unit)
+    in
+        match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
+            | LoweredCoreValue { state = firstState, error = firstError } as first ->
+                let firstDone = clock(Unit)
+                in
+                    match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
+                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0)
+                        | (pending, equalityGoals) ->
+                            let replayItems =
+                                match firstError with
+                                    | None -> validatedReplayItems(items)(trailingBody)
+                                    | Some(_error) -> items
+                            in
+                                let replayed =
+                                    seed
+                                    |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
+                                    |> withStateTraitGoalsPinned(true)
+                                    |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
+                                    |> refuseUnansweredGoals
+                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals)))
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

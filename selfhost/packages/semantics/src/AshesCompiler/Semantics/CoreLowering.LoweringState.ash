@@ -71,6 +71,7 @@ export (
     value stateTypeObservation,
     value withNodeTypes,
     value stateNodeTypes,
+    value observeLoweringEvent,
     value carryTypeObservation,
     value stateConstructorLayouts,
     value withAppendedConstructorLayouts,
@@ -805,6 +806,12 @@ let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = em
 type CoreTypeObservation =
     | topLevelScope: List(CoreBinding)
     | operators: List((Maybe(TextSpan), Str, SemanticType))
+    // How many operator sites took their operand type from the recorded node types where lowering
+    // would otherwise have deferred or pended the goal, how many deferred or pended one, and how
+    // many function bodies were lowered again, in the lowering that was kept.
+    | tableOperators: Int
+    | deferredOperators: Int
+    | relowerings: Int
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -1328,7 +1335,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = []))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -1356,6 +1363,21 @@ let observeOperatorType (traitName: Str) (operandType: SemanticType) (state: Cor
         match group.typeObservation with
             | None -> state
             | Some(observation) -> state with programState = (group with typeObservation = Some((observation with operators = (Ashes.Internal.deepCopy(state.currentSpan), traitName, Ashes.Internal.deepCopy(operandType)) :: observation.operators))))
+
+// Counts one operator site answered from the recorded node types (0), one deferred or pended
+// operator goal (1), or one function body lowered again (2), when the lowering observes.
+let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) ->
+                let counted =
+                    match event with
+                        | 0 -> observation with tableOperators = observation.tableOperators + 1
+                        | 1 -> observation with deferredOperators = observation.deferredOperators + 1
+                        | _ -> observation with relowerings = observation.relowerings + 1
+                in state with programState = (group with typeObservation = Some(counted)))
 
 // A frame lowered over a copy of the state hands back what it observed.
 let carryTypeObservation (bodyState: CoreLoweringState) (state: CoreLoweringState) =

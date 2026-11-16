@@ -15,6 +15,8 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
+import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -1302,6 +1304,66 @@ let coreOrderedOperatorName operator =
         | CoreLessOrEqualOperator -> Some("<=")
         | _ -> None
 
+// Whether a recorded type means the same thing to lowering: built only from the primitive types,
+// lists and tuples. A named type carries the inference's own symbol id, which lowering numbers
+// independently.
+let recursive isPortableRecordedType (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemBigInt -> true
+        | SemString -> true
+        | SemRune -> true
+        | SemBool -> true
+        | SemList(element) -> isPortableRecordedType(element)
+        | SemTuple(elements) -> allPortableRecordedTypes(elements)
+        | _ -> false
+and allPortableRecordedTypes (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> true
+        | head :: rest -> isPortableRecordedType(head) && allPortableRecordedTypes(rest)
+
+// The operand type the standalone inference recorded for the operator node being lowered, when it
+// recorded one lowering can read: no type variable and no named type. A generic body's operator
+// keeps its quantified variable there, and a node lowering synthesized has no identity; both answer
+// None.
+let recordedOperandType (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { operandType = operandType }) ->
+                    if isPortableRecordedType(operandType)
+                    then Some(operandType)
+                    else None
+                | None -> None
+        | _ -> None
+
+// The state with an operator's still-open operand types bound to the recorded operand type, the
+// way a later pass pins a proven goal; None when nothing is recorded or the types do not unify.
+let pinRecordedOperands (operandTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match recordedOperandType(state) with
+        | None -> None
+        | Some(recorded) ->
+            let recursive bindAll (remaining: List(SemanticType)) (bound: CoreLoweringState) =
+                match remaining with
+                    | [] -> Some(bound)
+                    | operandType :: rest ->
+                        match bindType(operandType)(recorded)(bound) with
+                            | (next, None) -> bindAll(rest)(next)
+                            | (_failed, Some(_error)) -> None
+            in bindAll(operandTypes)(state)
+
+// An ordered comparison's operand type still open after an earlier pass's proof is pinned to the
+// recorded operand type when there is one.
+let recordedOrderedOperand (operandType: SemanticType) (state: CoreLoweringState) =
+    match operandType with
+        | SemVariable(_id) ->
+            match pinRecordedOperands([operandType])(state) with
+                | Some(recordedState) -> (observeLoweringEvent(0)(recordedState), resolveType(recordedState)(operandType))
+                | None -> (state, operandType)
+        | _ -> (state, operandType)
+
 // Ordered comparisons infer one Ord operand type before numeric fallback can turn an
 // unresolved parameter into Int. Discovery records the goal until callers settle it;
 // replay pins that type and emits the real primitive comparison or trait dispatch.
@@ -1312,15 +1374,20 @@ let emitPreparedCoreOrdered name operator lower binary =
             match bindEqualityOperands(name)(leftType)(rightType)(binary)(state) with
                 | LoweredCoreBinary { state = unifiedState, error = None } as unified ->
                     match pinProvenTraitGoal("Ord")(orderedTraitMethod(name))(resolveType(unifiedState)(leftType))(unifiedState) with
-                        | (pinnedState, operandType) ->
-                            let prepared = unified with state = pinnedState, leftType = operandType, rightType = operandType
-                            in
-                                if hasActiveTraitEvidence("Ord")(operandType)(pinnedState)
-                                then emitCoreTraitOrdered(name)(lower)(prepared)
-                                else
-                                    match (operandType, unprovenTraitGoalKey("Ord")(orderedTraitMethod(name))(operandType)(pinnedState)) with
-                                        | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(operandType)(SemBool)(pinnedState)
-                                        | _ -> emitResolvedCoreBinary(operator)(lower)(prepared)
+                        | (provenState, provenType) ->
+                            match recordedOrderedOperand(provenType)(provenState) with
+                                | (pinnedState, operandType) ->
+                                    let prepared = unified with state = pinnedState, leftType = operandType, rightType = operandType
+                                    in
+                                        if hasActiveTraitEvidence("Ord")(operandType)(pinnedState)
+                                        then emitCoreTraitOrdered(name)(lower)(prepared)
+                                        else
+                                            match (operandType, unprovenTraitGoalKey("Ord")(orderedTraitMethod(name))(operandType)(pinnedState)) with
+                                                | (SemVariable(_id), Some(key)) ->
+                                                    pinnedState
+                                                    |> observeLoweringEvent(1)
+                                                    |> deferTraitGoal(key)(operandType)(SemBool)
+                                                | _ -> emitResolvedCoreBinary(operator)(lower)(prepared)
                 | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
 
@@ -1346,7 +1413,7 @@ let emitPreparedCoreBinary operator lower binary =
         | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
         | (None, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
-                | (Some(emitDeferred), SemVariable(leftId), SemVariable(_rightId)) ->
+                | (Some(emitDeferred), SemVariable(leftId), SemVariable(rightId)) ->
                     if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
                     then
                         binary
@@ -1361,7 +1428,20 @@ let emitPreparedCoreBinary operator lower binary =
                                 |> unifyEqualityOperands(operator)
                                 |> resolvedCoreBinary
                                 |> emitResolvedCoreBinary(operator)(lower)
-                            | None -> emitDeferred(binary)
+                            | None ->
+                                match pinRecordedOperands([SemVariable(leftId), SemVariable(rightId)])(state) with
+                                    | Some(recordedState) ->
+                                        binary
+                                        |> withCoreBinaryState(recordedState
+                                        |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(SemVariable(leftId)) :: stateUnresolvedCallResults(recordedState))
+                                        |> observeLoweringEvent(0))
+                                        |> unifyEqualityOperands(operator)
+                                        |> resolvedCoreBinary
+                                        |> emitResolvedCoreBinary(operator)(lower)
+                                    | None ->
+                                        binary
+                                        |> withCoreBinaryState(observeLoweringEvent(1)(state))
+                                        |> emitDeferred
                 | _ ->
                     binary
                     |> unifyEqualityOperands(operator)
