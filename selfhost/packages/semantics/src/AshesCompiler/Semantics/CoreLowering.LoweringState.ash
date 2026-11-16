@@ -49,6 +49,7 @@ export (
     type CoreTopLevelFunctionReference(..),
     type CoreHeapQueryFacts(..),
     type CoreHeapQueryContext(..),
+    type CoreTypeObservation(..),
     type CoreProgramState(..),
     type CoreFunctionState(..),
     type CoreOwnerState(..),
@@ -63,6 +64,11 @@ export (
     value lookupTopLevelFunctionRef,
     value emptyCoreHeapQueryContext,
     value clearAdmissibilityAnswers,
+    value withTypeObservation,
+    value observeTopLevelScope,
+    value observeOperatorType,
+    value stateTypeObservation,
+    value carryTypeObservation,
     value stateConstructorLayouts,
     value withAppendedConstructorLayouts,
     value stateConstructorsOfType,
@@ -788,6 +794,13 @@ let emptyCoreHeapQueryFacts = CoreHeapQueryFacts(copyPlan = None, admissibility 
 
 let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = emptyTypeGraphIndex(environment), facts = Ashes.Collection.Map.empty)
 
+// What a lowering asked to observe its types records for a comparison with the standalone
+// inference: the bindings in scope where the trailing expression is lowered, and every binary
+// operator site lowered, by its span, with its trait and left operand type, most recent first.
+type CoreTypeObservation =
+    | topLevelScope: List(CoreBinding)
+    | operators: List((Maybe(TextSpan), Str, SemanticType))
+
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
     | constructorIndex: CoreConstructorLookupIndex
@@ -916,6 +929,8 @@ type CoreProgramState =
     // result type the group's first lowering settled for a call to a member whose result was still
     // open there, by call site, pinned at the same site when the group is lowered again.
     | provenSiblingCallResults: MapTree(Str, SemanticType)
+    // None unless the lowering was asked to observe its types; nothing reads it while lowering.
+    | typeObservation: Maybe(CoreTypeObservation)
 
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
@@ -1296,6 +1311,37 @@ type LoweredCoreValue =
 let clearAdmissibilityAnswers (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with admissibilityAnswers = []))
+
+let withTypeObservation (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = []))))
+
+let stateTypeObservation (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.typeObservation)
+
+// Both observations leave the state as it is unless the lowering was asked to observe.
+let observeTopLevelScope (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with topLevelScope = Ashes.Internal.deepCopy(state.bindings)))))
+
+let observeOperatorType (traitName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with operators = (Ashes.Internal.deepCopy(state.currentSpan), traitName, Ashes.Internal.deepCopy(operandType)) :: observation.operators))))
+
+// A frame lowered over a copy of the state hands back what it observed.
+let carryTypeObservation (bodyState: CoreLoweringState) (state: CoreLoweringState) =
+    match stateTypeObservation(bodyState) with
+        | None -> state
+        | Some(observation) ->
+            let group = state.programState
+            in state with programState = (group with typeObservation = Some(observation))
 
 let stateConstructorLayouts (state: CoreLoweringState) =
     (let group = state.programState

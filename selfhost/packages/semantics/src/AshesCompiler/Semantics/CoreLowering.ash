@@ -8,8 +8,11 @@
 // - Recursive self/sibling references rebuild closures from the current shared environment.
 // - Lifted functions retain generation order, with nested functions preceding their enclosing function.
 
+import Ashes.Collection.List.map
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
+import AshesCompiler.Frontend.Token.TextSpan
+import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TypeInference
@@ -187,3 +190,55 @@ let lowerCoreRecursiveGroup bindings body =
     |> withStateTraitGoalsPinned(true)
     |> lowerRecursiveGroup(bindings)(body)(lowerCore)
     |> buildProgram
+
+// What lowering concluded about a program's types, for a comparison with the standalone
+// inference: each binding in scope at the trailing expression with its scheme, and each binary
+// operator site lowered with its trait and operand type, both read through the final pass's
+// substitution, with the error lowering stopped at, if any.
+type CoreObservedTypes =
+    | topLevel: List((Str, TypeScheme))
+    | operators: List((Maybe(TextSpan), Str, SemanticType))
+    | error: Maybe(CoreLoweringError)
+
+let observedScheme (state: CoreLoweringState) (binding: CoreBinding) =
+    (let scheme = binding.scheme
+    in
+        (binding.name, (scheme with body = resolveType(state)(scheme.body), constraints = map((given (constraint: TraitConstraint) ->
+            constraint with typeArguments = map(resolveType(state))(constraint.typeArguments)))(scheme.constraints))))
+
+let observedOperator (state: CoreLoweringState) (site: (Maybe(TextSpan), Str, SemanticType)) =
+    match site with
+        | (span, traitName, operandType) -> (span, traitName, resolveType(state)(operandType))
+
+let observedTypesOf (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = error } ->
+            match stateTypeObservation(state) with
+                | None -> CoreObservedTypes(topLevel = [], operators = [], error = error)
+                | Some(CoreTypeObservation { topLevelScope = scope, operators = operators }) ->
+                    CoreObservedTypes(topLevel = map(observedScheme(state))(scope), operators = map(observedOperator(state))(operators), error = error)
+
+// As lowerCoreProgramWithSourceAndReuse with reuse on, observing the types it settles; the
+// lowered program itself is not built.
+let lowerCoreProgramObservingTypes (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
+                |> (given (state: CoreLoweringState) ->
+                    state
+                    |> withStateSourceContext(source
+                    |> createSourceContext(filePath)
+                    |> Some)
+                    |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
+                    |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
+                    |> withStateReuseEnabled(true)
+                    |> withTypeObservation)
+                |> withProgramParameterOwnership(program)
+                |> lowerProgramPasses(items)(trailingBody)(None)
+                |> observedTypesOf

@@ -158,6 +158,7 @@ let restoreOuterFrame outer bodyState =
                 current
                 |> withStateOwnFieldRetainedParameters(stateOwnFieldRetainedParameters(bodyState))
                 |> withStateOwnFieldPendingParameters(stateOwnFieldPendingParameters(bodyState)))
+            |> carryTypeObservation(bodyState)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with

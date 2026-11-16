@@ -1468,6 +1468,46 @@ let clearAffineReservation (lowered: LoweredCoreValue) =
             let cleared = withStateAffineAppendReservation(None)(state)
             in lowered with state = cleared
 
+// The trait the standalone inference gives a binary operator site.
+let coreOperatorTraitName operator left =
+    match operator with
+        | CoreAddOperator -> "Add"
+        | CoreSubtractOperator ->
+            if isCoreZeroExpression(left)
+            then "Negate"
+            else "Subtract"
+        | CoreMultiplyOperator -> "Multiply"
+        | CoreDivideOperator -> "Divide"
+        | CoreModuloOperator -> "Remainder"
+        | CoreBitwiseAndOperator -> "BitAnd"
+        | CoreBitwiseOrOperator -> "BitOr"
+        | CoreBitwiseXorOperator -> "BitXor"
+        | CoreShiftLeftOperator -> "ShiftLeft"
+        | CoreShiftRightOperator -> "ShiftRight"
+        | CoreGreaterOperator -> "Ord"
+        | CoreGreaterOrEqualOperator -> "Ord"
+        | CoreLessOperator -> "Ord"
+        | CoreLessOrEqualOperator -> "Ord"
+        | CoreEqualOperator -> "Eq"
+        | CoreNotEqualOperator -> "Eq"
+
+// Records the site's operand type when the lowering observes its types: the right operand of a
+// negation written `0 - x`, the left one otherwise.
+let observeCoreBinary operator left (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
+            match stateTypeObservation(state) with
+                | None -> binary
+                | Some(_observation) ->
+                    let traitName = coreOperatorTraitName(operator)(left)
+                    in
+                        let operandType =
+                            if traitName == "Negate"
+                            then rightType
+                            else leftType
+                        in binary with state = observeOperatorType(traitName)(operandType)(state)
+        | _ -> binary
+
 let lowerCoreBinary operator left right lower state =
     match consumerRequestOf(state) with
         | request ->
@@ -1477,6 +1517,7 @@ let lowerCoreBinary operator left right lower state =
             |> restoreBinaryRequest(request)
             |> withBinaryAffineReservation(binaryAffineReservation(operator)(left)(state))
             |> prepareCoreBinary(operator)(left)
+            |> observeCoreBinary(operator)(left)
             |> emitPreparedCoreBinary(operator)(lower)
             |> clearAffineReservation
 

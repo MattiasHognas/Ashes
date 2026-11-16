@@ -1358,6 +1358,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
     match items with
         | [] ->
             state
+            |> observeTopLevelScope
             |> lowerCore(trailingBody)
             |> closePendingTopLevelItems(pending)
         // currentSpan carries the declaration as the innermost enclosing span, so an instruction the
