@@ -1837,6 +1837,18 @@ let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (funct
                 match transformCoroutineFunction(label)(captureCount)(rest) with
                     | (transformed, stateStructSize) -> (function_ :: transformed, stateStructSize)
 
+// Stage 0's `RetainCoroutineCapture`: the task frame keeps its own reference to each captured value,
+// because the frame outlives the expression that created the task and that scope releases its
+// bindings. The closure is copied to its reference-counted form, whose environment normalizer
+// retains (or copies) every capture, and the task takes its captures from that copy.
+let frameOwnedClosure (closureTemp: Int) (captureCount: Int) (state: CoreLoweringState) =
+    if captureCount == 0
+    then (state, closureTemp)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = allocated, temp = copyTemp } ->
+                (emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), copyTemp)
+
 // Stage 0's `LowerAsyncTaskCoroutine`: an `async` body that awaits is a coroutine. The body is
 // lowered as a lambda returning `Ok(body)` whose awaits suspend, the lambda's function becomes a
 // coroutine over a task frame, and `CreateTask` builds the task from the lambda's closure, its
@@ -1861,11 +1873,13 @@ let lowerCoroutineTask body lower (state: CoreLoweringState) =
                                 in
                                     match transformCoroutineFunction(label)(captureCount)(typedState.functions) with
                                         | (functions, stateStructSize) ->
-                                            match freshTemp((typedState with functions = functions)) with
-                                                | FreshTemp { state = tempState, temp = taskTemp } ->
-                                                    tempState
-                                                    |> emit(CreateTask(taskTemp)(closureTemp)(stateStructSize)(captureCount)(None)(false))
-                                                    |> success(taskTemp)(taskType)
+                                            match frameOwnedClosure(closureTemp)(captureCount)((typedState with functions = functions)) with
+                                                | (ownedState, frameClosure) ->
+                                                    match freshTemp(ownedState) with
+                                                        | FreshTemp { state = tempState, temp = taskTemp } ->
+                                                            tempState
+                                                            |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(None)(false))
+                                                            |> success(taskTemp)(taskType)
                     | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
 
 let lowerAsyncTask body lower (state: CoreLoweringState) =
