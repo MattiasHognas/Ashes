@@ -82,6 +82,7 @@ export (
     value lowerProgramPasses,
     type CoreProgramPassMeasurement(..),
     value lowerProgramPassesMeasured,
+    value registeredProgramState,
     value buildProgram,
     value withProgramParameterOwnership,
     value withExpressionReachSummaries,
@@ -1733,6 +1734,16 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                     |> recordCoverageOperatorConstrainedNames
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
+// The state after a program's capabilities, types, and externals are registered, before any value
+// is lowered: what lowering knows of the program's named types.
+let registeredProgramState items state =
+    match registerProgramCapabilities(items)(state) with
+        | Error(error) -> Error(error)
+        | Ok(registered) ->
+            match registerProgramTypes(items)(registered) with
+                | Error(error) -> Error(error)
+                | Ok(typed) -> registerProgramExternals(items)(typed)
+
 // The goals a pass recorded whose type its own substitution has since resolved to a concrete one.
 // A pass lowers the whole program, so by its end the substitution answers what the goal's own site
 // could not.
@@ -1994,6 +2005,13 @@ type CoreProgramPassMeasurement =
     | replayMillis: Int
     | pendingGoals: Int
     | equalityGoals: Int
+    | pendingGoalKeys: List(Str)
+
+// The site keys of a pass's pending trait goals.
+let recursive goalKeysOf (goals: List((Str, SemanticType))) =
+    match goals with
+        | [] -> []
+        | (key, _goalType) :: rest -> key :: goalKeysOf(rest)
 
 let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
     (let started = clock(Unit)
@@ -2003,7 +2021,7 @@ let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreL
                 let firstDone = clock(Unit)
                 in
                     match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
-                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0)
+                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [])
                         | (pending, equalityGoals) ->
                             let replayItems =
                                 match firstError with
@@ -2016,7 +2034,7 @@ let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreL
                                     |> withStateTraitGoalsPinned(true)
                                     |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
                                     |> refuseUnansweredGoals
-                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals)))
+                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

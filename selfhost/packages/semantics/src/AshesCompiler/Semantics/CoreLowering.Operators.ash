@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -1304,38 +1305,20 @@ let coreOrderedOperatorName operator =
         | CoreLessOrEqualOperator -> Some("<=")
         | _ -> None
 
-// Whether a recorded type means the same thing to lowering: built only from the primitive types,
-// lists and tuples. A named type carries the inference's own symbol id, which lowering numbers
-// independently.
-let recursive isPortableRecordedType (semanticType: SemanticType) =
-    match semanticType with
-        | SemInt -> true
-        | SemUInt(_bits) -> true
-        | SemFloat -> true
-        | SemBigInt -> true
-        | SemString -> true
-        | SemRune -> true
-        | SemBool -> true
-        | SemList(element) -> isPortableRecordedType(element)
-        | SemTuple(elements) -> allPortableRecordedTypes(elements)
-        | _ -> false
-and allPortableRecordedTypes (semanticTypes: List(SemanticType)) =
-    match semanticTypes with
-        | [] -> true
-        | head :: rest -> isPortableRecordedType(head) && allPortableRecordedTypes(rest)
-
-// The operand type the standalone inference recorded for the operator node being lowered, when it
-// recorded one lowering can read: no type variable and no named type. A generic body's operator
-// keeps its quantified variable there, and a node lowering synthesized has no identity; both answer
-// None.
+// The operand type the standalone inference recorded for the operator node being lowered, as
+// lowering writes it, when it holds no type variable. A generic body's operator keeps its
+// quantified variable there, and a node lowering synthesized has no identity; both answer None.
 let recordedOperandType (state: CoreLoweringState) =
     match (stateNodeTypes(state), state.currentNode) with
         | (Some(table), Some(node)) ->
             match nodeOperatorAt(node)(table) with
                 | Some(NodeOperator { operandType = operandType }) ->
-                    if isPortableRecordedType(operandType)
-                    then Some(operandType)
-                    else None
+                    match translateRecordedType(state)(operandType) with
+                        | Ok(translated) ->
+                            if freeTypeVariables(translated) == []
+                            then Some(translated)
+                            else None
+                        | Error(_message) -> None
                 | None -> None
         | _ -> None
 

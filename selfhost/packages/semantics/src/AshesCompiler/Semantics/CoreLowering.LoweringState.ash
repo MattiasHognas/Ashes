@@ -812,6 +812,10 @@ type CoreTypeObservation =
     | tableOperators: Int
     | deferredOperators: Int
     | relowerings: Int
+    // How many calls took the type the context expects of their result from the recorded node types.
+    | tableCallResults: Int
+    // How many calls lowered against a recorded expected type failed and were lowered again without it.
+    | tableFallbacks: Int
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -1335,7 +1339,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -1365,7 +1369,9 @@ let observeOperatorType (traitName: Str) (operandType: SemanticType) (state: Cor
             | Some(observation) -> state with programState = (group with typeObservation = Some((observation with operators = (Ashes.Internal.deepCopy(state.currentSpan), traitName, Ashes.Internal.deepCopy(operandType)) :: observation.operators))))
 
 // Counts one operator site answered from the recorded node types (0), one deferred or pended
-// operator goal (1), or one function body lowered again (2), when the lowering observes.
+// operator goal (1), one function body lowered again (2), or one call whose expected result type
+// came from the recorded node types (3), or one such call lowered again without it after it failed
+// (4), when the lowering observes.
 let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
     (let group = state.programState
     in
@@ -1376,7 +1382,9 @@ let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
                     match event with
                         | 0 -> observation with tableOperators = observation.tableOperators + 1
                         | 1 -> observation with deferredOperators = observation.deferredOperators + 1
-                        | _ -> observation with relowerings = observation.relowerings + 1
+                        | 2 -> observation with relowerings = observation.relowerings + 1
+                        | 3 -> observation with tableCallResults = observation.tableCallResults + 1
+                        | _ -> observation with tableFallbacks = observation.tableFallbacks + 1
                 in state with programState = (group with typeObservation = Some(counted)))
 
 // A frame lowered over a copy of the state hands back what it observed.

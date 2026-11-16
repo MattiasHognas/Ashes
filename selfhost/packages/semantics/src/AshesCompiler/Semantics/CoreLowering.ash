@@ -25,6 +25,7 @@ import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Expressions
 import AshesCompiler.Semantics.CoreLowering.Program
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.untranslatableRecordedTypes
 let lowerCoreProgram (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
@@ -314,12 +315,15 @@ let lowerCoreProgramObservingTypes (filePath: Str) (source: Str) (program: Progr
                 |> observedTypesOf
 
 // What one pass of a measured lowering counted: operator sites answered from the recorded node
-// types, operator goals deferred or pended, and function bodies lowered again, in the lowering
+// types, operator goals deferred or pended, function bodies lowered again, and calls whose expected
+// result type came from the recorded node types and how many of those fell back, in the lowering
 // that pass kept, with the error it stopped at, if any.
 type CorePassCounts =
     | tableOperators: Int
     | deferredOperators: Int
     | relowerings: Int
+    | tableCallResults: Int
+    | tableFallbacks: Int
     | error: Maybe(CoreLoweringError)
 
 type CoreLoweringMeasurement =
@@ -328,15 +332,41 @@ type CoreLoweringMeasurement =
     | replayed: Bool
     | pendingGoals: Int
     | equalityGoals: Int
+    | pendingGoalKeys: List(Str)
     | first: CorePassCounts
     | replay: CorePassCounts
+
+let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, error = None)
 
 let passCountsOf (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, error = error } ->
             match stateTypeObservation(state) with
-                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings }) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, error = error)
-                | None -> CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, error = error)
+                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks }) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, error = error)
+                | None -> noPassCounts with error = error
+
+// The seed every program-level lowering starts from with source locations and reuse on, given the
+// recorded node types or none.
+let measuredSeed (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items } ->
+            Unit
+            |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
+            |> (given (state: CoreLoweringState) ->
+                let configured =
+                    state
+                    |> withStateSourceContext(source
+                    |> createSourceContext(filePath)
+                    |> Some)
+                    |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
+                    |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
+                    |> withStateReuseEnabled(true)
+                    |> withTypeObservation
+                in
+                    match nodeTypes with
+                        | Some(table) -> withNodeTypes(table)(configured)
+                        | None -> configured)
+            |> withProgramParameterOwnership(program)
 
 // As lowerCoreProgramWithSourceAndReuse with reuse on, or, given recorded node types, as
 // lowerCoreNumberedProgramWithSourceAndReuse, timing the discovery pass and the replay pass with
@@ -349,25 +379,23 @@ let measureCoreProgramLowering clock (nodeTypes: Maybe(NodeTypeTable)) (filePath
                     | Some(expression) -> expression
                     | None -> ExprVar("Unit")
             in
-                let seed =
-                    Unit
-                    |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
-                    |> (given (state: CoreLoweringState) ->
-                        let configured =
-                            state
-                            |> withStateSourceContext(source
-                            |> createSourceContext(filePath)
-                            |> Some)
-                            |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
-                            |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
-                            |> withStateReuseEnabled(true)
-                            |> withTypeObservation
-                        in
-                            match nodeTypes with
-                                | Some(table) -> withNodeTypes(table)(configured)
-                                | None -> configured)
-                    |> withProgramParameterOwnership(program)
-                in
-                    match lowerProgramPassesMeasured(clock)(items)(trailingBody)(None)(seed) with
-                        | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, first = passCountsOf(first), replay = passCountsOf(replayed))
-                        | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, first = passCountsOf(first), replay = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, error = None))
+                match program
+                |> measuredSeed(nodeTypes)(filePath)(source)
+                |> lowerProgramPassesMeasured(clock)(items)(trailingBody)(None) with
+                    | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, first = passCountsOf(first), replay = passCountsOf(replayed))
+                    | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], first = passCountsOf(first), replay = noPassCounts)
+
+// Translates every type the standalone inference recorded into lowering's terms against the
+// program's registered types: how many translated, and each node whose type did not, with the
+// reason, or the error registration stopped at.
+let checkRecordedTypes (nodeTypes: NodeTypeTable) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items } ->
+            match program
+            |> measuredSeed(Some(nodeTypes))("")("")
+            |> registeredProgramState(items) with
+                | Error(error) -> Error(error)
+                | Ok(registered) ->
+                    registered
+                    |> untranslatableRecordedTypes(nodeTypes)
+                    |> Ok
