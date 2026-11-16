@@ -1916,10 +1916,37 @@ let lowerNonAsyncCallExpression expression function argument lower state =
                                 |> locateLoweredMismatch(argumentSiteOf(state))
                             else lowerGeneralCall(expression)(function)(argument)(lower)(state)
 
+let unitArgument (function: Expr) = ExprCall(function)(ExprVar("Unit"))(false)(callArgumentsInline)
+
+// `Ashes.Task.Parallel.both(left)(right)` and `withWorkers(count)(action)` as the sequential
+// evaluation stage 0 falls back to: both thunks applied in order and paired, and the action applied
+// once the count is checked positive. No worker thread runs them, so a result is the same and only
+// the parallelism is missing.
+let parallelCallRewrite expression =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName), arguments = first :: second :: [] } ->
+            if moduleName == "Ashes.Task.Parallel"
+            then
+                if memberName == "both"
+                then Some(ExprTuple([unitArgument(first), unitArgument(second)]))
+                else
+                    if memberName == "withWorkers"
+                    then
+                        callArgumentsInline
+                        |> ExprCall(ExprQualifiedVar("Ashes.IO")("panic"))(ExprString("Ashes.Task.Parallel.withWorkers: worker count must be positive."))(false)
+                        |> ExprIf(ExprGreaterThan(first)(ExprInt(0)))(unitArgument(second))
+                        |> Some
+                    else None
+            else None
+        | _ -> None
+
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
-        | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
+        | None ->
+            match parallelCallRewrite(expression) with
+                | Some(rewritten) -> lower(rewritten)(state)
+                | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =
