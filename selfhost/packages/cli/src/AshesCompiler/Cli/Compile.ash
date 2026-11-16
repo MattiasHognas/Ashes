@@ -61,6 +61,11 @@ import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceError
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.ProjectInference.IdentifiedStitchedProject
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
 import AshesCompiler.Semantics.ProjectInference.inferStitchedProjectFrom
 import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
 import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
@@ -349,8 +354,8 @@ let loweringErrorText (error: CoreLoweringError) =
             locationPrefix(loweringErrorLocation(error)) + codePrefix(code) + message
         | None -> Ashes.Trait.Show.show(error)
 
-let lowerStitchedProgram reuseEnabled inputPath source program =
-    match lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(program) with
+let loweredStitchedResult (lowering: CoreLoweringResult) =
+    match lowering with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
         | CoreLoweringResult { error = Some(error) } ->
             error
@@ -358,11 +363,54 @@ let lowerStitchedProgram reuseEnabled inputPath source program =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
+let lowerStitchedProgram reuseEnabled inputPath source program =
+    program
+    |> lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)
+    |> loweredStitchedResult
+
+// With `ASHES_TYPED_LOWERING=1` the standalone type inference runs on the stitched program first
+// and lowering is given the numbered program with the types the inference recorded against it. A
+// program the inference rejects is not lowered; the inference's error is the compile error. Unset,
+// lowering infers the program's types as it lowers it.
+let typedLoweringRequested unit =
+    match Ashes.IO.Environment.get("ASHES_TYPED_LOWERING") with
+        | Ok(Some(value)) -> value == "1"
+        | _ -> false
+
+let typedLoweringInferenceError (result: ProgramInferenceResult) (error: ProgramInferenceError) =
+    match result.errorLocation with
+        | Some(location) -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location)
+        | None -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error)
+
+// The numbered units of a stitched project as the one program lowering walks.
+let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
+
+let lowerStitchedTyped reuseEnabled inputPath source stitched =
+    (let identified = identifyStitchedProject(stitched)
+    in
+        match inferIdentifiedStitchedProjectFrom(
+            "standalone"
+            |> emptyTypeEnvironmentForPackage
+            |> withIntrinsicBuiltinSignatures,
+            stitched,
+            identified
+        ) with
+            | ProgramInferenceResult { error = Some(error) } as result ->
+                error
+                |> typedLoweringInferenceError(result)
+                |> Error
+            | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
+                nodeTypes
+                |> lowerCoreNumberedProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(numberedStitchedProgram(identified))
+                |> loweredStitchedResult)
+
 // The stitched project lowered and optimized, with the placement facts the reports read.
 let lowerStitched reuseEnabled inputPath source stitched =
     match stitched with
         | StitchedSyntaxProject { program = program } ->
-            match lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
+            match if typedLoweringRequested(Unit)
+            then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
+            else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
                 | Error(message) -> Error(message)
                 | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
 
