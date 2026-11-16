@@ -423,11 +423,17 @@ let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: 
     else state
 
 // After the last application, stage 0's `LowerCallGeneral` tail: a result the callee is known
-// to place on the reference-counted heap is marked newly produced.
+// to place on the reference-counted heap is marked newly produced. A call that asked for an arena
+// result receives the callee's arena copy instead, so its result is not, unless it is of the
+// contract's types, whose request is withdrawn when the result is taken, or one with no call copy-out,
+// whose window stage 0 closes without one.
 let markCallSpineResult (context: CoreCallContext) (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
-        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered } -> stage with lowered = (lowered with state = markCallResultOwnership(context)(temp)(semanticType)(state))
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered } ->
+            if callRequestsArenaResult(temp)(state.reversedInstructions) && !isGeneralRcValueType(semanticType)(state) && hasCallCopyOut(semanticType)(state)
+            then stage
+            else stage with lowered = (lowered with state = markCallResultOwnership(context)(temp)(semanticType)(state))
 
 // Stage 0's `LowerCallFinish` tail: the fresh arguments the callee did not take are released
 // only once the call's window is closed and its result copied out of it, since an arena-placed
@@ -1390,6 +1396,14 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                             match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
                                 | (Some(copyOut), true) ->
                                     match emitConditionalCallCopyOut(copyOut)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
+                                        | (closed, resultTemp) ->
+                                            closed
+                                            |> success(resultTemp)(semanticType)
+                                            |> closedCallStage(stage)(true)(false)
+                                // Stage 0's `LowerCallCopyOutResult`: a call that asked for an arena result holds the
+                                // callee's arena copy, copied out of the window before it is reset.
+                                | (Some(copyOut), false) when callRequestsArenaResult(temp)(allocated.reversedInstructions) ->
+                                    match emitPlainCallCopyOut(copyOut)(temp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
                                         | (closed, resultTemp) ->
                                             closed
                                             |> success(resultTemp)(semanticType)

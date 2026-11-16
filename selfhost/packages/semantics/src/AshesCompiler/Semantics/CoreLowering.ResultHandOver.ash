@@ -27,6 +27,8 @@ import AshesCompiler.Semantics.CoreLowering.CopyPlans
 import AshesCompiler.Semantics.CoreLowering.TcoReset
 export (
     value cancelArenaResultRequest,
+    value callRequestsArenaResult,
+    value emitPlainCallCopyOut,
     value takenOverSettleBase,
     value emitOwnFieldWalk,
     value resolvePendingTcoResets,
@@ -179,6 +181,32 @@ let recursive withdrawArenaResultRequest (temp: Int) (instructions: List(IrInstr
                 else instruction :: rest
             else instruction :: withdrawArenaResultRequest(temp)(rest)
         | instruction :: rest -> instruction :: withdrawArenaResultRequest(temp)(rest)
+
+// Whether the word `temp` a call passes carries the arena-result request constant, through the
+// `OrInt`s that join it to the argument ownership flag or the tuple parts request.
+let recursive wordRequestsArenaResult (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = OrInt(target, _flag, request) } :: rest ->
+            if target == temp
+            then wordRequestsArenaResult(request)(rest)
+            else wordRequestsArenaResult(temp)(rest)
+        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest ->
+            if target == temp
+            then value == 2
+            else wordRequestsArenaResult(temp)(rest)
+        | _instruction :: rest -> wordRequestsArenaResult(temp)(rest)
+
+// Whether the call producing `resultTemp` asked its callee for an arena result: the callee then
+// deep-copies its result into the caller's window whatever its compiled body returns.
+let recursive callRequestsArenaResult (resultTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } :: rest ->
+            if target == resultTemp
+            then word >= 0 && wordRequestsArenaResult(word)(rest)
+            else callRequestsArenaResult(resultTemp)(rest)
+        | _instruction :: rest -> callRequestsArenaResult(resultTemp)(rest)
 
 let recursive cancelRequestOfCall (resultTemp: Int) (instructions: List(IrInstruction)) =
     match instructions with
