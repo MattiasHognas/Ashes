@@ -697,6 +697,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 specializingInProgress = [],
                 specializationFreshInputs = None,
                 stackAllocateConstructor = false,
+                scrutineeTuple = false,
                 linearSpecializationAccumulators = [],
                 routedSpecializationAccumulators = [],
                 specializingReuseLabel = None,

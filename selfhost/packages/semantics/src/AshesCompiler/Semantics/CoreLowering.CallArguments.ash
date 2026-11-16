@@ -56,6 +56,7 @@ export (
     value shapeAtOrdinal,
     value parameterSlotAtOrdinal,
     value loopSlotIsRuntimeManaged,
+    value readsDemotedLoopList,
     value loopParameterReadSlot,
     value patternBindingRootSlot,
     value loopParameterIsRuntimeManaged,

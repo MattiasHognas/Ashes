@@ -74,10 +74,14 @@ let isFreshNullaryConstructor (element: Expr) (state: CoreLoweringState) =
 // reference-counted element, and an arena tuple can release nothing, so that reference would
 // outlive the tuple. On the reference-counted heap the tuple owns the element and whoever matches
 // on it releases both. A nullary constructor is an immortal cell an arena tuple strands nothing
-// of, so it does not count.
-let recursive holdsReferenceCountedElement (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+// of, so it does not count. Neither does a read of a list loop parameter a sibling keeps in the
+// arena, in the tuple literal a match is on, which no consumer keeps: stage 0 does not
+// read such a parameter as reference-counted (`IsRuntimeManagedTcoParamSlot`), and the tuple
+// takes no reference of it, so on the reference-counted heap it would release, as a counted
+// list, a list that may be the arena cells the loop's own back edge built.
+let recursive holdsReferenceCountedElement (scrutinee: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false && (scrutinee == false || readsDemotedLoopList(element)(state) == false) || holdsReferenceCountedElement(scrutinee)(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
 let recursive withoutTransferRetain (retained: Int) (retains: List((Int, Int, SemanticType))) =
@@ -708,7 +712,7 @@ let recordCallArgumentTupleOwnerDuplicates (successor: Bool) (temps: List(Int)) 
                             |> tupleOwnerDuplicateEntries(temps)(semanticTypes)(slot)(state))(stateCollectingCallArgumentRetains(state))(state)
         | _ -> lowered
 
-let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
+let finishTupleLowering (successor: Bool) (scrutinee: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValues { state = loweredState, temps = freshTemps, semanticTypes = semanticTypes, error = None } ->
@@ -717,7 +721,7 @@ let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfe
             // in the arena its caller takes it as.
             match arenaCellFields(semanticTypes)(runtimeTuple)(freshTemps)(loweredState) with
                 | (state, loweredTemps) ->
-                    match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
+                    match (freshTemp(state), holdsReferenceCountedElement(scrutinee)(elements)(loweredTemps)(semanticTypes)(state)) with
                         | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
                             if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                             then
@@ -763,9 +767,10 @@ let lowerTuple elements lower state =
     match consumerRequestOf(state) with
         | ConsumerRequest { runtimeTuple = runtimeTuple } as request ->
             state
+            |> withStateScrutineeTuple(false)
             |> markResourceArgumentsMoved(elements)
             |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(expectedTupleElements(request)(coreListLength(elements))(state))(elements)(lower)([])([])
-            |> finishTupleLowering(isTupleSuccessorRequest(request)(state))(elements)(runtimeTuple)(tupleTransfers(request)(state))
+            |> finishTupleLowering(isTupleSuccessorRequest(request)(state))(stateScrutineeTuple(state))(elements)(runtimeTuple)(tupleTransfers(request)(state))
             |> unifyTupleWithExpected(request)
 
 // The live arena list-cell token, if one was published by a cons arm of the match this cell is

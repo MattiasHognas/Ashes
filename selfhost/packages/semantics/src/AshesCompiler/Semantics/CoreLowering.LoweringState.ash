@@ -412,6 +412,8 @@ export (
     value withStateSpecializationFreshInputs,
     value stateStackAllocateConstructor,
     value withStateStackAllocateConstructor,
+    value stateScrutineeTuple,
+    value withStateScrutineeTuple,
     value stateLinearSpecializationAccumulators,
     value withStateLinearSpecializationAccumulators,
     value stateRoutedSpecializationAccumulators,
@@ -1271,6 +1273,9 @@ type CoreReuseState =
     // that is about to lower a constructor expression it has proven dead at the end of the frame.
     // `lowerConstructor` takes it and clears it, so a nested constructor argument never claims it.
     | stackAllocateConstructor: Bool
+    // A one-shot mark from `lowerMatch` that the tuple literal about to be lowered is the match's
+    // scrutinee, which no consumer keeps: `lowerTuple` takes it and clears it.
+    | scrutineeTuple: Bool
     // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
     // to a single-parameter specialization candidate, deep-copied once at loop entry so the
     // specialization may rewrite them in place. The only route by which a call whose accumulator
@@ -3063,3 +3068,11 @@ let stateInliningInProgress (state: CoreLoweringState) =
 let withStateInliningInProgress value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with inliningInProgress = value))
+
+let stateScrutineeTuple (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.scrutineeTuple)
+
+let withStateScrutineeTuple value (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with scrutineeTuple = value))

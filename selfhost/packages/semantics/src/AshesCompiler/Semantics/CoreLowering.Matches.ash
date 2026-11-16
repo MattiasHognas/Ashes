@@ -3128,3 +3128,11 @@ let recursive lambdaParts expression =
         | ExprNode(_node, inner) -> lambdaParts(inner)
         | ExprLambda(parameter, body, annotation) -> Some((parameter, body, annotation))
         | _ -> None
+// A tuple literal matched on directly is the match's scrutinee: no consumer keeps it, which
+// `lowerTuple` reads when it chooses the tuple's placement.
+let markScrutineeTuple (value: Expr) (state: CoreLoweringState) =
+    match stripExprAt(value) with
+        | ExprTuple(_elements) -> withStateScrutineeTuple(true)(state)
+        | _ -> state
+
+    |> markScrutineeTuple(value)
