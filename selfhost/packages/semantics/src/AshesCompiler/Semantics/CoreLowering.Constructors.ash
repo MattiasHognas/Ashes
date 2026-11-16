@@ -1067,7 +1067,9 @@ let finishBuiltinArguments arguments lower runtimeManaged shape =
             )
 
 // A builtin reading a resource argument is checked for use after its release before anything is
-// lowered; a closing builtin releases the binding once the call is lowered.
+// lowered; a closing builtin releases the binding once the call is lowered. Stage 0's
+// `LowerFileClose` checks nothing first: closing a handle already closed, or passed to a function,
+// is not reported.
 let builtinResourceArgument (arguments: List(Expr)) =
     match arguments with
         | first :: _rest -> Some(first)
@@ -1076,7 +1078,6 @@ let builtinResourceArgument (arguments: List(Expr)) =
 let checkBuiltinResourceUse (kind: CoreBuiltinKind) (arguments: List(Expr)) (state: CoreLoweringState) =
     match (builtinResourceRole(kind), builtinResourceArgument(arguments)) with
         | (BuiltinUsesResource, Some(argument)) -> checkResourceArgumentUse(argument)(state)
-        | (BuiltinClosesResource, Some(argument)) -> checkResourceArgumentUse(argument)(state)
         | _ -> None
 
 let releaseClosedBuiltinArgument (kind: CoreBuiltinKind) (arguments: List(Expr)) (lowered: LoweredCoreValue) =
