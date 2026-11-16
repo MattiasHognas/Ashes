@@ -13,9 +13,7 @@ import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionTemps
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
-import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemps
-import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsThrough
-import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsStopping
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsWithAliases
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.StructuralCopiers
@@ -855,9 +853,30 @@ let recursive independentOwnedSlotsOf (origin: Maybe(IrFunctionOrigin)) (slots: 
 let independentOwnedSlots (state: CoreLoweringState) =
     independentOwnedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcOwnedSlots(state))(stateGeneralRcPredecessorSlots(state))(state)
 
-// The local slots a function's result can have been read from, through no independent owned slot.
+let recursive ownedSlotRegistered (origin: Maybe(IrFunctionOrigin)) (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (owner, candidate, _semanticType) :: rest -> owner == origin && candidate == slot || ownedSlotRegistered(origin)(slot)(rest)
+
+let recursive aliasOwnerSlotPairsOf (origin: Maybe(IrFunctionOrigin)) (registered: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (entries: List((Maybe(IrFunctionOrigin), Int, Int))) =
+    match entries with
+        | [] -> []
+        | (owner, slot, aliasTemp) :: rest ->
+            if owner == origin && ownedSlotRegistered(origin)(slot)(registered)
+            then (slot, aliasTemp) :: aliasOwnerSlotPairsOf(origin)(registered)(rest)
+            else aliasOwnerSlotPairsOf(origin)(registered)(rest)
+
+// The owned slots of the function being lowered that hold the reference an escaping arena alias
+// keeps of an owner it borrows, each with the alias (stage 0's `GeneralRcOwnedSlot.AliasTemp`).
+let aliasOwnerSlotPairs (state: CoreLoweringState) =
+    state
+    |> stateGeneralRcAliasOwnerSlots
+    |> aliasOwnerSlotPairsOf(stateActiveFunctionOrigin(state))(stateGeneralRcOwnedSlots(state))
+
+// The local slots a function's result can have been read from, through no independent owned slot,
+// and the slots keeping alive the owners of the arena aliases it reaches.
 let resultReachedSlots (resultTemp: Int) (state: CoreLoweringState) =
-    localSlotsReachingTempsThrough([resultTemp])(independentOwnedSlots(state))(state.reversedInstructions)
+    localSlotsReachingTempsWithAliases([resultTemp])(independentOwnedSlots(state))([])(aliasOwnerSlotPairs(state))(state.reversedInstructions)
 
 // Whether the result reaches any owned slot of the function being finished.
 let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -1258,35 +1277,121 @@ let recursive preserveRequestedBorrowedStringParts (cell: Int) (parts: List(Int)
 // positions: the values that pin owned slots (every other element of the result's cells, and a
 // part that is fresh or not read out of an owned value), and the positions of the part stores of
 // a value other than a fresh one, whose stored value is retained under the request.
-let recursive tuplePartStores (instructions: List(IrInstruction)) (position: Int) (cells: List(Int)) (parts: List(Int)) (scalars: List(Int)) (ownedSlots: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) (borrowed: List((Int, Int))) (pinning: List(Int)) (retained: List((Int, Int))) =
+let recursive tuplePartStores (instructions: List(IrInstruction)) (position: Int) (cells: List(Int)) (parts: List(Int)) (normalized: List(Int)) (scalars: List(Int)) (ownedSlots: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) (borrowed: List((Int, Int))) (pinning: List(Int)) (retained: List((Int, Int))) =
     match instructions with
         | [] -> (reverse(pinning), reverse(retained))
         | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: rest ->
             if containsInt(basePtr)(cells) == false
-            then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
+            then tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
             else
                 if isTuplePartOffset(offset)(parts) == false
                 then
                     if isTuplePartOffset(offset)(scalars)
-                    then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
-                    else tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(source :: pinning)(retained)
+                    then tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
+                    else tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(source :: pinning)(retained)
                 else
-                    let original = borrowedTuplePartSource(source)(borrowed)
-                    in
-                        let fresh = isFreshRuntimeTemp(original)(state)
+                    if isTuplePartOffset(offset)(normalized)
+                    then tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
+                    else
+                        let original = borrowedTuplePartSource(source)(borrowed)
                         in
-                            let nextRetained =
-                                if fresh
-                                then retained
-                                else (position, source) :: retained
+                            let fresh = isFreshRuntimeTemp(original)(state)
                             in
-                                if fresh
-                                then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(original :: pinning)(nextRetained)
-                                else
-                                    if readOutOfOwnedValue([original])(ownedSlots)([])(forward)(state)
-                                    then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(nextRetained)
-                                    else tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(original :: pinning)(nextRetained)
-        | _ :: rest -> tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
+                                let nextRetained =
+                                    if fresh
+                                    then retained
+                                    else (position, source) :: retained
+                                in
+                                    if fresh
+                                    then tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(original :: pinning)(nextRetained)
+                                    else
+                                        if readOutOfOwnedValue([original])(ownedSlots)([])(forward)(state)
+                                        then tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(nextRetained)
+                                        else tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(original :: pinning)(nextRetained)
+        | _ :: rest -> tuplePartStores(rest)(position + 1)(cells)(parts)(normalized)(scalars)(ownedSlots)(forward)(state)(borrowed)(pinning)(retained)
+
+// Stage 0's `PartsKeepingAliasOwnersAlive`: the parts every store of which is an arena alias of an
+// owner only a slot of this function keeps alive (a record built over a let-bound list). No
+// reference the part could hand over exists, so the part is placed on the reference-counted heap
+// when the caller asks for it, where it holds references of its own, and the slot is released
+// behind it.
+let recursive partStoreSources (instructions: List(IrInstruction)) (cells: List(Int)) (offset: Int) (borrowed: List((Int, Int))) (sources: List(Int)) =
+    match instructions with
+        | [] -> sources
+        | IrInstruction { instruction = StoreMemOffset(basePtr, storeOffset, source) } :: rest ->
+            if storeOffset == offset && containsInt(basePtr)(cells)
+            then partStoreSources(rest)(cells)(offset)(borrowed)(borrowedTuplePartSource(source)(borrowed) :: sources)
+            else partStoreSources(rest)(cells)(offset)(borrowed)(sources)
+        | _ :: rest -> partStoreSources(rest)(cells)(offset)(borrowed)(sources)
+
+let recursive anyAliasOwnerSlotIn (slots: List(Int)) (aliases: List((Int, Int))) =
+    match aliases with
+        | [] -> false
+        | (slot, _aliasTemp) :: rest -> containsInt(slot)(slots) || anyAliasOwnerSlotIn(slots)(rest)
+
+let recursive keepAliasOwnersAlive (sources: List(Int)) (ownedSlots: List(Int)) (aliases: List((Int, Int))) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match sources with
+        | [] -> true
+        | source :: rest ->
+            !isFreshRuntimeTemp(source)(state) && !readOutOfOwnedValue([source])(ownedSlots)([])(forward)(state) && anyAliasOwnerSlotIn(localSlotsReachingTempsWithAliases([source])([])([])(aliases)(state.reversedInstructions))(aliases) && keepAliasOwnersAlive(rest)(ownedSlots)(aliases)(forward)(state)
+
+let isNormalizedPartType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match generalCopyPlanOf(semanticType)(state) with
+        | Some(_plan) -> !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state)
+        | None -> false
+
+let recursive partsKeepingAliasOwnersAlive (parts: List(Int)) (types: List(SemanticType)) (cells: List(Int)) (borrowed: List((Int, Int))) (ownedSlots: List(Int)) (aliases: List((Int, Int))) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> []
+        | part :: rest ->
+            match partStoreSources(forward)(cells)(part * 8)(borrowed)([]) with
+                | [] -> partsKeepingAliasOwnersAlive(rest)(types)(cells)(borrowed)(ownedSlots)(aliases)(forward)(state)
+                | sources ->
+                    if isNormalizedPartType(types
+                    |> nthElementType(part)
+                    |> resolveType(state))(state) && keepAliasOwnersAlive(sources)(ownedSlots)(aliases)(forward)(state)
+                    then part :: partsKeepingAliasOwnersAlive(rest)(types)(cells)(borrowed)(ownedSlots)(aliases)(forward)(state)
+                    else partsKeepingAliasOwnersAlive(rest)(types)(cells)(borrowed)(ownedSlots)(aliases)(forward)(state)
+
+let normalizedTupleParts (resultType: SemanticType) (parts: List(Int)) (cells: List(Int)) (borrowed: List((Int, Int))) (ownedSlots: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match (resolveType(state)(resultType), aliasOwnerSlotPairs(state)) with
+        | (_resolved, []) -> []
+        | (SemTuple(types), aliases) -> partsKeepingAliasOwnersAlive(parts)(types)(cells)(borrowed)(ownedSlots)(aliases)(forward)(state)
+        | _ -> []
+
+// Stage 0's `EmitReferenceCountedPartsOfArenaResult`: on the requested path of an arena result,
+// each part of `parts` is replaced in the result by a reference to it on the reference-counted
+// heap (a retain of one already there, a copy of an arena one), the reference the part hands over.
+let recursive emitReferenceCountedParts (resultTemp: Int) (types: List(SemanticType)) (parts: List(Int)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> state
+        | part :: rest ->
+            match generalCopyPlanOf(types
+            |> nthElementType(part)
+            |> resolveType(state))(state) with
+                | None -> emitReferenceCountedParts(resultTemp)(types)(rest)(state)
+                | Some(plan) ->
+                    match freshLabel("tuple_part_absent")(state) with
+                        | FreshLabel { state = labelled, label = skipLabel } ->
+                            match freshTempRun(3)(labelled) with
+                                | FreshTemp { state = allocated, temp = partTemp } ->
+                                    match allocated
+                                    |> emit(LoadMemOffset(partTemp)(resultTemp)(part * 8))
+                                    |> emit(LoadConstInt(partTemp + 1)(0))
+                                    |> emit(CmpIntNe(partTemp + 2)(partTemp)(partTemp + 1))
+                                    |> emit(JumpIfFalse(partTemp + 2)(skipLabel))
+                                    |> emitGuardedDeepCopy(partTemp)(plan) with
+                                        | (copied, ownedTemp) ->
+                                            copied
+                                            |> emit(StoreMemOffset(resultTemp)(part * 8)(ownedTemp))
+                                            |> emit(Label(skipLabel))
+                                            |> emitReferenceCountedParts(resultTemp)(types)(rest)
+
+let emitReferenceCountedPartsOfArenaResult (resultTemp: Int) (resultType: SemanticType) (parts: List(Int)) (state: CoreLoweringState) =
+    match (parts, resolveType(state)(resultType)) with
+        | ([], _resolved) -> state
+        | (_parts, SemTuple(types)) -> emitReferenceCountedParts(resultTemp)(types)(parts)(state)
+        | _ -> state
 
 // The retain spliced behind one part store: the stored value is retained when the caller asked for
 // the parts. Emitted on its own, most recent first.
@@ -1439,10 +1544,12 @@ let tuplePartsHandOverPlan (resultTemp: Int) (resultType: SemanticType) (parts: 
                                 | Some(first :: others) ->
                                     let guardedForward = reverse(guarded.reversedInstructions)
                                     in
-                                        match tuplePartStores(guardedForward)(0)(first :: others)(parts)(scalars)(ownedSlots)(guardedForward)(guarded)(borrowed)([])([]) with
-                                            | (pinning, retained) ->
-                                                (ownedSlotsOutside(localSlotsReachingTemps(pinning)(guarded.reversedInstructions))(registered), retainTuplePartStoresWhenRequested(retained)(guarded), true)
-                                | _ -> (kept, guarded, false))
+                                        let normalized = normalizedTupleParts(resultType)(parts)(first :: others)(borrowed)(ownedSlots)(guardedForward)(guarded)
+                                        in
+                                            match tuplePartStores(guardedForward)(0)(first :: others)(parts)(normalized)(scalars)(ownedSlots)(guardedForward)(guarded)(borrowed)([])([]) with
+                                                | (pinning, retained) ->
+                                                    (ownedSlotsOutside(localSlotsReachingTempsWithAliases(pinning)([])([])(aliasOwnerSlotPairs(guarded))(guarded.reversedInstructions))(registered), retainTuplePartStoresWhenRequested(retained)(guarded), true, normalized)
+                                | _ -> (kept, guarded, false, []))
 
 let recursive withoutAbsentValues (sources: List(Int)) (state: CoreLoweringState) =
     match sources with
@@ -1940,7 +2047,7 @@ let emitArenaCopiesOfOwnedPartsWhenRequested (resultTemp: Int) (resultType: Sema
 
 let handOverTupleParts (label: Str) (resultTemp: Int) (resultType: SemanticType) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(resultType)(parts)(scalars)(registered)(kept)(state) with
-        | (handedOver, spliced, cellsKnown) ->
+        | (handedOver, spliced, cellsKnown, normalized) ->
             match freshLabel("tuple_parts_not_requested")(spliced) with
                 | FreshLabel { state = keepState, label = keepLabel } ->
                     match freshLabel("tuple_parts_handed_over")(keepState) with
@@ -1954,6 +2061,7 @@ let handOverTupleParts (label: Str) (resultTemp: Int) (resultType: SemanticType)
                                     match emitTuplePartRetainsReading(resultTemp)(parts)([])(requested) with
                                         | (retained, partTemps) ->
                                             emitOwnedSlotDropsBehindRetainedParts(origin)(ownedSlotsBesideKept(kept)(registered))(partTemps)(retained))
+                            |> emitReferenceCountedPartsOfArenaResult(resultTemp)(resultType)(normalized)
                             |> emitTupleResultPartsMask(parts)
                             |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
                             |> emit(Jump(doneLabel))
@@ -2233,7 +2341,7 @@ let releaseOwnedSlotsBehindIndependentForwardedResult (resultTemp: Int) (resultT
                 then state
                 else
                     let reached =
-                        localSlotsReachingTempsStopping([resultTemp])(independentOwnedSlots(state))([callTemp])(state.reversedInstructions)
+                        localSlotsReachingTempsWithAliases([resultTemp])(independentOwnedSlots(state))([callTemp])(aliasOwnerSlotPairs(state))(state.reversedInstructions)
                     in
                         match registered
                         |> ownedSlotsOutsideResult(resultType)(reached)

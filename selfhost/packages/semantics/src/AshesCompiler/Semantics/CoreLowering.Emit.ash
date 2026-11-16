@@ -620,6 +620,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 generalRcFreshSlots = [],
                 generalRcHandedOverPartsSlots = [],
                 generalRcPartDuplicateSlots = [],
+                generalRcAliasOwnerSlots = [],
                 loopResultPartDuplicates = [],
                 takenOverConsumers = [],
                 takenOverRecordNames = [],

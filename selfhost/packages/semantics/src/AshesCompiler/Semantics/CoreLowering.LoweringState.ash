@@ -272,6 +272,8 @@ export (
     value withStateGeneralRcFreshSlots,
     value stateGeneralRcPartDuplicateSlots,
     value withStateGeneralRcPartDuplicateSlots,
+    value stateGeneralRcAliasOwnerSlots,
+    value withStateGeneralRcAliasOwnerSlots,
     value stateTakenOverConsumers,
     value withStateTakenOverConsumers,
     value stateTakenOverRecordNames,
@@ -1028,6 +1030,10 @@ type CoreOwnerState =
     // arena loop result cell (stage 0's `GeneralRcOwnedSlot.PartDuplicate`): withdrawn at the return
     // when the result is copied anyway.
     | generalRcPartDuplicateSlots: List((Maybe(IrFunctionOrigin), Int))
+    // The owned slots holding the reference an escaping arena alias keeps of an owner it borrows,
+    // each with the alias as it was stored (stage 0's `GeneralRcOwnedSlot.AliasTemp`): a result
+    // reaching the alias reaches the slot.
+    | generalRcAliasOwnerSlots: List((Maybe(IrFunctionOrigin), Int, Int))
     // The part duplicates the constructor whose arguments are being lowered took, kept once its cell is
     // known to stay in the arena.
     | loopResultPartDuplicates: List((Int, SemanticType))
@@ -2322,6 +2328,14 @@ let stateGeneralRcPartDuplicateSlots (state: CoreLoweringState) =
 let withStateGeneralRcPartDuplicateSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcPartDuplicateSlots = value))
+
+let stateGeneralRcAliasOwnerSlots (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcAliasOwnerSlots)
+
+let withStateGeneralRcAliasOwnerSlots value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcAliasOwnerSlots = value))
 
 let stateTakenOverConsumers (state: CoreLoweringState) =
     (let group = state.ownerState

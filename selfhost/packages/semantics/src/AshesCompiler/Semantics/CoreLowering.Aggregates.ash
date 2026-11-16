@@ -146,8 +146,9 @@ let recordArenaCellTailRetain (arenaCell: Bool) (original: Int) (retained: Int) 
 // borrows is never released by the arena aggregate, and a result normalized onto the
 // reference-counted heap retains the owner's value again. It is collected for the call the alias is
 // an argument of, or goes to an owned slot released once the function's result holds references of
-// its own.
-let keepAliasOwnerRetainOwned (ownerTemp: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+// its own. The slot is recorded with the alias it keeps the owner alive for: a result reaching the
+// alias reaches the slot.
+let keepAliasOwnerRetainOwned (ownerTemp: Int) (retained: Int) (semanticType: SemanticType) (aliasTemp: Int) (state: CoreLoweringState) =
     if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) || !newestIsRuntimeRetain(retained)(state)
     then state
     else
@@ -159,10 +160,11 @@ let keepAliasOwnerRetainOwned (ownerTemp: Int) (retained: Int) (semanticType: Se
                     allocated
                     |> emit(StoreLocal(ownedSlot)(retained))
                     |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                    |> (given (registered: CoreLoweringState) -> withStateGeneralRcAliasOwnerSlots((stateActiveFunctionOrigin(registered), ownedSlot, aliasTemp) :: stateGeneralRcAliasOwnerSlots(registered))(registered))
 
 // `retainBorrowedOwners` for an aggregate that stores the alias: each owner's retain is kept by
 // `keepAliasOwnerRetainOwned`.
-let recursive retainAndKeepBorrowedOwners (owners: List((Int, SemanticType))) (state: CoreLoweringState) =
+let recursive retainAndKeepBorrowedOwners (owners: List((Int, SemanticType))) (aliasTemp: Int) (state: CoreLoweringState) =
     match owners with
         | [] -> state
         | (slot, ownerType) :: rest ->
@@ -179,15 +181,15 @@ let recursive retainAndKeepBorrowedOwners (owners: List((Int, SemanticType))) (s
                                     |> mayBeEmptyList
                                     |> RcDup(duplicate)(ownerTemp)(true))
                                     |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
-                                    |> keepAliasOwnerRetainOwned(ownerTemp)(duplicate)(ownerType)
+                                    |> keepAliasOwnerRetainOwned(ownerTemp)(duplicate)(ownerType)(aliasTemp)
                                     |> (given (retained: CoreLoweringState) ->
                                         withStateOwnerReleasePlans(retained
                                         |> stateOwnerReleasePlans
                                         |> shareOwnerReleasePlan(slot))(retained))
-                                    |> retainAndKeepBorrowedOwners(rest)
-                | _ -> retainAndKeepBorrowedOwners(rest)(state)
+                                    |> retainAndKeepBorrowedOwners(rest)(aliasTemp)
+                | _ -> retainAndKeepBorrowedOwners(rest)(aliasTemp)(state)
 
-let retainAndKeepAliasBorrowedOwners (name: Str) (state: CoreLoweringState) =
+let retainAndKeepAliasBorrowedOwners (name: Str) (aliasTemp: Int) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(CoreBinding { location = CoreLocal(slot) }) ->
             match runtimeOwnerStateOf(slot)(state) with
@@ -195,7 +197,7 @@ let retainAndKeepAliasBorrowedOwners (name: Str) (state: CoreLoweringState) =
                 | None ->
                     retainAndKeepBorrowedOwners(state
                     |> stateBorrowedOwners
-                    |> borrowedOwnersOfSlot(slot))(state)
+                    |> borrowedOwnersOfSlot(slot))(aliasTemp)(state)
         | _ -> state
 
 // Whether the newest instruction is the loop-parameter retain marker `retainLoopParameterChild` just
@@ -256,7 +258,7 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
                 | (Some(_slot), None) ->
                     match emitTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
-                | _ -> (retainAndKeepAliasBorrowedOwners(name)(state), temp)
+                | _ -> (retainAndKeepAliasBorrowedOwners(name)(temp)(state), temp)
         | ExprQualifiedVar(owner, _field) ->
             if resultSurvivesReset(semanticType)(state)
             then (state, temp)
