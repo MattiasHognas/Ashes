@@ -6,7 +6,9 @@
 // - The pipeline is the same one `selfhost/tests/backend` proves end to end: the entry source and
 //   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
 //   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
-//   program through `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
+//   program through the standalone type inference (the type checker: a program it rejects fails
+//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through
+//   `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
 //   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
 //   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
@@ -53,6 +55,7 @@ import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.InferenceDiagnostics
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.LoweringDiagnostics
 import AshesCompiler.Semantics.ExplainReport
@@ -405,15 +408,81 @@ let lowerStitchedTyped reuseEnabled inputPath source stitched =
                 |> lowerCoreNumberedProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(numberedStitchedProgram(identified))
                 |> loweredStitchedResult)
 
-// The stitched project lowered and optimized, with the placement facts the reports read.
-let lowerStitched reuseEnabled inputPath source stitched =
-    match stitched with
-        | StitchedSyntaxProject { program = program } ->
-            match if typedLoweringRequested(Unit)
-            then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
-            else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
-                | Error(message) -> Error(message)
-                | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
+// With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
+// alone decides whether it is accepted, as before the check existed.
+let inferenceCheckSkipped unit =
+    match Ashes.IO.Environment.get("ASHES_SKIP_INFERENCE_CHECK") with
+        | Ok(Some(value)) -> value == "1"
+        | _ -> false
+
+let builtinInferenceEnvironment unit =
+    "standalone"
+    |> emptyTypeEnvironmentForPackage
+    |> withIntrinsicBuiltinSignatures
+
+// A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
+// program or rejects it with an error that keeps its structural form.
+let wordedLoweringError (lowering: CoreLoweringResult) =
+    match lowering with
+        | CoreLoweringResult { error = Some(error) } ->
+            match loweringErrorDiagnostic(error) with
+                | Some(_diagnostic) ->
+                    error
+                    |> loweringErrorText
+                    |> Some
+                | None -> None
+        | _ -> None
+
+// The compile error of a program the inference rejects. A bare unification error lacks the call,
+// argument or operator stage 0 words its message after, so lowering is asked for its own
+// diagnostic of the program, which has that site; every other error is the inference's own,
+// worded as stage 0 words it.
+let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxProject) builtins (result: ProgramInferenceResult) (error: ProgramInferenceError) =
+    (let inferenceText = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
+    in
+        if inferenceErrorWantsCallSiteWording(error)
+        then
+            match stitched.program
+            |> lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)
+            |> wordedLoweringError with
+                | Some(text) -> text
+                | None -> inferenceText
+        else inferenceText)
+
+// The standalone type inference is the type checker: it runs on every stitched program before
+// lowering, and a program it rejects is not lowered further. An accepted program is lowered as it
+// is without the check, or from the inference's recorded types with `ASHES_TYPED_LOWERING=1`.
+let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    (let builtins = builtinInferenceEnvironment(Unit)
+    in
+        let identified = identifyStitchedProject(stitched)
+        in
+            match inferIdentifiedStitchedProjectFrom(builtins)(stitched)(identified) with
+                | ProgramInferenceResult { error = Some(error) } as result ->
+                    error
+                    |> rejectedProgramText(reuseEnabled)(inputPath)(source)(stitched)(builtins)(result)
+                    |> Error
+                | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
+                    if typedLoweringRequested(Unit)
+                    then
+                        nodeTypes
+                        |> lowerCoreNumberedProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(numberedStitchedProgram(identified))
+                        |> loweredStitchedResult
+                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched.program))
+
+let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    if typedLoweringRequested(Unit)
+    then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
+    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched.program)
+
+// The stitched project type-checked, lowered and optimized, with the placement facts the reports
+// read.
+let lowerStitched reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    match if inferenceCheckSkipped(Unit)
+    then lowerUnchecked(reuseEnabled)(inputPath)(source)(stitched)
+    else lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
+        | Error(message) -> Error(message)
+        | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
 
 // The module-qualified name of a stitched binding for the reports. The single-file form is stage
 // 0's standalone layout, whose entry module is named `Main`; every other definition reports under

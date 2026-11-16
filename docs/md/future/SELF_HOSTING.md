@@ -325,6 +325,16 @@ Order of work. Each step lands separately and is useful if the later ones are de
 Steps 1 to 5 do not change generated code. Steps 7 and 8 do, in the ownership-sensitive paths, so
 step 3 must exist before they start.
 
+Decided on **2026-11-16**: the standalone inference is stage 1's type checker. `compile` and
+`run`, file and project forms, infer the stitched program before lowering it; a program it rejects
+fails with stage 0's code and message (`InferenceDiagnostics.ash` maps every error the inference
+raises), and an accepted program is lowered exactly as before, without reading the inference's
+results unless `ASHES_TYPED_LOWERING=1`. A bare unification error carries no call, argument or
+operator site, so for it lowering's own diagnostic is printed when lowering words one.
+`ASHES_SKIP_INFERENCE_CHECK=1` skips the check. This gives stage 1 the checks lowering lacks
+(capability rows, providers, handlers, written requirements, type alias cycles) and costs about
+57 s on the whole compiler and a few milliseconds on a test.
+
 ## Start here
 
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
