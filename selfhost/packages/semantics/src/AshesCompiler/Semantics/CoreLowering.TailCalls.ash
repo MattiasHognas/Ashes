@@ -120,6 +120,7 @@ let variableReadsParameterSlot (name: Str) (parameterSlot: Int) (state: CoreLowe
 let recursive concatChainReadsParameter (expression: Expr) (parameterSlot: Int) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> concatChainReadsParameter(inner)(parameterSlot)(state)
+        | ExprNode(_node, inner) -> concatChainReadsParameter(inner)(parameterSlot)(state)
         | ExprAdd(left, right) -> concatChainReadsParameter(left)(parameterSlot)(state) || concatChainReadsParameter(right)(parameterSlot)(state)
         | ExprVar(name) -> variableReadsParameterSlot(name)(parameterSlot)(state)
         | _ -> false

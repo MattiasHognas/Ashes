@@ -199,6 +199,7 @@ export (
 let recursive expectedTypeForwards expression =
     match expression with
         | ExprAt(_span, inner) -> expectedTypeForwards(inner)
+        | ExprNode(_node, inner) -> expectedTypeForwards(inner)
         | ExprLet(_, _, _, _, _, _) -> true
         | ExprLetRecursive(_, _, _, _, _, _) -> true
         | ExprLambda(_, _, _) -> true
@@ -217,6 +218,7 @@ let recursive expectedTypeForwards expression =
 let recursive runtimeRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> runtimeRequestForwards(inner)
+        | ExprNode(_node, inner) -> runtimeRequestForwards(inner)
         | ExprAdd(_, _) -> true
         | ExprTuple(_) -> false
         | other -> expectedTypeForwards(other)
@@ -225,6 +227,7 @@ let recursive runtimeRequestForwards expression =
 let recursive transferForwards expression =
     match expression with
         | ExprAt(_span, inner) -> transferForwards(inner)
+        | ExprNode(_node, inner) -> transferForwards(inner)
         | ExprLet(_, _, _, _, _, _) -> true
         | ExprLetRecursive(_, _, _, _, _, _) -> true
         | ExprVar(_) -> true
@@ -237,6 +240,7 @@ let recursive transferForwards expression =
 let recursive tailPositionForwards expression =
     match expression with
         | ExprAt(_span, inner) -> tailPositionForwards(inner)
+        | ExprNode(_node, inner) -> tailPositionForwards(inner)
         | ExprLet(_, _, _, _, _, _) -> true
         | ExprLetRecursive(_, _, _, _, _, _) -> true
         | ExprIf(_, _, _) -> true
@@ -256,6 +260,7 @@ let recursive tailPositionForwards expression =
 let recursive tailPositionOrConsForwards expression =
     match expression with
         | ExprAt(_span, inner) -> tailPositionOrConsForwards(inner)
+        | ExprNode(_node, inner) -> tailPositionOrConsForwards(inner)
         | ExprCons(_, _) -> true
         | ExprRecord(_, _, _) -> true
         | ExprRecordUpdate(_, _) -> true
@@ -267,6 +272,7 @@ let recursive tailPositionOrConsForwards expression =
 let recursive transferRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> transferRequestForwards(inner)
+        | ExprNode(_node, inner) -> transferRequestForwards(inner)
         | ExprLet(_, _, _, _, _, _) -> true
         | ExprLetRecursive(_, _, _, _, _, _) -> true
         | ExprIf(_, _, _) -> true
@@ -286,6 +292,7 @@ let recursive transferRequestForwards expression =
 let recursive aggregateRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> aggregateRequestForwards(inner)
+        | ExprNode(_node, inner) -> aggregateRequestForwards(inner)
         | ExprTuple(_) -> true
         | ExprRecord(_, _, _) -> true
         | ExprVar(_name) -> true
@@ -299,6 +306,7 @@ let recursive aggregateRequestForwards expression =
 let consPartsRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
+        | ExprNode(_node, _inner) -> true
         | ExprCons(_head, _tail) -> true
         | ExprList(_first :: _rest, _isMultiline) -> true
         | ExprIf(_condition, _thenBranch, _elseBranch) -> true
@@ -310,6 +318,7 @@ let consPartsRequestForwards (expression: Expr) =
 let recordSuccessorRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
+        | ExprNode(_node, _inner) -> true
         | ExprRecordUpdate(_target, _fields) -> true
         | ExprRecord(_name, _fields, _isMultiline) -> true
         | _ -> false
@@ -318,6 +327,7 @@ let recordSuccessorRequestForwards (expression: Expr) =
 let argumentCellRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
+        | ExprNode(_node, _inner) -> true
         | ExprCons(_head, _tail) -> true
         | _ -> false
 
@@ -677,6 +687,7 @@ let resourceTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
 let recursive unspanArgument (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanArgument(inner)
+        | ExprNode(_node, inner) -> unspanArgument(inner)
         | other -> other
 
 let isConsValue (expression: Expr) =
@@ -1293,6 +1304,7 @@ let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (valueType: SemanticType) 
 let recursive tailForwardedVariable (body: Expr) =
     match body with
         | ExprAt(_span, inner) -> tailForwardedVariable(inner)
+        | ExprNode(_node, inner) -> tailForwardedVariable(inner)
         | ExprVar(name) -> Some(name)
         | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) ->
             match tailForwardedVariable(nestedBody) with
@@ -1313,6 +1325,7 @@ let recursive forwardedBindingContains (name: Str) (forwarded: List(Str)) =
 let recursive forwardedBindingAliasesValue (value: Expr) (forwarded: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> forwardedBindingAliasesValue(inner)(forwarded)
+        | ExprNode(_node, inner) -> forwardedBindingAliasesValue(inner)(forwarded)
         | ExprVar(source) -> forwardedBindingContains(source)(forwarded)
         | _ -> false
 
@@ -1322,6 +1335,7 @@ let recursive forwardedBindingAliasesValue (value: Expr) (forwarded: List(Str)) 
 let recursive isTailForwardedBindingResultNames (body: Expr) (forwarded: List(Str)) =
     match body with
         | ExprAt(_span, inner) -> isTailForwardedBindingResultNames(inner)(forwarded)
+        | ExprNode(_node, inner) -> isTailForwardedBindingResultNames(inner)(forwarded)
         | ExprVar(candidate) -> forwardedBindingContains(candidate)(forwarded)
         | ExprLet(nested, value, nestedBody, _parameters, _annotation, _requirements) ->
             !forwardedBindingContains(nested)(forwarded) && isTailForwardedBindingResultNames(nestedBody)(
@@ -1408,6 +1422,7 @@ let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp
 let recursive stripExprAt (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripExprAt(inner)
+        | ExprNode(_node, inner) -> stripExprAt(inner)
         | other -> other
 
 let recursive patternBindsName (name: Str) (pattern: Pattern) =
@@ -1437,6 +1452,7 @@ and fieldPatternsBindName (name: Str) (fields: List((Str, Pattern))) =
 let recursive nameHasNonCalleeUse (name: Str) (expr: Expr) (asCallee: Bool) =
     match expr with
         | ExprAt(_span, inner) -> nameHasNonCalleeUse(name)(inner)(asCallee)
+        | ExprNode(_node, inner) -> nameHasNonCalleeUse(name)(inner)(asCallee)
         | ExprInt(_value) -> false
         | ExprBigInt(_value) -> false
         | ExprUInt(_value, _bitWidth, _suffix) -> false
@@ -2174,6 +2190,7 @@ let finishLetValueInSlot name value body requestBody bodyRequest lower outerBind
 let recursive qualifiedCallRoot (expression: Expr) (argumentCount: Int) =
     match expression with
         | ExprAt(_span, inner) -> qualifiedCallRoot(inner)(argumentCount)
+        | ExprNode(_node, inner) -> qualifiedCallRoot(inner)(argumentCount)
         | ExprCall(function, _argument, _isSugar, _layout) -> qualifiedCallRoot(function)(argumentCount + 1)
         | ExprQualifiedVar(moduleName, memberName) -> Some((moduleName, memberName, argumentCount))
         | _ -> None
@@ -2273,6 +2290,7 @@ let recursive orderedRecordFieldExpressions (fieldNames: List(Str)) (fields: Lis
 let recursive constructorApplicationOf (expression: Expr) (arguments: List(Expr)) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> constructorApplicationOf(inner)(arguments)(state)
+        | ExprNode(_node, inner) -> constructorApplicationOf(inner)(arguments)(state)
         | ExprCall(function, argument, _isSugar, _layout) -> constructorApplicationOf(function)(argument :: arguments)(state)
         | ExprVar(name) ->
             match constructorLayout(name)(state) with
@@ -2613,6 +2631,7 @@ let constructorGroupKey (expression: Expr) (state: CoreLoweringState) =
 let recursive callSpineRootAndArity (expression: Expr) (arity: Int) =
     match expression with
         | ExprAt(_span, inner) -> callSpineRootAndArity(inner)(arity)
+        | ExprNode(_node, inner) -> callSpineRootAndArity(inner)(arity)
         | ExprCall(function, _argument, _isSugar, _layout) -> callSpineRootAndArity(function)(arity + 1)
         | other -> (other, arity)
 
@@ -2832,6 +2851,7 @@ and patternFieldBindingNames fields names =
 let recursive collectFree expression bound free =
     match expression with
         | ExprAt(_span, inner) -> collectFree(inner)(bound)(free)
+        | ExprNode(_node, inner) -> collectFree(inner)(bound)(free)
         | ExprVar(name) -> addFreeName(name)(bound)(free)
         | ExprAdd(left, right) -> collectFreeBinary(left)(right)(bound)(free)
         | ExprSubtract(left, right) -> collectFreeBinary(left)(right)(bound)(free)

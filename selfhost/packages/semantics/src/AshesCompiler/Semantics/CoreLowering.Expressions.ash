@@ -1436,6 +1436,7 @@ let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: Se
 let recursive callSpineRootOf (expression: Expr) (count: Int) =
     match expression with
         | ExprAt(_span, inner) -> callSpineRootOf(inner)(count)
+        | ExprNode(_node, inner) -> callSpineRootOf(inner)(count)
         | ExprCall(function, _argument, _sugar, _layout) -> callSpineRootOf(function)(count + 1)
         | ExprVar(name) -> Some((name, count))
         | _ -> None
@@ -2026,6 +2027,19 @@ let lowerCoreDispatch expression lowerCore state =
                     match lowerCore(inner)((state with currentSpan = Some(span))) with
                         | LoweredCoreValue { state = innerState, temp = temp, semanticType = semanticType, error = error } ->
                             let restored = innerState with currentSpan = previous
+                            in
+                                LoweredCoreValue(
+                                    state = restored,
+                                    temp = temp,
+                                    semanticType = semanticType,
+                                    error = error
+                                )
+        | ExprNode(node, inner) ->
+            match state with
+                | CoreLoweringState { currentNode = previous } ->
+                    match lowerCore(inner)((state with currentNode = Some(node))) with
+                        | LoweredCoreValue { state = innerState, temp = temp, semanticType = semanticType, error = error } ->
+                            let restored = innerState with currentNode = previous
                             in
                                 LoweredCoreValue(
                                     state = restored,

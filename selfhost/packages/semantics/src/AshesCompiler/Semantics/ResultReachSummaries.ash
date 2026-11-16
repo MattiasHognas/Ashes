@@ -767,6 +767,7 @@ type ReachSummary =
 let recursive stripSpans (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripSpans(inner)
+        | ExprNode(_node, inner) -> stripSpans(inner)
         | other -> other
 
 // The source offset identifying a function's lambda value: the first located node through its
@@ -774,12 +775,14 @@ let recursive stripSpans (expr: Expr) =
 let recursive lambdaIdentityOf (value: Expr) =
     match value with
         | ExprAt(TextSpan { start = start }, _inner) -> start
+        | ExprNode(_node, inner) -> lambdaIdentityOf(inner)
         | ExprLambda(_parameter, body, _annotation) -> lambdaIdentityOf(body)
         | _ -> -1
 
 let recursive lambdaChainOf (value: Expr) (parameters: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> lambdaChainOf(inner)(parameters)
+        | ExprNode(_node, inner) -> lambdaChainOf(inner)(parameters)
         | ExprLambda(parameter, body, _annotation) -> lambdaChainOf(body)(parameter :: parameters)
         | body -> (reverse(parameters), body)
 
@@ -791,6 +794,7 @@ let isLambda (expr: Expr) =
 let recursive nestedShapeOf (value: Expr) (outer: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> nestedShapeOf(inner)(outer)
+        | ExprNode(_node, inner) -> nestedShapeOf(inner)(outer)
         | ExprLambda(parameter, body, _annotation) -> nestedShapeOf(body)(parameter :: outer)
         | ExprLetRecursive(name, recursiveValue, letBody, _parameters, _annotation, _requirements) ->
             match (outer, stripSpans(recursiveValue), stripSpans(letBody)) with
@@ -943,6 +947,7 @@ let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identit
 let recursive registerExpr (expr: Expr) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match expr with
         | ExprAt(_span, inner) -> registerExpr(inner)(enclosing)(scope)(registration)
+        | ExprNode(_node, inner) -> registerExpr(inner)(enclosing)(scope)(registration)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) -> registerBinding(false)(name)(value)(Some(body))(enclosing)(scope)(registration)
         | ExprLetResult(name, value, body) -> registerBinding(false)(name)(value)(Some(body))(enclosing)(scope)(registration)
         | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) -> registerBinding(true)(name)(value)(Some(body))(enclosing)(scope)(registration)
@@ -1362,6 +1367,7 @@ let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value:
 let recursive callSpineOf (expr: Expr) (arguments: List(Expr)) =
     match expr with
         | ExprAt(_span, inner) -> callSpineOf(inner)(arguments)
+        | ExprNode(_node, inner) -> callSpineOf(inner)(arguments)
         | ExprCall(function, argument, _isSugar, _layout) -> callSpineOf(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -1413,6 +1419,7 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
             then
                 stepOf(reachOfToken("#S" + Ashes.Text.fromInt(token)))(token + 1)
             else reachOf(context)(env)(scope)(token)(inner)
+        | ExprNode(_node, inner) -> reachOf(context)(env)(scope)(token)(inner)
         | ExprInt(_value) ->
             stepOf(reachBottom(Unit))(token)
         | ExprBigInt(_value) ->
@@ -1880,6 +1887,7 @@ and overApplyReach (context: ReachContext) (body: Expr) (markers: List(Str)) (in
         | Some(marker) ->
             match body with
                 | ExprAt(_span, inner) -> overApplyReach(context)(inner)(markers)(index)(env)(scope)(token)
+                | ExprNode(_node, inner) -> overApplyReach(context)(inner)(markers)(index)(env)(scope)(token)
                 | ExprLambda(parameter, lambdaBody, _annotation) ->
                     overApplyReach(context)(lambdaBody)(markers)(index + 1)((parameter, reachOfToken(marker)) :: env)(removeScopeNames([parameter])(scope))(token)
                 | ExprIf(_condition, thenBranch, elseBranch) ->
@@ -1947,6 +1955,7 @@ let functionReach (registry: ReachRegistry) (table: ReachTable) (function: Reach
 let recursive dependencyKeys (registry: ReachRegistry) (scope: ReachScope) (expr: Expr) (keys: MapTree(Str, Bool)) =
     match expr with
         | ExprAt(_span, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprNode(_node, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
         | ExprNode(_id, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
         | ExprInt(_value) -> keys
         | ExprBigInt(_value) -> keys
@@ -2176,6 +2185,7 @@ let initialTable (functions: List(ReachFunction)) = initialTableInto(functions)(
 let recursive mustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> mustReach(registry)(table)(scope)(name)(inner)
+        | ExprNode(_node, inner) -> mustReach(registry)(table)(scope)(name)(inner)
         | ExprVar(candidate) -> candidate == name
         | ExprLambda(parameter, body, _annotation) -> parameter != name && mustReach(registry)(table)(scope)(name)(body)
         | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->

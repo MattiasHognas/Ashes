@@ -89,17 +89,20 @@ let isBorrowReadResourceOp (moduleName: Str) (name: Str) =
 let recursive stripSpan (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripSpan(inner)
+        | ExprNode(_node, inner) -> stripSpan(inner)
         | other -> other
 
 let recursive collectCallArgsAndRoot (expr: Expr) (argsAcc: List(Expr)) =
     match expr with
         | ExprAt(_span, inner) -> collectCallArgsAndRoot(inner)(argsAcc)
+        | ExprNode(_node, inner) -> collectCallArgsAndRoot(inner)(argsAcc)
         | ExprCall(func, arg, _isSugar, _layout) -> collectCallArgsAndRoot(func)(arg :: argsAcc)
         | other -> (other, argsAcc)
 
 let recursive mentionsVar (expr: Expr) (param: Str) =
     match expr with
         | ExprAt(_span, inner) -> mentionsVar(inner)(param)
+        | ExprNode(_node, inner) -> mentionsVar(inner)(param)
         | ExprVar(name) -> name == param
         | ExprIf(cond, thenE, elseE) ->
             if mentionsVar(cond)(param)
@@ -288,6 +291,7 @@ let addFreeVar (acc: List(Str)) (bound: List(Str)) (name: Str) =
 let recursive collectFreeVars (expr: Expr) (bound: List(Str)) (acc: List(Str)) =
     match expr with
         | ExprAt(_span, inner) -> collectFreeVars(inner)(bound)(acc)
+        | ExprNode(_node, inner) -> collectFreeVars(inner)(bound)(acc)
         | ExprInt(_) -> acc
         | ExprBigInt(_) -> acc
         | ExprUInt(_, _, _) -> acc
@@ -468,6 +472,7 @@ let isWholeParameter (expr: Expr) (param: Str) =
 let recursive borrowReadWalk (table: UniqueParameterOwnership) (shadowed: List(Str)) (expr: Expr) (param: Str) =
     match expr with
         | ExprAt(_span, inner) -> borrowReadWalk(table)(shadowed)(inner)(param)
+        | ExprNode(_node, inner) -> borrowReadWalk(table)(shadowed)(inner)(param)
         | ExprInt(_) -> true
         | ExprBigInt(_) -> true
         | ExprUInt(_, _, _) -> true
@@ -697,6 +702,7 @@ let inferProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
 let recursive lambdaParameters (value: Expr) (parameters: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> lambdaParameters(inner)(parameters)
+        | ExprNode(_node, inner) -> lambdaParameters(inner)(parameters)
         | ExprLambda(parameter, body, _annotation) -> lambdaParameters(body)(parameter :: parameters)
         | body -> (reverse(parameters), body)
 
@@ -893,6 +899,7 @@ let recursive constructorArityOf (name: Str) (constructorArities: List((Str, Int
 let recursive isFullyFreshConstruction (constructorArities: List((Str, Int))) (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> isFullyFreshConstruction(constructorArities)(inner)
+        | ExprNode(_node, inner) -> isFullyFreshConstruction(constructorArities)(inner)
         | ExprInt(_) -> true
         | ExprBigInt(_) -> true
         | ExprUInt(_, _, _) -> true
@@ -947,6 +954,7 @@ and allFreshConstructionFields (constructorArities: List((Str, Int))) (fields: L
 let recursive collectCallSites (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (expr: Expr) (acc: List(MoveCallSite)) =
     match expr with
         | ExprAt(_span, inner) -> collectCallSites(functionTable)(enclosing)(inner)(acc)
+        | ExprNode(_node, inner) -> collectCallSites(functionTable)(enclosing)(inner)(acc)
         | ExprCall(_func, _arg, _isSugar, _layout) ->
             match collectCallArgsAndRoot(expr)([]) with
                 | (root, arguments) ->

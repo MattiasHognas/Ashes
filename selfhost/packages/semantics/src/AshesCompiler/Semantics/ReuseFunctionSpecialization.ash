@@ -31,6 +31,7 @@ export (
 let recursive specializationLambdaChain (value: Expr) (reversedParameters: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> specializationLambdaChain(inner)(reversedParameters)
+        | ExprNode(_node, inner) -> specializationLambdaChain(inner)(reversedParameters)
         | ExprLambda(parameter, body, _annotation) -> specializationLambdaChain(body)(parameter :: reversedParameters)
         | _ -> reversedParameters
 
@@ -49,6 +50,7 @@ let specializationCandidateOf (name: Str) (value: Expr) =
 let recursive stripSpecializationSpans (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> stripSpecializationSpans(inner)
+        | ExprNode(_node, inner) -> stripSpecializationSpans(inner)
         | other -> other
 
 // The body under a lambda chain and the leading non-recursive lets it opens with (a hoisted
@@ -70,7 +72,7 @@ let recursive lastOuterParameter (parameters: List(Str)) =
 // accumulator as one extra argument) or applied to the last outer parameter (`in go(map)`), is
 // specialized on the worker's parameter: the `Map.set` shape. The worker's own parameter, when
 // the value has that shape.
-let nestedRecursiveWorkerParameter (parameters: List(Str)) (value: Expr) =
+let recursive nestedRecursiveWorkerParameter (parameters: List(Str)) (value: Expr) =
     match specializationInnermostBody(value) with
         | ExprLetRecursive(worker, ExprLambda(workerParameter, workerBody, _annotation), returned, _parameters, _typeAnnotation, _constraints) ->
             match (stripSpecializationSpans(workerBody), stripSpecializationSpans(returned)) with
@@ -87,6 +89,10 @@ let nestedRecursiveWorkerParameter (parameters: List(Str)) (value: Expr) =
                             else None
                         | _ -> None
                 | _ -> None
+        | ExprLetRecursive(worker, ExprNode(_node, recursiveValue), returned, parametersOfLet, typeAnnotation, constraints) ->
+            constraints
+            |> ExprLetRecursive(worker)(recursiveValue)(returned)(parametersOfLet)(typeAnnotation)
+            |> nestedRecursiveWorkerParameter(parameters)
         | _ -> None
 
 // The parameter a candidate is specialized on: its nested worker's, or its last.
@@ -162,6 +168,7 @@ let reuseSpecializationLabel (name: Str) (index: Int) =
 let recursive specializationCallRoot (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> specializationCallRoot(inner)(arguments)
+        | ExprNode(_node, inner) -> specializationCallRoot(inner)(arguments)
         | ExprCall(function, argument, _isSugar, _layout) -> specializationCallRoot(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -188,6 +195,7 @@ let recursive specializationAccumulatorRecorded (name: Str) (found: List((Str, S
 let recursive unspanSpecializationExpr (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanSpecializationExpr(inner)
+        | ExprNode(_node, inner) -> unspanSpecializationExpr(inner)
         | other -> other
 
 let recursive lastCallArgument (arguments: List(Expr)) =
@@ -217,6 +225,7 @@ let specializationCallAccumulator (parameters: List(Str)) (candidates: List((Str
 let recursive collectSpecializableCallArgs (parameters: List(Str)) (candidates: List((Str, Int))) (expression: Expr) (found: List((Str, Str))) =
     match expression with
         | ExprAt(_span, inner) -> collectSpecializableCallArgs(parameters)(candidates)(inner)(found)
+        | ExprNode(_node, inner) -> collectSpecializableCallArgs(parameters)(candidates)(inner)(found)
         | ExprCall(function, argument, _isSugar, _layout) as call ->
             found
             |> recordSpecializableCallArg(parameters)(candidates)(call)

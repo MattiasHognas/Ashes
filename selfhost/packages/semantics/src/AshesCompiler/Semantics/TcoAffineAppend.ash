@@ -75,6 +75,7 @@ let affineResolve (name: Str) (shadowed: List(Str)) (aliases: List((Str, Int))) 
 let recursive affineUnspan (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> affineUnspan(inner)
+        | ExprNode(_node, inner) -> affineUnspan(inner)
         | other -> other
 
 let recursive affinePatternNames (pattern: Pattern) (names: List(Str)) =
@@ -110,6 +111,7 @@ and affinePatternFieldNames (fields: List((Str, Pattern))) (names: List(Str)) =
 let recursive affineFreeNames (expression: Expr) (bound: List(Str)) (free: List(Str)) =
     match expression with
         | ExprAt(_span, inner) -> affineFreeNames(inner)(bound)(free)
+        | ExprNode(_node, inner) -> affineFreeNames(inner)(bound)(free)
         | ExprVar(name) ->
             if affineContainsName(name)(bound)
             then free
@@ -271,6 +273,7 @@ let affineSaturate (left: Int) (right: Int) =
 let recursive affineCountUses (expression: Expr) (name: Str) =
     match expression with
         | ExprAt(_span, inner) -> affineCountUses(inner)(name)
+        | ExprNode(_node, inner) -> affineCountUses(inner)(name)
         | ExprInt(_value) -> 0
         | ExprUInt(_value, _bits, _text) -> 0
         | ExprBigInt(_text) -> 0
@@ -383,6 +386,7 @@ let affineDisqualifyGuard (continues: Bool) (guard: Maybe(Expr)) (shadowed: List
 let recursive affineCallSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> affineCallSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> affineCallSpine(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> affineCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -420,6 +424,7 @@ let recursive affineWalkArguments (arguments: List(Expr)) (index: Int) (shadowed
 let recursive affineWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (aliases: List((Str, Int))) (walk: AffineWalk) =
     match expression with
         | ExprAt(_span, inner) -> affineWalk(self)(parameters)(inner)(shadowed)(aliases)(walk)
+        | ExprNode(_node, inner) -> affineWalk(self)(parameters)(inner)(shadowed)(aliases)(walk)
         | ExprIf(condition, thenBranch, elseBranch) ->
             match affineWalk(self)(parameters)(thenBranch)(shadowed)(aliases)(walk) with
                 | (thenContinues, afterThen) ->

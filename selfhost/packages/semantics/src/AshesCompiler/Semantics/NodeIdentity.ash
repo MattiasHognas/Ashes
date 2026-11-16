@@ -19,6 +19,7 @@ export (
     value foldProgramNodes,
     value expressionKind,
     value nodeIdentityOf,
+    value withoutNodeIdentity,
 )
 
 let recursive identifyExpression (next: Int) (expression: Expr) =
@@ -280,6 +281,17 @@ let recursive nodeIdentityOf (expression: Expr) =
         | ExprAt(_span, inner) -> nodeIdentityOf(inner)
         | ExprNode(id, _inner) -> id
         | _ -> -1
+
+// The node without the identity wrappers at its top, under its location if it has one, so a shape
+// written for an unnumbered tree matches it.
+let recursive withoutNodeIdentity (expression: Expr) =
+    match expression with
+        | ExprNode(_id, inner) -> withoutNodeIdentity(inner)
+        | ExprAt(span, ExprNode(_id, inner)) ->
+            inner
+            |> withoutNodeIdentity
+            |> ExprAt(span)
+        | other -> other
 
 let expressionKind (expression: Expr) =
     match expression with

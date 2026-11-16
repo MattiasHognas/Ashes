@@ -13,6 +13,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TypeInference
@@ -38,6 +39,27 @@ let lowerCoreProgram (program: ProgramSyntax) =
                     state
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items)))
+                |> withProgramParameterOwnership(program)
+                |> lowerProgramPasses(items)(trailingBody)(None)
+                |> buildProgram
+
+// As lowerCoreProgram, for a numbered program and the types inference recorded against it, as
+// lowerCoreNumberedProgramWithSourceAndReuse takes them.
+let lowerCoreNumberedProgram (program: ProgramSyntax) (nodeTypes: NodeTypeTable) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialState
+                |> (given (state: CoreLoweringState) ->
+                    state
+                    |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
+                    |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
+                    |> withNodeTypes(nodeTypes))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
@@ -110,6 +132,42 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
             match lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(merged) with
                 | CoreLoweringResult { error = None } as lowered -> lowered
                 | _failed -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
+
+// As lowerProgramWithSourceAndReuse, for a program the standalone inference ran on first: its
+// items are the numbered units with `deriving` already expanded, every expression node is wrapped
+// in its identity, and `nodeTypes` holds what the inference recorded against those identities.
+let lowerNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (nodeTypes: NodeTypeTable) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
+                |> (given (state: CoreLoweringState) ->
+                    state
+                    |> withStateSourceContext(source
+                    |> createSourceContext(filePath)
+                    |> Some)
+                    |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
+                    |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
+                    |> withStateReuseEnabled(reuseEnabled)
+                    |> withNodeTypes(nodeTypes))
+                |> withProgramParameterOwnership(program)
+                |> lowerProgramPasses(items)(trailingBody)(None)
+                |> buildProgram
+
+// As lowerCoreProgramWithSourceAndReuse, merging mutually recursive groups the same way, for a
+// numbered program and the types inference recorded against it.
+let lowerCoreNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) (nodeTypes: NodeTypeTable) =
+    match mergeMutualRecursionGroups(program) with
+        | None -> lowerNumberedProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(nodeTypes)(program)
+        | Some(merged) ->
+            match lowerNumberedProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(nodeTypes)(merged) with
+                | CoreLoweringResult { error = None } as lowered -> lowered
+                | _failed -> lowerNumberedProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(nodeTypes)(program)
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
 // non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.

@@ -166,6 +166,8 @@ and rewrite self evidence blocked expression =
             else Some(expression)
         | ExprAt(span, inner) ->
             rewriteUnary(self)(evidence)(blocked)(given (next) -> ExprAt(span)(next))(inner)
+        | ExprNode(node, inner) ->
+            rewriteUnary(self)(evidence)(blocked)(given (next) -> ExprNode(node)(next))(inner)
         | ExprInt(_value) -> Some(expression)
         | ExprBigInt(_value) -> Some(expression)
         | ExprUInt(_value, _bits, _raw) -> Some(expression)

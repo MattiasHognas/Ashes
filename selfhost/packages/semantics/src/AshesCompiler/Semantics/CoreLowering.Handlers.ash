@@ -244,6 +244,7 @@ let lowerPerform operation lower state =
 let recursive unspanForResumeCheck expression =
     match expression with
         | ExprAt(_span, inner) -> unspanForResumeCheck(inner)
+        | ExprNode(_node, inner) -> unspanForResumeCheck(inner)
         | other -> other
 
 let tailResumeArgument body =

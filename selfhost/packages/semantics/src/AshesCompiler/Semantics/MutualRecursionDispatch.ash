@@ -67,6 +67,7 @@ let recursive anyNameIn (candidates: List(Str)) (names: List(Str)) =
 let recursive lambdaOf (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> lambdaOf(inner)
+        | ExprNode(_node, inner) -> lambdaOf(inner)
         | ExprLambda(parameter, body, annotation) -> Some((parameter, body, annotation))
         | _ -> None
 
@@ -134,6 +135,7 @@ let recursive memberNamed (name: Str) (members: List(DispatchMember)) (index: In
 let recursive callSpineOf (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> callSpineOf(inner)(arguments)
+        | ExprNode(_node, inner) -> callSpineOf(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> callSpineOf(function)(argument :: arguments)
         | ExprVar(name) -> Some((name, arguments))
         | _ -> None
@@ -144,6 +146,7 @@ let recursive callSpineOf (expression: Expr) (arguments: List(Expr)) =
 let recursive tailCalleesOf (members: List(DispatchMember)) (names: List(Str)) (expression: Expr) (found: List(Str)) =
     match expression with
         | ExprAt(_span, inner) -> tailCalleesOf(members)(names)(inner)(found)
+        | ExprNode(_node, inner) -> tailCalleesOf(members)(names)(inner)(found)
         | ExprIf(condition, thenBranch, elseBranch) ->
             if mentionsAny(names)(condition)
             then None
@@ -382,6 +385,10 @@ let recursive redirectTailCalls (dispatchName: Str) (members: List(DispatchMembe
             inner
             |> redirectTailCalls(dispatchName)(members)(slots)
             |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> redirectTailCalls(dispatchName)(members)(slots)
+            |> ExprNode(node)
         | ExprIf(condition, thenBranch, elseBranch) ->
             elseBranch
             |> redirectTailCalls(dispatchName)(members)(slots)

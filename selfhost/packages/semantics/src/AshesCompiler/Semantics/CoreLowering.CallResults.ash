@@ -997,6 +997,7 @@ let takenOverRecordProven (callee: Str) (span: Maybe(TextSpan)) (element: Semant
 let recursive ownFieldSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> ownFieldSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> ownFieldSpine(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> ownFieldSpine(function)(argument :: arguments)
         | other -> (other, arguments)
 
@@ -1038,6 +1039,7 @@ let constructorOfArity (name: Str) (arity: Int) (state: CoreLoweringState) =
 let recursive ownFieldLeaves (expression: Expr) (parameters: List(Str)) (selfName: Str) (arity: Int) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> ownFieldLeaves(inner)(parameters)(selfName)(arity)(state)
+        | ExprNode(_node, inner) -> ownFieldLeaves(inner)(parameters)(selfName)(arity)(state)
         | ExprIf(_condition, thenBranch, elseBranch) -> ownFieldLeaves(thenBranch)(parameters)(selfName)(arity)(state) && ownFieldLeaves(elseBranch)(parameters)(selfName)(arity)(state)
         | ExprMatch(_scrutinee, arms, _position) -> ownFieldArms(arms)(parameters)(selfName)(arity)(state)
         | ExprLet(name, _value, body, _parameters, _annotation, _requirements) ->
@@ -1453,6 +1455,15 @@ let recursive lowerCallSpineCallee expression (context: CoreCallContext) expecte
         // The applications of a spine are located at the outermost one; the callee they end in is
         // located where it is written, which a pipeline puts on a later line than the call.
         | ExprAt(_span, inner) ->
+            match unspanArgument(inner) with
+                | ExprCall(_function, _argument, _isSugar, _layout) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | ExprLambda(_parameter, _body, _annotation) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | _ ->
+                    state
+                    |> lower(expression)
+                    |> preconstrainCallResult(expected)(site)(arity)
+                    |> callStageOf
+        | ExprNode(_node, inner) ->
             match unspanArgument(inner) with
                 | ExprCall(_function, _argument, _isSugar, _layout) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
                 | ExprLambda(_parameter, _body, _annotation) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
@@ -1997,6 +2008,7 @@ let armBorrowsLoopParameterOf (body: Expr) (state: CoreLoweringState) =
 let recursive constructsFreshCell (body: Expr) (state: CoreLoweringState) =
     match body with
         | ExprAt(_span, inner) -> constructsFreshCell(inner)(state)
+        | ExprNode(_node, inner) -> constructsFreshCell(inner)(state)
         | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> constructsFreshCell(nested)(state)
         | ExprCons(_head, _tail) -> true
         | ExprTuple(_elements) -> true

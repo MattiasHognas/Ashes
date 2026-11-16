@@ -317,6 +317,7 @@ let createStructuralOwnerDropperOrigin (label: Str) (typeName: Str) =
 let recursive findInnermostLambdaUnderLets (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> findInnermostLambdaUnderLets(inner)
+        | ExprNode(_node, inner) -> findInnermostLambdaUnderLets(inner)
         | ExprLambda(_, _, _) -> Some(expr)
         | ExprLet(_name, _val, body, _params, _type, _reqs) -> findInnermostLambdaUnderLets(body)
         | ExprLetRecursive(_name, _val, body, _params, _type, _reqs) -> findInnermostLambdaUnderLets(body)
@@ -331,6 +332,7 @@ let recursive getExpressionSpan (expr: Expr) =
 let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe(SourceFunctionOrigin)) (sourceContext: Maybe(SourceContext)) =
     match expr with
         | ExprAt(_span, inner) -> discoverSourceFunctionOrigins(inner)(enclosingSource)(sourceContext)
+        | ExprNode(_node, inner) -> discoverSourceFunctionOrigins(inner)(enclosingSource)(sourceContext)
         | ExprLet(name, value, body, _params, _type, _reqs) ->
             if Ashes.Text.startsWith("__trait_validate_")(name)
             then

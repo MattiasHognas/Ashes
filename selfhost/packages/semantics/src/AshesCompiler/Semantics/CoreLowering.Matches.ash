@@ -1422,6 +1422,7 @@ let representationLetValueRequest (name: Str) (value: Expr) (body: Expr) (state:
 let recursive successorJoinSpanOf (value: Expr) (span: Maybe(TextSpan)) =
     match value with
         | ExprAt(at, inner) -> successorJoinSpanOf(inner)(Some(at))
+        | ExprNode(_node, inner) -> successorJoinSpanOf(inner)(span)
         | ExprLet(_name, _bound, body, _parameters, _annotation, _requirements) -> successorJoinSpanOf(body)(None)
         | ExprIf(_condition, _thenBranch, _elseBranch) -> span
         | ExprMatch(_scrutinee, _cases, _position) -> span
@@ -1431,6 +1432,7 @@ let recursive successorJoinSpanOf (value: Expr) (span: Maybe(TextSpan)) =
 let recursive selfCallChainPassing (expression: Expr) (name: Str) (selfName: Str) (reversedArguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> selfCallChainPassing(inner)(name)(selfName)(reversedArguments)
+        | ExprNode(_node, inner) -> selfCallChainPassing(inner)(name)(selfName)(reversedArguments)
         | ExprCall(function, argument, _isSugar, _layout) -> selfCallChainPassing(function)(name)(selfName)(argument :: reversedArguments)
         | ExprVar(callee) ->
             if callee == selfName
@@ -1454,6 +1456,7 @@ and argumentOrdinalNaming (arguments: List(Expr)) (name: Str) (ordinal: Int) =
 let recursive tailSelfCallOrdinalPassing (expression: Expr) (name: Str) (selfName: Str) =
     match expression with
         | ExprAt(_span, inner) -> tailSelfCallOrdinalPassing(inner)(name)(selfName)
+        | ExprNode(_node, inner) -> tailSelfCallOrdinalPassing(inner)(name)(selfName)
         | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->
             if bound == name
             then None
@@ -1553,6 +1556,7 @@ let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringS
 let recursive escapingChainBody (body: Expr) (lastOrdinary: Bool) =
     match body with
         | ExprAt(_span, inner) -> escapingChainBody(inner)(lastOrdinary)
+        | ExprNode(_node, inner) -> escapingChainBody(inner)(lastOrdinary)
         | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> escapingChainBody(nested)(true)
         | ExprLetRecursive(_name, _value, nested, _parameters, _annotation, _requirements) -> escapingChainBody(nested)(false)
         | _ ->
@@ -1593,6 +1597,7 @@ let letOwnedTypeName (value: Expr) (loweredValue: LoweredCoreValue) (state: Core
 let recursive resultHoldsClosureCapturing (name: Str) (aliases: List(Str)) (expression: Expr) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> resultHoldsClosureCapturing(name)(aliases)(inner)(state)
+        | ExprNode(_node, inner) -> resultHoldsClosureCapturing(name)(aliases)(inner)(state)
         | ExprLambda(parameter, lambdaBody, _annotation) -> parameter != name && exprMentionsName(name)(lambdaBody)
         | ExprVar(alias) -> containsName(alias)(aliases)
         | ExprLet(bound, value, nested, _parameters, _annotation, _requirements) ->
@@ -1668,6 +1673,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state = low
 let recursive constructorSpineRoot (expression: Expr) (argumentCount: Int) =
     match expression with
         | ExprAt(_span, inner) -> constructorSpineRoot(inner)(argumentCount)
+        | ExprNode(_node, inner) -> constructorSpineRoot(inner)(argumentCount)
         | ExprCall(function, _argument, _isSugar, _layout) -> constructorSpineRoot(function)(argumentCount + 1)
         | ExprVar(name) -> Some((name, argumentCount))
         | _ -> None
@@ -3038,5 +3044,6 @@ let lowerMatch value cases lower state =
 let recursive lambdaParts expression =
     match expression with
         | ExprAt(_span, inner) -> lambdaParts(inner)
+        | ExprNode(_node, inner) -> lambdaParts(inner)
         | ExprLambda(parameter, body, annotation) -> Some((parameter, body, annotation))
         | _ -> None

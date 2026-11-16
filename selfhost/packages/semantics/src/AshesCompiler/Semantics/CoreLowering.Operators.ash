@@ -1172,6 +1172,7 @@ let coerceCoreNegationZero binary =
 let recursive isCoreZeroExpression expression =
     match expression with
         | ExprAt(_span, inner) -> isCoreZeroExpression(inner)
+        | ExprNode(_node, inner) -> isCoreZeroExpression(inner)
         | ExprInt(0) -> true
         | _ -> false
 

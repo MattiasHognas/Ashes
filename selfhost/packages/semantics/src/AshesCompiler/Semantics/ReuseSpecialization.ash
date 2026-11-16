@@ -50,6 +50,7 @@ type CoreReuseToken =
 let recursive reuseUnspanExpr (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> reuseUnspanExpr(inner)
+        | ExprNode(_node, inner) -> reuseUnspanExpr(inner)
         | _ -> expression
 
 let recursive reuseUnspanPattern (pattern: Pattern) =

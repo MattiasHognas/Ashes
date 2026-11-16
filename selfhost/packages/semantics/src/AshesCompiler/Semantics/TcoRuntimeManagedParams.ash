@@ -107,6 +107,10 @@ let recursive inlineName (target: Str) (replacement: Str) (expression: Expr) =
             inner
             |> inlineName(target)(replacement)
             |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> inlineName(target)(replacement)
+            |> ExprNode(node)
         | ExprVar(name) ->
             if name == target
             then ExprVar(replacement)
@@ -182,11 +186,23 @@ let recursive inlinePlainVarAliases (expression: Expr) =
             inner
             |> inlinePlainVarAliases
             |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> inlinePlainVarAliases
+            |> ExprNode(node)
         | ExprLet(name, ExprVar(source), body, _parameters, _annotation, _requirements) ->
             body
             |> inlineName(name)(source)
             |> inlinePlainVarAliases
         | ExprLet(name, ExprAt(_span, ExprVar(source)), body, _parameters, _annotation, _requirements) ->
+            body
+            |> inlineName(name)(source)
+            |> inlinePlainVarAliases
+        | ExprLet(name, ExprNode(_node, ExprVar(source)), body, _parameters, _annotation, _requirements) ->
+            body
+            |> inlineName(name)(source)
+            |> inlinePlainVarAliases
+        | ExprLet(name, ExprAt(_span, ExprNode(_node, ExprVar(source))), body, _parameters, _annotation, _requirements) ->
             body
             |> inlineName(name)(source)
             |> inlinePlainVarAliases
@@ -239,6 +255,7 @@ let shapeResolveParameter (name: Str) (shadowed: List(Str)) (parameters: List(St
 let recursive shapeUnspan (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> shapeUnspan(inner)
+        | ExprNode(_node, inner) -> shapeUnspan(inner)
         | other -> other
 
 let recursive shapeUnspanPattern (pattern: Pattern) =
@@ -379,6 +396,7 @@ let recursive shapeConsChainTail (expression: Expr) =
 let recursive shapeReadsNameAmong (names: List(Str)) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> shapeReadsNameAmong(names)(inner)
+        | ExprNode(_node, inner) -> shapeReadsNameAmong(names)(inner)
         | ExprVar(name) -> shapeContainsName(name)(names)
         | ExprQualifiedVar(owner, _member) -> shapeContainsName(owner)(names)
         | ExprAdd(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
@@ -687,6 +705,7 @@ let recursive shapeObserveConsedTails (arguments: List(Expr)) (index: Int) (shad
 let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> shapeCallSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> shapeCallSpine(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> shapeCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -894,6 +913,7 @@ let shapeShadowNames (names: List(Str)) (walk: ShapeWalk) = walk with innerTails
 let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match expression with
         | ExprAt(_span, inner) -> shapeWalk(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(callParts)(walk)
+        | ExprNode(_node, inner) -> shapeWalk(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(callParts)(walk)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             walk
             |> shapeWalk(self)(parameters)(thenBranch)(shadowed)(tailOwners)(letValues)(callParts)
@@ -1091,6 +1111,7 @@ let isTcoListShape (shape: TcoArgumentShape) =
 let recursive selfCallArgumentOrdinal (function: Expr) (self: Str) (ordinal: Int) =
     match function with
         | ExprAt(_span, inner) -> selfCallArgumentOrdinal(inner)(self)(ordinal)
+        | ExprNode(_node, inner) -> selfCallArgumentOrdinal(inner)(self)(ordinal)
         | ExprCall(inner, _argument, _sugar, _layout) -> selfCallArgumentOrdinal(inner)(self)(ordinal + 1)
         | ExprVar(name) ->
             if name == self
@@ -1108,6 +1129,7 @@ let shapeFirstSome (first: Maybe(Int)) (second: Maybe(Int)) =
 let recursive selfCallOrdinalPassing (expression: Expr) (name: Str) (self: Str) =
     match expression with
         | ExprAt(_span, inner) -> selfCallOrdinalPassing(inner)(name)(self)
+        | ExprNode(_node, inner) -> selfCallOrdinalPassing(inner)(name)(self)
         | ExprCall(function, argument, _sugar, _layout) ->
             self
             |> selfCallOrdinalPassing(argument)(name)
@@ -1223,6 +1245,7 @@ let recursive flowNodes (pending: List(Expr)) (nodes: List(Expr)) =
     match pending with
         | [] -> Some(nodes)
         | ExprAt(_span, inner) :: rest -> flowNodes(inner :: rest)(nodes)
+        | ExprNode(_node, inner) :: rest -> flowNodes(inner :: rest)(nodes)
         | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
             match shapeCallSpine(call)([]) with
                 | (root, arguments) -> flowNodes(root :: append(arguments)(rest))(call :: nodes)
@@ -1424,6 +1447,7 @@ let recursive flowReadsName (name: Str) (parameters: List(Str)) (policy: List((S
     else
         match expression with
             | ExprAt(_span, inner) -> flowReadsName(name)(parameters)(policy)(depth)(inner)
+            | ExprNode(_node, inner) -> flowReadsName(name)(parameters)(policy)(depth)(inner)
             | ExprAdd(left, _right) ->
                 match shapeUnspan(left) with
                     | ExprVar(leftName) -> shapeContainsName(leftName)(parameters) && leftName == name

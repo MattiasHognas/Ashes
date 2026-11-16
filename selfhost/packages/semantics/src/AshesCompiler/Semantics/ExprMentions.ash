@@ -21,6 +21,7 @@ export (
 let recursive exprMentionsWith (qualifiers: Bool) (name: Str) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> exprMentionsWith(qualifiers)(name)(inner)
+        | ExprNode(_node, inner) -> exprMentionsWith(qualifiers)(name)(inner)
         | ExprVar(candidate) -> candidate == name
         | ExprQualifiedVar(qualifier, _member) -> qualifiers && qualifier == name
         | ExprAdd(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)

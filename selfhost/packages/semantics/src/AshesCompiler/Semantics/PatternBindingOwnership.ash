@@ -111,6 +111,7 @@ let recursive containsUse (use: PatternBindingUse) (uses: List(PatternBindingUse
 let recursive unspan (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspan(inner)
+        | ExprNode(_node, inner) -> unspan(inner)
         | other -> other
 
 let recursive unspanPattern (pattern: Pattern) =
@@ -308,6 +309,7 @@ and patternFieldNames (fields: List((Str, Pattern))) (names: List(Str)) =
 let recursive freeNames (expression: Expr) (bound: List(Str)) (names: List(Str)) =
     match expression with
         | ExprAt(_span, inner) -> freeNames(inner)(bound)(names)
+        | ExprNode(_node, inner) -> freeNames(inner)(bound)(names)
         | ExprVar(name) ->
             if containsText(name)(bound)
             then names
@@ -424,6 +426,7 @@ let recordFreeUses (expression: Expr) (bound: List(Str)) (lineages: List((Str, P
 let recursive callSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> callSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> callSpine(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> callSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -581,6 +584,7 @@ let tupleArmLineages (pattern: Pattern) (sources: List(Maybe(PatternLineage))) (
 let recursive walkExpression (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match expression with
         | ExprAt(_span, inner) -> walkExpression(inner)(lineages)(shadowedSelf)(context)(scope)(found)
+        | ExprNode(_node, inner) -> walkExpression(inner)(lineages)(shadowedSelf)(context)(scope)(found)
         | ExprCall(_function, _argument, _sugar, _layout) -> walkCall(expression)(lineages)(shadowedSelf)(scope)(found)
         | ExprVar(name) ->
             recordUse(name)(lineages)(contextUse(context))(scope)(found)

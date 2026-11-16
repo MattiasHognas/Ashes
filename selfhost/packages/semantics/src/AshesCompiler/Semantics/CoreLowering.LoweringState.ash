@@ -35,6 +35,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
+import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 export (
     type ConsumerRequest(..),
     type RuntimeTempState(..),
@@ -68,6 +69,8 @@ export (
     value observeTopLevelScope,
     value observeOperatorType,
     value stateTypeObservation,
+    value withNodeTypes,
+    value stateNodeTypes,
     value carryTypeObservation,
     value stateConstructorLayouts,
     value withAppendedConstructorLayouts,
@@ -933,6 +936,9 @@ type CoreProgramState =
     | provenSiblingCallResults: MapTree(Str, SemanticType)
     // None unless the lowering was asked to observe its types; nothing reads it while lowering.
     | typeObservation: Maybe(CoreTypeObservation)
+    // The types the standalone inference recorded against the numbered program, when lowering was
+    // given one.
+    | nodeTypes: Maybe(NodeTypeTable)
 
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
@@ -1284,6 +1290,8 @@ type CoreLoweringState =
     // of thousands of entries and every type resolved walks it once per variable.
     | substitution: MapTree(Int, SemanticType)
     | currentSpan: Maybe(TextSpan)
+    // The identity of the innermost numbered node being lowered; None for an unnumbered tree.
+    | currentNode: Maybe(Int)
     | consumerRequest: ConsumerRequest
     | runtimeTemps: MapTree(Int, RuntimeTempState)
     // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
@@ -1325,6 +1333,14 @@ let withTypeObservation (state: CoreLoweringState) =
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
     in group.typeObservation)
+
+let withNodeTypes (table: NodeTypeTable) (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with nodeTypes = Some(table)))
+
+let stateNodeTypes (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.nodeTypes)
 
 // Both observations leave the state as it is unless the lowering was asked to observe.
 let observeTopLevelScope (state: CoreLoweringState) =

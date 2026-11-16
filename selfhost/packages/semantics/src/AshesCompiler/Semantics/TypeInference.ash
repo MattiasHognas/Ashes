@@ -4540,9 +4540,12 @@ and inferAgainst expected expression environment substitution supply ambientRow 
                 inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
             )
         | ExprNode(node, inner) ->
-            ambientRow
-            |> inferAgainst(expected)(inner)(environment)(substitution)(withCurrentNode(node)(supply))
-            |> recordNodeType(node)
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferAgainst(expected)(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprLambda(name, body, None) ->
             match applySubstitution(substitution)(expected) with
                 | SemFunction(expectedParameter, expectedResult, _expectedRow) ->

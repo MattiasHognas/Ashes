@@ -412,6 +412,7 @@ let recursive closePendingTopLevelItems (pending: List(PendingTopLevelClose)) (l
 let recursive exprMayReferenceName (expr: Expr) (name: Str) =
     match expr with
         | ExprAt(_span, inner) -> exprMayReferenceName(inner)(name)
+        | ExprNode(_node, inner) -> exprMayReferenceName(inner)(name)
         | ExprNode(_id, inner) -> exprMayReferenceName(inner)(name)
         | ExprInt(_value) -> false
         | ExprBigInt(_value) -> false
@@ -573,6 +574,7 @@ and fieldPatternsBoundNames (fields: List((Str, Pattern))) (names: List(Str)) =
 let recursive collectNonCalleeUses (expr: Expr) (asCallee: Bool) (shadowed: List(Str)) (uses: NonCalleeUses) =
     match expr with
         | ExprAt(_span, inner) -> collectNonCalleeUses(inner)(asCallee)(shadowed)(uses)
+        | ExprNode(_node, inner) -> collectNonCalleeUses(inner)(asCallee)(shadowed)(uses)
         | ExprInt(_value) -> uses
         | ExprBigInt(_value) -> uses
         | ExprUInt(_value, _bitWidth, _suffix) -> uses
@@ -820,6 +822,7 @@ and recursiveGroupBody (bindings: List(LetBindingSyntax)) (body: Expr) =
 let recursive chainFinalVar (body: Expr) =
     match body with
         | ExprAt(_span, inner) -> chainFinalVar(inner)
+        | ExprNode(_node, inner) -> chainFinalVar(inner)
         | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> chainFinalVar(nested)
         | ExprLetRecursive(_name, _value, nested, _parameters, _annotation, _requirements) -> chainFinalVar(nested)
         | ExprVar(name) -> Some(name)
@@ -1692,16 +1695,20 @@ let recursive implementationDeclarationsOf (items: List(TopLevelItem)) (reversed
 // Stage 0 registers a program's `implement` declarations, and the ones `deriving` expands to,
 // before it lowers any value: each head with its type parameters, its requirements, and its
 // method bodies joins the standard trait environment the trait-mapped operators resolve
-// against.
+// against. A program lowered with recorded node types arrives with `deriving` already expanded.
 let registerProgramImplementations (items: List(TopLevelItem)) (state: CoreLoweringState) =
-    match expandDerivedImplementations(ProgramSyntax(items = items, body = None)) with
-        | Error(error) ->
-            error
-            |> Ashes.Trait.Show.show
-            |> UnsupportedCoreDerivingExpansion
-            |> Error
-        | Ok(ProgramSyntax { items = expanded }) ->
-            registerImplementationDeclarations(implementationDeclarationsOf(expanded)([]))(state)
+    match stateNodeTypes(state) with
+        | Some(_table) ->
+            registerImplementationDeclarations(implementationDeclarationsOf(items)([]))(state)
+        | None ->
+            match expandDerivedImplementations(ProgramSyntax(items = items, body = None)) with
+                | Error(error) ->
+                    error
+                    |> Ashes.Trait.Show.show
+                    |> UnsupportedCoreDerivingExpansion
+                    |> Error
+                | Ok(ProgramSyntax { items = expanded }) ->
+                    registerImplementationDeclarations(implementationDeclarationsOf(expanded)([]))(state)
 
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with
@@ -2295,6 +2302,7 @@ let isProgramFunction (functions: MapTree(Str, Bool)) (name: Str) =
 let recursive scanHandlerEffects (functions: MapTree(Str, Bool)) (locals: List(Str)) (expression: Expr) (scan: HandlerEffectScan) =
     match expression with
         | ExprAt(_span, inner) -> scanHandlerEffects(functions)(locals)(inner)(scan)
+        | ExprNode(_node, inner) -> scanHandlerEffects(functions)(locals)(inner)(scan)
         | ExprVar(name) ->
             if isProgramFunction(functions)(name)
             then scan with references = name :: scan.references

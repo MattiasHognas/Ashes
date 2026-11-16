@@ -2,6 +2,7 @@
 // and label supply, instruction emission, arena brackets, binding lookup and value placement
 // records. A part of `AshesCompiler.Semantics.CoreLowering`.
 
+import AshesCompiler.Semantics.NodeIdentity.withoutNodeIdentity
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
@@ -501,6 +502,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             typeSupply = typeVariableSupplyFrom(reservedBuiltinTypeVariableCount),
             substitution = Ashes.Collection.Map.empty,
             currentSpan = None,
+            currentNode = None,
             consumerRequest = emptyConsumerRequest,
             runtimeTemps = Ashes.Collection.Map.empty,
             reuseTokens = [],
@@ -572,7 +574,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 closureDropperLabels = [],
                 provenTraitGoals = Ashes.Collection.Map.empty,
                 provenSiblingCallResults = Ashes.Collection.Map.empty,
-                typeObservation = None
+                typeObservation = None,
+                nodeTypes = None
             ),
             functionState = CoreFunctionState(
                 admissibilityAnswers = [],
@@ -997,6 +1000,7 @@ let canTestRepresentation = true
 let recursive letValueIsLambda (value: Expr) =
     match value with
         | ExprAt(_span, inner) -> letValueIsLambda(inner)
+        | ExprNode(_node, inner) -> letValueIsLambda(inner)
         | ExprLambda(_parameter, _body, _annotation) -> true
         | _ -> false
 
@@ -1011,7 +1015,16 @@ let recursive lambdaParameterChain (value: Expr) (parameters: List(Str)) =
         | ExprAt(_span, inner) ->
             match inner with
                 | ExprAt(_innerSpan, _nested) -> lambdaParameterChain(inner)(parameters)
+                | ExprNode(_node, _nested) ->
+                    match withoutNodeIdentity(inner) with
+                        | ExprLambda(_parameter, _body, _annotation) -> lambdaParameterChain(inner)(parameters)
+                        | _ -> (reverse(parameters), value)
                 | ExprLambda(_parameter, _body, _annotation) -> lambdaParameterChain(inner)(parameters)
+                | _ -> (reverse(parameters), value)
+        | ExprNode(_node, inner) ->
+            match withoutNodeIdentity(inner) with
+                | ExprLambda(_parameter, _body, _annotation) -> lambdaParameterChain(inner)(parameters)
+                | ExprAt(_innerSpan, _nested) -> lambdaParameterChain(inner)(parameters)
                 | _ -> (reverse(parameters), value)
         | ExprLambda(parameter, body, _annotation) -> lambdaParameterChain(body)(parameter :: parameters)
         | body -> (reverse(parameters), body)

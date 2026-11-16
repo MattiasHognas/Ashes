@@ -1,6 +1,7 @@
 // Tail-call loop frames: loop parameter slots, exit own-field flags, specialization accumulators,
 // and the lowering of function and lambda bodies. A part of `AshesCompiler.Semantics.CoreLowering`.
 
+import AshesCompiler.Semantics.NodeIdentity.withoutNodeIdentity
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
@@ -93,6 +94,7 @@ let recursive matchedAccumulatorRecorded (name: Str) (found: List((Str, Str))) =
 let recursive collectCtorMatchedScrutinees (parameters: List(Str)) (expression: Expr) (found: List((Str, Str))) =
     match expression with
         | ExprAt(_span, inner) -> collectCtorMatchedScrutinees(parameters)(inner)(found)
+        | ExprNode(_node, inner) -> collectCtorMatchedScrutinees(parameters)(inner)(found)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             found
             |> collectCtorMatchedScrutinees(parameters)(thenBranch)
@@ -348,6 +350,7 @@ let allocateTmcChainSlots (tmcShapePresent: Bool) (zeroTemp: Int) (state: CoreLo
 let recursive exitSuccessorSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> exitSuccessorSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> exitSuccessorSpine(inner)(arguments)
         | ExprCall(function, argument, _sugar, _layout) -> exitSuccessorSpine(function)(argument :: arguments)
         | other -> (other, arguments)
 
@@ -400,6 +403,7 @@ let recursive exitArgumentAt (index: Int) (arguments: List(Expr)) =
 let recursive exitSuccessorsQualify (expression: Expr) (selfName: Str) (ordinal: Int) (name: Str) (arity: Int) (nullaryKnown: Bool) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> exitSuccessorsQualify(inner)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state)
+        | ExprNode(_node, inner) -> exitSuccessorsQualify(inner)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             match exitSuccessorsQualify(thenBranch)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state) with
                 | (true, thenBuilds) ->
@@ -688,11 +692,12 @@ let recursive typeHasMultipleSelfFields (typeName: Str) (layouts: List(CoreConst
 let recursive specializationRecursiveBody (callee: Str) (value: Expr) =
     match value with
         | ExprAt(_span, inner) -> specializationRecursiveBody(callee)(inner)
+        | ExprNode(_node, inner) -> specializationRecursiveBody(callee)(inner)
         | ExprLambda(_parameter, body, _annotation) -> specializationRecursiveBody(callee)(body)
         | ExprLet(_bound, _value, body, _params, _annotation, _traits) -> specializationRecursiveBody(callee)(body)
-        | ExprLetRecursive(bound, ExprLambda(_parameter, recursiveBody, _annotation), body, _params, _typeAnnotation, _traits) ->
-            match unspanArgument(body) with
-                | ExprVar(reference) ->
+        | ExprLetRecursive(bound, recursiveValue, body, _params, _typeAnnotation, _traits) ->
+            match (withoutNodeIdentity(recursiveValue), unspanArgument(body)) with
+                | (ExprLambda(_parameter, recursiveBody, _annotation), ExprVar(reference)) ->
                     if reference == bound
                     then (bound, recursiveBody)
                     else (callee, value)
@@ -860,6 +865,7 @@ let recursive seedParameterFromConstructorFields (parameter: Str) (parameterType
 and seedParameterFromChildren (parameter: Str) (parameterType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match expression with
         | ExprAt(_span, inner) -> seedParameterFromConstructorFields(parameter)(parameterType)(inner)(state)
+        | ExprNode(_node, inner) -> seedParameterFromConstructorFields(parameter)(parameterType)(inner)(state)
         | ExprCall(function, argument, _isSugar, _layout) -> seedParameterFromEach(parameter)(parameterType)([function, argument])(state)
         | ExprLet(name, value, body, _params, _annotation, _requirements) -> seedParameterFromBinder(parameter)(parameterType)(name)(value)(body)(state)
         | ExprLetResult(name, value, body) -> seedParameterFromBinder(parameter)(parameterType)(name)(value)(body)(state)
@@ -975,6 +981,7 @@ let recursive anyCallResultResolved (resultTypes: List(SemanticType)) (state: Co
 let recursive exprAppliesMappedOperator (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> exprAppliesMappedOperator(inner)
+        | ExprNode(_node, inner) -> exprAppliesMappedOperator(inner)
         | ExprAdd(_left, _right) -> true
         | ExprSubtract(_left, _right) -> true
         | ExprMultiply(_left, _right) -> true

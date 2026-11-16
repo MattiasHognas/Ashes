@@ -1096,6 +1096,7 @@ let lowerBuiltin (layout: CoreBuiltinLayout) arguments lower state =
 let recursive collectCallSpine expression =
     match expression with
         | ExprAt(_span, inner) -> collectCallSpine(inner)
+        | ExprNode(_node, inner) -> collectCallSpine(inner)
         | ExprCall(function, argument, _whitespace, _layout) ->
             match collectCallSpine(function) with
                 | CoreCallSpine { root = root, arguments = arguments } ->

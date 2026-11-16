@@ -1,6 +1,7 @@
 // Recursive bindings: their preparation, sibling result pinning and `let recursive` lowering. A
 // part of `AshesCompiler.Semantics.CoreLowering`.
 
+import AshesCompiler.Semantics.NodeIdentity.withoutNodeIdentity
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
@@ -214,7 +215,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
 // start of the file would collapse to the unlocated `TextSpan(0, 0)`; only the start locates
 // instructions, so the span is widened past it.
 let sugarChainBody (body: Expr) (declarationSpan: Maybe(TextSpan)) =
-    match (body, declarationSpan) with
+    match (withoutNodeIdentity(body), declarationSpan) with
         | (ExprLambda(_parameter, _inner, _annotation), Some(TextSpan(start, end))) ->
             if end > start
             then ExprAt(TextSpan(start = start, end = end))(body)

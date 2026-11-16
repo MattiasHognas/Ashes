@@ -29,6 +29,7 @@ export (
     type IdentifiedProgramUnits(..),
     value identifyProgramUnits,
     value inferIdentifiedProgramUnitsFrom,
+    value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
     value inferProgramFromPackage,
     value inferProgramInPackage,
@@ -2908,3 +2909,7 @@ let inferProgramInPackage packageId program =
     inferProgramFromPackage(packageId)(emptyTypeEnvironmentForPackage(packageId))(program)
 
 let inferProgram program = inferProgramInPackage("standalone")(program)
+
+// The numbered units as the one program lowering walks: their items in unit order, then the
+// numbered trailing expression.
+let identifiedProgramSyntax (identified: IdentifiedProgramUnits) = ProgramSyntax(items = expandedProgramUnitItems(identified.units), body = identified.body)

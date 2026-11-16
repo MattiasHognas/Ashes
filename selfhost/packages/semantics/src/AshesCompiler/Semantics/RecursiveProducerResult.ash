@@ -19,6 +19,7 @@ let recursive containsName name names =
 let recursive recursiveCallRoot expression resolve =
     match expression with
         | ExprAt(_span, inner) -> recursiveCallRoot(inner)(resolve)
+        | ExprNode(_node, inner) -> recursiveCallRoot(inner)(resolve)
         | ExprCall(function, _argument, _sugar, _layout) -> recursiveCallRoot(function)(resolve)
         | ExprVar(name) ->
             match resolve(name) with
@@ -29,6 +30,7 @@ let recursive recursiveCallRoot expression resolve =
 let recursive isRecursiveProducerResult expression resolve =
     match expression with
         | ExprAt(_span, inner) -> isRecursiveProducerResult(inner)(resolve)
+        | ExprNode(_node, inner) -> isRecursiveProducerResult(inner)(resolve)
         | ExprVar(name) ->
             match resolve(name) with
                 | RecursiveProducerValue -> true

@@ -304,12 +304,14 @@ let bindingIsLocalSlot (name: Str) (slot: Int) (state: CoreLoweringState) =
 let recursive letChainBody (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> letChainBody(inner)
+        | ExprNode(_node, inner) -> letChainBody(inner)
         | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> letChainBody(body)
         | other -> other
 
 let recursive consChainTail (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> consChainTail(inner)
+        | ExprNode(_node, inner) -> consChainTail(inner)
         | ExprCons(_head, tail) -> consChainTail(tail)
         | other -> other
 
@@ -747,6 +749,7 @@ let recursive parameterReadOnlyThroughFieldsOrCalls (name: Str) (depth: Int) (re
     else
         match expression with
             | ExprAt(_span, inner) -> parameterReadOnlyThroughFieldsOrCalls(name)(depth)(returned)(inner)
+            | ExprNode(_node, inner) -> parameterReadOnlyThroughFieldsOrCalls(name)(depth)(returned)(inner)
             | ExprVar(candidate) -> returned || candidate != name
             | ExprQualifiedVar(_qualifier, _member) -> true
             | ExprInt(_value) -> true
@@ -850,6 +853,7 @@ let recursive tupleElementsStoreParameterOnlyBare (name: Str) (elements: List(Ex
 let recursive bodyReachesParameterOnlyAsTupleElement (name: Str) (body: Expr) =
     match body with
         | ExprAt(_span, inner) -> bodyReachesParameterOnlyAsTupleElement(name)(inner)
+        | ExprNode(_node, inner) -> bodyReachesParameterOnlyAsTupleElement(name)(inner)
         | ExprLet(bound, value, rest, _parameters, _annotation, _requirements) -> bound != name && !exprReadsName(name)(value) && bodyReachesParameterOnlyAsTupleElement(name)(rest)
         | ExprTuple(elements) -> tupleElementsStoreParameterOnlyBare(name)(elements)
         | _ -> false
@@ -1251,6 +1255,10 @@ let recursive annotateBindingLambdaChain (annotation: TypeExpr) (value: Expr) =
             inner
             |> annotateBindingLambdaChain(annotation)
             |> ExprAt(span)
+        | (_, ExprNode(node, inner)) ->
+            inner
+            |> annotateBindingLambdaChain(annotation)
+            |> ExprNode(node)
         | (TypeArrow(argument, result, _capabilities, _tail), ExprLambda(parameter, body, existing)) ->
             ExprLambda(parameter)(annotateBindingLambdaChain(result)(body))(match existing with
                 | Some(_explicit) -> existing
