@@ -24,6 +24,7 @@ export (
     value getAllTemps,
     value getWrittenLocalSlots,
     value getReadLocalSlots,
+    value spillCrossBlockTemps,
 )
 
 type StateMachineResult =
@@ -1198,3 +1199,72 @@ let transformStateMachine instructions captureCount =
                                                                                     savedTempOffsets = tempToSlotOffset,
                                                                                     savedLocalOffsets = localToSlotOffset
                                                                                 ))
+
+// The temps a coroutine reads in a block (a run of instructions after a label) that the same block
+// has not defined before the read. After the split such a read can sit on a path from another state,
+// which no definition dominates; stage 0 keeps every temp in a stack slot, so it never notices.
+let recursive crossBlockTempsAux instructions (defined: List(IrTemp)) (spilled: List(IrTemp)) =
+    match instructions with
+        | [] -> spilled
+        | IrInstruction { instruction = Label(_name) } :: tail -> crossBlockTempsAux(tail)([])(spilled)
+        | IrInstruction { instruction = inst } :: tail ->
+            spilled
+            |> addUnseenUses(getUsedTemps(inst))(defined)
+            |> crossBlockTempsAux(tail)(append(getDefinedTemps(inst))(defined))
+and addUnseenUses (uses: List(IrTemp)) (defined: List(IrTemp)) (spilled: List(IrTemp)) =
+    match uses with
+        | [] -> spilled
+        | used :: rest ->
+            if listContains(used)(defined) || listContains(used)(spilled)
+            then addUnseenUses(rest)(defined)(spilled)
+            else addUnseenUses(rest)(defined)(used :: spilled)
+
+let recursive spillSlotOf (temp: IrTemp) (spilled: List(IrTemp)) (slot: Int) =
+    match spilled with
+        | [] -> slot
+        | candidate :: rest ->
+            if candidate == temp
+            then slot
+            else spillSlotOf(temp)(rest)(slot + 1)
+
+let recursive spillReloads (uses: List(IrTemp)) (defined: List(IrTemp)) (spilled: List(IrTemp)) (firstSlot: Int) (acc: List(IrInstruction)) (reloaded: List(IrTemp)) =
+    match uses with
+        | [] -> (acc, reloaded)
+        | used :: rest ->
+            if listContains(used)(spilled) && listContains(used)(defined) == false && listContains(used)(reloaded) == false
+            then
+                spillReloads(rest)(defined)(spilled)(firstSlot)(IrInstruction(instruction = firstSlot
+                |> spillSlotOf(used)(spilled)
+                |> LoadLocal(used), location = None) :: acc)(used :: reloaded)
+            else spillReloads(rest)(defined)(spilled)(firstSlot)(acc)(reloaded)
+
+let recursive spillStores (defs: List(IrTemp)) (spilled: List(IrTemp)) (firstSlot: Int) (acc: List(IrInstruction)) =
+    match defs with
+        | [] -> acc
+        | defined :: rest ->
+            if listContains(defined)(spilled)
+            then
+                spillStores(rest)(spilled)(firstSlot)(IrInstruction(instruction = StoreLocal(spillSlotOf(defined)(spilled)(firstSlot))(defined), location = None) :: acc)
+            else spillStores(rest)(spilled)(firstSlot)(acc)
+
+let recursive spillCrossBlockTempsAux instructions (defined: List(IrTemp)) (spilled: List(IrTemp)) (firstSlot: Int) (acc: List(IrInstruction)) =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = Label(_name) } as labelled) :: tail -> spillCrossBlockTempsAux(tail)([])(spilled)(firstSlot)(labelled :: acc)
+        | (IrInstruction { instruction = inst } as wrapped) :: tail ->
+            match spillReloads(getUsedTemps(inst))(defined)(spilled)(firstSlot)(acc)([]) with
+                | (withReloads, reloaded) ->
+                    let defs = getDefinedTemps(inst)
+                    in
+                        wrapped :: withReloads
+                        |> spillStores(defs)(spilled)(firstSlot)
+                        |> spillCrossBlockTempsAux(tail)(defined
+                        |> append(reloaded)
+                        |> append(defs))(spilled)(firstSlot)
+
+// Every temp a block reads without defining goes through a local slot of its own, stored after each
+// definition and reloaded at the start of each reading block, so every read has a dominating
+// definition. Answers the instructions and the number of slots added after `firstSlot`.
+let spillCrossBlockTemps instructions (firstSlot: Int) =
+    (let spilled = crossBlockTempsAux(instructions)([])([])
+    in (spillCrossBlockTempsAux(instructions)([])(spilled)(firstSlot)([]), listLength(spilled)))

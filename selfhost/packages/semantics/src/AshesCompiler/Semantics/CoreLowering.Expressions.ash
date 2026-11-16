@@ -63,6 +63,7 @@ import AshesCompiler.Semantics.CoreLowering.TailCalls
 import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
 import AshesCompiler.Semantics.PerceusLifetimePlacement.placeFunctionLifetimes
 import AshesCompiler.Semantics.StateMachineTransform.transformStateMachine
+import AshesCompiler.Semantics.StateMachineTransform.spillCrossBlockTemps
 import AshesCompiler.Semantics.StateMachineTransform.StateMachineResult
 export (
     value recordCoverageOpenSchemes,
@@ -1810,8 +1811,9 @@ let largerOf (left: Int) (right: Int) =
 
 // The lifted function `label` turned into a coroutine, as stage 0's coroutine build does: its
 // lifetimes are placed on the linear body, where an await is still an ordinary control-flow edge,
-// then the state-machine transform splits it at its awaits over the task frame. Answers the
-// functions and the frame size.
+// then the state-machine transform splits it at its awaits over the task frame, and every temp a
+// block of it reads without defining goes through a local slot. Answers the functions and the frame
+// size.
 let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (functions: List(IrFunction)) =
     match functions with
         | [] -> ([], 0)
@@ -1828,7 +1830,9 @@ let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (funct
                                     stateStructSize = stateStructSize,
                                     captureCount = captureCount
                                 )
-                            in ((placed with instructions = instructions, tempCount = largerOf(placed.tempCount)(maxTemp + 1), coroutine = Some(coroutine)) :: rest, stateStructSize)
+                            in
+                                match spillCrossBlockTemps(instructions)(placed.localCount) with
+                                    | (spilledInstructions, addedSlots) -> ((placed with instructions = spilledInstructions, localCount = placed.localCount + addedSlots, tempCount = largerOf(placed.tempCount)(maxTemp + 1), coroutine = Some(coroutine)) :: rest, stateStructSize)
             else
                 match transformCoroutineFunction(label)(captureCount)(rest) with
                     | (transformed, stateStructSize) -> (function_ :: transformed, stateStructSize)
