@@ -1691,8 +1691,9 @@ and anyConstructorCarriesTextBytes (visited: List(Str)) (layouts: List(CoreConst
 // Stage 0's `MarkOwnerViewedByResult` and `MaterializeScopeResultViews`: a `let` owning a
 // reference-counted string or bytes value whose result may name its bytes materializes the result
 // before the binding is released. A result the arena deep copy reproduces is copied into the
-// arena; one of the contract's types is normalized onto the reference-counted heap instead; for
-// anything else the binding is kept alive rather than released, a leak being the safe side of a
+// arena; one of the contract's types is copied onto the reference-counted heap when it is still in
+// the arena and taken as it is when it is already reference-counted, holding no view; for anything
+// else the binding is kept alive rather than released, a leak being the safe side of a
 // view left pointing into freed memory. Returns the state, the result temp, and whether the
 // binding's release is withheld.
 let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -1708,8 +1709,8 @@ let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType)
             then
                 match generalCopyPlanOf(resultType)(state) with
                     | Some(plan) ->
-                        match emitGuardedDeepCopy(resultTemp)(plan)(state) with
-                            | (copied, normalizedTemp) -> (markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)(copied), normalizedTemp, false)
+                        match emitOwnedResultOrCopy(resultTemp)(plan)(state) with
+                            | (copied, normalizedTemp) -> (copied, normalizedTemp, false)
                     | None -> (state, resultTemp, true)
             else (state, resultTemp, true)
 
