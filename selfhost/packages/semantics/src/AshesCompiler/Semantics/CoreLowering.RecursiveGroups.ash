@@ -637,13 +637,22 @@ let isOwnSuccessorRead (argument: Expr) (slot: Int) (state: CoreLoweringState) =
 // places on the reference-counted heap. The back edge releases the old parameter's own reference
 // (and its children through the structural walk) once its argument rebuilds the value, so a
 // stored borrow would be freed under the cell.
+// A field read whose type needs no release (`state.done: Bool`) is a copied word, never retained.
+let loopParameterChildSlot (argument: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprQualifiedVar(_owner, _field) ->
+            if resultSurvivesReset(semanticType)(state)
+            then None
+            else loopParameterReadSlot(argument)(state)
+        | _ -> loopParameterReadSlot(argument)(state)
+
 let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             if temp != originalTemp
             then lowered
             else
-                match loopParameterReadSlot(argument)(state) with
+                match loopParameterChildSlot(argument)(semanticType)(state) with
                     | Some(slot) ->
                         if isOwnSuccessorRead(argument)(slot)(state)
                         then lowered
