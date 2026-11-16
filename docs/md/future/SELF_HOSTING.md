@@ -196,6 +196,27 @@ Order of work. Each step lands separately and is useful if the later ones are de
 5. **Compare the two inferences.** With step 4 in place, report where the standalone result and
    lowering's own inference disagree per top-level binding. Operators and capability rows are the
    known differences. Each disagreement is settled against the language reference.
+
+   Done for top-level schemes and binary operator sites over the 927 test programs both sides
+   accept. Lowering records what it concluded only when asked (`lowerCoreProgramObservingTypes`);
+   bindings are compared by stitched name and operator sites by span and trait. Measured:
+   - Capability rows: lowering's schemes carry none (10,769 bindings differ only there). Lowering
+     decides capability handling syntactically and from the declared operation schemes, never
+     from a row.
+   - Operators: of 17,971 sites, 17,750 agree. 148 are a generic body lowering lowers at several
+     instances; 68 sites and 39 schemes are an operator the inference generalizes with its trait
+     requirement where lowering holds it monomorphic and settles it to `Int`, as section 21.6 of
+     the reference does not; 64 are operator nodes lowering synthesizes and the table has no node
+     for.
+   - Lowering is less precise in three places: `Ashes.Collection.Map.foldLeft` and
+     `HashMap.foldLeft` lose the link between the folder's accumulator and the result, a handler
+     arm's parameters and `resume` result stay untyped, and a few bindings stay monomorphic
+     because a deferred operator holds their variable back.
+   - `panic` wrappers are `Str -> a` in the inference and `Str -> Never` in lowering; both conform
+     to the reference.
+   - Fixed in the inference: `Ashes.Text.fromInt` and `toHex` arguments are no longer generalized
+     over (stage 0 and the reference type them `Int -> Str`), and `Ashes.Trait` is inferred first,
+     so programs with inline modules no longer keep settled requirements.
 6. **Give syntax nodes an identity and record types against it.** Assign identities after
    stitching, including synthesized nodes, and have the inference pass fill a table: a type per
    expression, the resolved instance per operator, the instantiation and dictionaries per call,
