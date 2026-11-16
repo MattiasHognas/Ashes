@@ -394,10 +394,42 @@ let normalizedOwnedResultTempOf (stage: CoreCallStage) =
         | CoreCallStage { resultNormalizedOwned = true, lowered = LoweredCoreValue { temp = temp } } -> temp
         | _ -> -1
 
-// A partial application keeps its fresh arguments alive in the returned closure.
+let parkedFunctionType (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_parameter, _result, _row) -> true
+        | _ -> false
+
+let recursive parkedTemp (temp: Int) (parked: List(Int)) =
+    match parked with
+        | [] -> false
+        | candidate :: rest -> candidate == temp || parkedTemp(temp)(rest)
+
+// Stage 0's `ParkArgumentsHandedToCurryStage`: a curry stage's result is a closure whose
+// environment keeps the argument, and a stage that does not adopt a reference stores the pointer
+// in an arena environment, so a reference handed over for the result to keep waits in an owned
+// slot (left empty when the stage adopted it), released once the function's result or the loop's
+// successors hold references of their own.
+let recursive parkArgumentsHandedToCurryStage (consumed: List(CoreConsumedArgument)) (parked: List(Int)) (state: CoreLoweringState) =
+    match consumed with
+        | [] -> state
+        | CoreConsumedArgument { temp = temp, semanticType = semanticType, adoptionFlagTemp = adoptionFlagTemp } :: rest ->
+            let valueType = resolveType(state)(semanticType)
+            in
+                if adoptionFlagTemp < 0 || resultSurvivesReset(valueType)(state) || parkedFunctionType(valueType) || containsUnresolvedLayout(valueType)(state) || parkedTemp(temp)(parked)
+                then parkArgumentsHandedToCurryStage(rest)(parked)(state)
+                else
+                    state
+                    |> keepHandedOverArgumentInOwnedSlot(false)(temp)(valueType)(adoptionFlagTemp)
+                    |> parkArgumentsHandedToCurryStage(rest)(temp :: parked)
+
+// A partial application keeps its fresh arguments alive in the returned closure; a reference
+// handed over for it to keep is parked.
 let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (stage: CoreCallStage) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
-        | SemFunction(_parameter, _result, _row) -> state
+        | SemFunction(_parameter, _result, _row) ->
+            if generalRcEnabled(state)
+            then parkArgumentsHandedToCurryStage(stage.consumedArguments)([])(state)
+            else state
         | _ ->
             match state
             |> handedOverReleaseGuard(context)(resultType)(stage.resultFlagTemp)

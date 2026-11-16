@@ -1623,6 +1623,38 @@ let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state
 // cannot describe the replacement temp, even if that binding is an owned loop field.
 let toSpaceArgumentHandOff = CoreArgumentHandOff(borrowsOnly = true, borrowsForPlacement = true, fresh = false, runtimeArgument = false, mayReach = false, transfers = false, keptWholeUnderOwnedResult = false, normalizes = false, borrowedReach = false, cannotBeKeptWhole = false, pendingRootSlot = None)
 
+let isFunctionType (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_parameter, _result, _row) -> true
+        | _ -> false
+
+// Whether the call spine still returns a function once its `remaining` later arguments are applied
+// to this application's result.
+let recursive spineReturnsFunction (semanticType: SemanticType) (remaining: Int) =
+    if remaining <= 0
+    then isFunctionType(semanticType)
+    else
+        match semanticType with
+            | SemFunction(_parameter, result, _row) -> spineReturnsFunction(result)(remaining - 1)
+            | _ -> false
+
+// Stage 0's forced retain of a named argument the callee's result may keep
+// (`CalleeResultMayReachParameter`), for a call spine that returns a curry stage. Stage 0 reads a
+// runtime owner's slot as a reference-counted temp, so a let or pattern binding handed to such a
+// call is retained outright and handed over, and `parkArgumentsHandedToCurryStage` keeps the
+// reference in an owned slot when the stage does not adopt it: the stage's closure environment
+// holds the argument after the binding's owner releases it.
+let curryStageOwnerReach (context: CoreCallContext) (arity: Int) (argument: Expr) (resultType: SemanticType) (state: CoreLoweringState) (handOff: CoreArgumentHandOff) =
+    if handOff.mayReach || handOff.fresh || handOff.borrowsOnly || handOff.transfers || handOff.keptWholeUnderOwnedResult || handOff.runtimeArgument == false
+    then handOff
+    else
+        match handOff.pendingRootSlot with
+            | Some(_slot) -> handOff
+            | None ->
+                if spineReturnsFunction(resolveType(state)(resultType))(arity - 1) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
+                then handOff with mayReach = true
+                else handOff
+
 let applyCoreCall (context: CoreCallContext) arity argument (copiedToSpace: Bool) argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
     match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
         | (decidedState, readsResult, resultNormalizedOwned) ->
@@ -1634,7 +1666,10 @@ let applyCoreCall (context: CoreCallContext) arity argument (copiedToSpace: Bool
                     let placed =
                         if copiedToSpace
                         then handOff
-                        else borrowedByReuseSpecialization(context)(arity)(queried)(handOff)
+                        else
+                            handOff
+                            |> curryStageOwnerReach(context)(arity)(argument)(resultType)(queried)
+                            |> borrowedByReuseSpecialization(context)(arity)(queried)
                     in emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(placed)(readsResult)(resultNormalizedOwned)(queried)
 
 let freshToSpaceSourceOwner (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
