@@ -60,6 +60,7 @@ import AshesCompiler.Semantics.CoreLowering.Records
 import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Handlers
 import AshesCompiler.Semantics.CoreLowering.TailCalls
+import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
 export (
     value recordCoverageOpenSchemes,
     value replaceConstrainedScheme,
@@ -1737,7 +1738,54 @@ let describeCallArity (expression: Expr) (lowered: LoweredCoreValue) =
                 | None -> lowered
         | _ -> lowered
 
-let lowerCallExpression expression function argument lower state =
+// `async` names stage 0's intrinsic unless the program binds the name itself.
+let asyncNameUnbound (state: CoreLoweringState) =
+    match lookupBinding("async")(state.bindings) with
+        | Some(_binding) -> false
+        | None ->
+            match state
+            |> stateTopLevelFunctionRefIndex
+            |> lookupTopLevelFunctionRef("async") with
+                | Some(_function) -> false
+                | None -> true
+
+// The body of `async(body)` or `Ashes.Task.task(body)` when the expression is one.
+let asyncTaskBody expression (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprVar(name), arguments = body :: [] } ->
+            if name == "async" && asyncNameUnbound(state)
+            then Some(body)
+            else None
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName), arguments = body :: [] } ->
+            if moduleName == "Ashes.Task" && memberName == "task"
+            then Some(body)
+            else None
+        | _ -> None
+
+let taskCall (memberName: Str) (argument: Expr) =
+    ExprCall(ExprQualifiedVar("Ashes.Task")(memberName))(argument)(false)(callArgumentsInline)
+
+// Stage 0's `LowerAsyncTask` for a body with no `await`: a task already completed with
+// `Ok(body)`, of type `Task(Str, a)`. A body that awaits is a suspending coroutine, which this
+// lowering does not build yet.
+let lowerCompletedAsyncTask body lower (state: CoreLoweringState) =
+    if exprContainsAwait(body)
+    then failure(state)(UnsupportedCoreLoweringExpression("async body that awaits"))
+    else
+        match state
+        |> clearConsumerRequest
+        |> lower(callArgumentsInline
+        |> ExprCall(ExprVar("Ok"))(body)(false)
+        |> taskCall("fromResult")) with
+            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+            | LoweredCoreValue { state = loweredState, temp = temp, semanticType = taskType, error = None } ->
+                match freshType(loweredState) with
+                    | FreshType { state = typeState, semanticType = valueType } ->
+                        match bindType(taskType)(SemNamed(0)("Task")([SemString, valueType]))(typeState) with
+                            | (failedState, Some(error)) -> failure(failedState)(error)
+                            | (boundState, None) -> success(temp)(taskType)(boundState)
+
+let lowerNonAsyncCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
     |> tryLowerConstructorCall(expression)(consumerRequestOf(state))(lower) with
@@ -1762,6 +1810,11 @@ let lowerCallExpression expression function argument lower state =
                                 |> unifyOptionalExpectedResult(expectedTypeOf(state))
                                 |> locateLoweredMismatch(argumentSiteOf(state))
                             else lowerGeneralCall(expression)(function)(argument)(lower)(state)
+
+let lowerCallExpression expression function argument lower state =
+    match asyncTaskBody(expression)(state) with
+        | Some(body) -> lowerCompletedAsyncTask(body)(lower)(state)
+        | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =
@@ -2413,6 +2466,9 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)
         | ExprResultMapErrorPipe(left, right) -> lowerResultMapErrorPipe(left)(right)(lowerCore)(state)
+        // Outside a coroutine body an `await` runs its task to completion, as `Ashes.Task.run` does.
+        | ExprAwait(operand) ->
+            lowerCore(taskCall("run")(operand))(state)
         | unsupported ->
             unsupported
             |> expressionName

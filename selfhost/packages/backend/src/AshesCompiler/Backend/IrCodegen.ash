@@ -124,6 +124,7 @@ import AshesCompiler.Backend.IrCodegen.BigInt
 import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
 import AshesCompiler.Backend.IrCodegen.ForeignStrings
+import AshesCompiler.Backend.IrCodegen.Tasks
 import Ashes.Number.UInt
 import Ashes.Collection.Map
 import Ashes.Collection.Map.MapTree
@@ -1486,6 +1487,12 @@ let codegenInstructionKind cx builder kind state =
                                                 |> lookupTemp(cx)(process)
                                                 |> emitProcessKill(context)(function_)(builder)(i64)(i8)(ptrType)(arena)
                                             in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | CreateCompletedTask(target, result) ->
+                                            let taskRef =
+                                                emitCreateCompletedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(result)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | RunTask(target, task) ->
+                                            (bindTemp(target)(emitRunCompletedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot

@@ -149,6 +149,10 @@ type CoreBuiltinKind =
     | CoreProcessReadStderrLine
     | CoreProcessWaitForExit
     | CoreProcessKill
+    // `Ashes.Task.run` drives a task to its result; `Ashes.Task.fromResult` is a task already
+    // completed with one.
+    | CoreTaskRun
+    | CoreTaskFromResult
 
 type CoreBuiltinLayout =
     | moduleName: Str
@@ -416,6 +420,11 @@ let coreBuiltinKind moduleName memberName =
             else None
         | "Ashes.IO.Process" -> processBuiltinKind(memberName)
         | "Ashes.IO.Console" -> consoleBuiltinKind(memberName)
+        | "Ashes.Task" ->
+            match memberName with
+                | "run" -> Some(CoreTaskRun)
+                | "fromResult" -> Some(CoreTaskFromResult)
+                | _ -> None
         | _ -> None
 
 // The module names `coreBuiltinKind` dispatches on — the builtin modules that exist without any
@@ -443,7 +452,8 @@ let intrinsicBuiltinModuleNames =
         "Ashes.Net.Tls",
         "Ashes.Net.Tls.Server",
         "Ashes.IO.Process",
-        "Ashes.IO.Console"
+        "Ashes.IO.Console",
+        "Ashes.Task"
     ]
 
 let recursive isIntrinsicBuiltinModuleIn (moduleName: Str) (names: List(Str)) =
@@ -494,6 +504,14 @@ let tlsSocketType = SemNamed(0)("TlsSocket")([])
 let stringResultOf valueType = SemNamed(0)("Result")([SemString, valueType])
 
 let stringTaskOf valueType = SemNamed(0)("Task")([SemString, valueType])
+
+// `Ashes.Task`'s schemes over its error and value types, the reserved ids `Result`'s own
+// constructors quantify.
+let polymorphicTaskOf = SemNamed(0)("Task")([SemVariable(2), SemVariable(3)])
+
+let polymorphicResultOf = SemNamed(0)("Result")([SemVariable(2), SemVariable(3)])
+
+let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(argument)(result)(None), constraints = [])
 
 let monomorphicScheme body = TypeScheme(quantified = [], body = body, constraints = [])
 
@@ -1032,6 +1050,12 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.Number.Math")("atan2")(floatBinaryScheme),
         standardBuiltinLayout("Ashes.Number.Math")("hypot")(floatBinaryScheme),
         standardBuiltinLayout("Ashes.Number.Math")("fmod")(floatBinaryScheme),
+        polymorphicResultOf
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("run"),
+        polymorphicTaskOf
+        |> taskScheme(polymorphicResultOf)
+        |> standardBuiltinLayout("Ashes.Task")("fromResult"),
         standardBuiltinLayout("Ashes.Net.Http")("get")(
             None
             |> SemFunction(SemString)(stringTaskOf(SemString))
@@ -1342,6 +1366,8 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreRegexFind, code :: subject :: from :: [], _types) -> target3(start)(code)(subject)(from)(RegexFind)
         | (CoreRegexCaptures, code :: subject :: from :: [], _types) -> regexCaptures(start)(code)(subject)(from)
         | (CoreRegexSubstitute, code :: subject :: replacement :: [], _types) -> rsub(start)(code)(subject)(replacement)
+        | (CoreTaskRun, task :: [], _types) -> target1(start)(task)(RunTask)
+        | (CoreTaskFromResult, result :: [], _types) -> target1(start)(result)(CreateCompletedTask)
         | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
         | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
         | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)
