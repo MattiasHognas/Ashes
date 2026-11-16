@@ -4540,8 +4540,14 @@ and inferSeededRecursiveValue annotation recursiveType value recursiveEnvironmen
     match seedRecursiveSignature(annotation)(recursiveType)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> inferWith(value)(recursiveEnvironment)(seededSubstitution)(seededSupply)(ambientRow)
         | failure -> failure
+// A shipped trait's method is bound under the trait's own name (`Hash.hash`); a reference that
+// stitching qualified (`Ashes_Trait_Hash.hash`) finds it there when nothing answers to the
+// qualified name itself.
 and inferQualifiedValue moduleName name environment substitution supply ambientRow =
-    (let qualified = traitNameIn(environment)(moduleName) + "." + name
+    (let qualified =
+        match (resolveTypeBinding(traitNameIn(environment)(moduleName) + "." + name)(environment), resolveTypeBinding(canonicalTraitName(moduleName) + "." + name)(environment)) with
+            | (None, Some(_canonical)) -> canonicalTraitName(moduleName) + "." + name
+            | _ -> traitNameIn(environment)(moduleName) + "." + name
     in
         match resolveTypeBinding(qualified)(environment) with
             | Some(_scheme) -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)

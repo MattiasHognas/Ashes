@@ -1509,6 +1509,29 @@ let isCapabilityOperationCall expression (state: CoreLoweringState) =
                         | None -> false
         | _other -> false
 
+// A qualifier naming a trait of the shipped `Ashes.Trait` module, as stitching spells it.
+let isShippedTraitQualifier (qualifier: Str) = Ashes.Text.startsWith(qualifier)("Ashes_Trait_")
+
+// The binary methods of the shipped operator traits, each the operator stage 0 maps it to: a
+// saturated `Ord.less(left)(right)` is `left < right`, `Add.add(left)(right)` is `left + right`.
+let shippedTraitBinaryOperator (traitName: Str) (methodName: Str) =
+    match (traitName, methodName) with
+        | ("Ord", "less") -> Some(CoreLessOperator)
+        | ("Ord", "lessOrEqual") -> Some(CoreLessOrEqualOperator)
+        | ("Ord", "greater") -> Some(CoreGreaterOperator)
+        | ("Ord", "greaterOrEqual") -> Some(CoreGreaterOrEqualOperator)
+        | ("Add", "add") -> Some(CoreAddOperator)
+        | ("Subtract", "subtract") -> Some(CoreSubtractOperator)
+        | ("Multiply", "multiply") -> Some(CoreMultiplyOperator)
+        | ("Divide", "divide") -> Some(CoreDivideOperator)
+        | ("Remainder", "remainder") -> Some(CoreModuloOperator)
+        | ("BitAnd", "bitAnd") -> Some(CoreBitwiseAndOperator)
+        | ("BitOr", "bitOr") -> Some(CoreBitwiseOrOperator)
+        | ("BitXor", "bitXor") -> Some(CoreBitwiseXorOperator)
+        | ("ShiftLeft", "shiftLeft") -> Some(CoreShiftLeftOperator)
+        | ("ShiftRight", "shiftRight") -> Some(CoreShiftRightOperator)
+        | _ -> None
+
 // A saturated `Eq.equal(left)(right)` or `Eq.notEqual(left)(right)`, the calls a derived
 // equality makes per field, is the operator it stands for: the operands take the same
 // primitive-or-dispatched comparison as `left == right`.
@@ -1520,9 +1543,97 @@ let traitOperatorCall (function: Expr) (argument: Expr) =
                     match (standardTraitName(qualifier), methodName) with
                         | ("Eq", "equal") -> Some((CoreEqualOperator, left, argument))
                         | ("Eq", "notEqual") -> Some((CoreNotEqualOperator, left, argument))
-                        | _ -> None
+                        | _ ->
+                            if isShippedTraitQualifier(qualifier)
+                            then
+                                match shippedTraitBinaryOperator(standardTraitName(qualifier))(methodName) with
+                                    | Some(operator) -> Some((operator, left, argument))
+                                    | None -> None
+                            else None
                 | _ -> None
         | _ -> None
+
+// The unary methods of the shipped operator traits, by the operator each stands for: `negate` is
+// `0 - x`, `not` is `!x`, `bitwiseNot` is `~x`.
+let shippedTraitUnaryOperator (function: Expr) =
+    match stripExprAt(function) with
+        | ExprQualifiedVar(qualifier, methodName) ->
+            if isShippedTraitQualifier(qualifier)
+            then
+                match (standardTraitName(qualifier), methodName) with
+                    | ("Negate", "negate") -> Some("negate")
+                    | ("Not", "not") -> Some("not")
+                    | ("BitwiseNot", "bitwiseNot") -> Some("bitwiseNot")
+                    | ("Default", "default") -> Some("default")
+                    | _ -> None
+            else None
+        | _ -> None
+
+// The number of arguments a shipped trait method takes, for the methods a call lowers directly:
+// a bare reference to one is the lambda applying it (stage 0's `BuildTraitMethodEtaLambda`).
+let shippedTraitMethodArity (qualifier: Str) (methodName: Str) =
+    if isShippedTraitQualifier(qualifier)
+    then
+        match (standardTraitName(qualifier), methodName) with
+            | ("Eq", "equal") -> Some(2)
+            | ("Eq", "notEqual") -> Some(2)
+            | ("Show", "show") -> Some(1)
+            | ("Hash", "hash") -> Some(1)
+            | (traitName, _method) ->
+                match shippedTraitBinaryOperator(traitName)(methodName) with
+                    | Some(_operator) -> Some(2)
+                    | None ->
+                        match methodName
+                        |> ExprQualifiedVar(qualifier)
+                        |> shippedTraitUnaryOperator with
+                            | Some(_method) -> Some(1)
+                            | None -> None
+    else None
+
+let recursive traitMethodEtaBody (body: Expr) (index: Int) (arity: Int) =
+    if index >= arity
+    then body
+    else
+        traitMethodEtaBody(ExprCall(body)(ExprVar("__trait_method_arg_" + Ashes.Text.fromInt(index)))(false)(callArgumentsInline))(index + 1)(arity)
+
+let recursive traitMethodEtaLambda (body: Expr) (index: Int) =
+    if index < 0
+    then body
+    else
+        traitMethodEtaLambda(ExprLambda("__trait_method_arg_" + Ashes.Text.fromInt(index))(body)(None))(index - 1)
+
+// Stage 0's `LowerBareTraitMethodReference`: `List.map(Show.show)` passes the lambda
+// `given (a0) -> Show.show(a0)`, whose saturated call takes the direct route.
+let shippedTraitMethodReference (qualifier: Str) (methodName: Str) =
+    match shippedTraitMethodArity(qualifier)(methodName) with
+        | Some(arity) ->
+            arity - 1
+            |> traitMethodEtaLambda(traitMethodEtaBody(ExprQualifiedVar(qualifier)(methodName))(0)(arity))
+            |> Some
+        | None -> None
+
+// `Default.default(Unit)` resolves the instance by its result type rather than by an operand: the
+// type the context expects, or a goal a later pass pins.
+let lowerTraitDefaultCall argument lower state =
+    match state
+    |> clearConsumerRequest
+    |> lower(argument) with
+        | LoweredCoreValue { state = loweredState, temp = unitTemp, error = None } ->
+            match freshType(loweredState) with
+                | FreshType { state = typeState, semanticType = valueType } ->
+                    match expectedTypeOf(state) with
+                        | Some(expected) ->
+                            match bindType(valueType)(expected)(typeState) with
+                                | (failedState, Some(error)) -> failure(failedState)(error)
+                                | (boundState, None) ->
+                                    boundState
+                                    |> withConsumerRequest(state.consumerRequest)
+                                    |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(resolveType(boundState)(valueType))
+                        | None ->
+                            typeState
+                            |> withConsumerRequest(state.consumerRequest)
+                            |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(valueType)
+        | failed -> failed
 
 // The unary counterpart of `traitOperatorCall`: `Ashes.Trait.Show.show(x)` and its siblings name a
 // trait method directly rather than standing behind an operator, so there is no mapped operator to
@@ -2258,7 +2369,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprQualifiedVar(receiverName, fieldName) ->
             match operationEtaExpansion(receiverName)(fieldName)(state) with
                 | Some(lambda) -> lowerCore(lambda)(state)
-                | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
+                | None ->
+                    match shippedTraitMethodReference(receiverName)(fieldName) with
+                        | Some(etaLambda) -> lowerCore(etaLambda)(state)
+                        | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
         | ExprLet(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLet(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLetRecursive(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
@@ -2271,9 +2385,15 @@ let lowerCoreDispatch expression lowerCore state =
                     match traitUnaryMethodCall(function) with
                         | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
                         | None ->
-                            state
-                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
-                            |> describeCallArity(expression)
+                            match shippedTraitUnaryOperator(function) with
+                                | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
+                                | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
+                                | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
+                                | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
+                                | None ->
+                                    state
+                                    |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                                    |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->
@@ -2289,6 +2409,7 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprPerform(operation) -> lowerPerform(operation)(lowerCore)(state)
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)
+        | ExprResultMapErrorPipe(left, right) -> lowerResultMapErrorPipe(left)(right)(lowerCore)(state)
         | unsupported ->
             unsupported
             |> expressionName
@@ -2409,7 +2530,6 @@ let specializationCallInstantiation (accumulatorParameterType: SemanticType) (ar
 let persistentCollectionOperation (callee: Str) = Ashes.Text.startsWith(callee)("Ashes_Collection_Map_") || Ashes.Text.startsWith(callee)("Ashes_Collection_HashMap_")
 
 // Stage 0's `FlowingCallArguments`: a call routed to a reuse specialization of a persistent
-        | ExprResultMapErrorPipe(left, right) -> lowerResultMapErrorPipe(left)(right)(lowerCore)(state)
 // collection's operation rebuilding a named accumulator flows the arguments the specialization
 // stores by reference; any other call flows what its callee's summary admits.
 let flowCallFlagsOf (call: Expr) (state: CoreLoweringState) =
@@ -2472,6 +2592,8 @@ let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) 
             then dispatched with expectedType = request.expectedType
             else dispatched
 
+// A `let?` is lowered as the match it means, under the whole request: its body stands where the
+// `let?` does, as stage 0's `LowerLetResult` lowers it.
 let recursive lowerCore expression state =
     match (expression, state
     |> resolveLoopCallFlow
@@ -2492,5 +2614,3 @@ let recursive lowerCore expression state =
                     |> lowerCoreDispatch(expression)(lowerCore)
                     |> withLoweredConsumerRequest(emptyConsumerRequest)
                     |> unifyUnforwardedExpectedType(expression)(request)
-// A `let?` is lowered as the match it means, under the whole request: its body stands where the
-// `let?` does, as stage 0's `LowerLetResult` lowers it.
