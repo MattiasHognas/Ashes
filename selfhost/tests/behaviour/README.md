@@ -163,3 +163,27 @@ lambda_equality_typed_by_later_arguments: same -> output-differs (stdout (stage 
 ```
 
 Run against the baseline with the build it was recorded from, it exits 0 with no regressions.
+
+## Attributing crashes to functions
+
+Executables linked by the self-hosted compiler carry no symbol table, unwind tables or frame
+pointers, so gdb shows `??` for every address. With `ASHES_LINK_MAP=<path>` set, the self-hosted
+`compile` writes a link map beside the executable it links: `<path>` has one line per function,
+`<hex address> <hex size> <name>`, sorted by address, and `<path>.names` names where each IR
+function came from (`<label> <origin kind> <source function> <parent label>`, tab-separated). The
+executable is the same with or without the variable. Name the map `<executable>.map` and the
+scripts below find it on their own.
+
+- `resolve-address.sh <map> <address>...` prints `symbol+offset` for each address.
+- `link-map-symbols.sh <map> [<out>]` writes a symbol-only ELF file; `gdb -ex 'add-symbol-file
+  <out>' --args <executable> ...` then names functions in backtraces and disassembly.
+- `crash-trace.sh [--map <map>] -- <command...>` runs a command under gdb with core dumps off and
+  reports the crash PC, gdb's frames in the executable's code, and every stack word that points
+  into that code. The stack words are candidate return addresses, an approximate backtrace.
+- `cluster-crashes.sh --compiler <path> --results <results.tsv>` reruns every `stage1-crash` row
+  of a behavioural run under `crash-trace.sh --brief` (4 in parallel, each capped at 4G and 60 s)
+  and prints one row per function the crashes happened in, most crashes first, with three
+  example tests. Without a map it clusters by raw PC. Results go to `work/crash-clusters/`.
+
+Set the stack limit stage-1 code needs before running any of them on a stage-1 or stage-2
+compiler: `ulimit -s 1048576`.
