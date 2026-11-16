@@ -1980,8 +1980,40 @@ let restoreConstrainedBindingState outer lowered =
         | LoweredCoreValue { state = loweredState } ->
             lowered with state = withStateActiveTraitMethods(stateActiveTraitMethods(outer))(loweredState)
 
+// A type with every arrow's capability row dropped. Lowering's own inference gives a lambda no row,
+// and a function type without one unifies only with an empty closed row, so a constrained plan's
+// type, inferred with rows (an external call's `{UnsafeFfi | a}`), is taken without them.
+let recursive withoutCapabilityRows (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(argument, result, _row) ->
+            SemFunction(withoutCapabilityRows(argument))(withoutCapabilityRows(result))(None)
+        | SemList(element) ->
+            element
+            |> withoutCapabilityRows
+            |> SemList
+        | SemPointer(element) ->
+            element
+            |> withoutCapabilityRows
+            |> SemPointer
+        | SemTuple(elements) ->
+            elements
+            |> withoutCapabilityRowsIn
+            |> SemTuple
+        | SemNamed(symbol, name, arguments) ->
+            arguments
+            |> withoutCapabilityRowsIn
+            |> SemNamed(symbol)(name)
+        | other -> other
+and withoutCapabilityRowsIn (types: List(SemanticType)) =
+    match types with
+        | [] -> []
+        | head :: rest -> withoutCapabilityRows(head) :: withoutCapabilityRowsIn(rest)
+
 let finalizeConstrainedScheme (scheme: TypeScheme) outerBindings state =
-    (let resolved = resolveType(state)(scheme.body)
+    (let resolved =
+        scheme.body
+        |> resolveType(state)
+        |> withoutCapabilityRows
     in
         let requirements =
             map((given (constraint: TraitConstraint) ->
@@ -1996,7 +2028,7 @@ let constrainedPlanRequirements (plan: CoreConstrainedInference) =
 
 let constrainedPlanSourceType (plan: CoreConstrainedInference) =
     (let scheme = plan.scheme
-    in scheme.body)
+    in withoutCapabilityRows(scheme.body))
 
 let lowerConstrainedBindingValue name (plan: CoreConstrainedInference) value lower state =
     match adoptConstrainedPlan(plan)(state) with
