@@ -252,6 +252,59 @@ Order of work. Each step lands separately and is useful if the later ones are de
    keeps the re-lowerings is call results whose type the body resolves late, which the table
    answers but lowering does not yet read.
 
+   Second slice, in place: recorded types are read as lowering's own by stitched type name
+   (lowering gives every named type symbol id 0; the inference numbers its own), with capability
+   rows dropped. Every recorded type of the test programs and of the compiler maps except the rigid
+   type parameters of generic implementations (`implement Eq(List(a))`, 128 nodes in `Ashes.Trait`),
+   which need an instantiation like any generic body. Operators read named types too; a call whose
+   callee's type is settled takes its expected result type from the table, and is lowered as before
+   if that fails; an open `Show.show` or `Hash.hash` operand and an open dictionary requirement are
+   pinned to the recorded type. Ten swept programs change: two in numbering only, three lose one
+   arena request word, and five change ownership placement around a call result lowering used to
+   see open, which wants the behavioural check.
+
+   Measured on the whole compiler (`-O0` driver, the two runs one after the other): the replay pass
+   still runs. Discovery 992 s and replay 845 s with the old entry point, 822 s and 819 s plus 106 s
+   of inference with the table (the old run shared the machine with driver builds). Pending trait
+   goals 7 to 2: the five `>=` goals are answered, the two `Show.show` goals stay because their
+   recorded operand type is not closed. Deferred operator goals 19 to 2. Bodies lowered again 2,205
+   and 2,176 to 2,121 and 2,094; 20,902 calls took a recorded expected type, none fell back. Over
+   the tests: replays 15 to 12, structural equality goals 7 to 0, bodies lowered again 6,152 to
+   6,129.
+
+   Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
+   a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
+   that point, and by values whose copy waits on a type. Taking those results from the table
+   changed ownership placement in 21 swept programs, so those decisions belong to step 8. The
+   order-dependent rules met in this work, each deciding on whether a type is still open at the site:
+   - `selfResultDeferred`: a self call whose callee is listed as deferring its result asks for an
+     arena result and records no unresolved call result.
+   - `siblingResultOpen`: a call to a group member whose arrow was open when the body began asks for
+     an arena result, also when the body is lowered again.
+   - `siblingResultPinned`: such a call whose result the group's first lowering settled uses that
+     result at the site and keeps the arena request.
+   - `deferredSelfResultNamedByConsumer`: a deferred self call whose consumer names a resolved type
+     does not ask for an arena result.
+   - `keepFirstSelfResultDeferral`: a body lowered again keeps the self calls its first lowering
+     deferred.
+   - `requestsArenaResult` and `containsUnresolvedLayout`: a call whose result layout is still open
+     asks for an arena result and joins the body's unresolved call results.
+   - `calleeResultUnsettled` (in `requestsArenaResultFromUnknownCallee`): a callee whose body has not
+     been lowered yet is asked for an arena result.
+   - `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls` and
+     `anyCallResultResolved`: a body whose unresolved call results resolved is lowered again.
+   - `bodyEncounteredRequirementClosedScope`: a body applying a mapped operator whose scope types it
+     closed is lowered again against the closed scope.
+   - `lowerInternalDeepCopy`: a copy of a value whose type is still a variable passes through and
+     asks for the body to be lowered again.
+   - `emitDeferredCoreAdd` and `emitDeferredCoreEquality`: `+`, `==` and `!=` over two open operands
+     emit the integer form, recorded for rewriting once the type is final.
+   - `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal` and
+     `pinProvenEqualityGoal`: a trait goal or dictionary whose operand is open is deferred to the
+     replay pass, which pins what the first pass proved.
+   - `activeEvidenceCoversOperator` and `traitPlanLacksActiveEvidence`: an open operand dispatches
+     through a generic body's own evidence only when that body carries it.
+
    What the table does not yet give lowering:
    - Nodes that lowering synthesizes (evidence rewrites, specialized copies) have no identity;
      they need a rule such as the source node's identity plus an instantiation.
