@@ -38,6 +38,7 @@ import AshesCompiler.Semantics.ReuseResetSafety.reuseResetSafety
 import AshesCompiler.Semantics.ReuseResetSafety.ReuseResetSafety
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1349,6 +1350,48 @@ let tryConstrainedCall expression lower (state: CoreLoweringState) =
                         | None -> tryConstrainedGlobalCall(name)(expression)(lower)(state)
                 | _ -> None
 
+let recursive withoutQuantified (variables: List(Int)) (quantified: List((Int, Str))) =
+    match variables with
+        | [] -> []
+        | variable :: rest ->
+            if quantifiedNamesVariable(variable)(quantified)
+            then withoutQuantified(rest)(quantified)
+            else variable :: withoutQuantified(rest)(quantified)
+and quantifiedNamesVariable (variable: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (id, _name) :: rest -> id == variable || quantifiedNamesVariable(variable)(rest)
+
+// Whether a call's callee is a binding whose type is settled where the call is lowered: a
+// top-level or let-bound function whose scheme holds no variable it does not quantify. A self or
+// sibling call of a recursive group still being lowered, a parameter, and any other callee whose
+// type the body is still working out keep their result open, as stage 0 sees it.
+let calleeTypeSettled (expression: Expr) (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = root } ->
+            match unspanArgument(root) with
+                | ExprVar(name) ->
+                    match lookupBinding(name)(state.bindings) with
+                        | Some(CoreBinding { scheme = TypeScheme { quantified = quantified, body = body } }) ->
+                            withoutQuantified(body
+                            |> resolveType(state)
+                            |> freeTypeVariables)(quantified) == []
+                        | None ->
+                            lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefIndex(state)) != None
+                | ExprQualifiedVar(_qualifier, _name) -> true
+                | _ -> false
+
+// The closed type the standalone inference recorded for a call node whose consumer expects no
+// type of its result and whose callee's type is settled, so the callee's result is resolved before
+// the arguments and before any arena request is decided.
+let recordedCallExpectation (expression: Expr) (state: CoreLoweringState) =
+    match expectedTypeOf(state) with
+        | Some(_expected) -> None
+        | None ->
+            if calleeTypeSettled(expression)(state)
+            then recordedClosedNodeType(state)
+            else None
+
 let lowerUnconstrainedGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (true, Some(frame), Some(loop)) ->
@@ -1364,10 +1407,28 @@ let lowerUnconstrainedGeneralCall expression function argument lower state =
                     match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
                         | Some(inlined) -> inlined
                         | None ->
-                            state
-                            |> clearConsumerRequest
-                            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
-                            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+                            let lowerExpecting =
+                                given (expected) ->
+                                    given (from: CoreLoweringState) ->
+                                        from
+                                        |> clearConsumerRequest
+                                        |> lowerCall(collectCallSpine(expression))(function)(argument)(expected)(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
+                                        |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+                            in
+                                match recordedCallExpectation(expression)(state) with
+                                    | None ->
+                                        lowerExpecting(expectedTypeOf(state))(state)
+                                    | Some(recorded) ->
+                                        // Lowering's own inference stays the authority: a call that
+                                        // fails against the recorded type is lowered as before.
+                                        match state
+                                        |> observeLoweringEvent(3)
+                                        |> lowerExpecting(Some(recorded)) with
+                                            | LoweredCoreValue { error = None } as lowered -> lowered
+                                            | _failed ->
+                                                state
+                                                |> observeLoweringEvent(4)
+                                                |> lowerExpecting(None)
 
 let lowerGeneralCall expression function argument lower state =
     match tryConcreteSourceCall(expression)(lower)(state) with
