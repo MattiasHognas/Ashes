@@ -119,9 +119,12 @@ let recursive parameterNames parameters =
         | [] -> []
         | TypeParameter { name = name } :: tail -> name :: parameterNames(tail)
 
+// Whether a self reference applies the declaration to its own parameters in order. Written type
+// arguments carry their source spans, which are seen through.
 let recursive exactTypeParameterArguments (expected: List(Str)) (arguments: List(TypeExpr)) =
     match (expected, arguments) with
         | ([], []) -> true
+        | (_names, TypeAt(_span, inner) :: argumentTail) -> exactTypeParameterArguments(expected)(inner :: argumentTail)
         | (name :: nameTail, TypeNamed(argumentName) :: argumentTail) ->
             if sameText(name)(argumentName)
             then exactTypeParameterArguments(nameTail)(argumentTail)
