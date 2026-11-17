@@ -207,7 +207,7 @@ let checkTypeSelectorImportsModule unitValue =
             |> resolveStitchedUnqualified("Sel")(-1)(StitchedType)("Box")
             |> requireDefinition("the selected type should resolve unqualified")
             |> definitionName
-            |> test.assertEqual("Foo_Util_Box")))
+            |> test.assertEqual("Box")))
 
 let collisionUnit name path =
     unit(

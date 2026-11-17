@@ -111,7 +111,7 @@ let requireProgram name units =
 
 let expectTreeDeclaration item =
     match item with
-        | TopLevelType(TypeDecl { name = "Foo_Util_Tree", constructors = TypeConstructor { name = "Foo_Util_Node", parameters = TypeApplied("Foo_Util_Tree", []) :: [] } :: [] }) -> Unit
+        | TopLevelType(TypeDecl { name = "Tree", constructors = TypeConstructor { name = "Node", parameters = TypeApplied("Tree", []) :: [] } :: [] }) -> Unit
         | _ -> test.fail("type declarations and recursive constructor fields should use stitched names")
 
 let expectTraitDeclaration item =
@@ -138,7 +138,7 @@ let expectUtilRewriting units =
 // name that is a stitched VALUE stays the arm's own local, in the pattern and in the body.
 let expectMatchedBinding item =
     match item with
-        | TopLevelLet(LetBindingSyntax { name = "matched", value = ExprMatch(ExprVar("Foo_Util_Node"), (PatternConstructor("Foo_Util_Node", []), ExprVar("Foo_Util_value"), None) :: (PatternVar("Foo_Util_Node"), ExprVar("Foo_Util_value"), None) :: (PatternVar("value"), ExprVar("value"), None) :: [], None) }, false) -> Unit
+        | TopLevelLet(LetBindingSyntax { name = "matched", value = ExprMatch(ExprVar("Node"), (PatternConstructor("Node", []), ExprVar("Foo_Util_value"), None) :: (PatternVar("Node"), ExprVar("Foo_Util_value"), None) :: (PatternVar("value"), ExprVar("value"), None) :: [], None) }, false) -> Unit
         | _ -> test.fail("constructor expressions and patterns should use stitched names")
 
 let expectHandlerBinding item =
@@ -148,7 +148,7 @@ let expectHandlerBinding item =
 
 let expectMainRewriting units =
     match requireProgram("Main")(units) with
-        | ProgramSyntax { items = TopLevelLet(LetBindingSyntax { name = "before", value = ExprVar("later") }, false) :: TopLevelAt(TextSpan { start = 20, end = 40 }, TopLevelLet(LetBindingSyntax { name = "later", value = ExprVar("Foo_Util_value") }, false)) :: TopLevelLet(LetBindingSyntax { name = "shadow", value = ExprLambda("value", ExprVar("value"), None) }, false) :: TopLevelLet(LetBindingSyntax { name = "qualified", value = ExprVar("Foo_Util_value") }, false) :: matched :: TopLevelLet(LetBindingSyntax { name = "method", value = ExprQualifiedVar("Foo_Util_Render", "render") }, false) :: handler :: TopLevelTypeAlias(TypeAliasDecl { name = "Local", target = TypeNamed("Foo_Util_Tree") }) :: TopLevelLet(LetBindingSyntax { name = "copied", value = ExprQualifiedVar("Ashes.Internal", "deepCopy") }, false) :: [], body = Some(ExprTuple(ExprVar("before") :: ExprVar("later") :: [])) } ->
+        | ProgramSyntax { items = TopLevelLet(LetBindingSyntax { name = "before", value = ExprVar("later") }, false) :: TopLevelAt(TextSpan { start = 20, end = 40 }, TopLevelLet(LetBindingSyntax { name = "later", value = ExprVar("Foo_Util_value") }, false)) :: TopLevelLet(LetBindingSyntax { name = "shadow", value = ExprLambda("value", ExprVar("value"), None) }, false) :: TopLevelLet(LetBindingSyntax { name = "qualified", value = ExprVar("Foo_Util_value") }, false) :: matched :: TopLevelLet(LetBindingSyntax { name = "method", value = ExprQualifiedVar("Foo_Util_Render", "render") }, false) :: handler :: TopLevelTypeAlias(TypeAliasDecl { name = "Local", target = TypeNamed("Tree") }) :: TopLevelLet(LetBindingSyntax { name = "copied", value = ExprQualifiedVar("Ashes.Internal", "deepCopy") }, false) :: [], body = Some(ExprTuple(ExprVar("before") :: ExprVar("later") :: [])) } ->
             matched
             |> expectMatchedBinding
             |> (given (_) -> expectHandlerBinding(handler))
