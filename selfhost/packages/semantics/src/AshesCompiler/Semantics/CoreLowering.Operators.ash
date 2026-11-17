@@ -1189,7 +1189,7 @@ let recursive isCoreZeroExpression expression =
 // is lowered again against the resolved type: a string `+` lowered against the open types is an
 // arena concatenation that does not release the counted copy of an operand read from a call result.
 // Every other operand shape still resolves immediately through `resolvedCoreBinary`.
-let emitDeferredCoreAdd binary =
+let emitDeferredCoreArithmetic (speculative: Int -> Int -> Int -> IrInstructionKind) binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, leftType = leftType, rightTemp = right, rightType = rightType, error = None } ->
             match bindType(leftType)(rightType)(state) with
@@ -1205,9 +1205,11 @@ let emitDeferredCoreAdd binary =
                                         |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(leftType) :: unresolved)
                                     in
                                         recorded
-                                        |> emit(AddInt(target)(left)(right))
+                                        |> emit(speculative(target)(left)(right))
                                         |> success(target)(leftType)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitDeferredCoreAdd binary = emitDeferredCoreArithmetic(AddInt)(binary)
 
 // `==` and `!=` over two still-unresolved type variables (`lit == ch` before the constructor
 // field that pins `lit` to `Str`) take the same path as `+`: the operands are unified with each
@@ -1254,6 +1256,14 @@ let equalityGoalMethod operator =
 let deferredCoreOperatorEmitter operator =
     match operator with
         | CoreAddOperator -> Some(emitDeferredCoreAdd)
+        | CoreSubtractOperator ->
+            SubInt
+            |> emitDeferredCoreArithmetic
+            |> Some
+        | CoreMultiplyOperator ->
+            MulInt
+            |> emitDeferredCoreArithmetic
+            |> Some
         | CoreEqualOperator ->
             CmpIntEq
             |> emitDeferredCoreEquality("equal")
@@ -1439,6 +1449,10 @@ let resolveDeferredOperator state semanticType (kind: IrInstructionKind) (tempCo
         | (SemString, AddInt(target, left, right)) -> ([ConcatStr(target)(left)(right)(false)], tempCount)
         | (SemFloat, AddInt(target, left, right)) -> ([AddFloat(target)(left)(right)], tempCount)
         | (SemBigInt, AddInt(target, left, right)) -> ([BigIntBinary(target)(left)(right)("add")(false)], tempCount)
+        | (SemFloat, SubInt(target, left, right)) -> ([SubFloat(target)(left)(right)], tempCount)
+        | (SemBigInt, SubInt(target, left, right)) -> ([BigIntBinary(target)(left)(right)("sub")(false)], tempCount)
+        | (SemFloat, MulInt(target, left, right)) -> ([MulFloat(target)(left)(right)], tempCount)
+        | (SemBigInt, MulInt(target, left, right)) -> ([BigIntBinary(target)(left)(right)("mul")(false)], tempCount)
         | (SemString, CmpIntEq(target, left, right)) -> ([CmpStrEq(target)(left)(right)], tempCount)
         | (SemString, CmpIntNe(target, left, right)) -> ([CmpStrNe(target)(left)(right)], tempCount)
         | (SemFloat, CmpIntEq(target, left, right)) -> ([CmpFloatEq(target)(left)(right)], tempCount)
@@ -1450,6 +1464,8 @@ let resolveDeferredOperator state semanticType (kind: IrInstructionKind) (tempCo
 let deferredOperatorTarget (kind: IrInstructionKind) =
     match kind with
         | AddInt(target, _left, _right) -> Some(target)
+        | SubInt(target, _left, _right) -> Some(target)
+        | MulInt(target, _left, _right) -> Some(target)
         | CmpIntEq(target, _left, _right) -> Some(target)
         | CmpIntNe(target, _left, _right) -> Some(target)
         | _ -> None
