@@ -10,6 +10,7 @@ import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
+import AshesCompiler.Frontend.Syntax.callArgumentsPipe
 import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.RecursiveTraitEvidence
 import AshesCompiler.Semantics.CoreConstrainedSpecialization
@@ -18,6 +19,7 @@ import AshesCompiler.Semantics.OperatorConstraintOrigins.mayOriginateOperatorCon
 import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
+import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitResolution.resolveTraitEvidence
@@ -2608,6 +2610,50 @@ let lowerPossiblyConstrainedLetRecursive name value body annotation requirements
         | None ->
             lowerLetRecursive(name)(bindingLambdaValue(annotation)(value)(state))(body)(annotation)(lower)(state)
 
+// Whether a lambda body names a resource binding of the enclosing scope other than its own
+// parameter.
+let recursive bodyNamesOuterResource (parameter: Str) (body: Expr) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> false
+        | CoreBinding { name = name, location = CoreLocal(_slot), ownedRead = true } :: rest ->
+            if name != parameter && exprMentionsName(name)(body)
+            then
+                match resourceBindingOf(name)(state) with
+                    | Some(_resource) -> true
+                    | None -> bodyNamesOuterResource(parameter)(body)(rest)(state)
+            else bodyNamesOuterResource(parameter)(body)(rest)(state)
+        | _binding :: rest -> bodyNamesOuterResource(parameter)(body)(rest)(state)
+
+// A pipeline stage written as a lambda literal over a resource of the enclosing scope,
+// `Unit |> (given (_) -> Ashes.IO.File.close(fh)) |> (given (_) -> Ashes.IO.File.readChunk(fh)(4))`,
+// is lowered as the `let` it means, and so is every lambda stage after it in the same pipeline:
+// `argument |> (given (p) -> body)` evaluates the argument and then the body, so the earlier
+// stages' closes and moves are recorded before a later stage's uses of the same resource are
+// checked (stage 0 checks a stage closure's captured resources at its application for the same
+// reason), and each parameter takes its argument's type. A stage that awaits keeps its closure,
+// and so does one whose argument is itself a lambda, which a `let` would generalize.
+let recursive resourcePipelineStageLet (function: Expr) (argument: Expr) (layout: Int) (state: CoreLoweringState) =
+    if layout != callArgumentsPipe
+    then None
+    else
+        match (stripExprAt(function), stripExprAt(argument)) with
+            | (ExprLambda(_parameter, _body, _annotation), ExprLambda(_innerParameter, _innerBody, _innerAnnotation)) -> None
+            | (ExprLambda(parameter, body, annotation), strippedArgument) ->
+                if exprContainsAwait(body) == false && (bodyNamesOuterResource(parameter)(body)(state.bindings)(state) || followsResourcePipelineStage(strippedArgument)(state))
+                then
+                    []
+                    |> ExprLet(parameter)(argument)(body)([])(annotation)
+                    |> Some
+                else None
+            | _ -> None
+and followsResourcePipelineStage (argument: Expr) (state: CoreLoweringState) =
+    match argument with
+        | ExprCall(function, inner, _whitespace, layout) ->
+            match resourcePipelineStageLet(function)(inner)(layout)(state) with
+                | Some(_stageLet) -> true
+                | None -> false
+        | _ -> false
+
 let lowerCoreDispatch expression lowerCore state =
     match expression with
         | ExprAt(span, inner) ->
@@ -2681,22 +2727,25 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
         | ExprLambda(parameter, body, annotation) ->
             lowerLambda(parameter)(body)(annotation)(statePendingStackClosure(state))(lowerCore)(state)
-        | ExprCall(function, argument, _whitespace, _layout) ->
-            match traitOperatorCall(function)(argument) with
-                | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
+        | ExprCall(function, argument, _whitespace, layout) ->
+            match resourcePipelineStageLet(function)(argument)(layout)(state) with
+                | Some(stageLet) -> lowerCore(stageLet)(state)
                 | None ->
-                    match traitUnaryMethodCall(function) with
-                        | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
+                    match traitOperatorCall(function)(argument) with
+                        | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
                         | None ->
-                            match shippedTraitUnaryOperator(function) with
-                                | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
-                                | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
-                                | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
-                                | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
+                            match traitUnaryMethodCall(function) with
+                                | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
                                 | None ->
-                                    state
-                                    |> lowerCallExpression(expression)(function)(argument)(lowerCore)
-                                    |> describeCallArity(expression)
+                                    match shippedTraitUnaryOperator(function) with
+                                        | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
+                                        | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
+                                        | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
+                                        | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
+                                        | None ->
+                                            state
+                                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                                            |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->

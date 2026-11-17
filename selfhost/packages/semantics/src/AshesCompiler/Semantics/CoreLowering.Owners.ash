@@ -73,6 +73,7 @@ export (
     value resourceTypeNameOf,
     value unspanArgument,
     value isConsValue,
+    value resourceBindingOf,
     value resourceStateOf,
     value markResourceReleased,
     value markResourceArgumentsMoved,
