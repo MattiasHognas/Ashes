@@ -575,9 +575,12 @@ let finishRecordUpdate fields targetSlot (updateRequest: ConsumerRequest) lower 
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
 // A record update whose target reads a loop parameter (or a record field of one) inside the
-// loop body retains the unchanged fields it copies out of that parameter.
+// loop body retains the unchanged fields it copies out of that parameter. The transfer of the
+// update's children is for the fields it stores, not for its target, which stage 0 lowers under
+// no request.
 let lowerRecordUpdate target fields lower state =
     state
+    |> withConsumerRequest((consumerRequestOf(state) with transfersRuntimeManagedChildren = false, callArgument = false))
     |> lower(target)
     |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(consumerRequestOf(state))(lower)
 

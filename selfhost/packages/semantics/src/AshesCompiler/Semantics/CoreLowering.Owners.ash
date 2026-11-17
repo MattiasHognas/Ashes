@@ -269,8 +269,8 @@ let recursive tailPositionOrConsForwards expression =
         | _ -> tailPositionForwards(expression)
 
 // The transfer of an aggregate's children reaches the forms that forward their result and the
-// aggregates that store the children: a constructor application, a record, a cons cell, a list
-// literal, and a tuple.
+// aggregates that store the children: a constructor application, a record, a record update, a
+// cons cell, a list literal, and a tuple.
 let recursive transferRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> transferRequestForwards(inner)
@@ -281,6 +281,7 @@ let recursive transferRequestForwards expression =
         | ExprMatch(_, _, _) -> true
         | ExprCall(_, _, _, _) -> true
         | ExprRecord(_, _, _) -> true
+        | ExprRecordUpdate(_, _) -> true
         | ExprCons(_, _) -> true
         | ExprList(_, _) -> true
         | ExprTuple(_) -> true
