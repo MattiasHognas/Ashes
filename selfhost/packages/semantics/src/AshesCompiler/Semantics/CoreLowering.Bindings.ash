@@ -299,7 +299,7 @@ let emitOwnedPassthroughCopy (sourceTemp: Int) (parameterType: SemanticType) (st
         | Some(inlinePlan) ->
             let plan = entryCopyPlanOf(parameterType)(inlinePlan)(state)
             in
-                match if canTestRepresentation && resultSurvivesReset(parameterType)(state) == false
+                match if canTestRepresentation(state) && resultSurvivesReset(parameterType)(state) == false
                 then
                     emitReferenceOrCopy(sourceTemp)(emitPassthroughCopyByCopy(sourceTemp)(plan))(state)
                 else emitPassthroughCopyByCopy(sourceTemp)(plan)(state) with

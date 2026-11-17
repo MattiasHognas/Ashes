@@ -540,6 +540,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 moveCallSites = [],
                 moveNullaryConstructors = [],
                 liveHandlerFunctions = Ashes.Collection.Map.empty,
+                parallelWorkerFunctions = Ashes.Collection.Map.empty,
                 entryRunsUnderLiveHandlerPost = false,
                 anyRunsUnderLiveHandlerPost = false,
                 patternOwnerSites = [],
@@ -598,6 +599,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 pendingSourceFunction = None,
                 activeFunctionOrigin = None,
                 underLiveHandlerPost = false,
+                mayRunAsParallelWorker = false,
                 handlerArmOwnResult = false,
                 pendingClosureNormalizers = [],
                 resourceStates = [],
@@ -1000,9 +1002,8 @@ let sourceFunctionOriginFor (name: Str) (state: CoreLoweringState) =
 // representation of asks the value at run time — `IsReferenceCounted` — and takes a reference
 // instead of a copy when the answer is yes. Stage 0 withholds that from a function that may run as
 // a structured-parallelism worker, whose arena another thread tears down independently of this
-// function's scope; this compiler lowers no structured parallelism, so no function it lowers is
-// one of those.
-let canTestRepresentation = true
+// function's scope.
+let canTestRepresentation (state: CoreLoweringState) = stateMayRunAsParallelWorker(state) == false
 
 let recursive letValueIsLambda (value: Expr) =
     match value with
@@ -1132,9 +1133,27 @@ let functionUnderLiveHandlerPost (origin: IrFunctionOrigin) (state: CoreLowering
                 | None -> stateUnderLiveHandlerPost(state)
         | None -> stateUnderLiveHandlerPost(state)
 
+// A top-level function takes its own parallel-worker answer; any other function keeps the answer
+// of the function it is lowered inside.
+let functionMayRunAsParallelWorker (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match origin.sourceOrigin with
+        | Some(SourceFunctionOrigin { functionSourceName = name }) ->
+            match state
+            |> stateTopLevelNames
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(_) ->
+                    match state
+                    |> stateParallelWorkerFunctions
+                    |> Ashes.Collection.Map.getStr(name) with
+                        | Some(_) -> true
+                        | None -> false
+                | None -> stateMayRunAsParallelWorker(state)
+        | None -> stateMayRunAsParallelWorker(state)
+
 let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) =
     state
     |> withStateUnderLiveHandlerPost(functionUnderLiveHandlerPost(origin)(state))
+    |> withStateMayRunAsParallelWorker(functionMayRunAsParallelWorker(origin)(state))
     |> withStatePendingSourceFunction(None)
     |> withStatePendingStackClosure(false)
     |> withStateActiveFunctionOrigin(Some(origin))

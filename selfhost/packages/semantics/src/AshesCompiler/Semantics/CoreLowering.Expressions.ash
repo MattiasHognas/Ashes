@@ -2274,6 +2274,23 @@ let lowerJoinOrCall expression function argument lower (state: CoreLoweringState
                         | failed -> failed
         | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
 
+// A call of one of the `Ashes.Task.Parallel` functions whose callbacks run on worker threads.
+let isParallelWorkerCall expression =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName) } -> moduleName == "Ashes.Task.Parallel" && (memberName == "map" || memberName == "reduce" || memberName == "mapGrained" || memberName == "reduceGrained")
+        | CoreCallSpine { root = ExprVar(name) } -> name == "Ashes_Task_Parallel_map" || name == "Ashes_Task_Parallel_reduce" || name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
+        | _ -> false
+
+// Lowers such a call as code that may run on a worker, so the callbacks lifted from its arguments
+// do (stage 0 marks the callback functions themselves); the enclosing answer is restored after it.
+let lowerAsParallelWorker lowerCall (state: CoreLoweringState) =
+    (let enclosing = stateMayRunAsParallelWorker(state)
+    in
+        match state
+        |> withStateMayRunAsParallelWorker(true)
+        |> lowerCall with
+            | LoweredCoreValue { state = loweredState } as lowered -> lowered with state = withStateMayRunAsParallelWorker(enclosing)(loweredState))
+
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
@@ -2282,7 +2299,11 @@ let lowerCallExpression expression function argument lower state =
                 | None ->
                     if forksOutsideAsync(expression)(state)
                     then failure(state)(UnsupportedCoreBuiltinLowering("Ashes.Task.fork() must be used inside an async task."))
-                    else lowerJoinOrCall(expression)(function)(argument)(lower)(state)
+                    else
+                        if isParallelWorkerCall(expression)
+                        then
+                            lowerAsParallelWorker(lowerJoinOrCall(expression)(function)(argument)(lower))(state)
+                        else lowerJoinOrCall(expression)(function)(argument)(lower)(state)
                 | Some(rewritten) -> lower(rewritten)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.

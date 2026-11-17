@@ -209,6 +209,10 @@ export (
     value withStateActiveFunctionOrigin,
     value stateUnderLiveHandlerPost,
     value withStateUnderLiveHandlerPost,
+    value withStateParallelWorkerFunctions,
+    value stateParallelWorkerFunctions,
+    value stateMayRunAsParallelWorker,
+    value withStateMayRunAsParallelWorker,
     value stateHandlerArmOwnResult,
     value withStateHandlerArmOwnResult,
     value ordinaryRcPlacementAllowed,
@@ -870,6 +874,9 @@ type CoreProgramState =
     // Stage 0's `_maFunctionsMayExecuteUnderLiveHandlerPost`: the top-level functions that may run
     // while a one-shot handler's post is pending, and whether the entry scope may.
     | liveHandlerFunctions: MapTree(Str, Bool)
+    // Stage 0's `_maFunctionsMayExecuteAsParallelWorker`: the top-level functions that may run on a
+    // structured-parallelism worker thread.
+    | parallelWorkerFunctions: MapTree(Str, Bool)
     | entryRunsUnderLiveHandlerPost: Bool
     | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
@@ -999,6 +1006,10 @@ type CoreFunctionState =
     // lowered: it may run while a one-shot handler's post is pending, so its values stay off the
     // reference-counted heap. A nested function takes its enclosing function's answer.
     | underLiveHandlerPost: Bool
+    // Stage 0's `OwnershipPlacementContext.MayExecuteAsParallelWorker` of the function being lowered:
+    // a worker frees its own heap when it exits, so a value of its is copied out, never shared. A
+    // nested function takes its enclosing function's answer.
+    | mayRunAsParallelWorker: Bool
     // Stage 0's `_loweringHandlerArmOwnResult`: an operation arm closure is being lowered, whose own
     // escaping result may reach the reference-counted heap under a live handler post, since the
     // perform site always asks for its arena form and releases the original.
@@ -3134,3 +3145,19 @@ let stateScrutineeTuple (state: CoreLoweringState) =
 let withStateScrutineeTuple value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with scrutineeTuple = value))
+
+let withStateParallelWorkerFunctions value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with parallelWorkerFunctions = value))
+
+let stateParallelWorkerFunctions (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.parallelWorkerFunctions)
+
+let stateMayRunAsParallelWorker (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.mayRunAsParallelWorker)
+
+let withStateMayRunAsParallelWorker value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with mayRunAsParallelWorker = value))

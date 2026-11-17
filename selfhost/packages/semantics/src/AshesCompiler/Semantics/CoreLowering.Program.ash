@@ -65,6 +65,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.PerceusLifetimePlacement
+import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -2803,6 +2804,86 @@ let programLiveHandlerFunctions (table: List((Str, List(Str), Expr))) (body: May
                     |> liveFunctionsFixpoint(scans)(escaped)
                     |> (given (live) -> (live, entry.containsHandle, entry.containsHandle || anyInstallsHandler(scans))))
 
+// The `Ashes.Task.Parallel` functions whose callback arguments run on worker threads (stage 0's
+// `ParallelWorkerCalleeNames`), by qualified and by stitched name.
+let parallelWorkerMemberNames = ["map", "reduce", "mapGrained", "reduceGrained"]
+
+let parallelWorkerStitchedNames = ["Ashes_Task_Parallel_map", "Ashes_Task_Parallel_reduce", "Ashes_Task_Parallel_mapGrained", "Ashes_Task_Parallel_reduceGrained"]
+
+let isParallelWorkerCallee (callee: Expr) =
+    match unspanArgument(callee) with
+        | ExprQualifiedVar(moduleName, memberName) -> moduleName == "Ashes.Task.Parallel" && containsName(memberName)(parallelWorkerMemberNames)
+        | ExprVar(name) -> containsName(name)(parallelWorkerStitchedNames)
+        | _ -> false
+
+// The root and the arguments of a call spine.
+let recursive callSpineParts (expression: Expr) (arguments: List(Expr)) =
+    match unspanArgument(expression) with
+        | ExprCall(function, argument, _isSugar, _layout) -> callSpineParts(function)(argument :: arguments)
+        | root -> (root, arguments)
+
+// Stage 0's `MarkFunctionsReachableFrom` over a worker callback's arguments: the program functions
+// they call or name, and every escaped function when one of them calls a value the analysis
+// cannot name.
+let recursive seedParallelWorkerArguments (functions: MapTree(Str, Bool)) (escaped: List(Str)) (arguments: List(Expr)) (seeds: MapTree(Str, Bool)) =
+    match arguments with
+        | [] -> seeds
+        | argument :: rest ->
+            let scan = scanHandlerEffects(functions)([])(argument)(emptyHandlerEffectScan)
+            in
+                let named = append(scan.callees)(scan.references)
+                in
+                    let marked =
+                        if scan.dynamicCall
+                        then append(named)(escaped)
+                        else named
+                    in
+                        match addLiveFunctions(marked)(seeds)(false) with
+                            | (added, _changed) -> seedParallelWorkerArguments(functions)(escaped)(rest)(added)
+
+let parallelWorkerSeedVisit (functions: MapTree(Str, Bool)) (escaped: List(Str)) =
+    given (seeds: MapTree(Str, Bool)) ->
+        given (_id: Int) ->
+            given (_span) ->
+                given (node: Expr) ->
+                    match node with
+                        | ExprCall(_function, _argument, _isSugar, _layout) ->
+                            match callSpineParts(node)([]) with
+                                | (root, arguments) ->
+                                    if isParallelWorkerCallee(root)
+                                    then seedParallelWorkerArguments(functions)(escaped)(arguments)(seeds)
+                                    else seeds
+                        | _ -> seeds
+
+let recursive seedParallelWorkerTable (functions: MapTree(Str, Bool)) (escaped: List(Str)) (table: List((Str, List(Str), Expr))) (seeds: MapTree(Str, Bool)) =
+    match table with
+        | [] -> seeds
+        | (_name, _parameters, body) :: rest ->
+            body
+            |> foldExpressionNodes(parallelWorkerSeedVisit(functions)(escaped))(seeds)
+            |> seedParallelWorkerTable(functions)(escaped)(rest)
+
+// Stage 0's `ComputeParallelWorkerEffects`: the top-level functions that may run on a
+// structured-parallelism worker, the least fixpoint from the callbacks passed to the parallel
+// functions through their callees, and every escaped function where one makes a call the analysis
+// cannot name. A function nested in a top-level one is counted as part of it.
+let programParallelWorkerFunctions (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    (let functions = programFunctionSet(table)(Ashes.Collection.Map.empty)
+    in
+        match scanProgramHandlerEffects(functions)(table)(entryHandlerEffectScan(functions)(body))([]) with
+            | (entry, scans) ->
+                let escaped = escapedFunctions(scans)(entry.references)
+                in
+                    let entrySeeds =
+                        match body with
+                            | Some(expression) ->
+                                foldExpressionNodes(parallelWorkerSeedVisit(functions)(escaped))(Ashes.Collection.Map.empty)(expression)
+                            | None -> Ashes.Collection.Map.empty
+                    in
+                        entrySeeds
+                        |> seedParallelWorkerTable(functions)(escaped)(table)
+                        |> liveFunctionsFixpoint(scans)(escaped))
+
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
     (let functionTable = topLevelFunctions(program)
     in
@@ -2811,6 +2892,7 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
         |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
+        |> withStateParallelWorkerFunctions(programParallelWorkerFunctions(functionTable)(program.body))
         |> (given (seeded: CoreLoweringState) ->
             withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))

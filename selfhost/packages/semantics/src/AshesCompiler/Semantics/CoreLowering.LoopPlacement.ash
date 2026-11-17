@@ -1025,13 +1025,14 @@ let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, In
 
 // Stage 0's `ResolvePatternBindingPlacementOutcome`: a copy-typed binding owns nothing; a
 // binding whose root parameter lives on the reference-counted heap, or whose own type is
-// reference-counted whatever holds it, gets its protective owner, as does one bound out of a tuple
-// matched on the reference-counted heap, which descends from the tuple's counted copy of an
-// arena-placed root; any other binding of an arena-placed root keeps its identity markers.
+// reference-counted whatever holds it (outside a parallel worker), gets its protective owner, as
+// does one bound out of a tuple matched on the reference-counted heap, which descends from the
+// tuple's counted copy of an arena-placed root; any other binding of an arena-placed root keeps its
+// identity markers.
 let patternSitePlaced (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     site.siteType
     |> resolveType(state)
-    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(managedAdts)(candidates) || site.siteHeldByTuple || isUnconditionallyRcManagedType(resolved)))
+    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(managedAdts)(candidates) || site.siteHeldByTuple || isUnconditionallyRcManagedType(resolved) && canTestRepresentation(state)))
 
 let recursive placedPatternOwnerSites (sites: List(PatternOwnerSite)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match sites with

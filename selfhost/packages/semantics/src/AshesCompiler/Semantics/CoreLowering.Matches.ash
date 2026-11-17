@@ -1105,7 +1105,7 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                 | (true, Some(plan)) ->
                     match lower(body)(state) with
                         | LoweredCoreValue { state = armState, temp = armTemp, semanticType = armType, error = None } ->
-                            if canTestRepresentation
+                            if canTestRepresentation(state)
                             then
                                 // The copy marks its own temp. What the test answers with is the
                                 // arm's own value when the runtime says it is already

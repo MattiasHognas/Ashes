@@ -2774,7 +2774,7 @@ let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
             let deepUnique =
-                canTestRepresentation == false && (match resolveType(state)(semanticType) with
+                canTestRepresentation(state) == false && (match resolveType(state)(semanticType) with
                     | SemList(_element) -> isFreshListConstruction(value)
                     | SemNamed(_symbolId, name, _arguments) as named -> canRuntimeManageRecursiveCopyAdt(named)(state) && isFreshConstructorTree(value)(name)(state)
                     | _ -> false)

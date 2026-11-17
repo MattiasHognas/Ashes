@@ -1094,7 +1094,7 @@ let loopExitCellHoldsReference (name: Str) (slot: Int) (frame: CoreTcoLoopFrame)
 // caller, which sees an arena result, nor the join that copies it beside a reference-counted arm
 // releases it. A cell of scalars over a parameter handed on unchanged stays in the arena.
 let loopExitCellSlot (request: ConsumerRequest) (tailExpression: Expr) (state: CoreLoweringState) =
-    match (canTestRepresentation && request.consTailPosition, stateTcoLoop(state), stateTcoLoopFrame(state), unspanArgument(tailExpression)) with
+    match (canTestRepresentation(state) && request.consTailPosition, stateTcoLoop(state), stateTcoLoopFrame(state), unspanArgument(tailExpression)) with
         | (true, Some(loop), Some(frame), ExprVar(name)) ->
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(slot) ->
@@ -1124,7 +1124,7 @@ let referenceOrCopyLoopExitTail (tailTemp: Int) (tailType: SemanticType) (state:
 // Stage 0's `PrepareRuntimeRcListTail`: the cons argument of a tail self-call whose tail reads the
 // loop's own list accumulator takes that list over rather than copying it.
 let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
-    match (canTestRepresentation, request.runtimeTcoListTailSlot, unspanArgument(tailExpression)) with
+    match (canTestRepresentation(state), request.runtimeTcoListTailSlot, unspanArgument(tailExpression)) with
         | (true, Some(tailSlot), ExprVar(name)) ->
             match lookupBinding(name)(state.bindings) with
                 | Some(CoreBinding { location = CoreLocal(boundSlot) }) ->
@@ -1144,7 +1144,7 @@ let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (
 // the list is in the reference-counted region and a copy onto it when the list is in the arena,
 // which the enclosing scope reclaims under the cell.
 let referenceOrCopyUnplacedLetTail (applies: Bool) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
-    match (applies && canTestRepresentation && isRuntimeTemp(tailTemp)(state) == false, unspanArgument(tailExpression), argumentCopyPlanOf(tailType)(state)) with
+    match (applies && canTestRepresentation(state) && isRuntimeTemp(tailTemp)(state) == false, unspanArgument(tailExpression), argumentCopyPlanOf(tailType)(state)) with
         | (true, ExprVar(_name), Some(plan)) ->
             emitReferenceOrCopy(tailTemp)(state
             |> entryCopyPlanOf(tailType)(plan)
@@ -1390,7 +1390,7 @@ let cellRequestOf (request: ConsumerRequest) = request with runtimeList = true
 let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
-            if generalRcEnabled(tailState) && canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
+            if generalRcEnabled(tailState) && canTestRepresentation(tailState) && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
             then
                 if headType
                 |> resolveType(tailState)
@@ -1497,7 +1497,7 @@ let isChainTail (expression: Expr) =
 let ownChainHeadOverReferenceCountedTail (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, error = None }) ->
-            if canTestRepresentation && (isChainTail(tailExpression) || request.chainTailCell) && request.runtimeTcoListTailSlot != None && requestsRuntimeList(request) && !request.borrowsCellParts && (isRuntimeTemp(tailTemp)(tailState) || headReadsAdmittedLoopParameter(tailExpression)(tailState)) && !cellHeadIsRuntimeManageable(request)(headExpression)(headTemp)(headType)(tailState) && isChainOwnableHeadType(resolveType(tailState)(headType))
+            if canTestRepresentation(tailState) && (isChainTail(tailExpression) || request.chainTailCell) && request.runtimeTcoListTailSlot != None && requestsRuntimeList(request) && !request.borrowsCellParts && (isRuntimeTemp(tailTemp)(tailState) || headReadsAdmittedLoopParameter(tailExpression)(tailState)) && !cellHeadIsRuntimeManageable(request)(headExpression)(headTemp)(headType)(tailState) && isChainOwnableHeadType(resolveType(tailState)(headType))
             then
                 match argumentCopyPlanOf(headType)(tailState) with
                     | Some(plan) ->
@@ -1919,7 +1919,7 @@ let isFreshReferenceCountedCell (cellTemp: Int) (state: CoreLoweringState) = fre
 // static string's cell) is copied in. The literal's own tail is the empty list, then the cell
 // before it, so only a cell that was left in the arena needs its representation tested.
 let ownedLiteralTail (runtimeManaged: Bool) (tailIsReferenceCounted: Bool) (tailTemp: Int) elementType (state: CoreLoweringState) =
-    if canTestRepresentation && runtimeManaged && tailIsReferenceCounted == false
+    if canTestRepresentation(state) && runtimeManaged && tailIsReferenceCounted == false
     then
         match argumentCopyPlanOf(elementType
         |> resolveType(state)

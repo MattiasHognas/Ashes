@@ -1400,7 +1400,7 @@ let isListHeadHandOverType (resultType: SemanticType) (state: CoreLoweringState)
         | SemList(element) ->
             match listHeadCopyKindOf(element)(state) with
                 | Some(_headCopy) -> false
-                | None -> canTestRepresentation && !resultSurvivesReset(element)(state) && !containsUnresolvedLayout(SemList(element))(state) && isGeneralRcValueType(SemList(element))(state)
+                | None -> canTestRepresentation(state) && !resultSurvivesReset(element)(state) && !containsUnresolvedLayout(SemList(element))(state) && isGeneralRcValueType(SemList(element))(state)
         | _ -> false
 
 let unknownCalleeTupleResultParts (candidates: List(Int)) (listHeads: Bool) =
@@ -1555,17 +1555,17 @@ let ownsGenericStringArgument (argumentType: SemanticType) (resultType: Semantic
         | SemString ->
             match finalApplicationResult(resultType)(arity - 1)(state) with
                 | Some(SemFunction(_argument, _result, _row)) -> false
-                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation(state) && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
                 | None -> false
         | SemNamed(_symbolId, _name, _arguments) as named ->
             match finalApplicationResult(resultType)(arity - 1)(state) with
                 | Some(SemFunction(_argument, _result, _row)) -> false
-                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && specializationFieldRelocatable(named)(state) && isGeneralRcValueType(named)(state) && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation(state) && specializationFieldRelocatable(named)(state) && isGeneralRcValueType(named)(state) && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
                 | None -> false
         | SemList(element) ->
             match finalApplicationResult(resultType)(arity - 1)(state) with
                 | Some(SemFunction(_argument, _result, _row)) -> false
-                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && (resolveType(state)(element) == SemString || resultSurvivesReset(element)(state) || isGeneralRcValueType(element)(state)) && containsUnresolvedLayout(finalType)(state) == false && (specializationFieldRelocatable(finalType)(state) || isGeneralRcValueType(finalType)(state))
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation(state) && (resolveType(state)(element) == SemString || resultSurvivesReset(element)(state) || isGeneralRcValueType(element)(state)) && containsUnresolvedLayout(finalType)(state) == false && (specializationFieldRelocatable(finalType)(state) || isGeneralRcValueType(finalType)(state))
                 | None -> false
         | _ -> false
 

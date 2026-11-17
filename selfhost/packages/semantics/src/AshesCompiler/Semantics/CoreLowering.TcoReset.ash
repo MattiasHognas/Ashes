@@ -744,7 +744,7 @@ let unlocatedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLow
 // reference to the original child when the runtime answers that it is already reference-counted,
 // and the copy otherwise. A scalar child is its own word and has no representation to ask about.
 let emitChildReferenceOrCopy (childTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match (canTestRepresentation, plan) with
+    match (canTestRepresentation(state), plan) with
         | (false, _plan) -> unlocatedDeepCopy(childTemp)(plan)(state)
         | (_tests, ScalarArgumentCopy) -> unlocatedDeepCopy(childTemp)(plan)(state)
         | (_tests, _plan) ->
@@ -1139,7 +1139,7 @@ let isFreshAggregateLiteral (expression: Expr) (state: CoreLoweringState) =
 // is copied (a name bound out of a tuple, a join) may still hold an arena cell built this
 // iteration, which has no reference count to release.
 let emitGuardedSourceChildDrop (childTemp: Int) (childType: SemanticType) (state: CoreLoweringState) =
-    if canTestRepresentation == false
+    if canTestRepresentation(state) == false
     then emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)(state)
     else
         match freshTemp(state) with

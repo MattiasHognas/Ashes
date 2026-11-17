@@ -395,7 +395,7 @@ let emitReferenceOrCopy (sourceTemp: Int) emitCopy (state: CoreLoweringState) =
 // reference-counted, and the copy otherwise. A value that survives the reset needs neither. The
 // test carries no location, as the rest of the reset does.
 let emitBackEdgeReferenceOrCopy (sourceTemp: Int) (semanticType: SemanticType) emitCopy (state: CoreLoweringState) =
-    if canTestRepresentation == false || resultSurvivesReset(semanticType)(state)
+    if canTestRepresentation(state) == false || resultSurvivesReset(semanticType)(state)
     then emitCopy(state)
     else
         match emitReferenceOrCopy(sourceTemp)(emitCopy)((state with currentSpan = None)) with
@@ -1215,7 +1215,7 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
 // and copied spine and heads otherwise. The entry copy reaches the walk below directly, since it
 // tests the whole argument itself.
 and emitGuardedListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    if canTestRepresentation
+    if canTestRepresentation(state)
     then
         emitReferenceOrCopy(sourceTemp)(emitListDeepCopyWith(true)(false)(-1)(sourceTemp)(elementPlan))(state)
     else emitListDeepCopy(sourceTemp)(elementPlan)(state)
@@ -1398,7 +1398,7 @@ and emitConstructorDeepCopy (sourceTemp: Int) (constructorPlan: (Int, Int, Bool,
 // reference to the original child when the runtime answers that it is already reference-counted,
 // and the copy otherwise. A scalar child is its own word and has no representation to ask about.
 and emitChildDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match (canTestRepresentation, plan) with
+    match (canTestRepresentation(state), plan) with
         | (false, _plan) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
         | (_tests, ScalarArgumentCopy) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
         | (_tests, _plan) ->
@@ -1566,7 +1566,7 @@ let emitArgumentCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: Co
 // caller handed over when the runtime answers that it is already reference-counted. A scalar is
 // the value itself and has no representation to ask about.
 let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match (canTestRepresentation, plan) with
+    match (canTestRepresentation(state), plan) with
         | (false, _plan) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
         | (_tests, ScalarArgumentCopy) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
         | (_tests, _plan) ->
@@ -1576,7 +1576,7 @@ let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLowe
 // tested again inside the first test and shares the reference-counted suffix it reaches, and the
 // result temp stage 0 reserves before that walk takes over is reserved here too.
 let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match (canTestRepresentation, plan) with
+    match (canTestRepresentation(state), plan) with
         | (true, ListDeepArgumentCopy(elementPlan)) ->
             emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
                 match freshTemp(copying) with

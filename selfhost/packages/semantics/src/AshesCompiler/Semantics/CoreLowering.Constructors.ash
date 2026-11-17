@@ -173,7 +173,7 @@ let emitOwnedStringCopy (sourceTemp: Int) (state: CoreLoweringState) =
 let ownPatternBoundStringChild (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if canTestRepresentation && runtimeManaged && resolveType(state)(fieldType) == SemString && isPatternOwnerRead(argument)(state) && containsInt(temp)(statePatternOwnerCopyTemps(state)) == false
+            if canTestRepresentation(state) && runtimeManaged && resolveType(state)(fieldType) == SemString && isPatternOwnerRead(argument)(state) && containsInt(temp)(statePatternOwnerCopyTemps(state)) == false
             then
                 match emitReferenceOrCopy(temp)(emitOwnedStringCopy(temp))(state) with
                     | (owned, ownedTemp) ->
