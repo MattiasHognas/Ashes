@@ -342,6 +342,7 @@ now compiles the whole compiler, so stage 2 exists; it is not yet correct. The g
 to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
 
 1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
+   **Reached on 2026-11-18 (bootstrap52):** stage 2 compiles the compiler into a stage 3 that is byte-for-byte identical to stage 2 (45,851,504 bytes; stage 3 built in 11:25 at a 12.5 GiB peak). Stage 1 behaves as stage 0 on every `tests/*.ash` program apart from live-cell counts (973 same, 149 differ only in leaks, 0 crashes, 0 wrong outputs). Stage 2 matches stage 0 on 971; its 6 remaining differences are the next work. A capped run with swap disallowed was killed by the kernel with memory free; run stage 3 with swap allowed.
    - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
      builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
      with stage 2 as the compiler under test, groups the crashes by function with
