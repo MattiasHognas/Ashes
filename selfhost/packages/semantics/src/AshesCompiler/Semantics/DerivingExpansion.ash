@@ -17,6 +17,7 @@ export (
     type DerivingTypeContext(..),
     value emptyDerivingTypeContext,
     value addDerivingItemsToContext,
+    value describeUnsupportedDerivedField,
     value expandDerivedImplementationsFrom,
     value expandDerivedImplementations,
 )
@@ -827,3 +828,94 @@ let expandDerivedImplementations program =
             expandDerivedImplementationsFrom(Unit
             |> emptyDerivingTypeContext
             |> addDerivingItemsToContext(items))(program)
+
+// Why a field type cannot take part in a derived implementation, worded as stage 0 words it, or
+// None when it can.
+let recursive unsupportedDerivedReason (declarationName: Str) (declaredParameters: List(Str)) (context: DerivingTypeContext) (visitedAliases: List(Str)) (typeExpression: TypeExpr) =
+    match typeExpression with
+        | TypeAt(_span, inner) -> unsupportedDerivedReason(declarationName)(declaredParameters)(context)(visitedAliases)(inner)
+        | TypeArrow(_argument, _result, _capabilities, _tail) -> Some("an unsupported function type")
+        | TypeTuple(elements) -> unsupportedDerivedReasons(declarationName)(declaredParameters)(context)(visitedAliases)(elements)
+        | TypeUnit -> None
+        | TypeApplied(name, arguments) ->
+            if sameText(name)(declarationName)
+            then
+                if exactTypeParameterArguments(declaredParameters)(arguments)
+                then None
+                else Some("unsupported non-regular recursion")
+            else
+                if sameText(name)("Ptr")
+                then Some("an unsupported external pointer type")
+                else unsupportedNamedReason(declarationName)(declaredParameters)(context)(visitedAliases)(name)(arguments)
+        | TypeNamed(name) ->
+            if sameText(name)(declarationName)
+            then
+                match declaredParameters with
+                    | [] -> None
+                    | _ -> Some("unsupported non-regular recursion")
+            else
+                match unsupportedNamedReason(declarationName)(declaredParameters)(context)(visitedAliases)(name)([]) with
+                    | Some(reason) -> Some(reason)
+                    | None ->
+                        if derivedNamedVariableIsSupported(name)(declaredParameters)
+                        then None
+                        else Some("the unbound type variable '" + name + "'")
+and unsupportedNamedReason (declarationName: Str) (declaredParameters: List(Str)) (context: DerivingTypeContext) (visitedAliases: List(Str)) (name: Str) (arguments: List(TypeExpr)) =
+    if sameText(name)("Task")
+    then Some("the unsupported task type 'Task'")
+    else
+        if derivedBuiltinFieldIsUnsupported(name)
+        then Some("the resource type '" + name + "'")
+        else
+            match resolveDerivedTypeDefinition(name)(context) with
+                | Some(DerivedOpaqueType(opaqueName)) -> Some("the opaque external type '" + opaqueName + "'")
+                | Some(DerivedResourceType(resourceName)) -> Some("the resource type '" + resourceName + "'")
+                | Some(DerivedCapabilityType(capabilityName)) -> Some("the capability type '" + capabilityName + "'")
+                | Some(DerivedTypeAlias(aliasName, parameters, target)) ->
+                    if textExists(aliasName)(visitedAliases) || derivedTypeCount(parameters) != derivedTypeCount(arguments)
+                    then None
+                    else
+                        target
+                        |> substituteDerivedAliasType(parameters)(arguments)
+                        |> unsupportedDerivedReason(declarationName)(declaredParameters)(context)(aliasName :: visitedAliases)
+                | None -> unsupportedDerivedReasons(declarationName)(declaredParameters)(context)(visitedAliases)(arguments)
+and unsupportedDerivedReasons (declarationName: Str) (declaredParameters: List(Str)) (context: DerivingTypeContext) (visitedAliases: List(Str)) (types: List(TypeExpr)) =
+    match types with
+        | [] -> None
+        | head :: tail ->
+            match unsupportedDerivedReason(declarationName)(declaredParameters)(context)(visitedAliases)(head) with
+                | Some(reason) -> Some(reason)
+                | None -> unsupportedDerivedReasons(declarationName)(declaredParameters)(context)(visitedAliases)(tail)
+
+let recursive fieldNameAt (names: List(Str)) (index: Int) =
+    match names with
+        | [] -> ""
+        | head :: tail ->
+            if index == 0
+            then head
+            else fieldNameAt(tail)(index - 1)
+
+let recursive unsupportedFieldIn (declaration: TypeDecl) (context: DerivingTypeContext) (constructor: TypeConstructor) (fields: List(TypeExpr)) (index: Int) =
+    match fields with
+        | [] -> None
+        | field :: rest ->
+            match unsupportedDerivedReason(declaration.name)(parameterNames(declaration.typeParameters))(context)([])(field) with
+                | Some(reason) ->
+                    let description =
+                        if declaration.isRecord
+                        then "field '" + fieldNameAt(constructor.fieldNames)(index) + "'"
+                        else "payload " + Ashes.Text.fromInt(index + 1) + " of constructor '" + constructor.name + "'"
+                    in Some((description, reason))
+                | None -> unsupportedFieldIn(declaration)(context)(constructor)(rest)(index + 1)
+
+let recursive unsupportedFieldAmong (declaration: TypeDecl) (context: DerivingTypeContext) (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> None
+        | constructor :: rest ->
+            match unsupportedFieldIn(declaration)(context)(constructor)(constructor.parameters)(0) with
+                | Some(found) -> Some(found)
+                | None -> unsupportedFieldAmong(declaration)(context)(rest)
+
+// The first field of a declaration that cannot take part in a derived implementation, as stage 0
+// names it (`field 'x'` of a record, `payload 2 of constructor 'C'` otherwise), with the reason.
+let describeUnsupportedDerivedField (context: DerivingTypeContext) (declaration: TypeDecl) = unsupportedFieldAmong(declaration)(context)(declaration.constructors)

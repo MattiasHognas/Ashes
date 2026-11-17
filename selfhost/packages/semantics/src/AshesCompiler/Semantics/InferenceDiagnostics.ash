@@ -4,9 +4,9 @@
 // read as the source spells them. An error stage 0 has no wording for prints its structural form.
 
 import Ashes.Collection.List.reverse
-import AshesCompiler.Frontend.InlineModules
 import AshesCompiler.Frontend.Token.TextSpan
-import AshesCompiler.Semantics.DerivingExpansion.DerivingExpansionError
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.DerivingExpansion
 import AshesCompiler.Semantics.DiagnosticTypeText
 import AshesCompiler.Semantics.ExternalAbi.ExternalAbiError
 import AshesCompiler.Semantics.ExternalTyping.ExternalTypingError
@@ -15,14 +15,16 @@ import AshesCompiler.Semantics.ModuleSemanticStitching.StitchedNameKind
 import AshesCompiler.Semantics.ProgramInference.InferenceErrorLocation
 import AshesCompiler.Semantics.ProgramInference.ProgramInferenceError
 import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
-import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectSyntaxStitching.StitchedDefinitionPlacement
 import AshesCompiler.Semantics.ProjectSyntaxStitching.StitchedSyntaxProject
 import AshesCompiler.Semantics.SourceContext.buildSourceTextIndex
 import AshesCompiler.Semantics.SourceContext.resolvePositionInIndex
+import AshesCompiler.Semantics.StitchedSources.regionFilePath
+import AshesCompiler.Semantics.StitchedSources.regionSourceText
 import AshesCompiler.Semantics.TypeInference.ConstructorInferenceDefinition
 import AshesCompiler.Semantics.TypeInference.TypeEnvironment
 import AshesCompiler.Semantics.TypeInference.TypeInferenceError
+import AshesCompiler.Semantics.TypeInference.TraitImplementationSite
 import AshesCompiler.Semantics.TypeInference.resolveWrittenTypeBinding
 import AshesCompiler.Semantics.TypeResolution.TypeResolutionError
 import AshesCompiler.Semantics.Types
@@ -351,6 +353,28 @@ let recursive firstNames (pairs: List((Int, Str))) (count: Int) =
             then []
             else name :: firstNames(rest)(count - 1)
 
+let recursive namesAtDistance (pairs: List((Int, Str))) (distance: Int) =
+    match pairs with
+        | [] -> []
+        | (candidateDistance, name) :: rest ->
+            if candidateDistance == distance
+            then (candidateDistance, name) :: namesAtDistance(rest)(distance)
+            else namesAtDistance(rest)(distance)
+
+// The candidates nearest first, keeping their order among equally near ones, as stage 0's stable
+// ordering does.
+let recursive rankedByDistance (pairs: List((Int, Str))) (distance: Int) (limit: Int) =
+    if distance > limit
+    then []
+    else
+        limit
+        |> rankedByDistance(pairs)(distance + 1)
+        |> appendPairs(namesAtDistance(pairs)(distance))
+and appendPairs (left: List((Int, Str))) (right: List((Int, Str))) =
+    match left with
+        | [] -> right
+        | head :: rest -> head :: appendPairs(rest)(right)
+
 // Stage 0's suggestion for an unknown constructor: up to three constructors in scope within an
 // edit distance of half the name's length (at least 3), nearest first, the builtin constructors
 // ahead of the program's own when equally near.
@@ -366,12 +390,7 @@ let constructorHint (placements: List(StitchedDefinitionPlacement)) (builtins: T
             |> appendTexts(builtinConstructorNames(builtins.constructors)([]))
         in
             let ranked =
-                []
-                |> closeNames(name)(threshold)(candidates)
-                |> Ashes.Collection.List.sortBy(given (left) ->
-                    given (right) ->
-                        match (left, right) with
-                            | ((leftDistance, _leftName), (rightDistance, _rightName)) -> leftDistance <= rightDistance)
+                rankedByDistance(closeNames(name)(threshold)(candidates)([]))(0)(threshold)
             in
                 match firstNames(ranked)(3) with
                     | [] -> ""
@@ -522,7 +541,119 @@ let recursive quotedNames (names: List(Str)) (reversed: List(Str)) =
             |> Ashes.Text.join(", ")
         | name :: rest -> quotedNames(rest)("'" + name + "'" :: reversed)
 
-let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
+let ffiBufferCode = "ASH044"
+
+let ffiOutParameterCode = "ASH045"
+
+let ffiStringCode = "ASH046"
+
+let externalResourceDestructorCode = "ASH041"
+
+let externalOwnershipCode = "ASH042"
+
+let recursive externalFunctionNamed (items: List(TopLevelItem)) (name: Str) =
+    match items with
+        | [] -> None
+        | TopLevelAt(_span, inner) :: rest -> externalFunctionNamed(inner :: rest)(name)
+        | TopLevelExternal(ExternalFunction(candidate, parameterTypes, returnType, _symbol, ownerships, _row)) :: rest ->
+            if candidate == name
+            then Some((parameterTypes, returnType, ownerships))
+            else externalFunctionNamed(rest)(name)
+        | _ :: rest -> externalFunctionNamed(rest)(name)
+
+let recursive anyParsedBuffer (types: List(ParsedType)) =
+    match types with
+        | [] -> false
+        | ParsedBuffer(_element) :: _rest -> true
+        | _ :: rest -> anyParsedBuffer(rest)
+
+let recursive anyParsedOut (types: List(ParsedType)) =
+    match types with
+        | [] -> false
+        | ParsedOut(_element) :: _rest -> true
+        | _ :: rest -> anyParsedOut(rest)
+
+let recursive anyOutNativeString (types: List(ParsedType)) =
+    match types with
+        | [] -> false
+        | ParsedOut(ParsedNativeString(_nullable, _ownership, _destructor)) :: _rest -> true
+        | _ :: rest -> anyOutNativeString(rest)
+
+let returnsNativeString (returnType: ParsedType) =
+    match returnType with
+        | ParsedNativeString(_nullable, _ownership, _destructor) -> true
+        | _ -> false
+
+// Why an external function cannot be used as a value, as stage 0 names its contract, with that
+// contract's code.
+let directCallDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (name: Str) =
+    (let subject = "External function '" + sourceNameOf(placements)(name) + "' has "
+    in
+        match externalFunctionNamed(items)(name) with
+            | None -> coded(externalOwnershipCode)(subject + "a resource ownership contract and must be called directly.")
+            | Some((parameterTypes, returnType, _ownerships)) ->
+                if anyParsedBuffer(parameterTypes)
+                then coded(ffiBufferCode)(subject + "a call-scoped FFI buffer parameter and must be called directly.")
+                else
+                    if returnsNativeString(returnType) || anyOutNativeString(parameterTypes)
+                    then coded(ffiStringCode)(subject + "a native string conversion contract and must be called directly.")
+                    else
+                        if anyParsedOut(parameterTypes)
+                        then coded(ffiOutParameterCode)(subject + "a compiler-owned FFI out parameter and must be called directly.")
+                        else coded(externalOwnershipCode)(subject + "a resource ownership contract and must be called directly."))
+
+let recursive parsedTypeAt (types: List(ParsedType)) (index: Int) =
+    match types with
+        | [] -> None
+        | head :: rest ->
+            if index <= 1
+            then Some(head)
+            else parsedTypeAt(rest)(index - 1)
+
+let recursive ownershipAt (ownerships: List(ExternalParameterOwnership)) (index: Int) =
+    match ownerships with
+        | [] -> ExternalOwnershipUnspecified
+        | head :: rest ->
+            if index <= 1
+            then head
+            else ownershipAt(rest)(index - 1)
+
+// A misplaced or missing `borrow`/`consume` on parameter `index` (counted from 1) of an external
+// function, in the words stage 0 uses for the three ways it can be wrong.
+let ownershipMarkerDiagnostic (items: List(TopLevelItem)) (name: Str) (index: Int) =
+    (let place = " #" + Ashes.Text.fromInt(index) + " of '" + name + "'"
+    in
+        match externalFunctionNamed(items)(name) with
+            | None -> None
+            | Some((parameterTypes, _returnType, ownerships)) ->
+                match (parsedTypeAt(parameterTypes)(index), ownershipAt(ownerships)(index)) with
+                    | (Some(ParsedOut(_element)), _ownership) -> coded(ffiOutParameterCode)("External out parameter" + place + " cannot use 'borrow' or 'consume'.")
+                    | (_parameter, ExternalOwnershipUnspecified) -> coded(externalOwnershipCode)("External resource parameter" + place + " must be marked 'borrow' or 'consume'.")
+                    | _ -> coded(externalOwnershipCode)("External ownership marker on parameter" + place + " requires a direct resource type."))
+
+// The external-declaration errors stage 0 words with the same facts; one whose stage-0 message
+// names the function or the parameter number the error does not carry keeps its structural form.
+let externalTypingDiagnostic (items: List(TopLevelItem)) (name: Str) (error: ExternalTypingError) =
+    match error with
+        | InvalidExternalTypePosition("FfiBuffer") -> coded(ffiBufferCode)("FfiBuffer(T) is supported only as a direct external parameter.")
+        | InvalidExternalTypePosition("out") -> coded(ffiOutParameterCode)("out T is supported only as a direct external parameter.")
+        | InvalidExternalTypePosition("FfiStr") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
+        | InvalidExternalTypePosition("FfiStr parameter") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
+        | InvalidExternalTypePosition("nullable out FfiStr") -> coded(ffiStringCode)("out FfiStr(...) is already nullable and cannot also specify 'nullable'.")
+        | InvalidExternalBufferElement(_element) -> coded(ffiBufferCode)("FfiBuffer(T) requires a copyable opaque external type T.")
+        | InvalidExternalOutElement(_element) -> coded(ffiOutParameterCode)("out T requires an opaque external type or pointer type T.")
+        | InvalidExternalOwnershipMarker(index) -> ownershipMarkerDiagnostic(items)(name)(index)
+        | _ -> None
+
+let externalAbiDiagnostic (error: ExternalAbiError) =
+    match error with
+        | ExternalAbiSourceTypingError(typing) -> externalTypingDiagnostic([])("")(typing)
+        | InvalidExternalResourceDestructor(resource, destructor) -> coded(externalResourceDestructorCode)("External resource '" + resource + "' requires destructor '" + destructor + "' with signature (consume " + resource + ") -> void.")
+        | SharedExternalResourceDestructor(destructor) -> coded(externalResourceDestructorCode)("External resource destructor '" + destructor + "' is assigned to more than one resource type.")
+        | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
+        | _ -> None
+
+let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
     match error with
         | UnknownValue(name) -> unknownValueDiagnostic(placements)(builtins)(location)(name)
         | InferenceUnificationError(unification) -> unificationDiagnostic(placements)(unification)
@@ -550,6 +681,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (builti
         | NoTraitImplementation(traitName, types) -> missingImplementationDiagnostic(placements)(traitName)(types)
         | NonExhaustiveMatch(message) -> uncoded(message)
         | UnreachableMatchArm(message) -> uncoded(message)
+        | ExternalFunctionRequiresDirectCall(name) -> directCallDiagnostic(placements)(items)(name)
         | ConstructorPatternsFromDifferentAdts(names) -> uncoded("Constructor patterns from different ADTs (" + quotedNames(names)([]) + ") cannot appear in the same match expression.")
         | TuplePatternArityMismatch(expected, actual) -> uncoded("Tuple pattern arity mismatch: expected " + Ashes.Text.fromInt(expected) + " element(s) but got " + Ashes.Text.fromInt(actual) + ".")
         | BuiltinIntArgumentMismatch(name, argumentType) -> uncoded(name + "() expects Int but got " + typeText(placements)(argumentType) + ".")
@@ -559,48 +691,60 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (builti
         | ExpectedTaskType(awaitedType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(awaitedType) + " vs Task<a, b>.")
         | _ -> None
 
-let ffiBufferCode = "ASH044"
+let recursive typeDeclarationNamed (items: List(TopLevelItem)) (name: Str) =
+    match items with
+        | [] -> None
+        | TopLevelAt(_span, inner) :: rest -> typeDeclarationNamed(inner :: rest)(name)
+        | TopLevelType(declaration) :: rest ->
+            if declaration.name == name
+            then Some(declaration)
+            else typeDeclarationNamed(rest)(name)
+        | _ :: rest -> typeDeclarationNamed(rest)(name)
 
-let ffiOutParameterCode = "ASH045"
+// Stage 0 names the field a derived implementation cannot cover and why.
+let unsupportedDerivedFieldDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (typeName: Str) (traitName: Str) =
+    (let prefix = "Cannot derive '" + traitName + "' for '" + sourceNameOf(placements)(typeName) + "'"
+    in
+        match typeDeclarationNamed(items)(typeName) with
+            | None -> coded(invalidTraitImplementationCode)(prefix + ".")
+            | Some(declaration) ->
+                match describeUnsupportedDerivedField(Unit
+                |> emptyDerivingTypeContext
+                |> addDerivingItemsToContext(items))(declaration) with
+                    | Some((field, reason)) -> coded(invalidTraitImplementationCode)(prefix + ": " + field + " has " + reason + ".")
+                    | None -> coded(invalidTraitImplementationCode)(prefix + "."))
 
-let ffiStringCode = "ASH046"
+let stitchedItems (stitched: StitchedSyntaxProject) =
+    match stitched.program with
+        | ProgramSyntax { items = items } -> items
 
-let externalResourceDestructorCode = "ASH041"
-
-// The external-declaration errors stage 0 words with the same facts; one whose stage-0 message
-// names the function or the parameter number the error does not carry keeps its structural form.
-let externalTypingDiagnostic (error: ExternalTypingError) =
-    match error with
-        | InvalidExternalTypePosition("FfiBuffer") -> coded(ffiBufferCode)("FfiBuffer(T) is supported only as a direct external parameter.")
-        | InvalidExternalTypePosition("out") -> coded(ffiOutParameterCode)("out T is supported only as a direct external parameter.")
-        | InvalidExternalTypePosition("FfiStr") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
-        | InvalidExternalTypePosition("FfiStr parameter") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
-        | InvalidExternalTypePosition("nullable out FfiStr") -> coded(ffiStringCode)("out FfiStr(...) is already nullable and cannot also specify 'nullable'.")
-        | InvalidExternalBufferElement(_element) -> coded(ffiBufferCode)("FfiBuffer(T) requires a copyable opaque external type T.")
-        | InvalidExternalOutElement(_element) -> coded(ffiOutParameterCode)("out T requires an opaque external type or pointer type T.")
-        | _ -> None
-
-let externalAbiDiagnostic (error: ExternalAbiError) =
-    match error with
-        | ExternalAbiSourceTypingError(typing) -> externalTypingDiagnostic(typing)
-        | InvalidExternalResourceDestructor(resource, destructor) -> coded(externalResourceDestructorCode)("External resource '" + resource + "' requires destructor '" + destructor + "' with signature (consume " + resource + ") -> void.")
-        | SharedExternalResourceDestructor(destructor) -> coded(externalResourceDestructorCode)("External resource destructor '" + destructor + "' is assigned to more than one resource type.")
-        | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
-        | _ -> None
-
-let derivingDiagnostic (error: DerivingExpansionError) =
+let derivingDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (error: DerivingExpansionError) =
     match error with
         | UnsupportedDerivedTrait(_typeName, traitName) -> coded(invalidTraitImplementationCode)("Trait '" + traitName + "' cannot be derived; supported traits are Eq, Ord, Show, and Hash.")
         | DuplicateDerivedTrait(typeName, traitName) -> coded(invalidTraitImplementationCode)("Trait '" + traitName + "' appears more than once in the deriving clause for '" + typeName + "'.")
-        | UnsupportedDerivedField(typeName, traitName) -> coded(invalidTraitImplementationCode)("Cannot derive '" + traitName + "' for '" + typeName + "'.")
+        | UnsupportedDerivedField(typeName, traitName) -> unsupportedDerivedFieldDiagnostic(placements)(items)(typeName)(traitName)
+
+let siteText (site: Maybe(TraitImplementationSite)) =
+    match site with
+        | Some(TraitImplementationSite { sourcePath = Some(path), offset = offset }) -> Some(regionFilePath(path) + ":" + Ashes.Text.fromInt(offset))
+        | _ -> None
+
+// Stage 0 names both implementations by file and offset; an implementation the compiler supplies
+// has no site, and the message then names only the trait.
+let overlapDiagnostic (placements: List(StitchedDefinitionPlacement)) (traitName: Str) (first: Maybe(TraitImplementationSite)) (conflicting: Maybe(TraitImplementationSite)) =
+    (let subject = "Overlapping implementations for trait '" + sourceNameOf(placements)(traitName) + "'"
+    in
+        match (siteText(first), siteText(conflicting)) with
+            | (Some(firstText), Some(conflictingText)) -> coded(traitCoherenceCode)(subject + ": first at " + firstText + " and conflicting implementation at " + conflictingText + ".")
+            | _ -> coded(traitCoherenceCode)(subject + "."))
 
 // The diagnostic stage 0 reports for an inference error, as its code and message, when stage 0
 // words that error.
-let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlacement)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: ProgramInferenceError) =
+let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: ProgramInferenceError) =
     match error with
-        | ProgramErrorAt(_location, inner) -> inferenceErrorDiagnostic(placements)(builtins)(location)(inner)
-        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorDiagnostic(placements)(builtins)(location)(ProgramExpressionError(inner))
-        | ProgramExpressionError(inner) -> expressionDiagnostic(placements)(builtins)(location)(inner)
+        | ProgramErrorAt(_location, inner) -> inferenceErrorDiagnostic(placements)(items)(builtins)(location)(inner)
+        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorDiagnostic(placements)(items)(builtins)(location)(ProgramExpressionError(inner))
+        | ProgramExpressionError(inner) -> expressionDiagnostic(placements)(items)(builtins)(location)(inner)
         | ProgramTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicateCapabilityDeclaration(name) -> uncoded("Duplicate capability name '" + sourceNameOf(placements)(name) + "'.")
         | ReservedCapabilityDeclaration(name) -> uncoded("Capability name '" + sourceNameOf(placements)(name) + "' is reserved for a built-in runtime capability.")
@@ -625,9 +769,9 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | DuplicateTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Method '" + method + "' is implemented more than once in implementation of '" + traitName + "'.")
         | MissingTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Implementation of '" + traitName + "' is missing required method '" + method + "'.")
         | OrphanTraitImplementation(traitName, head, packageId) -> coded(traitCoherenceCode)("Orphan implementation '" + requirementText(placements)(traitName)(head) + "' is illegal: package '" + packageId + "' owns neither the trait nor an outer nominal head type.")
-        | OverlappingTraitImplementations(traitName) -> coded(traitCoherenceCode)("Overlapping implementations for trait '" + traitName + "'.")
-        | ProgramDerivingExpansionError(expansion) -> derivingDiagnostic(expansion)
-        | ProgramExternalTypingError(typing) -> externalTypingDiagnostic(typing)
+        | OverlappingTraitImplementations(traitName, first, conflicting) -> overlapDiagnostic(placements)(traitName)(first)(conflicting)
+        | ProgramDerivingExpansionError(expansion) -> derivingDiagnostic(placements)(items)(expansion)
+        | ProgramExternalTypingError(name, typing) -> externalTypingDiagnostic(items)(name)(typing)
         | ProgramExternalAbiError(abi) -> externalAbiDiagnostic(abi)
         | RecursiveTypeAlias(cycle) -> coded(recursiveTypeAliasCode)("Recursive type alias cycle: " + cycle + ".")
         | ReservedTypeDeclaration(_name) -> uncoded("'Ashes' and built-in runtime types are reserved")
@@ -653,63 +797,11 @@ let maybeText (value: Maybe(Str)) =
         | Some(text) -> text
         | None -> ""
 
-// An inline module's region is named `<file>#<module>`. Its spans are offsets into the module's
-// own text, which keeps the file's lines and columns (blank lines stand before it), so that text,
-// lifted from the file again, gives the position in the file.
-let locationFilePath (path: Str) =
-    (let index = Ashes.Text.indexOf(path)("#")
-    in
-        if index < 0
-        then path
-        else Ashes.Text.take(path)(index))
-
-let inlineModuleName (path: Str) =
-    (let index = Ashes.Text.indexOf(path)("#")
-    in
-        if index < 0
-        then ""
-        else Ashes.Text.drop(path)(index + 1))
-
 let locationOffset (location: InferenceErrorLocation) =
     match (location.span, location.declarationSpan) with
         | (Some(TextSpan { start = start }), _) -> Some(start)
         | (None, Some(TextSpan { start = start })) -> Some(start)
         | _ -> None
-
-let fileText (entryPath: Str) (entrySource: Str) (path: Str) =
-    if path == entryPath
-    then Some(entrySource)
-    else
-        match readSourceText(path) with
-            | Ok(text) -> Some(text)
-            | Error(_) -> None
-
-let textEndsWith (text: Str) (suffix: Str) =
-    if Ashes.Text.length(suffix) > Ashes.Text.length(text)
-    then false
-    else Ashes.Text.drop(text)(Ashes.Text.length(text) - Ashes.Text.length(suffix)) == suffix
-
-let recursive inlineModuleText (modules: List(InlineModuleInfo)) (name: Str) =
-    match modules with
-        | [] -> None
-        | InlineModuleInfo { name = candidate, source = source } :: rest ->
-            if candidate == name || textEndsWith(candidate)("." + name) || textEndsWith(name)("." + candidate)
-            then Some(source)
-            else inlineModuleText(rest)(name)
-
-// The text a region's spans are offsets into: the file's, or an inline module's lifted text.
-let regionText (entryPath: Str) (entrySource: Str) (sourcePath: Str) =
-    match sourcePath
-    |> locationFilePath
-    |> fileText(entryPath)(entrySource) with
-        | None -> None
-        | Some(text) ->
-            match inlineModuleName(sourcePath) with
-                | "" -> Some(text)
-                | name ->
-                    match expandInlineModules("")(text) with
-                        | Ok(InlineModuleExpansion { modules = modules }) -> inlineModuleText(modules)(name)
-                        | Error(_) -> None
 
 // `path:line:column ` for a located error, from the text of the file the error was raised in.
 let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(InferenceErrorLocation)) =
@@ -718,9 +810,9 @@ let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(Inferenc
         | Some(located) ->
             match (located.sourcePath, locationOffset(located)) with
                 | (Some(sourcePath), Some(offset)) ->
-                    let path = locationFilePath(sourcePath)
+                    let path = regionFilePath(sourcePath)
                     in
-                        match regionText(entryPath)(entrySource)(sourcePath) with
+                        match regionSourceText(entryPath)(entrySource)(sourcePath) with
                             | None -> ""
                             | Some(text) ->
                                 match resolvePositionInIndex(buildSourceTextIndex(text))(offset) with
@@ -740,6 +832,6 @@ let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironm
         | Some(error) ->
             let prefix = locationPrefix(entryPath)(entrySource)(result.errorLocation)
             in
-                match inferenceErrorDiagnostic(stitched.definitionPlacements)(builtins)(result.errorLocation)(error) with
+                match inferenceErrorDiagnostic(stitched.definitionPlacements)(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
                     | Some((code, message)) -> prefix + codePrefix(code) + message
                     | None -> prefix + "Type inference failed: " + Ashes.Trait.Show.show(error)

@@ -118,6 +118,24 @@ let errorRegion regions (location: InferenceErrorLocation) =
     then entryRegion(regions)
     else regionAt(location.unitIndex)(regions)
 
+// An implementation site's file, from the region of the unit it was declared in.
+let siteWithPath regions (site: Maybe(TraitImplementationSite)) =
+    match site with
+        | Some(TraitImplementationSite { unitIndex = unitIndex } as known) ->
+            match regionAt(unitIndex)(regions) with
+                | Some(StitchedModuleRegion { sourcePath = sourcePath }) -> Some((known with sourcePath = Some(sourcePath)))
+                | None -> site
+        | None -> None
+
+// The files of the implementations an overlap error names.
+let withImplementationPaths regions (error: ProgramInferenceError) =
+    match error with
+        | OverlappingTraitImplementations(traitName, first, conflicting) ->
+            conflicting
+            |> siteWithPath(regions)
+            |> OverlappingTraitImplementations(traitName)(siteWithPath(regions)(first))
+        | other -> other
+
 // Names the module an error was raised in: units are inferred in region order, so the failing
 // unit's index selects its region, and the trailing expression belongs to the entry module.
 let withErrorModule regions (result: ProgramInferenceResult) =
@@ -130,6 +148,12 @@ let withErrorModule regions (result: ProgramInferenceResult) =
                     )
                 | None -> result
         | _ -> result
+
+let withErrorImplementationPaths regions (result: ProgramInferenceResult) =
+    match result.error with
+        | Some(error) ->
+            result with error = Some(withImplementationPaths(regions)(error))
+        | None -> result
 
 // A stitched project split into its modules, with `deriving` expanded and every expression node
 // identified. It is what inference records against, and what a reader of the recorded types walks.
@@ -215,6 +239,7 @@ let inferIdentifiedStitchedProjectFrom baseEnvironment project (identified: Iden
                         (program with units = orderedUnits)
                         |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(identified.entryPackageId)
                         |> withErrorModule(orderedRegions)
+                        |> withErrorImplementationPaths(orderedRegions)
 
 let inferStitchedProjectFrom baseEnvironment project =
     project

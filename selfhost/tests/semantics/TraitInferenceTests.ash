@@ -973,7 +973,7 @@ let expectTraitImplementationCoherence unit =
                     eqDeclaration
                 ), TopLevelImplementation(exact), TopLevelImplementation(exact)], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                 | _ -> test.fail("exact duplicate implementation heads should overlap")
         in
             let concrete =
@@ -988,7 +988,7 @@ let expectTraitImplementationCoherence unit =
                             genericEqualImplementation
                         ), TopLevelImplementation(concrete)], body = None)
                     ) with
-                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                         | _ -> test.fail("generic and concrete heads should overlap")
                 in
                     let concreteFirstChecked =
@@ -999,7 +999,7 @@ let expectTraitImplementationCoherence unit =
                                 genericEqualImplementation
                             )], body = None)
                         ) with
-                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                             | _ -> test.fail("overlap detection should not depend on implementation order")
                     in
                         let pairTrait =

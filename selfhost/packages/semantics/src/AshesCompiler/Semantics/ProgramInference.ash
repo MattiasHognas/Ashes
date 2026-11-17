@@ -86,9 +86,12 @@ type ProgramInferenceError =
     | MissingTraitImplementationMethod(Str, Str)
     // The trait, the implementation head, and the package that declares the implementation.
     | OrphanTraitImplementation(Str, List(SemanticType), Str)
-    | OverlappingTraitImplementations(Str)
+    // The trait, where the implementation already registered was declared, and where the one that
+    // overlaps it is; a site is None for an implementation the compiler supplies.
+    | OverlappingTraitImplementations(Str, Maybe(TraitImplementationSite), Maybe(TraitImplementationSite))
     | ProgramDerivingExpansionError(DerivingExpansionError)
-    | ProgramExternalTypingError(ExternalTypingError)
+    // The external declaration's name (empty for an opaque type) and what is wrong with it.
+    | ProgramExternalTypingError(Str, ExternalTypingError)
     | ProgramExternalAbiError(ExternalAbiError)
     | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
@@ -2016,6 +2019,26 @@ and traitHeadTypeOverlaps left right substitutions =
                         | (SemOpaque(leftName), SemOpaque(rightName)) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = leftName == rightName)
                         | _ -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = false)
 
+let existingImplementationSite (found: Maybe(TraitImplementationInferenceDefinition)) =
+    match found with
+        | Some(TraitImplementationInferenceDefinition { site = site }) -> site
+        | None -> None
+
+// The site of an implementation declared at `offset` in the unit being inferred.
+let implementationSiteAt (environment: TypeEnvironment) (offset: Maybe(Int)) =
+    match offset with
+        | Some(start) -> Some(TraitImplementationSite(unitIndex = environment.currentUnit, offset = start, sourcePath = None))
+        | None -> None
+
+// The registered implementation, if any, whose head overlaps the candidate's.
+let recursive firstOverlappingImplementation candidateArguments implementations =
+    match implementations with
+        | [] -> None
+        | (TraitImplementationInferenceDefinition { typeArguments = existingArguments } as existing) :: tail ->
+            match traitHeadTypesOverlap(existingArguments)(candidateArguments)([]) with
+                | TraitHeadOverlapResult { substitutions = _substitutions, overlaps = true } -> Some(existing)
+                | _ -> firstOverlappingImplementation(candidateArguments)(tail)
+
 let recursive anyTraitImplementationHeadOverlaps candidateArguments implementations =
     match implementations with
         | [] -> false
@@ -2123,7 +2146,7 @@ let recursive registerImplementationMethods traitName bindings typeArguments env
                                         ProgramExpressionError(error)
                                     ))
 
-let registerTraitImplementation declaration state =
+let registerTraitImplementation (offset: Maybe(Int)) declaration state =
     match (declaration, state) with
         | (TraitImplementationDecl { traitName = traitName, typeArguments = typeArguments, requirements = requirements, bindings = bindings }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
             match resolveTraitBinding(traitName)(environment) with
@@ -2216,7 +2239,12 @@ let registerTraitImplementation declaration state =
                                                                                             then
                                                                                                 ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(
                                                                                                     OverlappingTraitImplementations(
-                                                                                                        traitName
+                                                                                                        traitName,
+                                                                                                        environment
+                                                                                                        |> resolveTraitImplementations(traitName)
+                                                                                                        |> firstOverlappingImplementation(resolvedTypeArguments)
+                                                                                                        |> existingImplementationSite,
+                                                                                                        implementationSiteAt(environment)(offset)
                                                                                                     )
                                                                                                 ))
                                                                                             else
@@ -2244,7 +2272,8 @@ let registerTraitImplementation declaration state =
                                                                                                                 )
                                                                                                                 |> Some)
                                                                                                             | None ->
-                                                                                                                ProgramInferenceState(environment = addTraitImplementation(
+                                                                                                                ProgramInferenceState(environment = addTraitImplementationAt(
+                                                                                                                    implementationSiteAt(environment)(offset),
                                                                                                                     traitName,
                                                                                                                     resolvedTypeArguments,
                                                                                                                     simplifyTraitConstraints(
@@ -2425,6 +2454,11 @@ let externalTypeWithUnit environment semanticType =
             withNominalUnit(SemNamed(symbolId)(name)([]))(semanticType)
         | _ -> semanticType
 
+let externalDeclarationName declaration =
+    match declaration with
+        | ExternalFunction(name, _parameterTypes, _returnType, _symbol, _ownerships, _capabilityRow) -> name
+        | ExternalOpaqueType(name, _destructor) -> name
+
 let registerExternalFunction declaration declarations state =
     match state with
         | ProgramInferenceState { environment = environment, error = None } ->
@@ -2448,7 +2482,10 @@ let registerExternalFunction declaration declarations state =
                                 firstClassScheme
                             )
                             |> (given (nextEnvironment) -> withProgramInferenceEnvironment(nextEnvironment)(state))
-                | ExternalFunctionTypingResult { error = Some(error) } -> withProgramInferenceError(Some(ProgramExternalTypingError(error)))(state)
+                | ExternalFunctionTypingResult { error = Some(error) } ->
+                    withProgramInferenceError(error
+                    |> ProgramExternalTypingError(externalDeclarationName(declaration))
+                    |> Some)(state)
         | failedState -> failedState
 
 let recursive groupBindingNames bindings =
@@ -2609,6 +2646,7 @@ let recursive inferTopLevelItem externalDeclarations item state =
     locateTopLevelItemError(
         item,
         match item with
+            | TopLevelAt(TextSpan { start = start }, TopLevelImplementation(declaration)) -> registerTraitImplementation(Some(start))(declaration)(state)
             | TopLevelAt(_span, inner) -> inferTopLevelItem(externalDeclarations)(inner)(state)
             | TopLevelExport(_export) -> state
             | TopLevelType(declaration) ->
@@ -2620,7 +2658,7 @@ let recursive inferTopLevelItem externalDeclarations item state =
             | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
             | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
             | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
-            | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
+            | TopLevelImplementation(declaration) -> registerTraitImplementation(None)(declaration)(state)
             | TopLevelLet(binding, isRecursive) ->
                 state
                 |> inferTopLevelLet(binding)(isRecursive)
@@ -2693,6 +2731,8 @@ let stateWithInferencePackage packageId state =
                 environment
             ), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
 
+let stateWithInferenceUnit unitIndex (state: ProgramInferenceState) = state with environment = withInferenceUnit(unitIndex)(state.environment)
+
 let locateProgressUnitError unitIndex (progress: ProgramInferenceProgress) = ProgramInferenceProgress(state = locateUnitError(unitIndex)(progress.state), resolved = progress.resolved, nodeTypes = progress.nodeTypes)
 
 let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (progress: ProgramInferenceProgress) =
@@ -2704,6 +2744,7 @@ let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (
             else
                 progress
                 |> advanceProgramInference(stateWithInferencePackage(packageId))
+                |> advanceProgramInference(stateWithInferenceUnit(unitIndex))
                 |> advanceProgramInference(checkTypeAliasCycles(items))
                 |> inferTopLevelItems(items)(externalDeclarations)
                 |> locateProgressUnitError(unitIndex)

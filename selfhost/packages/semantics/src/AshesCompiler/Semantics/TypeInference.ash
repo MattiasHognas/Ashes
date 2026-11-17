@@ -30,6 +30,7 @@ export (
     type TraitInferenceDefinition(..),
     type TraitMethodInferenceDefinition(..),
     type TraitImplementationInferenceDefinition(..),
+    type TraitImplementationSite(..),
     type TraitImplementationMethodInferenceDefinition(..),
     type TypeInferenceError(..),
     type TypeInferenceResult(..),
@@ -38,6 +39,7 @@ export (
     value emptyTypeEnvironmentForPackage,
     value withInferencePackage,
     value inferencePackageId,
+    value withInferenceUnit,
     value addTypeBinding,
     value addInferenceTypeDefinition,
     value addInferenceZeroCostTypeDefinition,
@@ -60,6 +62,7 @@ export (
     value resolveTraitBinding,
     value resolveTraitMethod,
     value addTraitImplementation,
+    value addTraitImplementationAt,
     value resolveTraitImplementations,
     value inferenceTypeResolutionContext,
     value inferenceEnvironmentSchemes,
@@ -138,11 +141,20 @@ type TraitImplementationMethodInferenceDefinition =
     | implementation: Expr
     | semanticType: SemanticType
 
+// Where an implementation was declared: the inferred unit it belongs to, the offset of its declaration
+// in that unit's text, and the unit's file once the caller maps units to files.
+type TraitImplementationSite =
+    | unitIndex: Int
+    | offset: Int
+    | sourcePath: Maybe(Str)
+    deriving {Eq, Show}
+
 type TraitImplementationInferenceDefinition =
     | traitName: Str
     | typeArguments: List(SemanticType)
     | requirements: List(TraitConstraint)
     | methods: List(TraitImplementationMethodInferenceDefinition)
+    | site: Maybe(TraitImplementationSite)
 
 type ExternalFunctionInferenceDefinition =
     | name: Str
@@ -162,6 +174,8 @@ type HeapConstructorLookupIndex =
 
 type TypeEnvironment =
     | packageId: Str
+    // The index of the unit a program's inference is in, among the units it infers.
+    | currentUnit: Int
     | bindings: List((Str, TypeScheme))
     | constructors: List(ConstructorInferenceDefinition)
     | constructorFieldGroups: List(ConstructorFieldGroup)
@@ -328,13 +342,15 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
 let emptyTypeEnvironment unit = emptyTypeEnvironmentForPackage("standalone")
 
 let withInferencePackage packageId (environment: TypeEnvironment) = environment with packageId = packageId
+
+let withInferenceUnit unitIndex (environment: TypeEnvironment) = environment with currentUnit = unitIndex
 
 let inferencePackageId environment =
     match environment with
@@ -660,20 +676,22 @@ let resolveTraitMethod traitName methodName environment =
                 methods
             )
 
-let addTraitImplementation traitName typeArguments requirements methods (environment: TypeEnvironment) =
+let addTraitImplementationAt (site: Maybe(TraitImplementationSite)) traitName typeArguments requirements methods (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { traitImplementations = traitImplementations } ->
-            let definition = TraitImplementationInferenceDefinition(traitName = traitNameIn(environment)(traitName), typeArguments = typeArguments, requirements = requirements, methods = methods)
+            let definition = TraitImplementationInferenceDefinition(traitName = traitNameIn(environment)(traitName), typeArguments = typeArguments, requirements = requirements, methods = methods, site = site)
             in environment with traitImplementations = definition :: traitImplementations
+
+let addTraitImplementation traitName typeArguments requirements methods (environment: TypeEnvironment) = addTraitImplementationAt(None)(traitName)(typeArguments)(requirements)(methods)(environment)
 
 let recursive filterTraitImplementations traitName implementations =
     match implementations with
         | [] -> []
-        | TraitImplementationInferenceDefinition { traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods } :: tail ->
+        | TraitImplementationInferenceDefinition { traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods, site = site } :: tail ->
             let rest = filterTraitImplementations(traitName)(tail)
             in
                 if traitName == candidateName
-                then TraitImplementationInferenceDefinition(traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods) :: rest
+                then TraitImplementationInferenceDefinition(traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods, site = site) :: rest
                 else rest
 
 let resolveTraitImplementations traitName environment =

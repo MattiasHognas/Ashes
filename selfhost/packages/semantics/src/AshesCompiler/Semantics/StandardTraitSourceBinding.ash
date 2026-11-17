@@ -446,7 +446,7 @@ let recursive bindStandardImplementations bindings implementations reversedImple
                         bindStandardImplementations(
                             bindings,
                             tail,
-                            TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = boundMethods) :: reversedImplementations
+                            TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = boundMethods, site = None) :: reversedImplementations
                         )
 
 let withTraitImplementations implementations (environment: TypeEnvironment) = environment with traitImplementations = implementations

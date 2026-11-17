@@ -171,7 +171,7 @@ let expectProgramGlobalCoherence unit =
                 match [domain, extension, main]
                 |> requireStitched
                 |> inferStitchedProject with
-                    | ProgramInferenceResult { error = Some(OverlappingTraitImplementations("Domain_Comparable")) } -> Unit
+                    | ProgramInferenceResult { error = Some(OverlappingTraitImplementations("Domain_Comparable", _firstSite, _conflictingSite)) } -> Unit
                     | ProgramInferenceResult { error = Some(error) } ->
                         test.fail(
                             "unexpected global coherence result: " + Ashes.Trait.Show.show(error)
