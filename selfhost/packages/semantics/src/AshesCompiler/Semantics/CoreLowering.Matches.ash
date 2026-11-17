@@ -89,6 +89,59 @@ let lowerStaticStringNormalizedBody body (normalizeStaticStrings: Bool) lower (s
 // arena join whose later copy-out orphans the fresh branch's reference-counted value.
 let ifBranchesNormalizeStaticStrings thenBranch elseBranch (request: ConsumerRequest) (state: CoreLoweringState) = request.runtimeString && reconcilableStringArms([(PatternWildcard, thenBranch, None), (PatternWildcard, elseBranch, None)])(state)
 
+// The field read a branch hands out as its value, through the lets around it (`state.refs`),
+// unless a let in between rebinds the receiver.
+let recursive tailFieldRead (body: Expr) =
+    match body with
+        | ExprAt(_span, inner) -> tailFieldRead(inner)
+        | ExprNode(_node, inner) -> tailFieldRead(inner)
+        | ExprQualifiedVar(_owner, _field) -> Some(body)
+        | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) ->
+            match tailFieldRead(nestedBody) with
+                | Some(read) ->
+                    match read with
+                        | ExprQualifiedVar(owner, _field) ->
+                            if owner == nested
+                            then None
+                            else Some(read)
+                        | _ -> None
+                | None -> None
+        | _ -> None
+
+let inTcoLoop (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(_loop) -> true
+        | None -> false
+
+// Stage 0's `TransferDirectRuntimeManagedBranchResult` for a loop exit: an arm in the loop's tail
+// returning a heap field of a loop parameter (`| [] -> state.refs`) hands out a child the exit's
+// release of that parameter would free, so the read takes a reference of its own: an identity
+// marker the loop's finalize makes a real retain for a parameter it places on the heap.
+let transferLoopExitFieldResult (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if request.tailPosition == false || inTcoLoop(state) == false || resultSurvivesReset(resolveType(state)(bodyType))(state)
+    then (state, temp)
+    else
+        match tailFieldRead(body) with
+            | None -> (state, temp)
+            | Some(read) ->
+                match loopParameterReadSlot(read)(state) with
+                    | None -> (state, temp)
+                    | Some(slot) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = duplicate } ->
+                                (allocated
+                                |> emit(RcDup(duplicate)(temp)(false)(false))
+                                |> (given (marked: CoreLoweringState) -> withStateTcoParameterRetainSites((duplicate, slot, bodyType) :: stateTcoParameterRetainSites(marked))(marked)), duplicate)
+
+// An `if` branch's result as the join stores it (`transferIfBranchResult`), or, at the loop's
+// exit, a heap field of a loop parameter with a reference of its own.
+let transferIfBranchOrExitField (request: ConsumerRequest) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match transferIfBranchResult(request.tailCall)(branch)(temp)(semanticType)(state) with
+        | (transferred, branchTemp) ->
+            if branchTemp != temp
+            then (transferred, branchTemp)
+            else transferLoopExitFieldResult(request)(branch)(temp)(semanticType)(transferred)
+
 let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower plan =
     match plan with
         | CoreIfPlan { state = failedState, error = Some(error) } ->
@@ -116,7 +169,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStri
                 | LoweredCoreValue { state = resultState, temp = loweredTemp, semanticType = semanticType, error = None } ->
                     match normalizeParameterPassthroughBranch(thenBranch)(loweredTemp)(resultState) with
                         | (normalizedState, temp) ->
-                            match transferIfBranchResult(request.tailCall)(thenBranch)(temp)(semanticType)(normalizedState) with
+                            match transferIfBranchOrExitField(request)(thenBranch)(temp)(semanticType)(normalizedState) with
                                 | (transferred, branchTemp) ->
                                     CoreIfThen(
                                         state = transferred
@@ -142,7 +195,7 @@ let finishIfElseBranch (successorJoin: Bool) elseBranch (request: ConsumerReques
                         | (typedState, None) ->
                             match normalizeParameterPassthroughBranch(elseBranch)(loweredTemp)(typedState) with
                                 | (normalizedState, temp) ->
-                                    match transferIfBranchResult(request.tailCall)(elseBranch)(temp)(elseType)(normalizedState) with
+                                    match transferIfBranchOrExitField(request)(elseBranch)(temp)(elseType)(normalizedState) with
                                         | (transferred, branchTemp) ->
                                             match freshTemp(transferred) with
                                                 | FreshTemp { state = targetState, temp = target } ->
@@ -1203,15 +1256,21 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
 // Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
 // owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
 // loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
-// any other arm result transfers a scrutinee child or the arm's own binding.
-let transferArmResult (body: Expr) (temp: Int) (bodyType: SemanticType) (outerBindings: List(CoreBinding)) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+// an arm at the loop's exit returning a heap field of a loop parameter retains it; any other arm
+// result transfers a scrutinee child or the arm's own binding.
+let transferArmResult (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyType: SemanticType) (outerBindings: List(CoreBinding)) (owners: List(ArmOwner)) (state: CoreLoweringState) =
     match transferBranchOwnerResult(body)(temp)(state) with
         | (duplicated, duplicate) ->
             if duplicate != temp
             then (duplicated, duplicate)
             else
-                match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
-                    | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
+                match transferLoopExitFieldResult(request)(body)(temp)(bodyType)(state) with
+                    | (retained, retainedTemp) ->
+                        if retainedTemp != temp
+                        then (retained, retainedTemp)
+                        else
+                            match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
+                                | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
 
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
@@ -1227,7 +1286,7 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
                         | (typedState, None) ->
                             match normalizeParameterPassthroughBranch(body)(temp)(typedState) with
                                 | (normalizedState, normalizedTemp) ->
-                                    match transferArmResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
+                                    match transferArmResult(request)(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
                                         | (transferredState, resultTemp) ->
                                             match transferredState
                                             |> emit(StoreLocal(resultSlot)(resultTemp))
