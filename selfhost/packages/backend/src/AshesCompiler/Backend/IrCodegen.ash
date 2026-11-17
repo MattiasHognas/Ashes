@@ -2110,45 +2110,56 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                             else Unit
                                         in
+                                            // A program with worker threads reserves its reference-counted range here, on the
+                                            // main thread before any worker exists, by allocating and releasing one block.
                                             let _ =
-                                                if isEntry && mc.moduleUsesProgramArgs
+                                                if isEntry && arena.arenaThreadSlots
                                                 then
-                                                    mc.moduleProgramArgsGlobal |> emitProgramArgsInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(externals.mallocFn)(externals.mallocType)(externals.memcpyFn)(externals.memcpyType)(getParam(functionValue)(0u32))
+                                                    let block = buildCall(builder)(externals.mallocType)(externals.mallocFn)([constInt(types.i64)(16u64)(false)])(1u32)("rc_reserve_block")
+                                                    in
+                                                        let _ = buildCall(builder)(externals.freeType)(externals.freeFn)([block])(1u32)("")
+                                                        in Unit
                                                 else Unit
                                             in
-                                                let labelBlocks =
-                                                    instructions
-                                                    |> collectLabelNames
-                                                    |> createLabelBlocks(context)(functionValue)
-                                                    |> indexStrEntries
+                                                let _ =
+                                                    if isEntry && mc.moduleUsesProgramArgs
+                                                    then
+                                                        mc.moduleProgramArgsGlobal |> emitProgramArgsInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(externals.mallocFn)(externals.mallocType)(externals.memcpyFn)(externals.memcpyType)(getParam(functionValue)(0u32))
+                                                    else Unit
                                                 in
-                                                    let cx =
-                                                        CodegenContext(
-                                                            context = context,
-                                                            moduleRef = mc.moduleRef,
-                                                            function_ = functionValue,
-                                                            types = types,
-                                                            externals = externals,
-                                                            localSlots = localSlots,
-                                                            labelBlocks = labelBlocks,
-                                                            stringLiteralGlobals = stringLiteralGlobals,
-                                                            liftedFunctions = liftedFunctions,
-                                                            closureNormalizers = mc.moduleClosureNormalizers,
-                                                            closureFunctionType = closureFnType,
-                                                            envpGlobal = mc.moduleEnvpGlobal,
-                                                            programArgsGlobal = mc.moduleProgramArgsGlobal,
-                                                            externalSymbols = mc.moduleExternalSymbols,
-                                                            capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
-                                                            nullaryCellGlobals = mc.moduleNullaryCellGlobals,
-                                                            consoleGlobals = mc.moduleConsoleGlobals,
-                                                            arenaRuntime = arena,
-                                                            copyRuntime = mc.moduleCopyRuntime,
-                                                            bigIntRuntime = mc.moduleBigIntRuntime,
-                                                            taskRuntime = mc.moduleTaskRuntime,
-                                                            parallelRuntime = mc.moduleParallelRuntime,
-                                                            isEntry = isEntry
-                                                        )
-                                                    in (cx, instructions)
+                                                    let labelBlocks =
+                                                        instructions
+                                                        |> collectLabelNames
+                                                        |> createLabelBlocks(context)(functionValue)
+                                                        |> indexStrEntries
+                                                    in
+                                                        let cx =
+                                                            CodegenContext(
+                                                                context = context,
+                                                                moduleRef = mc.moduleRef,
+                                                                function_ = functionValue,
+                                                                types = types,
+                                                                externals = externals,
+                                                                localSlots = localSlots,
+                                                                labelBlocks = labelBlocks,
+                                                                stringLiteralGlobals = stringLiteralGlobals,
+                                                                liftedFunctions = liftedFunctions,
+                                                                closureNormalizers = mc.moduleClosureNormalizers,
+                                                                closureFunctionType = closureFnType,
+                                                                envpGlobal = mc.moduleEnvpGlobal,
+                                                                programArgsGlobal = mc.moduleProgramArgsGlobal,
+                                                                externalSymbols = mc.moduleExternalSymbols,
+                                                                capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
+                                                                nullaryCellGlobals = mc.moduleNullaryCellGlobals,
+                                                                consoleGlobals = mc.moduleConsoleGlobals,
+                                                                arenaRuntime = arena,
+                                                                copyRuntime = mc.moduleCopyRuntime,
+                                                                bigIntRuntime = mc.moduleBigIntRuntime,
+                                                                taskRuntime = mc.moduleTaskRuntime,
+                                                                parallelRuntime = mc.moduleParallelRuntime,
+                                                                isEntry = isEntry
+                                                            )
+                                                        in (cx, instructions)
 
 // The temps holding cells this function allocates with the tagless layout.
 let recursive taglessCellTemps instructions =
