@@ -8,6 +8,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
+import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 export (
     value arenaCellsCarrying,
@@ -15,6 +16,7 @@ export (
     value constructionWordSource,
     value countTempUses,
     value isArenaCell,
+    value isBareFieldRead,
     value isBorrowedRead,
     value isUnrealizedConstructionRetain,
     value leaveWithdrawnPartDuplicateToItsCell,
@@ -96,6 +98,48 @@ let recursive readDefinitionOf (temp: Int) (instructions: List(IrInstruction)) =
             if definesRead(temp)(instruction)
             then Some(kind)
             else readDefinitionOf(temp)(rest)
+
+// The instructions from the one defining `temp` on.
+let recursive definitionFrom (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then Some(instructions)
+            else definitionFrom(temp)(rest)
+
+// The sources of every store into `slot` among `instructions`, each with the instructions
+// before that store.
+let recursive slotStores (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = StoreLocal(stored, source) } :: rest ->
+            if stored == slot
+            then (source, rest) :: slotStores(slot)(rest)
+            else slotStores(slot)(rest)
+        | _instruction :: rest -> slotStores(slot)(rest)
+
+let isFieldReadDefinition (definition: Maybe(List(IrInstruction))) =
+    match definition with
+        | Some(IrInstruction { instruction = GetAdtField(_target, _pointer, _index, _tagless) } :: _rest) -> true
+        | Some(IrInstruction { instruction = LoadMemOffset(_target, _pointer, _offset) } :: _rest) -> true
+        | _ -> false
+
+// Stage 0's `IsBareFieldRead`: `temp` reads a field of another value, directly, through a
+// borrow, or through a local stored once from such a read; a cell storing it took no reference.
+let recursive isBareFieldRead (temp: Int) (instructions: List(IrInstruction)) =
+    match definitionFrom(temp)(instructions) with
+        | Some(IrInstruction { instruction = Borrow(_target, source) } :: _rest) -> isBareFieldRead(source)(instructions)
+        | Some(IrInstruction { instruction = LoadLocal(_target, slot) } :: earlier) ->
+            match slotStores(slot)(earlier) with
+                | (source, beforeStore) :: [] ->
+                    beforeStore
+                    |> definitionFrom(source)
+                    |> isFieldReadDefinition
+                | _ -> false
+        | definition -> isFieldReadDefinition(definition)
 
 // Whether `temp` is a borrowed read: the construction storing it took no reference of its own.
 let isBorrowedRead (temp: Int) (instructions: List(IrInstruction)) =

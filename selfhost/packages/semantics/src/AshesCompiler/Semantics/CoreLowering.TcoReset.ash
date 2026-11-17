@@ -1233,7 +1233,7 @@ let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) 
 and emitStoredSourceChildRelease (childTemp: Int) (childType: SemanticType) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match stored with
         | Some(storedTemp) ->
-            if isUnrealizedConstructionRetain(storedTemp)(state.reversedInstructions)
+            if isUnrealizedConstructionRetain(storedTemp)(state.reversedInstructions) || isBareFieldRead(storedTemp)(state.reversedInstructions)
             then state
             else emitGuardedSourceChildDrop(childTemp)(childType)(state)
         | None -> emitGuardedSourceChildDrop(childTemp)(childType)(state)
