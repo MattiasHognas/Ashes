@@ -295,6 +295,14 @@ let packageMaterializedResults returnInstrs startTemp components =
                                 error = None
                             )
 
+// The type a direct call yields is the declared source result, as stage 0 types the call from the
+// signature: a zero-cost type or an alias stays what the declaration names, although the native
+// value is its payload. A declaration without a result keeps the materialized Unit.
+let declaredExternalResultType (abi: ExternalFunctionAbi) (materialized: SemanticType) =
+    match abi with
+        | ExternalFunctionAbi { sourceTyping = ExternalFunctionTyping { sourceResult = SemTuple([]) } } -> materialized
+        | ExternalFunctionAbi { sourceTyping = ExternalFunctionTyping { sourceResult = sourceResult } } -> sourceResult
+
 let emitDirectExternalCall abi startTemp startLocal argumentTemps _argumentTypes =
     match abi with
         | ExternalFunctionAbi { symbol = symbol, parameters = parameters, returnType = retType } ->
@@ -342,4 +350,4 @@ let emitDirectExternalCall abi startTemp startLocal argumentTemps _argumentTypes
                                                         match materializeOutSlots(outputSlots)(initialMaterialization) with
                                                             | OutMaterializationResult { instructions = finalInstrs, nextTemp = finalTemp, nextLocal = finalLocal, components = finalComps } ->
                                                                 let emission = packageMaterializedResults(finalInstrs)(finalTemp)(finalComps)
-                                                                in emission with nextLocal = finalLocal
+                                                                in emission with nextLocal = finalLocal, resultType = declaredExternalResultType(abi)(emission.resultType)
