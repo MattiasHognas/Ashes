@@ -1122,63 +1122,62 @@ let defineQueueCleanupFunction module_ context builder i64 i8 ptrType =
     in
         let cleanupFn = addInternalFunction(module_)("__ashes_parallel_queue_cleanup")(cleanupType)
         in
-            let loopBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_loop")
+            let entryBlock = appendBasicBlock(context)(cleanupFn)("entry")
             in
-                let bodyBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_body")
+                let loopBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_loop")
                 in
-                    let regionBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_region")
+                    let bodyBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_body")
                     in
-                        let _ =
-                            "entry"
-                            |> appendBasicBlock(context)(cleanupFn)
-                            |> positionBuilderAtEnd(builder)
+                        let regionBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_region")
                         in
-                            let desc = getParam(cleanupFn)(0u32)
+                            let _ = positionBuilderAtEnd(builder)(entryBlock)
                             in
-                                let count = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCount)("parq_cleanup_n")
+                                let desc = getParam(cleanupFn)(0u32)
                                 in
-                                    let totalItems = parWord(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)("parq_cleanup_s")
+                                    let count = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCount)("parq_cleanup_n")
                                     in
-                                        let workers = parWord(builder)(i64)(i8)(ptrType)(desc)(queueWorkerCount)("parq_cleanup_workers")
+                                        let totalItems = parWord(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)("parq_cleanup_s")
                                         in
-                                            let regionBytes = parWord(builder)(i64)(i8)(ptrType)(desc)(queueRegionBytes)("parq_cleanup_size")
+                                            let workers = parWord(builder)(i64)(i8)(ptrType)(desc)(queueWorkerCount)("parq_cleanup_workers")
                                             in
-                                                let payloadBytes =
-                                                    buildAdd(builder)(buildMul(builder)(count)(parConst(i64)(8))("parq_cleanup_element_bytes"))(buildMul(builder)(totalItems)(parConst(i64)(16))("parq_cleanup_tree_bytes"))("parq_cleanup_payload")
+                                                let regionBytes = parWord(builder)(i64)(i8)(ptrType)(desc)(queueRegionBytes)("parq_cleanup_size")
                                                 in
-                                                    let recordsBase =
-                                                        buildAdd(builder)(buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_cleanup_elems"))(payloadBytes)("parq_cleanup_records")
+                                                    let payloadBytes =
+                                                        buildAdd(builder)(buildMul(builder)(count)(parConst(i64)(8))("parq_cleanup_element_bytes"))(buildMul(builder)(totalItems)(parConst(i64)(16))("parq_cleanup_tree_bytes"))("parq_cleanup_payload")
                                                     in
-                                                        let workerSlot = buildAlloca(builder)(i64)("parq_cleanup_worker")
+                                                        let recordsBase =
+                                                            buildAdd(builder)(buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_cleanup_elems"))(payloadBytes)("parq_cleanup_records")
                                                         in
-                                                            let _ =
-                                                                buildStore(builder)(parConst(i64)(0))(workerSlot)
+                                                            let workerSlot = buildAlloca(builder)(i64)("parq_cleanup_worker")
                                                             in
-                                                                let _ = buildBr(builder)(loopBlock)
+                                                                let _ =
+                                                                    buildStore(builder)(parConst(i64)(0))(workerSlot)
                                                                 in
-                                                                    let _ = positionBuilderAtEnd(builder)(loopBlock)
+                                                                    let _ = buildBr(builder)(loopBlock)
                                                                     in
-                                                                        let worker = buildLoad(builder)(i64)(workerSlot)("parq_cleanup_index")
+                                                                        let _ = positionBuilderAtEnd(builder)(loopBlock)
                                                                         in
-                                                                            let _ =
-                                                                                buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(worker)(workers)("parq_cleanup_more"))(bodyBlock)(regionBlock)
+                                                                            let worker = buildLoad(builder)(i64)(workerSlot)("parq_cleanup_index")
                                                                             in
-                                                                                let _ = positionBuilderAtEnd(builder)(bodyBlock)
+                                                                                let _ =
+                                                                                    buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(worker)(workers)("parq_cleanup_more"))(bodyBlock)(regionBlock)
                                                                                 in
-                                                                                    let _ =
-                                                                                        emitReleaseWorker(context)(cleanupFn)(builder)(i64)(i8)(ptrType)(buildAdd(builder)(recordsBase)(buildMul(builder)(worker)(parConst(i64)(queueRecordBytes))("parq_cleanup_offset"))("parq_cleanup_record"))("parq_cleanup_worker")
+                                                                                    let _ = positionBuilderAtEnd(builder)(bodyBlock)
                                                                                     in
                                                                                         let _ =
-                                                                                            buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(workerSlot)("parq_cleanup_reload"))(parConst(i64)(1))("parq_cleanup_next"))(workerSlot)
+                                                                                            emitReleaseWorker(context)(cleanupFn)(builder)(i64)(i8)(ptrType)(buildAdd(builder)(recordsBase)(buildMul(builder)(worker)(parConst(i64)(queueRecordBytes))("parq_cleanup_offset"))("parq_cleanup_record"))("parq_cleanup_worker")
                                                                                         in
-                                                                                            let _ = buildBr(builder)(loopBlock)
+                                                                                            let _ =
+                                                                                                buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(workerSlot)("parq_cleanup_reload"))(parConst(i64)(1))("parq_cleanup_next"))(workerSlot)
                                                                                             in
-                                                                                                let _ = positionBuilderAtEnd(builder)(regionBlock)
+                                                                                                let _ = buildBr(builder)(loopBlock)
                                                                                                 in
-                                                                                                    let _ = emitLinuxMunmap(builder)(i64)(desc)(regionBytes)
+                                                                                                    let _ = positionBuilderAtEnd(builder)(regionBlock)
                                                                                                     in
-                                                                                                        let _ = buildRetVoid(builder)
-                                                                                                        in (cleanupFn, cleanupType))
+                                                                                                        let _ = emitLinuxMunmap(builder)(i64)(desc)(regionBytes)
+                                                                                                        in
+                                                                                                            let _ = buildRetVoid(builder)
+                                                                                                            in (cleanupFn, cleanupType))
 
 // The parallel runtime of a program that uses `Ashes.Task.Parallel`; `threads` when it forks or
 // starts a queue.
