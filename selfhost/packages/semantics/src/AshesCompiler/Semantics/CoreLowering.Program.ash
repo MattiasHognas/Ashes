@@ -1774,6 +1774,89 @@ let recursive implementationMethodDefinitions (bindings: List(TraitImplementatio
         | [] -> []
         | TraitImplementationMethodBinding { methodName = methodName, implementation = implementation } :: rest -> TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = SemNever) :: implementationMethodDefinitions(rest)
 
+// A type with its capability rows dropped: lowering tracks no rows, and a written `needs` row
+// would make the type unconvertible.
+let recursive withoutNeedsRows (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(span, inner) ->
+            inner
+            |> withoutNeedsRows
+            |> TypeAt(span)
+        | TypeArrow(argument, result, _capabilities, _tail) ->
+            TypeArrow(withoutNeedsRows(argument))(withoutNeedsRows(result))([])(None)
+        | TypeApplied(name, arguments) ->
+            arguments
+            |> withoutNeedsRowsIn
+            |> TypeApplied(name)
+        | TypeTuple(elements) ->
+            elements
+            |> withoutNeedsRowsIn
+            |> TypeTuple
+        | other -> other
+and withoutNeedsRowsIn (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | head :: rest -> withoutNeedsRows(head) :: withoutNeedsRowsIn(rest)
+
+// A user-declared trait's methods, each with its signature as a scheme over the trait's own
+// parameters that requires the trait at them (stage 0's trait method symbols); a signature this
+// resolver cannot express leaves the method out.
+let recursive userTraitMethodDefinitions (aliases: MapTree(Str, (List(Str), TypeExpr))) (traitName: Str) (parameterTypes: List(SemanticType)) (quantified: List((Int, Str))) (table: List((Str, SemanticType))) (methods: List(TraitMethodDecl)) =
+    match methods with
+        | [] -> []
+        | TraitMethodDecl { name = methodName, signature = signature, defaultImplementation = defaultImplementation } :: rest ->
+            match typeExprToSemanticType(signature
+            |> withoutNeedsRows
+            |> expandTypeAliases(aliases)(32))(table) with
+                | Some(methodType) ->
+                    let constraint = TraitConstraint(traitName = traitName, typeArguments = parameterTypes)
+                    in TraitMethodInferenceDefinition(name = methodName, scheme = TypeScheme(quantified = quantified, body = methodType, constraints = [constraint]), defaultImplementation = defaultImplementation) :: userTraitMethodDefinitions(aliases)(traitName)(parameterTypes)(quantified)(table)(rest)
+                | None -> userTraitMethodDefinitions(aliases)(traitName)(parameterTypes)(quantified)(table)(rest)
+
+let recursive userTraitSupertraits (aliases: MapTree(Str, (List(Str), TypeExpr))) (table: List((Str, SemanticType))) (supertraits: List(TraitConstraintSyntax)) =
+    match supertraits with
+        | [] -> []
+        | TraitConstraintSyntax { traitName = traitName, typeArguments = typeArguments } :: rest ->
+            match typeExprListToSemanticTypes(expandTypeExprAliases(aliases)(typeArguments))(table) with
+                | Some(arguments) -> TraitConstraint(traitName = standardTraitName(traitName), typeArguments = arguments) :: userTraitSupertraits(aliases)(table)(rest)
+                | None -> userTraitSupertraits(aliases)(table)(rest)
+
+// Stage 0's trait symbols for a program's own `trait` declarations: each is added to lowering's
+// trait environment with its methods and supertraits, so its implementations register against it
+// and its methods dispatch as the shipped traits' do. A trait the environment already knows (a
+// shipped trait stitched in from `Ashes.Trait`) keeps its seeded definition.
+let registerProgramTraitDeclaration (declaration: TraitDecl) (state: CoreLoweringState) =
+    match declaration with
+        | TraitDecl { name = name, typeParameters = typeParameters, supertraits = supertraits, methods = methods } ->
+            let traitName = standardTraitName(name)
+            in
+                match state
+                |> stateTraitEnvironment
+                |> resolveTraitBinding(traitName) with
+                    | Some(_known) -> state
+                    | None ->
+                        match assignTypeParameterIds(typeParameters)(state.typeSupply) with
+                            | (namedIds, nextSupply) ->
+                                let parameterTypes = typeParameterSemVars(namedIds)
+                                in
+                                    let table = typeParameterResolutionTable(namedIds)
+                                    in
+                                        let aliases = stateTypeAliases(state)
+                                        in
+                                            (state with typeSupply = nextSupply) |> withStateTraitEnvironment(state
+                                            |> stateTraitEnvironment
+                                            |> addTraitBinding(traitName)(length(typeParameters))(parameterTypes)(userTraitMethodDefinitions(aliases)(traitName)(parameterTypes)(typeParameterQuantified(namedIds))(table)(methods))(userTraitSupertraits(aliases)(table)(supertraits)))
+
+let recursive registerTraitDeclarations (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match items with
+        | [] -> state
+        | TopLevelAt(_span, inner) :: rest -> registerTraitDeclarations(inner :: rest)(state)
+        | TopLevelTrait(declaration) :: rest ->
+            state
+            |> registerProgramTraitDeclaration(declaration)
+            |> registerTraitDeclarations(rest)
+        | _other :: rest -> registerTraitDeclarations(rest)(state)
+
 let registerImplementationDeclaration (declaration: TraitImplementationDecl) (state: CoreLoweringState) =
     match declaration with
         | TraitImplementationDecl { traitName = traitName, typeArguments = typeArguments, requirements = requirements, bindings = bindings } ->
@@ -1837,7 +1920,9 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                     |> registerProgramExternals(items) with
                         | Error(error) -> failure(typed)(error)
                         | Ok(withExternals) ->
-                            match registerProgramImplementations(items)(withExternals) with
+                            match withExternals
+                            |> registerTraitDeclarations(items)
+                            |> registerProgramImplementations(items) with
                                 | Error(error) -> failure(withExternals)(error)
                                 | Ok(withImplementations) ->
                                     withImplementations

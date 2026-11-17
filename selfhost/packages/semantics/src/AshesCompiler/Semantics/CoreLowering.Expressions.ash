@@ -1684,6 +1684,113 @@ let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: Se
                     |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resultType)(lower)(operandTemp)(resolveType(operandState)(operandType))
         | failed -> failed
 
+// A trait the program declares itself: lowering's trait environment knows it and the shipped
+// environment does not.
+let isUserDeclaredTrait (traitName: Str) (state: CoreLoweringState) =
+    match resolveTraitBinding(traitName)(standardLoweringTraitEnvironment) with
+        | Some(_shipped) -> false
+        | None ->
+            match state
+            |> stateTraitEnvironment
+            |> resolveTraitBinding(traitName) with
+                | Some(_declared) -> true
+                | None -> false
+
+// The trait and the method scheme `qualifier.methodName` names, when the qualifier is a trait the
+// program declares and the name one of its methods.
+let userTraitMethodScheme (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
+    (let traitName = standardTraitName(qualifier)
+    in
+        if isShippedTraitQualifier(qualifier) || isUserDeclaredTrait(traitName)(state) == false
+        then None
+        else
+            match state
+            |> stateTraitEnvironment
+            |> resolveTraitMethod(traitName)(methodName) with
+                | Some(TraitMethodInferenceDefinition { scheme = scheme }) -> Some((traitName, scheme))
+                | None -> None)
+
+let recursive userTraitMethodArity (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> 1 + userTraitMethodArity(result)
+        | _ -> 0
+
+// Stage 0's `LowerBareTraitMethodReference` for a user-declared trait: the method as a value is
+// the lambda applying it, whose saturated call takes the dispatch route.
+let userTraitMethodReference (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
+    match userTraitMethodScheme(qualifier)(methodName)(state) with
+        | Some((_traitName, TypeScheme { body = body })) ->
+            let arity = userTraitMethodArity(body)
+            in
+                if arity < 1
+                then None
+                else
+                    arity - 1
+                    |> traitMethodEtaLambda(traitMethodEtaBody(ExprQualifiedVar(qualifier)(methodName))(0)(arity))
+                    |> Some
+        | None -> None
+
+// The arguments after the one a trait method dispatches on apply to the dispatched result as an
+// ordinary call.
+let applyRemainingTraitArguments (resultTemp: Int) (resultType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    match arguments with
+        | [] -> success(resultTemp)(resultType)(state)
+        | _ ->
+            match freshLocal(state) with
+                | FreshLocal { state = slotState, local = slot } ->
+                    let name = "__trait_method_result_" + Ashes.Text.fromInt(slot)
+                    in
+                        slotState
+                        |> emit(StoreLocal(slot)(resultTemp))
+                        |> addBinding(name)(emptyScheme(resultType))(CoreLocal(slot))
+                        |> lower(appendConstrainedArguments(ExprVar(name))(arguments))
+                        |> restoreLoweredBindings(state.bindings)
+
+let consumerRequestForDispatch (rest: List(Expr)) (request: ConsumerRequest) (state: CoreLoweringState) =
+    match rest with
+        | [] -> withConsumerRequest(request)(state)
+        | _ -> clearConsumerRequest(state)
+
+// Stage 0's `LowerTraitMethodCall` for a user-declared trait with one parameter: the method's
+// scheme is instantiated, its first parameter typed by the first argument, and the method
+// dispatched through the evidence for the trait's type argument (an active requirement inside a
+// constrained body, the registered implementation otherwise); later arguments apply to the result.
+let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeScheme) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    match (arguments, instantiate(scheme)(state.typeSupply)) with
+        | (first :: rest, InstantiationResult { semanticType = SemFunction(parameterType, resultType, _row), constraints = TraitConstraint { typeArguments = typeArgument :: [] } :: [], supply = nextSupply }) ->
+            match state
+            |> withTypeSupply(nextSupply)
+            |> clearConsumerRequest
+            |> lower(first) with
+                | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = operandType, error = None } ->
+                    match bindType(parameterType)(operandType)(loweredState) with
+                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (boundState, None) ->
+                            match boundState
+                            |> consumerRequestForDispatch(rest)(state.consumerRequest)
+                            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
+                                | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
+                                    dispatched
+                                    |> withConsumerRequest(state.consumerRequest)
+                                    |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
+                                | failed -> failed
+                | failed -> failed
+        | _ ->
+            SemNever
+            |> UnsupportedCoreTraitDispatch(traitName)
+            |> failure(state)
+
+// A call spine rooted at a method of a user-declared trait.
+let userTraitMethodCall (expression: Expr) (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = root, arguments = arguments } ->
+            match stripExprAt(root) with
+                | ExprQualifiedVar(qualifier, methodName) ->
+                    match userTraitMethodScheme(qualifier)(methodName)(state) with
+                        | Some((traitName, scheme)) -> Some((traitName, methodName, scheme, arguments))
+                        | None -> None
+                | _ -> None
+
 // The name a call spine is rooted at and the number of arguments applied to it.
 let recursive callSpineRootOf (expression: Expr) (count: Int) =
     match expression with
@@ -2271,6 +2378,25 @@ let constrainedPlanSupported (written: Bool) constraints =
     then writtenConstraintsSupported(constraints)
     else constrainedOperatorsSupported(constraints)
 
+// A plan's requirements are each supported as `constrainedPlanSupported` says, or name a trait the
+// program declares, whose methods dispatch through the active requirement's evidence
+// (`lowerUserTraitMethodCall`).
+let recursive constrainedPlanSupportedIn (written: Bool) (constraints: List(TraitConstraint)) (state: CoreLoweringState) =
+    match constraints with
+        | [] -> true
+        | (TraitConstraint { traitName = name } as constraint) :: rest -> (isUserDeclaredTrait(name)(state) || constrainedPlanSupported(written)([constraint])) && constrainedPlanSupportedIn(written)(rest)(state)
+
+let programTraitDefinitions (state: CoreLoweringState) =
+    match stateTraitEnvironment(state) with
+        | TypeEnvironment { traits = traits } -> traits
+
+// Whether the value names a trait the program declares, which an unannotated binding's plan may
+// then rest on.
+let recursive mentionsUserDeclaredTrait (value: Expr) (traits: List(TraitInferenceDefinition)) (state: CoreLoweringState) =
+    match traits with
+        | [] -> false
+        | TraitInferenceDefinition { name = name } :: rest -> isUserDeclaredTrait(name)(state) && exprReadsName(name)(value) || mentionsUserDeclaredTrait(value)(rest)(state)
+
 let recursive hasOperatorConstraint (constraints: List(TraitConstraint)) =
     match constraints with
         | [] -> false
@@ -2343,7 +2469,7 @@ let nameCarriesOperatorConstraint (state: CoreLoweringState) (name: Str) =
 let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraintSyntax)) (state: CoreLoweringState) =
     match requirements with
         | [] ->
-            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false
+            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false && mentionsUserDeclaredTrait(value)(programTraitDefinitions(state))(state) == false
         | _ -> false
 
 let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
@@ -2364,7 +2490,7 @@ let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation
                     | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                     | CoreConstrainedInference { error = Some(_error) } -> None
                     | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                        if constrainedPlanSupported(written)(constraints)
+                        if constrainedPlanSupportedIn(written)(constraints)(state)
                         then Some(plan)
                         else None
 
@@ -2748,7 +2874,10 @@ let lowerCoreDispatch expression lowerCore state =
                 | None ->
                     match shippedTraitMethodReference(receiverName)(fieldName) with
                         | Some(etaLambda) -> lowerCore(etaLambda)(state)
-                        | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
+                        | None ->
+                            match userTraitMethodReference(receiverName)(fieldName)(state) with
+                                | Some(etaLambda) -> lowerCore(etaLambda)(state)
+                                | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
         | ExprLet(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLet(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLetRecursive(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
@@ -2770,9 +2899,12 @@ let lowerCoreDispatch expression lowerCore state =
                                         | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
                                         | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
                                         | None ->
-                                            state
-                                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
-                                            |> describeCallArity(expression)
+                                            match userTraitMethodCall(expression)(state) with
+                                                | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
+                                                | None ->
+                                                    state
+                                                    |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                                                    |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->

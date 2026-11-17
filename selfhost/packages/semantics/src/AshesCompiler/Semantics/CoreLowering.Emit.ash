@@ -31,6 +31,7 @@ import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 export (
+    value standardLoweringTraitEnvironment,
     type FreshTemp(..),
     type FreshLocal(..),
     type FreshType(..),
