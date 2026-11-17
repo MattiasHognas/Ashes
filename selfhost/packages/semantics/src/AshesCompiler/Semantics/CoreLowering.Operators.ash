@@ -1588,6 +1588,67 @@ let observeCoreBinary operator left (binary: LoweredCoreBinary) =
                         in binary with state = observeOperatorType(traitName)(operandType)(state)
         | _ -> binary
 
+// The trait and method an arithmetic or bitwise operator stands for over an operand that is no
+// primitive (stage 0's mapped binary traits): `Box(7) + Box(2)` is `Add.add`.
+let arithmeticTraitMethod operator =
+    match operator with
+        | CoreAddOperator -> Some(("Add", "add"))
+        | CoreSubtractOperator -> Some(("Subtract", "subtract"))
+        | CoreMultiplyOperator -> Some(("Multiply", "multiply"))
+        | CoreDivideOperator -> Some(("Divide", "divide"))
+        | CoreModuloOperator -> Some(("Remainder", "remainder"))
+        | CoreBitwiseAndOperator -> Some(("BitAnd", "bitAnd"))
+        | CoreBitwiseOrOperator -> Some(("BitOr", "bitOr"))
+        | CoreBitwiseXorOperator -> Some(("BitXor", "bitXor"))
+        | CoreShiftLeftOperator -> Some(("ShiftLeft", "shiftLeft"))
+        | CoreShiftRightOperator -> Some(("ShiftRight", "shiftRight"))
+        | _ -> None
+
+// A user type's operator: the implementation's method applied to both operands, its result of the
+// operand type.
+let emitCoreTraitArithmetic (traitName: Str) (methodName: Str) lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = operandType, error = None } ->
+            match state
+            |> stateTraitEnvironment
+            |> resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [operandType])) with
+                | TraitEvidenceResolution { plan = Some(plan) } ->
+                    match emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary) with
+                        | LoweredCoreValue { error = None } as lowered -> lowered with semanticType = operandType
+                        | failed -> failed
+                | TraitEvidenceResolution { plan = None } ->
+                    operandType
+                    |> MissingCoreTraitEvidence(traitName)
+                    |> failure(state)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let isSubtractOperator operator =
+    match operator with
+        | CoreSubtractOperator -> true
+        | _ -> false
+
+let isUserTypeOperand (semanticType: SemanticType) =
+    match semanticType with
+        | SemNamed(_symbolId, _name, _arguments) -> true
+        | _ -> false
+
+// An operator over a user type's operands dispatches through the operator's trait, a negation
+// `0 - x` of one through `Negate`; every other operator takes its primitive route.
+let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, rightTemp = rightTemp, rightType = rightType, error = None } ->
+            let resolvedLeft = resolveType(state)(leftType)
+            in
+                let resolvedRight = resolveType(state)(rightType)
+                in
+                    if isSubtractOperator(operator) && isCoreZeroExpression(left) && isUserTypeOperand(resolvedRight)
+                    then emitCoreTraitUnaryDispatch("Negate")("negate")(resolvedRight)(lower)(rightTemp)(resolvedRight)(state)
+                    else
+                        match (arithmeticTraitMethod(operator), isUserTypeOperand(resolvedLeft) && resolvedLeft == resolvedRight) with
+                            | (Some((traitName, methodName)), true) -> emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
+                            | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
+        | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
+
 let lowerCoreBinary operator left right lower state =
     match consumerRequestOf(state) with
         | request ->
@@ -1598,7 +1659,7 @@ let lowerCoreBinary operator left right lower state =
             |> withBinaryAffineReservation(binaryAffineReservation(operator)(left)(state))
             |> prepareCoreBinary(operator)(left)
             |> observeCoreBinary(operator)(left)
-            |> emitPreparedCoreBinary(operator)(lower)
+            |> emitPreparedOrTraitBinary(operator)(left)(lower)
             |> clearAffineReservation
 
 let finishCoreLogicalNot lowered =
@@ -1658,6 +1719,7 @@ let finishOrDeferCoreLogicalNot lower lowered =
                     else
                         match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
                             | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
+                            | (SemNamed(_symbolId, _name, _arguments), _key) -> emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
                             | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
         | failed -> failed
 
@@ -1666,10 +1728,19 @@ let lowerCoreLogicalNot operand lower state =
     |> lower(operand)
     |> finishOrDeferCoreLogicalNot(lower)
 
+// `~x` over a user type dispatches through `BitwiseNot`; a primitive operand takes the inline mask.
+let finishCoreBitwiseNotOrTrait lower lowered =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = operand, semanticType = semanticType, error = None } ->
+            match resolveType(state)(semanticType) with
+                | SemNamed(_symbolId, _name, _arguments) as named -> emitCoreTraitUnaryDispatch("BitwiseNot")("bitwiseNot")(named)(lower)(operand)(named)(state)
+                | _ -> finishCoreBitwiseNot(lowered)
+        | failed -> failed
+
 let lowerCoreBitwiseNot operand lower state =
     state
     |> lower(operand)
-    |> finishCoreBitwiseNot
+    |> finishCoreBitwiseNotOrTrait(lower)
 
 let recursive parseDecimalDigits remaining value =
     match Ashes.Text.unconsText(remaining) with
