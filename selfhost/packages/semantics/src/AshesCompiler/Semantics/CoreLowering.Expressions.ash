@@ -1853,9 +1853,9 @@ let frameOwnedClosure (closureTemp: Int) (captureCount: Int) (state: CoreLowerin
 let recursive functionForks (label: Str) (functions: List(IrFunction)) =
     match functions with
         | [] -> false
-        | function_ :: rest ->
-            if function_.label == label
-            then instructionsFork(function_.instructions)
+        | IrFunction { label = functionLabel, instructions = functionInstructions } :: rest ->
+            if functionLabel == label
+            then instructionsFork(functionInstructions)
             else functionForks(label)(rest)
 and instructionsFork (instructions: List(IrInstruction)) =
     match instructions with

@@ -564,12 +564,12 @@ let runtimePayloadCandidates (fileName: Str) =
     in
         match Ashes.IO.Environment.executableDirectory(Unit) with
             | Ok(directory) ->
-                let parent = Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(directory)
+                let parentDirectory = Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(directory)
                 in
                     [
                         Ashes.IO.Path.join(Ashes.IO.Path.Unix)(directory)(relative),
-                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(parent)(relative),
-                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(parent))(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(parentDirectory)(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(parentDirectory))(relative),
                         relative
                     ]
             | Error(_) -> [relative])
