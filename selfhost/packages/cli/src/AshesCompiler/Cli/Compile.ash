@@ -618,27 +618,56 @@ let recursive linkRuntimePayloads context module_ (payloads: List(Str)) =
                         | Error(message) -> Error(message)
                         | Ok(_) -> linkRuntimePayloads(context)(module_)(rest)
 
+// Stage 0's `VerifyModule`: with `ASH_DBG_DUMP_IR` set, a module that fails verification is
+// written to /tmp/ashes_bad_ir.ll.
+let dumpBrokenModule module_ =
+    match Ashes.IO.Environment.get("ASH_DBG_DUMP_IR") with
+        | Ok(Some(_)) ->
+            match printModuleToString(module_) with
+                | Ok(text) ->
+                    match Ashes.IO.File.writeText("/tmp/ashes_bad_ir.ll")(text) with
+                        | _ -> Unit
+                | Error(_) -> Unit
+        | _ -> Unit
+
+// Stage 0's `VerifyModule` before the optimization passes: a broken module fails the compile with
+// the verifier's report instead of being optimized into a broken program.
+let verifyGeneratedModule module_ =
+    match verifyModule(module_)(verifierReturnStatusAction) with
+        | (false, _report) -> Ok(Unit)
+        | (true, report) ->
+            let detail =
+                match report with
+                    | Ok(Some(text)) -> text
+                    | _ -> "unknown error"
+            in
+                let _ = dumpBrokenModule(module_)
+                in Error("LLVM module verification failed: " + detail)
+
 let emitObjectWithMachine (payloads: List(Str)) machine builder module_ context =
     (let _ = setTarget(module_)(linuxX64Triple)
     in
         let _ = applyDataLayout(module_)(machine)
         in
-            let _ = runOptimizationPasses(module_)(machine)
-            in
-                match linkRuntimePayloads(context)(module_)(payloads) with
-                    | Error(message) -> Error(message)
-                    | Ok(_) ->
-                        match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                            | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
-                            | (false, _, None) -> Error("LLVM produced no object buffer.")
-                            | (false, _, Some(buffer)) ->
-                                let bytesResult =
-                                    buffer
-                                    |> getBufferSize
-                                    |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                                in
-                                    let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
-                                    in bytesResult)
+            match verifyGeneratedModule(module_) with
+                | Error(message) -> Error(message)
+                | Ok(_) ->
+                    let _ = runOptimizationPasses(module_)(machine)
+                    in
+                        match linkRuntimePayloads(context)(module_)(payloads) with
+                            | Error(message) -> Error(message)
+                            | Ok(_) ->
+                                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
+                                    | (false, _, None) -> Error("LLVM produced no object buffer.")
+                                    | (false, _, Some(buffer)) ->
+                                        let bytesResult =
+                                            buffer
+                                            |> getBufferSize
+                                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                                        in
+                                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
+                                            in bytesResult)
 
 // A target machine for `triple` tuned to the host CPU, as `selfhost/tests/backend` resolves it:
 // LLVM's default optimization level and static relocations, matching stage 0's own default build

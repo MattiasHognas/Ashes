@@ -63,6 +63,7 @@ export (
     value buildRet,
     value buildRetVoid,
     value verifyModule,
+    value printModuleToString,
     value verifierAbortProcessAction,
     value verifierPrintMessageAction,
     value verifierReturnStatusAction,
@@ -213,6 +214,7 @@ external LLVMBuildRet(LLVMBuilderRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuild
 external LLVMBuildRetVoid(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildRetVoid@libLLVM.so"
 external LLVMDisposeMessage(*u8) -> void = "LLVMDisposeMessage@libLLVM.so"
 external LLVMVerifyModule(LLVMModuleRef, u32, out FfiStr(owned LLVMDisposeMessage)) -> Bool = "LLVMVerifyModule@libLLVM.so"
+external LLVMPrintModuleToString(LLVMModuleRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMPrintModuleToString@libLLVM.so"
 external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@libLLVM.so"
 external LLVMInitializeX86Target() -> void = "LLVMInitializeX86Target@libLLVM.so"
 external LLVMInitializeX86TargetMC() -> void = "LLVMInitializeX86TargetMC@libLLVM.so"
@@ -364,6 +366,10 @@ let verifierReturnStatusAction = 2u32
 let functionType returnType paramTypes paramCount isVarArg = LLVMFunctionType(returnType)(paramTypes)(paramCount)(isVarArg)
 
 let verifyModule module_ action = LLVMVerifyModule(module_)(action)
+
+// The module's textual IR (`LLVMPrintModuleToString`), for a dump of a module that failed
+// verification.
+let printModuleToString module_ = LLVMPrintModuleToString(module_)
 
 let initializeX86TargetInfo _ = LLVMInitializeX86TargetInfo(Unit)
 
