@@ -646,7 +646,7 @@ let patternOwnerTypeName (resolved: SemanticType) (state: CoreLoweringState) =
         | None -> "PatternBinding"
 
 // The compiler-provided resource types (§16 of the language reference) the lowering tracks.
-let isResourceTypeName (name: Str) = name == "FileHandle" || name == "Process"
+let isResourceTypeName (name: Str) = name == "FileHandle" || name == "Process" || name == "Socket" || name == "TlsSocket"
 
 // The destructor of a declared external resource (`external type T resource destructor f`): the
 // external function naming `T` as the resource it destroys.
@@ -838,6 +838,14 @@ let builtinResourceRole (kind: CoreBuiltinKind) =
         | CoreProcessReadStderrLine -> BuiltinUsesResource
         | CoreProcessWaitForExit -> BuiltinUsesResource
         | CoreProcessKill -> BuiltinUsesResource
+        | CoreTcpSend -> BuiltinUsesResource
+        | CoreTcpReceive -> BuiltinUsesResource
+        | CoreTcpAccept -> BuiltinUsesResource
+        | CoreTcpClose -> BuiltinClosesResource
+        | CoreTlsSend -> BuiltinUsesResource
+        | CoreTlsReceive -> BuiltinUsesResource
+        | CoreTlsClose -> BuiltinClosesResource
+        | CoreTlsServerHandshake -> BuiltinUsesResource
         | _ -> BuiltinNoResource
 
 // Which of a let-bound lambda's parameters a call through it only borrows: stage 0's parameter

@@ -1004,7 +1004,18 @@ let codegenInstructionKind cx builder kind state =
                                                             |> lookupTemp(cx)(sourceTemp)
                                                             |> emitProcessDrop(context)(function_)(builder)(i64)(i8)(ptrType)
                                                         in (tempEnv, terminated)
-                                                    else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
+                                                    else
+                                                        if typeName == "Socket"
+                                                        then
+                                                            let _ =
+                                                                tempEnv
+                                                                |> lookupTemp(cx)(sourceTemp)
+                                                                |> emitLinuxClose(builder)(i64)
+                                                            in (tempEnv, terminated)
+                                                        else
+                                                            if typeName == "TlsSocket"
+                                                            then (tempEnv, terminated)
+                                                            else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
                         // `CopyOutArena`/`CopyOutList` move a value that lives above a scope's
                         // restored watermark to storage that survives the reset — an RC cell or an
                         // arena block below the watermark — before the chunks are reclaimed. Each
@@ -1902,6 +1913,8 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -1998,8 +2011,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 |> allocateLocalSlots(builder)(types.i64)(localCount)
                                 |> indexIntEntries
                             in
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
@@ -2008,6 +2019,8 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             |> lookupIndexedInt(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexedInt(1)
@@ -2015,8 +2028,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             in Unit
                                     else Unit
                                 in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                     let _ =
                                     // The entry receives the initial stack pointer in `rdi` (the
                                     // trampoline's `mov rdi, rsp`); the SysV layout there is
