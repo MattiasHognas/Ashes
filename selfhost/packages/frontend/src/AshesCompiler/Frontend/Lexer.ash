@@ -6,6 +6,7 @@
 // - Token text remains the original spelling needed by parsing and formatting.
 
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Frontend.FloatLiteral
 import AshesCompiler.Frontend.UnicodeClassification
 export (
     type LexerResult(..),
@@ -324,7 +325,7 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                     in
                         match tokenLength
                         |> lexerSlice(bytes)(start)
-                        |> Ashes.Text.parseFloat with
+                        |> floatLiteralValue with
                             | Ok(value) ->
                                 (lexerToken(
                                     Float,
