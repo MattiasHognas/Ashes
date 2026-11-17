@@ -135,6 +135,7 @@ export (
     value emitRestoreAndReclaim,
     value operatorDefaultedVariables,
     value resultSurvivesReset,
+    value backEdgeArgumentSurvivesReset,
     value shareOwnerReleasePlan,
     value ownerValueTypeOf,
     value borrowedOwnersOfSlot,
@@ -1777,6 +1778,22 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
         // needs no release; a declared resource owns what its handle names.
         | SemOpaque(name) -> isDeclaredResourceName(name)(state) == false
         | resolved -> canArenaResetLayout(resolved)
+
+// Whether a loop argument survives the per-iteration arena reset at a back edge. A type variable
+// only the current body's still-pending deferred operator owns may yet settle on `Str` at a later
+// call (`grow(s + s)(n - 1)` applied to a string), which turns the speculative `AddInt` into an
+// arena concatenation; resetting under it would free the successor the next iteration reads, so
+// only a sealed default counts as the `Int` it resolves to here.
+let backEdgeArgumentSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(id) ->
+            []
+            |> sealedOperatorTypes(stateSealedOperatorDefaults(state))
+            |> (given (types) ->
+                state
+                |> operatorDefaultedVariables(types)
+                |> containsInt(id))
+        | _ -> resultSurvivesReset(semanticType)(state)
 
 // A live owner retained into a runtime cell shares its graph with the cell from then on, so its
 // scope-exit release may no longer assume the graph is unique.

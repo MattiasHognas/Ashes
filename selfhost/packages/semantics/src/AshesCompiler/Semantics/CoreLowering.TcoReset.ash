@@ -2501,7 +2501,7 @@ let backEdgeArgumentIsInPlaceReuse (argument: TcoResetArgument) (state: CoreLowe
                                 | _ -> false)
                         | _ -> false
 
-let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || backEdgeArgumentIsInPlaceReuse(argument)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
+let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = backEdgeArgumentSurvivesReset(argument.argumentType)(state) || backEdgeArgumentIsInPlaceReuse(argument)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
 
 let recursive allArgumentsSurvivePlainReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with

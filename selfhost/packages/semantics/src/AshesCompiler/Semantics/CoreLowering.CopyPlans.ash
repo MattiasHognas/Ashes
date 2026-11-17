@@ -423,7 +423,7 @@ let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLower
 let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
-        | semanticType :: rest -> resultSurvivesReset(semanticType)(state) && argumentsSurviveReset(rest)(state)
+        | semanticType :: rest -> backEdgeArgumentSurvivesReset(semanticType)(state) && argumentsSurviveReset(rest)(state)
 
 // Stage 0's `EmitTcoBackEdgeArenaBlock` for the plain reset: the pre-restore slot is allocated
 // first, the iteration-local owners are released, and when every argument's resolved type
