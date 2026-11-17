@@ -2030,6 +2030,33 @@ let forksOutsideAsync expression (state: CoreLoweringState) =
         | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName) } -> moduleName == "Ashes.Task" && memberName == "fork" && stateCoroutineBody(state) == false
         | _ -> false
 
+// The local a `Ashes.Task.join(handle)` call names as its handle: a join consumes the handle, so a
+// second join of the same binding is stage 0's use-after-move (`ASH008`).
+let joinedHandleLocal expression (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName), arguments = handleArgument :: [] } ->
+            if moduleName == "Ashes.Task" && memberName == "join"
+            then
+                match unspanArgument(handleArgument) with
+                    | ExprVar(name) ->
+                        match lookupBinding(name)(state.bindings) with
+                            | Some(CoreBinding { location = CoreLocal(slot) }) -> Some((name, slot))
+                            | _ -> None
+                    | _ -> None
+            else None
+        | _ -> None
+
+let lowerJoinOrCall expression function argument lower (state: CoreLoweringState) =
+    match joinedHandleLocal(expression)(state) with
+        | Some((name, slot)) ->
+            match resourceStateOf(slot)(state) with
+                | Some(ResourceMoved) -> failure(state)(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))
+                | _ ->
+                    match lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state) with
+                        | LoweredCoreValue { state = loweredState, error = None } as lowered -> lowered with state = markResourceReleased(slot)(ResourceMoved)(loweredState)
+                        | failed -> failed
+        | None -> lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
+
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
@@ -2038,7 +2065,7 @@ let lowerCallExpression expression function argument lower state =
                 | None ->
                     if forksOutsideAsync(expression)(state)
                     then failure(state)(UnsupportedCoreBuiltinLowering("Ashes.Task.fork() must be used inside an async task."))
-                    else lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state)
+                    else lowerJoinOrCall(expression)(function)(argument)(lower)(state)
                 | Some(rewritten) -> lower(rewritten)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
