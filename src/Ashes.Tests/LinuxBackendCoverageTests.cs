@@ -7110,7 +7110,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildLoopParameterTheBodyNeverReadsProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 9}\n");
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
             samples.Add(sample);
         }
 
@@ -7288,7 +7288,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildExitCellOfRecordsPassedToCallProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 9}\n");
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
             samples.Add(sample);
         }
 
@@ -21779,6 +21779,55 @@ public sealed class LinuxBackendCoverageTests
         }
 
         AssertMemoryPlateaus("escaping cell retained tail", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildLoopRecordFieldConsReturnedAtExitProgram(int rounds)
+        => $$"""
+            type State =
+                | count: Int
+                | refs: List(Str)
+
+            let recursive scan (tokens: List(Str)) (state: State) =
+                match tokens with
+                    | [] -> state.refs
+                    | text :: rest -> scan(rest)(State(count = 0, refs = text :: state.refs))
+
+            let recursive total (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> total(rest)(k + 1)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + total(scan(["Ashes", "x", "abc"])(State(count = n, refs = [])))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_record_field_cons_returned_at_exit_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop's successor record holds an arena cell consed onto the record parameter's list
+        // field. The cell's tail retain goes to an owned slot, so the back edge's copy of the
+        // successor skips that tail when it releases the source's children: releasing it there too
+        // freed the list the next iteration still held.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopRecordFieldConsReturnedAtExitProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop record field cons returned at exit", samples, maxRssKb: 16_000);
     }
 
     private static string BuildLoopRebuildsListOfListsProgram(int rounds)

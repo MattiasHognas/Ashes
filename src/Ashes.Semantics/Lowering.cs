@@ -18636,9 +18636,14 @@ public sealed partial class Lowering
     {
         int retainedTemp = RetainRuntimeManagedAggregateChild(tail, tailTemp, tailType);
         if (!RecordCallArgumentArenaRetain(tailTemp, retainedTemp, tailType)
-            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null
+            && KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSKIP") is null)
         {
-            KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType);
+            // The slot releases the retain, so a release of the cell's children (a back edge's copy
+            // of a successor that holds the cell in a field, dropping the source it copied) skips
+            // the tail.
+            _ownedSlotConstructorArguments.Add(tail);
         }
 
         return retainedTemp;
@@ -18646,7 +18651,8 @@ public sealed partial class Lowering
 
     // Any list type qualifies, not only the contract's: a list the function's result copies out (a
     // `List(Str)`) is copied before the owned slots are released, so the copy holds its own cells.
-    private void KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
+    // True when the retain went to an owned slot.
+    private bool KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
     {
         if (retainedTemp == tailTemp
             || !GeneralRcEnabled
@@ -18656,12 +18662,13 @@ public sealed partial class Lowering
             || Prune(tailType) is not TypeRef.TList
             || ContainsUnresolvedLayoutType(Prune(tailType), []))
         {
-            return;
+            return false;
         }
 
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(tailType));
+        return true;
     }
 
     // An arena cell that escapes (a call's argument the callee's result may reach) holding a value
