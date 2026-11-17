@@ -92,7 +92,12 @@ let nominalIdentityMismatchFails unit =
     |> SemNamed(8)("Result")
     |> expectMismatch(SemNamed(7)("Result")([]))
 
-let tupleArityMismatchFails unit = expectArity(SemTuple([SemInt]))(SemTuple([SemInt, SemString]))
+let tupleArityMismatchFails unit = expectMismatch(SemTuple([SemInt]))(SemTuple([SemInt, SemString]))
+
+let namedArgumentArityMismatchFails unit =
+    [SemInt, SemString]
+    |> SemNamed(7)("Pair")
+    |> expectArity(SemNamed(7)("Pair")([SemInt]))
 
 let capabilityRowOrderIsIgnored unit =
     None
@@ -146,6 +151,7 @@ let runUnificationTests unit =
     |> primitiveMismatchFails
     |> nominalIdentityMismatchFails
     |> tupleArityMismatchFails
+    |> namedArgumentArityMismatchFails
     |> capabilityRowOrderIsIgnored
     |> parameterizedCapabilityUnifies
     |> openRowCapturesExtraCapability

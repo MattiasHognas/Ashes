@@ -6,27 +6,51 @@
 // - Trait registration, coherence, defaults, and termination checks produce deterministic errors.
 
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
+import AshesCompiler.Semantics.NodeIdentity
+import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
 export (
     type ProgramInferenceError(..),
     type ProgramInferenceResult(..),
+    type InferenceErrorLocation(..),
     type ProgramInferenceUnit(..),
+    type IdentifiedProgramUnits(..),
+    value identifyProgramUnits,
+    value inferIdentifiedProgramUnitsFrom,
+    value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,
     value expressionDependsOnTraitMethod,
 )
+
+// Where an inference error was raised. `unitIndex` is the position of the failing unit among the
+// units inferred, or -1 for the trailing expression; `moduleName` and `sourcePath` are filled in
+// by a caller that knows which module each unit is. `span` is the innermost located expression
+// around the failure and `declarationSpan` the top-level declaration, both as offsets into that
+// module's own text.
+type InferenceErrorLocation =
+    | packageId: Str
+    | unitIndex: Int
+    | moduleName: Maybe(Str)
+    | sourcePath: Maybe(Str)
+    | declaration: Maybe(Str)
+    | declarationSpan: Maybe(TextSpan)
+    | span: Maybe(TextSpan)
+    deriving {Eq, Show}
 
 type ProgramInferenceError =
     | ProgramExpressionError(TypeInferenceError)
@@ -60,13 +84,25 @@ type ProgramInferenceError =
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
     | MissingTraitImplementationMethod(Str, Str)
-    | OrphanTraitImplementation(Str)
-    | OverlappingTraitImplementations(Str)
+    // The trait, the implementation head, and the package that declares the implementation.
+    | OrphanTraitImplementation(Str, List(SemanticType), Str)
+    // The trait, where the implementation already registered was declared, and where the one that
+    // overlaps it is; a site is None for an implementation the compiler supplies.
+    | OverlappingTraitImplementations(Str, Maybe(TraitImplementationSite), Maybe(TraitImplementationSite))
     | ProgramDerivingExpansionError(DerivingExpansionError)
-    | ProgramExternalTypingError(ExternalTypingError)
+    // The external declaration's name (empty for an opaque type) and what is wrong with it.
+    | ProgramExternalTypingError(Str, ExternalTypingError)
     | ProgramExternalAbiError(ExternalAbiError)
     | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
+    // A transparent alias whose expansion reaches itself, with the cycle written `A -> B -> A`.
+    | RecursiveTypeAlias(Str)
+    // A type, alias or zero-cost type declared under `Ashes` or a builtin type's name.
+    | ReservedTypeDeclaration(Str)
+    // An error tagged with where it was raised while the program is being inferred. A finished
+    // `ProgramInferenceResult` never carries it: the bare error is in `error` and the place in
+    // `errorLocation`.
+    | ProgramErrorAt(InferenceErrorLocation, ProgramInferenceError)
     deriving {Eq, Show}
 
 type ProgramInferenceResult =
@@ -74,6 +110,10 @@ type ProgramInferenceResult =
     | substitution: List((Int, SemanticType))
     | environment: TypeEnvironment
     | externalAbi: Maybe(ExternalProgramAbi)
+    // What was recorded against the identified nodes of the program. Empty when the program
+    // inferred carried no identities.
+    | nodeTypes: NodeTypeTable
+    | errorLocation: Maybe(InferenceErrorLocation)
     | error: Maybe(ProgramInferenceError)
 
 type ProgramInferenceState =
@@ -86,6 +126,15 @@ type ProgramInferenceState =
 type ProgramInferenceUnit =
     | packageId: Str
     | program: ProgramSyntax
+
+// The units of a program after `deriving` is expanded and every expression node has its identity,
+// with the trailing expression numbered after them. `nodeCount` is the number of identities
+// given, which are 0 up to it.
+type IdentifiedProgramUnits =
+    | units: List(ProgramInferenceUnit)
+    | body: Maybe(Expr)
+    | nodeCount: Int
+    | error: Maybe(ProgramInferenceError)
 
 type ProgramUnitExpansion =
     | units: List(ProgramInferenceUnit)
@@ -168,12 +217,6 @@ type DefaultMethodCycleValidation =
     | completed: List(Str)
     | cycle: Maybe(Str)
 
-let recursive wrapSugarParameters parameters body =
-    match parameters with
-        | [] -> body
-        | head :: tail ->
-            ExprLambda(head)(wrapSugarParameters(tail)(body))(None)
-
 let recursive syntaxListLength parameters =
     match parameters with
         | [] -> 0
@@ -198,16 +241,12 @@ let recursive appendProgramSubstitution left right =
 let recursive prepareRecursiveBindings bindings environment supply reversedPending =
     match bindings with
         | [] -> RecursivePreparation(environment = environment, pending = reverse(reversedPending), supply = supply)
-        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } :: tail ->
+        | LetBindingSyntax { name = name, value = value, sugarParameters = _parameters, typeAnnotation = annotation, requirements = requirements } :: tail ->
             match freshTypeVariable(supply) with
                 | (placeholderType, nextSupply) ->
                     let scheme = TypeScheme(quantified = [], body = placeholderType, constraints = [])
                     in
-                        let pending =
-                            PendingRecursiveBinding(name = name, value = wrapSugarParameters(
-                                parameters,
-                                value
-                            ), annotation = annotation, requirements = requirements, placeholderType = placeholderType)
+                        let pending = PendingRecursiveBinding(name = name, value = value, annotation = annotation, requirements = requirements, placeholderType = placeholderType)
                         in
                             prepareRecursiveBindings(
                                 tail,
@@ -216,14 +255,52 @@ let recursive prepareRecursiveBindings bindings environment supply reversedPendi
                                 pending :: reversedPending
                             )
 
-let recursive inferRecursiveBindings pending environment boundaryEnvironment substitution supply reversedResolved =
+let recursive appendProgramConstraints left right =
+    match left with
+        | [] -> right
+        | head :: tail -> head :: appendProgramConstraints(tail)(right)
+
+let recursive pendingPlaceholderTypes pending =
+    match pending with
+        | [] -> []
+        | PendingRecursiveBinding { placeholderType = placeholderType } :: tail -> placeholderType :: pendingPlaceholderTypes(tail)
+
+// The boundary a recursive member's signature is checked against, with the group's own types in
+// scope: a requirement on a type a sibling has yet to settle is not ambiguous while the group
+// is still being inferred. The group as a whole is checked once every member is typed.
+let recursiveGroupBoundary groupType substitution boundaryEnvironment = addTypeBinding("$recursive group")(TypeScheme(quantified = [], body = applySubstitution(substitution)(groupType), constraints = []))(boundaryEnvironment)
+
+let recursive resolvedGroupTypes substitution resolved =
+    match resolved with
+        | [] -> []
+        | ResolvedRecursiveBinding { semanticType = semanticType } :: tail -> applySubstitution(substitution)(semanticType) :: resolvedGroupTypes(substitution)(tail)
+
+let recursive resolvedGroupConstraints substitution resolved =
+    match resolved with
+        | [] -> []
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            tail
+            |> resolvedGroupConstraints(substitution)
+            |> appendProgramConstraints(applyInferenceConstraints(substitution)(constraints))
+
+let recursiveGroupAmbiguity resolved substitution outerEnvironment =
+    firstAmbiguousTraitRequirementUnder(
+        substitution,
+        resolvedGroupConstraints(substitution)(resolved),
+        resolved
+        |> resolvedGroupTypes(substitution)
+        |> SemTuple,
+        outerEnvironment
+    )
+
+let recursive inferRecursiveBindings groupType pending environment boundaryEnvironment substitution supply reversedResolved =
     match pending with
         | [] ->
             RecursiveInference(resolved = reverse(
                 reversedResolved
             ), substitution = substitution, supply = supply, error = None)
         | PendingRecursiveBinding { name = name, value = value, annotation = annotation, requirements = requirements, placeholderType = placeholderType } :: tail ->
-            match inferExpressionFrom(value)(environment)(substitution)(supply) with
+            match inferExpressionFromLocated(value)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                     match valueType
                     |> applySubstitution(valueSubstitution)
@@ -242,7 +319,7 @@ let recursive inferRecursiveBindings pending environment boundaryEnvironment sub
                                         requirements,
                                         unifiedType,
                                         valueConstraints,
-                                        boundaryEnvironment,
+                                        recursiveGroupBoundary(groupType)(unifiedSubstitution)(boundaryEnvironment),
                                         unifiedSubstitution,
                                         valueSupply
                                     ) with
@@ -250,6 +327,7 @@ let recursive inferRecursiveBindings pending environment boundaryEnvironment sub
                                             let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = selectedConstraints)
                                             in
                                                 inferRecursiveBindings(
+                                                    groupType,
                                                     tail,
                                                     environment,
                                                     boundaryEnvironment,
@@ -270,6 +348,43 @@ let recursive inferRecursiveBindings pending environment boundaryEnvironment sub
                         error
                     ))
 
+let recursive seedRecursiveBindings pending environment substitution supply =
+    match pending with
+        | [] -> RecursiveInference(resolved = [], substitution = substitution, supply = supply, error = None)
+        | PendingRecursiveBinding { annotation = annotation, placeholderType = placeholderType } :: tail ->
+            match seedRecursiveSignature(annotation)(placeholderType)(environment)(substitution)(supply) with
+                | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> seedRecursiveBindings(tail)(environment)(seededSubstitution)(seededSupply)
+                | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } ->
+                    RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(
+                        error
+                    ))
+
+// Every member's written signature is in place before any member's value is inferred, so a call
+// to a sibling or to the binding itself is typed by what was written.
+let inferSeededRecursiveBindings groupType pending environment boundaryEnvironment substitution supply =
+    match seedRecursiveBindings(pending)(boundaryEnvironment)(substitution)(supply) with
+        | RecursiveInference { resolved = _resolved, substitution = seededSubstitution, supply = seededSupply, error = None } ->
+            inferRecursiveBindings(
+                groupType,
+                pending,
+                environment,
+                boundaryEnvironment,
+                seededSubstitution,
+                seededSupply,
+                []
+            )
+        | failure -> failure
+
+// The group's substitution with each builtin argument requirement on a variable the group would
+// generalize over settled to `Int`, as a single binding's is.
+let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substitution =
+    match bindings with
+        | [] -> substitution
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            substitution
+            |> defaultBuiltinArguments(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))
+            |> defaultRecursiveBuiltinArguments(tail)(outerEnvironment)
+
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
     match bindings with
         | [] -> resultEnvironment
@@ -281,7 +396,8 @@ let recursive generalizeRecursiveBindings bindings outerEnvironment substitution
                     let scheme =
                         resolvedConstraints
                         |> simplifyTraitConstraints(outerEnvironment)
-                        |> generalize(inferenceEnvironmentSchemes(outerEnvironment))(resolvedType)
+                        |> requirementsLeftToWrite(outerEnvironment)
+                        |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(outerEnvironment))(substitution)(resolvedType)
                     in
                         resultEnvironment
                         |> addTypeBinding(name)(scheme)
@@ -292,23 +408,35 @@ let inferRecursiveGroup bindings state =
         | ProgramInferenceState { environment = outerEnvironment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None } ->
             match prepareRecursiveBindings(bindings)(outerEnvironment)(supply)([]) with
                 | RecursivePreparation { environment = recursiveEnvironment, pending = pending, supply = preparedSupply } ->
-                    match inferRecursiveBindings(
+                    match inferSeededRecursiveBindings(
+                        pending
+                        |> pendingPlaceholderTypes
+                        |> SemTuple,
                         pending,
                         recursiveEnvironment,
                         outerEnvironment,
                         substitution,
-                        preparedSupply,
-                        []
+                        preparedSupply
                     ) with
                         | RecursiveInference { resolved = resolved, substitution = resolvedSubstitution, supply = resolvedSupply, error = None } ->
-                            let finalEnvironment =
-                                generalizeRecursiveBindings(
-                                    resolved,
-                                    outerEnvironment,
-                                    resolvedSubstitution,
-                                    outerEnvironment
-                                )
-                            in ProgramInferenceState(environment = finalEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                            match recursiveGroupAmbiguity(resolved)(resolvedSubstitution)(outerEnvironment) with
+                                | Some((traitName, typeArguments)) ->
+                                    ProgramInferenceState(environment = outerEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
+                                        typeArguments
+                                        |> AmbiguousTraitRequirement(traitName)
+                                        |> ProgramExpressionError
+                                    ))
+                                | None ->
+                                    let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
+                                    in
+                                        let finalEnvironment =
+                                            generalizeRecursiveBindings(
+                                                resolved,
+                                                outerEnvironment,
+                                                defaultedSubstitution,
+                                                outerEnvironment
+                                            )
+                                        in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)
@@ -468,41 +596,6 @@ let recursive validateTraitDeclarations declarations allDeclarations seen =
                                                             allDeclarations,
                                                             name :: seen
                                                         )
-
-let isBuiltinRuntimeCapability name =
-    if name == "ConsoleIO"
-    then true
-    else
-        if name == "FileRead"
-        then true
-        else
-            if name == "FileWrite"
-            then true
-            else
-                if name == "ProcessSpawn"
-                then true
-                else
-                    if name == "ProcessExit"
-                    then true
-                    else
-                        if name == "TimeRead"
-                        then true
-                        else
-                            if name == "EnvironmentRead"
-                            then true
-                            else
-                                if name == "Entropy"
-                                then true
-                                else
-                                    if name == "UnsafeFfi"
-                                    then true
-                                    else
-                                        if name == "NetListen"
-                                        then true
-                                        else
-                                            if name == "NetConnect"
-                                            then true
-                                            else name == "Stop"
 
 let recursive addCapabilityToInnermostArrow capabilityType semanticType =
     match semanticType with
@@ -832,7 +925,7 @@ let recursive registerProviderOperations capabilityName capabilityType operation
                                 supply
                             ) with
                                 | TypeInferenceResult { semanticType = expectedType, substitution = expectedSubstitution, supply = expectedSupply, constraints = _expectedConstraints, error = None } ->
-                                    match inferExpressionFrom(
+                                    match inferExpressionFromLocated(
                                         implementation,
                                         environment,
                                         expectedSubstitution,
@@ -916,7 +1009,18 @@ let recursive selfAppliedConstructors (name: Str) (parameters: List(TypeParamete
         | [] -> []
         | TypeConstructor { name = constructorName, parameters = fields, fieldNames = fieldNames } :: rest -> TypeConstructor(name = constructorName, parameters = selfAppliedTypeExprs(name)(parameters)(fields), fieldNames = fieldNames) :: selfAppliedConstructors(name)(parameters)(rest)
 
-let registerTypeDeclaration declaration state =
+// A type the stitched `Ashes.Trait` module declares is also known by its bare name, as its
+// constructors are: `Ordering` can be written in a signature without an import.
+let withBareStandardTypeName (name: Str) parameters resultType environment =
+    match parameters with
+        | [] ->
+            if canonicalTraitName(name) == name
+            then environment
+            else
+                addInferenceTypeAlias(canonicalTraitName(name))([])(resultType)(environment)
+        | _ -> environment
+
+let registerParameterizedTypeDeclaration declaration state =
     match (declaration, state) with
         | (TypeDecl { name = name, typeParameters = parameters, constructors = declaredConstructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
             let constructors = selfAppliedConstructors(name)(parameters)(declaredConstructors)
@@ -941,12 +1045,63 @@ let registerTypeDeclaration declaration state =
                                     context,
                                     typedEnvironment
                                 ) with
-                                    | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = constructorEnvironment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
+                                    | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = withBareStandardTypeName(name)(parameters)(resultType)(constructorEnvironment), substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
                                     | ConstructorRegistration { environment = _constructorEnvironment, error = Some(error) } ->
                                         ProgramInferenceState(environment = environment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = Some(
                                             ProgramTypeResolutionError(error)
                                         ))
         | (_declaration, failedState) -> failedState
+
+// A type declared without parameters takes one for each payload name that denotes no known type,
+// in the order the names first appear. The declaring type's own name and every declared or
+// built-in type stay concrete field types.
+let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExpr) (found: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> implicitTypeParameterNames(owner)(context)(inner)(found)
+        | TypeNamed(candidate) ->
+            if candidate == owner
+            then found
+            else
+                if nameExists(candidate)(found)
+                then found
+                else
+                    match resolveTypeExpression(typeExpr)(context) with
+                        | TypeResolutionResult { semanticType = _semanticType, error = Some(UnknownTypeName(_)) } -> candidate :: found
+                        | _ -> found
+        | TypeApplied(_name, arguments) -> implicitTypeParameterNamesIn(owner)(context)(arguments)(found)
+        | TypeArrow(argument, result, _capabilities, _tail) -> implicitTypeParameterNamesIn(owner)(context)([argument, result])(found)
+        | TypeTuple(elements) -> implicitTypeParameterNamesIn(owner)(context)(elements)(found)
+        | TypeUnit -> found
+and implicitTypeParameterNamesIn (owner: Str) context (typeExprs: List(TypeExpr)) (found: List(Str)) =
+    match typeExprs with
+        | [] -> found
+        | head :: tail ->
+            found
+            |> implicitTypeParameterNames(owner)(context)(head)
+            |> implicitTypeParameterNamesIn(owner)(context)(tail)
+
+let recursive implicitConstructorParameterNames (owner: Str) context (constructors: List(TypeConstructor)) (found: List(Str)) =
+    match constructors with
+        | [] -> found
+        | TypeConstructor { parameters = fields } :: rest ->
+            found
+            |> implicitTypeParameterNamesIn(owner)(context)(fields)
+            |> implicitConstructorParameterNames(owner)(context)(rest)
+
+let recursive typeParametersNamed (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: tail -> TypeParameter(name = head) :: typeParametersNamed(tail)
+
+let registerTypeDeclaration declaration state =
+    match (declaration, state) with
+        | (TypeDecl { name = name, typeParameters = [], constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits }, ProgramInferenceState { environment = environment, error = None }) ->
+            match []
+            |> implicitConstructorParameterNames(name)(inferenceTypeResolutionContext(environment))(constructors)
+            |> reverse with
+                | [] -> registerParameterizedTypeDeclaration(declaration)(state)
+                | names -> registerParameterizedTypeDeclaration(TypeDecl(name = name, typeParameters = typeParametersNamed(names), constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits))(state)
+        | _ -> registerParameterizedTypeDeclaration(declaration)(state)
 
 let registerTypeAlias declaration state =
     match (declaration, state) with
@@ -966,6 +1121,115 @@ let registerTypeAlias declaration state =
                                 ProgramTypeResolutionError(error)
                             ))
         | (_declaration, failedState) -> failedState
+
+// The type names a type expression mentions.
+let recursive typeExprNames (typeExpr: TypeExpr) (found: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprNames(inner)(found)
+        | TypeNamed(name) -> name :: found
+        | TypeApplied(name, arguments) -> typeExprNamesIn(arguments)(name :: found)
+        | TypeArrow(argument, result, _capabilities, _tail) -> typeExprNamesIn([argument, result])(found)
+        | TypeTuple(elements) -> typeExprNamesIn(elements)(found)
+        | TypeUnit -> found
+and typeExprNamesIn (typeExprs: List(TypeExpr)) (found: List(Str)) =
+    match typeExprs with
+        | [] -> found
+        | head :: tail ->
+            found
+            |> typeExprNames(head)
+            |> typeExprNamesIn(tail)
+
+let recursive isParameterName (name: Str) (parameters: List(TypeParameter)) =
+    match parameters with
+        | [] -> false
+        | TypeParameter { name = candidate } :: rest -> candidate == name || isParameterName(name)(rest)
+
+let recursive withoutParameterNames (parameters: List(TypeParameter)) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            if isParameterName(name)(parameters)
+            then withoutParameterNames(parameters)(rest)
+            else name :: withoutParameterNames(parameters)(rest)
+
+// Each alias a unit declares, with the type names its target mentions other than its own
+// parameters.
+let recursive aliasDependencies (items: List(TopLevelItem)) =
+    match items with
+        | [] -> []
+        | TopLevelAt(_span, inner) :: rest -> aliasDependencies(inner :: rest)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = parameters, target = target }) :: rest ->
+            (name, []
+            |> typeExprNames(target)
+            |> withoutParameterNames(parameters)) :: aliasDependencies(rest)
+        | _ :: rest -> aliasDependencies(rest)
+
+let recursive aliasDependenciesOf (name: Str) (dependencies: List((Str, List(Str)))) =
+    match dependencies with
+        | [] -> None
+        | (candidate, mentioned) :: rest ->
+            if candidate == name
+            then Some(mentioned)
+            else aliasDependenciesOf(name)(rest)
+
+// The path from the first occurrence of `name` on a walk, written in walking order and closed
+// with `name` again. `reversedPath` holds the walk most recent first.
+let recursive cyclePathFrom (name: Str) (reversedPath: List(Str)) (cycle: List(Str)) =
+    match reversedPath with
+        | [] -> cycle
+        | head :: rest ->
+            if head == name
+            then head :: cycle
+            else cyclePathFrom(name)(rest)(head :: cycle)
+
+let recursive joinCycle (names: List(Str)) =
+    match names with
+        | [] -> ""
+        | head :: [] -> head
+        | head :: rest -> head + " -> " + joinCycle(rest)
+
+let recursive aliasCycleThrough (dependencies: List((Str, List(Str)))) (reversedPath: List(Str)) (name: Str) =
+    if nameExists(name)(reversedPath)
+    then
+        [name]
+        |> cyclePathFrom(name)(reversedPath)
+        |> joinCycle
+        |> Some
+    else
+        match aliasDependenciesOf(name)(dependencies) with
+            | None -> None
+            | Some(mentioned) -> aliasCycleThroughAny(dependencies)(name :: reversedPath)(mentioned)
+and aliasCycleThroughAny (dependencies: List((Str, List(Str)))) (reversedPath: List(Str)) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | head :: rest ->
+            match aliasCycleThrough(dependencies)(reversedPath)(head) with
+                | Some(cycle) -> Some(cycle)
+                | None -> aliasCycleThroughAny(dependencies)(reversedPath)(rest)
+
+let recursive firstAliasCycle (dependencies: List((Str, List(Str)))) (remaining: List((Str, List(Str)))) =
+    match remaining with
+        | [] -> None
+        | (name, _mentioned) :: rest ->
+            match aliasCycleThrough(dependencies)([])(name) with
+                | Some(cycle) -> Some(cycle)
+                | None -> firstAliasCycle(dependencies)(rest)
+
+// A unit's aliases checked for a cycle before any is registered, so an alias that names one
+// declared after it in a cycle is reported as the cycle rather than as an unknown type. Applied
+// only under the program inference rules.
+let checkTypeAliasCycles (items: List(TopLevelItem)) (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            if environment.programInferenceRules
+            then
+                let dependencies = aliasDependencies(items)
+                in
+                    match firstAliasCycle(dependencies)(dependencies) with
+                        | Some(cycle) -> state with error = Some(RecursiveTypeAlias(cycle))
+                        | None -> state
+            else state
+        | _ -> state
 
 let recursive quantifiedTypeIds quantified =
     match quantified with
@@ -1120,7 +1384,7 @@ let recursive registerTraitMethods traitName declarations parameterTypes quantif
                 | TypeResolutionResult { semanticType = methodType, error = None } ->
                     if anyTraitParameterOccurs(parameterTypes)(methodType)
                     then
-                        let constraint = TraitConstraint(traitName = traitName, typeArguments = parameterTypes)
+                        let constraint = TraitConstraint(traitName = canonicalTraitName(traitName), typeArguments = parameterTypes)
                         in
                             let scheme = TypeScheme(quantified = quantified, body = methodType, constraints = [constraint])
                             in
@@ -1132,7 +1396,7 @@ let recursive registerTraitMethods traitName declarations parameterTypes quantif
                                         parameterTypes,
                                         quantified,
                                         context,
-                                        addTypeBinding(traitName + "." + methodName)(scheme)(environment),
+                                        addTypeBinding(canonicalTraitName(traitName) + "." + methodName)(scheme)(environment),
                                         supply,
                                         definition :: reversed
                                     )
@@ -1155,7 +1419,7 @@ let recursive resolveTraitConstraints declarations context reversed =
         | TraitConstraintSyntax { traitName = traitName, typeArguments = typeArguments } :: tail ->
             match resolveConstructorParameters(typeArguments)(context)([]) with
                 | TypeListResolutionResult { semanticTypes = arguments, error = None } ->
-                    let constraint = TraitConstraint(traitName = traitName, typeArguments = arguments)
+                    let constraint = TraitConstraint(traitName = canonicalTraitName(traitName), typeArguments = arguments)
                     in resolveTraitConstraints(tail)(context)(constraint :: reversed)
                 | TypeListResolutionResult { semanticTypes = _arguments, error = Some(error) } ->
                     TraitConstraintRegistration(constraints = reverse(
@@ -1314,7 +1578,7 @@ let recursive resolveImplementationRequirements owner requirements headNames con
                                                     headNames,
                                                     context,
                                                     environment,
-                                                    TraitConstraint(traitName = traitName, typeArguments = arguments) :: reversed
+                                                    TraitConstraint(traitName = canonicalTraitName(traitName), typeArguments = arguments) :: reversed
                                                 )
                                             | TypeListResolutionResult { semanticTypes = _arguments, error = Some(error) } ->
                                                 TraitConstraintRegistration(constraints = reverse(
@@ -1462,6 +1726,7 @@ and handlerArmsDependOnTraitMethod traitName methodName arms =
 and expressionDependsOnTraitMethod traitName methodName expression =
     match expression with
         | ExprAt(_span, inner) -> expressionDependsOnTraitMethod(traitName)(methodName)(inner)
+        | ExprNode(_id, inner) -> expressionDependsOnTraitMethod(traitName)(methodName)(inner)
         | ExprQualifiedVar(candidateTraitName, candidateMethodName) ->
             if traitName == candidateTraitName
             then methodName == candidateMethodName
@@ -1754,6 +2019,26 @@ and traitHeadTypeOverlaps left right substitutions =
                         | (SemOpaque(leftName), SemOpaque(rightName)) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = leftName == rightName)
                         | _ -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = false)
 
+let existingImplementationSite (found: Maybe(TraitImplementationInferenceDefinition)) =
+    match found with
+        | Some(TraitImplementationInferenceDefinition { site = site }) -> site
+        | None -> None
+
+// The site of an implementation declared at `offset` in the unit being inferred.
+let implementationSiteAt (environment: TypeEnvironment) (offset: Maybe(Int)) =
+    match offset with
+        | Some(start) -> Some(TraitImplementationSite(unitIndex = environment.currentUnit, offset = start, sourcePath = None))
+        | None -> None
+
+// The registered implementation, if any, whose head overlaps the candidate's.
+let recursive firstOverlappingImplementation candidateArguments implementations =
+    match implementations with
+        | [] -> None
+        | (TraitImplementationInferenceDefinition { typeArguments = existingArguments } as existing) :: tail ->
+            match traitHeadTypesOverlap(existingArguments)(candidateArguments)([]) with
+                | TraitHeadOverlapResult { substitutions = _substitutions, overlaps = true } -> Some(existing)
+                | _ -> firstOverlappingImplementation(candidateArguments)(tail)
+
 let recursive anyTraitImplementationHeadOverlaps candidateArguments implementations =
     match implementations with
         | [] -> false
@@ -1821,7 +2106,7 @@ let recursive registerImplementationMethods traitName bindings typeArguments env
                     in
                         let expectedType = applySubstitution(methodSubstitution)(methodBody)
                         in
-                            match inferExpressionFrom(implementation)(environment)(substitution)(supply) with
+                            match inferExpressionFromLocated(implementation)(environment)(substitution)(supply) with
                                 | TypeInferenceResult { semanticType = implementationType, substitution = implementationSubstitution, supply = implementationSupply, constraints = _implementationConstraints, error = None } ->
                                     match implementationType
                                     |> applySubstitution(implementationSubstitution)
@@ -1861,7 +2146,7 @@ let recursive registerImplementationMethods traitName bindings typeArguments env
                                         ProgramExpressionError(error)
                                     ))
 
-let registerTraitImplementation declaration state =
+let registerTraitImplementation (offset: Maybe(Int)) declaration state =
     match (declaration, state) with
         | (TraitImplementationDecl { traitName = traitName, typeArguments = typeArguments, requirements = requirements, bindings = bindings }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
             match resolveTraitBinding(traitName)(environment) with
@@ -1954,7 +2239,12 @@ let registerTraitImplementation declaration state =
                                                                                             then
                                                                                                 ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(
                                                                                                     OverlappingTraitImplementations(
-                                                                                                        traitName
+                                                                                                        traitName,
+                                                                                                        environment
+                                                                                                        |> resolveTraitImplementations(traitName)
+                                                                                                        |> firstOverlappingImplementation(resolvedTypeArguments)
+                                                                                                        |> existingImplementationSite,
+                                                                                                        implementationSiteAt(environment)(offset)
                                                                                                     )
                                                                                                 ))
                                                                                             else
@@ -1962,7 +2252,9 @@ let registerTraitImplementation declaration state =
                                                                                                     traitName,
                                                                                                     bindings,
                                                                                                     resolvedTypeArguments,
-                                                                                                    environment,
+                                                                                                    // The implementation is in scope for its own methods: one that calls itself at the type it
+                                                                                                    // is being written for is supplied by this implementation.
+                                                                                                    addTraitImplementation(traitName)(resolvedTypeArguments)(simplifyTraitConstraints(environment)(resolvedRequirements))([])(environment),
                                                                                                     substitution,
                                                                                                     supply,
                                                                                                     []
@@ -1980,7 +2272,8 @@ let registerTraitImplementation declaration state =
                                                                                                                 )
                                                                                                                 |> Some)
                                                                                                             | None ->
-                                                                                                                ProgramInferenceState(environment = addTraitImplementation(
+                                                                                                                ProgramInferenceState(environment = addTraitImplementationAt(
+                                                                                                                    implementationSiteAt(environment)(offset),
                                                                                                                     traitName,
                                                                                                                     resolvedTypeArguments,
                                                                                                                     simplifyTraitConstraints(
@@ -1996,7 +2289,9 @@ let registerTraitImplementation declaration state =
                                                                                                         ))
                                                                 else
                                                                     ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(
-                                                                        OrphanTraitImplementation(traitName)
+                                                                        environment
+                                                                        |> inferencePackageId
+                                                                        |> OrphanTraitImplementation(traitName)(resolvedTypeArguments)
                                                                     ))
                                                     | TraitConstraintRegistration { constraints = _resolvedRequirements, error = Some(error) } ->
                                                         ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(
@@ -2030,7 +2325,7 @@ let recursive validateTraitDefaultMethods traitName methods state =
                 | Some(TraitMethodInferenceDefinition { name = _name, scheme = scheme, defaultImplementation = _registeredDefault }) ->
                     match instantiate(scheme)(supply) with
                         | InstantiationResult { semanticType = expectedType, constraints = _expectedConstraints, supply = expectedSupply } ->
-                            match inferExpressionFrom(
+                            match inferExpressionFromLocated(
                                 defaultImplementation,
                                 environment,
                                 substitution,
@@ -2072,13 +2367,13 @@ let recursive validateTraitDefaults declarations state =
 
 let inferTopLevelLet binding isRecursive state =
     match (binding, state) with
-        | (LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
+        | (LetBindingSyntax { name = name, value = value, sugarParameters = _parameters, typeAnnotation = annotation, requirements = requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
             if isRecursive
             then inferRecursiveGroup([binding])(state)
             else
-                let bindingValue = wrapSugarParameters(parameters)(value)
+                let bindingValue = value
                 in
-                    match inferTopLevelBinding(
+                    match inferTopLevelBindingLocated(
                         name,
                         bindingValue,
                         annotation,
@@ -2121,6 +2416,49 @@ let recursive registerExternalOpaqueTypes declarations state =
                 | failedState -> failedState
         | _declaration :: tail -> registerExternalOpaqueTypes(tail)(state)
 
+// External typing writes `void` and the argument of a parameterless external as the empty tuple.
+// The language gives both the built-in `Unit`, the type of the `Unit` value a call passes, so an
+// environment that defines `Unit` has them rewritten to it.
+let recursive withNominalUnit unitType semanticType =
+    match semanticType with
+        | SemTuple([]) -> unitType
+        | SemTuple(elements) ->
+            elements
+            |> withNominalUnitIn(unitType)
+            |> SemTuple
+        | SemList(element) ->
+            element
+            |> withNominalUnit(unitType)
+            |> SemList
+        | SemFunction(argument, result, row) ->
+            SemFunction(withNominalUnit(unitType)(argument))(withNominalUnit(unitType)(result))(row)
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> withNominalUnitIn(unitType)
+            |> SemNamed(symbolId)(name)
+        | SemPointer(pointee) ->
+            pointee
+            |> withNominalUnit(unitType)
+            |> SemPointer
+        | other -> other
+and withNominalUnitIn unitType semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail -> withNominalUnit(unitType)(head) :: withNominalUnitIn(unitType)(tail)
+
+let externalTypeWithUnit environment semanticType =
+    match environment
+    |> inferenceTypeResolutionContext
+    |> resolveTypeExpression(TypeNamed("Unit")) with
+        | TypeResolutionResult { semanticType = SemNamed(symbolId, name, []), error = None } ->
+            withNominalUnit(SemNamed(symbolId)(name)([]))(semanticType)
+        | _ -> semanticType
+
+let externalDeclarationName declaration =
+    match declaration with
+        | ExternalFunction(name, _parameterTypes, _returnType, _symbol, _ownerships, _capabilityRow) -> name
+        | ExternalOpaqueType(name, _destructor) -> name
+
 let registerExternalFunction declaration declarations state =
     match state with
         | ProgramInferenceState { environment = environment, error = None } ->
@@ -2130,12 +2468,12 @@ let registerExternalFunction declaration declarations state =
                 inferenceTypeResolutionContext(environment)
             ) with
                 | ExternalFunctionTypingResult { typing = Some(ExternalFunctionTyping { name = name, directType = directType, firstClassType = firstClassType }), error = None } ->
-                    let directScheme = TypeScheme(quantified = [], body = directType, constraints = [])
+                    let directScheme = TypeScheme(quantified = [], body = externalTypeWithUnit(environment)(directType), constraints = [])
                     in
                         let firstClassScheme =
                             match firstClassType with
                                 | None -> None
-                                | Some(semanticType) -> Some(TypeScheme(quantified = [], body = semanticType, constraints = []))
+                                | Some(semanticType) -> Some(TypeScheme(quantified = [], body = externalTypeWithUnit(environment)(semanticType), constraints = []))
                         in
                             environment
                             |> addExternalFunctionBinding(
@@ -2144,42 +2482,205 @@ let registerExternalFunction declaration declarations state =
                                 firstClassScheme
                             )
                             |> (given (nextEnvironment) -> withProgramInferenceEnvironment(nextEnvironment)(state))
-                | ExternalFunctionTypingResult { error = Some(error) } -> withProgramInferenceError(Some(ProgramExternalTypingError(error)))(state)
+                | ExternalFunctionTypingResult { error = Some(error) } ->
+                    withProgramInferenceError(error
+                    |> ProgramExternalTypingError(externalDeclarationName(declaration))
+                    |> Some)(state)
         | failedState -> failedState
 
-let recursive inferTopLevelItems items externalDeclarations state =
+let recursive groupBindingNames bindings =
+    match bindings with
+        | [] -> ""
+        | LetBindingSyntax { name = name } :: [] -> name
+        | LetBindingSyntax { name = name } :: tail -> name + ", " + groupBindingNames(tail)
+
+let recursive topLevelItemDescription item =
+    match item with
+        | TopLevelAt(_span, inner) -> topLevelItemDescription(inner)
+        | TopLevelType(TypeDecl { name = name }) -> Some("type " + name)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name }) -> Some("type " + name)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name }) -> Some("type " + name)
+        | TopLevelCapability(CapabilityDecl { name = name }) -> Some("capability " + name)
+        | TopLevelProvide(ProvideDecl { capabilityName = name }) -> Some("provide " + name)
+        | TopLevelTrait(TraitDecl { name = name }) -> Some("trait " + name)
+        | TopLevelImplementation(TraitImplementationDecl { traitName = name }) -> Some("implement " + name)
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) -> Some("let " + name)
+        | TopLevelRecursiveGroup(bindings) -> Some("let recursive " + groupBindingNames(bindings))
+        | TopLevelExternal(ExternalFunction(name, _, _, _, _, _)) -> Some("external " + name)
+        | TopLevelExternal(ExternalOpaqueType(name, _)) -> Some("external type " + name)
+        | TopLevelExport(_export) -> None
+
+let topLevelItemSpan item =
+    match item with
+        | TopLevelAt(span, _inner) -> Some(span)
+        | _ -> None
+
+let programErrorSpan error =
+    match error with
+        | ProgramExpressionError(inner) -> inferenceErrorSpan(inner)
+        | _ -> None
+
+let unlocatedProgramError error =
+    match error with
+        | ProgramExpressionError(inner) ->
+            inner
+            |> unlocatedInferenceError
+            |> ProgramExpressionError
+        | other -> other
+
+let locatedProgramError packageId declaration declarationSpan error =
+    ProgramErrorAt(
+        InferenceErrorLocation(
+            packageId = packageId,
+            unitIndex = -1,
+            moduleName = None,
+            sourcePath = None,
+            declaration = declaration,
+            declarationSpan = declarationSpan,
+            span = programErrorSpan(error)
+        ),
+        unlocatedProgramError(error)
+    )
+
+let withDeclarationSpan span (location: InferenceErrorLocation) = location with declarationSpan = Some(span)
+
+let withUnitIndex unitIndex (location: InferenceErrorLocation) = location with unitIndex = unitIndex
+
+// Tags the error a declaration raised with the declaration it was raised in. A declaration that
+// is wrapped in its span is tagged once by its inner form, so the span is added here.
+let locateTopLevelItemError item (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { error = None } -> state
+        | ProgramInferenceState { error = Some(ProgramErrorAt(location, error)) } ->
+            match (location.declarationSpan, topLevelItemSpan(item)) with
+                | (None, Some(span)) ->
+                    state with error = Some(
+                        ProgramErrorAt(withDeclarationSpan(span)(location))(error)
+                    )
+                | _ -> state
+        | ProgramInferenceState { environment = environment, error = Some(error) } ->
+            state with error = Some(
+                locatedProgramError(
+                    inferencePackageId(environment),
+                    topLevelItemDescription(item),
+                    topLevelItemSpan(item),
+                    error
+                )
+            )
+
+let hasProgramInferenceError (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { error = Some(_error) } -> true
+        | _ -> false
+
+let locateUnitError unitIndex (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { error = Some(ProgramErrorAt(location, error)) } ->
+            state with error = Some(
+                ProgramErrorAt(withUnitIndex(unitIndex)(location))(error)
+            )
+        | _ -> state
+
+// Splits a tagged error into the bare error and its location for the finished result, and hands
+// the environment back with the program-only rules off, as an environment for lowering has them.
+let withProgramErrorLocation (finished: ProgramInferenceResult) =
+    (let result = finished with environment = withoutProgramInferenceRules(finished.environment)
+    in
+        match result with
+            | ProgramInferenceResult { error = Some(ProgramErrorAt(location, error)) } -> result with error = Some(error), errorLocation = Some(location)
+            | ProgramInferenceResult { error = Some(error) } ->
+                result with error = Some(unlocatedProgramError(error))
+            | _ -> result)
+
+// A program's inference between two top-level declarations. Every binding in scope is generalized
+// there, so no later declaration can reach a type variable an earlier one bound: each declaration
+// starts from an empty substitution and a closed generalization scope, and what it bound moves
+// into `resolved`, the map the finished result's substitution is read from.
+type ProgramInferenceProgress =
+    | state: ProgramInferenceState
+    | resolved: MapTree(Int, SemanticType)
+    | nodeTypes: NodeTypeTable
+
+let settleProgramInferenceState (resolved: MapTree(Int, SemanticType)) (nodeTypes: NodeTypeTable) (state: ProgramInferenceState) =
+    (let settled = state with substitution = [], environment = withClosedGeneralizationScope(state.environment), supply = withoutNodeNotes(state.supply)
+    in
+        ProgramInferenceProgress(state = settled, resolved = extendSubstitutionMap(state.substitution)(resolved), nodeTypes = settleNodeNotes(state.substitution)(nodeNotesOf(state.supply))(nodeTypes)))
+
+let startProgramInferenceProgress (state: ProgramInferenceState) = settleProgramInferenceState(Ashes.Collection.Map.empty)(emptyNodeTypeTable)(state)
+
+let advanceProgramInference step (progress: ProgramInferenceProgress) =
+    progress.state
+    |> step
+    |> settleProgramInferenceState(progress.resolved)(progress.nodeTypes)
+
+// Notes each binding's finished scheme against the root node of its value, so a reader of the
+// node table finds a top-level binding the way it finds a local one.
+let recursive noteDeclarations (bindings: List(LetBindingSyntax)) (state: ProgramInferenceState) =
+    match (bindings, state) with
+        | ([], _) -> state
+        | (_, ProgramInferenceState { error = Some(_error) }) -> state
+        | (binding :: rest, _) ->
+            match (nodeIdentityOf(binding.value) >= 0, resolveWrittenTypeBinding(binding.name)(state.environment)) with
+                | (true, Some(scheme)) ->
+                    let noted =
+                        withNodeNote(NodeDeclarationNote(nodeIdentityOf(binding.value))(binding.name)(scheme))(state.supply)
+                    in
+                        let next = state with supply = noted
+                        in noteDeclarations(rest)(next)
+                | _ -> noteDeclarations(rest)(state)
+
+// `Ashes` and the builtin runtime and primitive type names, which no declaration may take; the
+// same names lowering refuses.
+let isReservedDeclarationName (name: Str) = name == "Ashes" || name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle" || name == "Float" || name == "Bytes" || name == "Rune" || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+
+// Refuses a reserved declaration name under the program inference rules; otherwise registers.
+let refuseReservedDeclaration (name: Str) register (state: ProgramInferenceState) =
+    match state with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            if environment.programInferenceRules && isReservedDeclarationName(name)
+            then state with error = Some(ReservedTypeDeclaration(name))
+            else register(state)
+        | _ -> register(state)
+
+let recursive inferTopLevelItem externalDeclarations item state =
+    locateTopLevelItemError(
+        item,
+        match item with
+            | TopLevelAt(TextSpan { start = start }, TopLevelImplementation(declaration)) -> registerTraitImplementation(Some(start))(declaration)(state)
+            | TopLevelAt(_span, inner) -> inferTopLevelItem(externalDeclarations)(inner)(state)
+            | TopLevelExport(_export) -> state
+            | TopLevelType(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerTypeDeclaration(declaration))(state)
+            | TopLevelTypeAlias(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerTypeAlias(declaration))(state)
+            | TopLevelZeroCostType(declaration) ->
+                refuseReservedDeclaration(declaration.name)(registerZeroCostType(declaration))(state)
+            | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
+            | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
+            | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
+            | TopLevelImplementation(declaration) -> registerTraitImplementation(None)(declaration)(state)
+            | TopLevelLet(binding, isRecursive) ->
+                state
+                |> inferTopLevelLet(binding)(isRecursive)
+                |> noteDeclarations([binding])
+            | TopLevelRecursiveGroup(bindings) ->
+                state
+                |> inferRecursiveGroup(bindings)
+                |> noteDeclarations(bindings)
+            | TopLevelExternal(ExternalOpaqueType(_name, _destructor)) -> state
+            | TopLevelExternal(declaration) -> registerExternalFunction(declaration)(externalDeclarations)(state)
+    )
+
+let recursive inferTopLevelItems items externalDeclarations (progress: ProgramInferenceProgress) =
     match items with
-        | [] -> state
+        | [] -> progress
         | head :: tail ->
-            let nextState =
-                match head with
-                    | TopLevelAt(_span, inner) -> inferTopLevelItems([inner])(externalDeclarations)(state)
-                    | TopLevelExport(_export) -> state
-                    | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
-                    | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
-                    | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
-                    | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
-                    | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
-                    | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
-                    | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
-                    | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
-                    | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
-                    | TopLevelExternal(declaration) ->
-                        match declaration with
-                            | ExternalOpaqueType(_name, _destructor) -> state
-                            | ExternalFunction(_, _, _, _, _, _) ->
-                                registerExternalFunction(
-                                    declaration,
-                                    externalDeclarations,
-                                    state
-                                )
-                    | _ ->
-                        match state with
-                            | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } ->
-                                ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
-                                    UnsupportedTopLevelDeclaration("declaration kind")
-                                ))
-            in inferTopLevelItems(tail)(externalDeclarations)(nextState)
+            if hasProgramInferenceError(progress.state)
+            then progress
+            else
+                progress
+                |> advanceProgramInference(inferTopLevelItem(externalDeclarations)(head))
+                |> inferTopLevelItems(tail)(externalDeclarations)
 
 let recursive appendProgramUnitItems left right =
     match left with
@@ -2230,16 +2731,38 @@ let stateWithInferencePackage packageId state =
                 environment
             ), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
 
-let recursive inferExpandedProgramUnits units externalDeclarations state =
-    match units with
-        | [] -> state
-        | ProgramInferenceUnit { packageId = packageId, program = ProgramSyntax { items = items } } :: tail ->
-            state
-            |> stateWithInferencePackage(packageId)
-            |> inferTopLevelItems(items)(externalDeclarations)
-            |> inferExpandedProgramUnits(tail)(externalDeclarations)
+let stateWithInferenceUnit unitIndex (state: ProgramInferenceState) = state with environment = withInferenceUnit(unitIndex)(state.environment)
 
-let inferProgramUnitBody body entryPackageId state =
+let locateProgressUnitError unitIndex (progress: ProgramInferenceProgress) = ProgramInferenceProgress(state = locateUnitError(unitIndex)(progress.state), resolved = progress.resolved, nodeTypes = progress.nodeTypes)
+
+let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (progress: ProgramInferenceProgress) =
+    match units with
+        | [] -> progress
+        | ProgramInferenceUnit { packageId = packageId, program = ProgramSyntax { items = items } } :: tail ->
+            if hasProgramInferenceError(progress.state)
+            then progress
+            else
+                progress
+                |> advanceProgramInference(stateWithInferencePackage(packageId))
+                |> advanceProgramInference(stateWithInferenceUnit(unitIndex))
+                |> advanceProgramInference(checkTypeAliasCycles(items))
+                |> inferTopLevelItems(items)(externalDeclarations)
+                |> locateProgressUnitError(unitIndex)
+                |> inferExpandedProgramUnitsAt(unitIndex + 1)(tail)(externalDeclarations)
+
+let inferExpandedProgramUnits units externalDeclarations progress = inferExpandedProgramUnitsAt(0)(units)(externalDeclarations)(progress)
+
+let recursive appendResolvedSubstitution entries substitution =
+    match entries with
+        | [] -> substitution
+        | head :: tail -> head :: appendResolvedSubstitution(tail)(substitution)
+
+// The finished result's substitution: the trailing expression's own bindings ahead of everything
+// the declarations bound, so a lookup still finds the youngest entry for a variable first.
+let withResolvedSubstitution (resolved: MapTree(Int, SemanticType)) (result: ProgramInferenceResult) =
+    result with substitution = appendResolvedSubstitution(result.substitution)(Ashes.Collection.Map.toList(resolved))
+
+let inferProgramUnitBody body entryPackageId (nodeTypes: NodeTypeTable) state =
     match stateWithInferencePackage(entryPackageId)(state) with
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
             match body with
@@ -2249,16 +2772,22 @@ let inferProgramUnitBody body entryPackageId state =
                         substitution = substitution,
                         environment = environment,
                         externalAbi = None,
+                        nodeTypes = nodeTypes,
+                        errorLocation = None,
                         error = None
                     )
                 | Some(expression) ->
-                    match inferExpressionFrom(expression)(environment)(substitution)(supply) with
-                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } ->
+                    match supply
+                    |> inferTopLevelExpressionLocated(expression)(environment)(substitution)
+                    |> checkTrailingRequirements(expression)(environment) with
+                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = bodySupply, constraints = _constraints, error = None } ->
                             ProgramInferenceResult(
                                 semanticType = semanticType,
                                 substitution = bodySubstitution,
                                 environment = environment,
                                 externalAbi = None,
+                                nodeTypes = settleNodeNotes(bodySubstitution)(nodeNotesOf(bodySupply))(nodeTypes),
+                                errorLocation = None,
                                 error = None
                             )
                         | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } ->
@@ -2267,7 +2796,16 @@ let inferProgramUnitBody body entryPackageId state =
                                 substitution = bodySubstitution,
                                 environment = environment,
                                 externalAbi = None,
-                                error = Some(ProgramExpressionError(error))
+                                nodeTypes = nodeTypes,
+                                errorLocation = None,
+                                error = Some(
+                                    locatedProgramError(
+                                        entryPackageId,
+                                        None,
+                                        None,
+                                        ProgramExpressionError(error)
+                                    )
+                                )
                             )
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } ->
             ProgramInferenceResult(
@@ -2275,15 +2813,22 @@ let inferProgramUnitBody body entryPackageId state =
                 substitution = substitution,
                 environment = environment,
                 externalAbi = None,
+                nodeTypes = nodeTypes,
+                errorLocation = None,
                 error = Some(error)
             )
+
+let inferProgramProgressBody body entryPackageId (progress: ProgramInferenceProgress) =
+    progress.state
+    |> inferProgramUnitBody(body)(entryPackageId)(progress.nodeTypes)
+    |> withResolvedSubstitution(progress.resolved)
 
 // The supply starts above every id a statically embedded scheme already quantifies over — the
 // builtin signatures and the standard traits' parameters — because reissuing one makes `instantiate`
 // mint a self-mapping substitution that `applySubstitution` recurses on forever. See
 // `reservedInferenceTypeVariableCount`.
 let initialProgramInferenceState error environment =
-    ProgramInferenceState(environment = environment, substitution = [], supply = typeVariableSupplyFrom(
+    ProgramInferenceState(environment = withProgramInferenceRules(environment), substitution = [], supply = typeVariableSupplyFrom(
         reservedInferenceTypeVariableCount
     ), nextTypeSymbolId = environment
     |> inferenceTypeResolutionContext
@@ -2315,6 +2860,8 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                 substitution = [],
                 environment = baseEnvironment,
                 externalAbi = None,
+                nodeTypes = emptyNodeTypeTable,
+                errorLocation = None,
                 error = Some(error)
             )
         | ProgramUnitExpansion { units = units, error = None } ->
@@ -2329,15 +2876,40 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                             validateTraitDeclarations(declarations)(declarations)([])
                         )
                         |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> startProgramInferenceProgress
                         |> inferExpandedProgramUnits(units)(externalDeclarations)
-                        |> validateTraitDefaults(declarations)
-                        |> inferProgramUnitBody(body)(entryPackageId)
+                        |> advanceProgramInference(validateTraitDefaults(declarations))
+                        |> inferProgramProgressBody(body)(entryPackageId)
                         |> attachExternalAbi(externalDeclarations)
+                        |> withProgramErrorLocation
+
+let recursive identifyExpandedUnits (next: Int) (units: List(ProgramInferenceUnit)) (reversed: List(ProgramInferenceUnit)) =
+    match units with
+        | [] -> (reverse(reversed), next)
+        | ProgramInferenceUnit { packageId = packageId, program = program } :: tail ->
+            match identifyProgram(next)(program) with
+                | (identified, after) -> identifyExpandedUnits(after)(tail)(ProgramInferenceUnit(packageId = packageId, program = identified) :: reversed)
+
+// Expands `deriving` in `units` and gives every expression node of the result, and of `body`, its
+// identity. Both steps depend only on the units, so the same units are numbered the same way.
+let identifyProgramUnits units (body: Maybe(Expr)) =
+    match expandProgramInferenceUnits(units) with
+        | ProgramUnitExpansion { units = _units, error = Some(error) } -> IdentifiedProgramUnits(units = [], body = body, nodeCount = 0, error = Some(error))
+        | ProgramUnitExpansion { units = expanded, error = None } ->
+            match identifyExpandedUnits(0)(expanded)([]) with
+                | (identified, afterUnits) ->
+                    match body with
+                        | None -> IdentifiedProgramUnits(units = identified, body = None, nodeCount = afterUnits, error = None)
+                        | Some(expression) ->
+                            match identifyExpression(afterUnits)(expression) with
+                                | (identifiedBody, after) -> IdentifiedProgramUnits(units = identified, body = Some(identifiedBody), nodeCount = after, error = None)
+
+let inferIdentifiedProgramUnitsFrom baseEnvironment entryPackageId (identified: IdentifiedProgramUnits) = inferExpandedProgramUnitsFrom(baseEnvironment)(identified.body)(entryPackageId)(ProgramUnitExpansion(units = identified.units, error = identified.error))
 
 let inferProgramUnitsFrom baseEnvironment units body entryPackageId =
-    units
-    |> expandProgramInferenceUnits
-    |> inferExpandedProgramUnitsFrom(baseEnvironment)(body)(entryPackageId)
+    body
+    |> identifyProgramUnits(units)
+    |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(entryPackageId)
 
 let inferExpandedProgramFromPackage packageId baseEnvironment program =
     match program with
@@ -2353,10 +2925,12 @@ let inferExpandedProgramFromPackage packageId baseEnvironment program =
                             validateTraitDeclarations(declarations)(declarations)([])
                         )
                         |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> startProgramInferenceProgress
                         |> inferTopLevelItems(items)(externalDeclarations)
-                        |> validateTraitDefaults(declarations)
-                        |> inferProgramUnitBody(body)(packageId)
+                        |> advanceProgramInference(validateTraitDefaults(declarations))
+                        |> inferProgramProgressBody(body)(packageId)
                         |> attachExternalAbi(externalDeclarations)
+                        |> withProgramErrorLocation
 
 let inferProgramFromPackage packageId baseEnvironment program =
     match expandDerivedImplementations(program) with
@@ -2369,11 +2943,19 @@ let inferProgramFromPackage packageId baseEnvironment program =
                     baseEnvironment
                 ),
                 externalAbi = None,
+                nodeTypes = emptyNodeTypeTable,
+                errorLocation = None,
                 error = Some(ProgramDerivingExpansionError(error))
             )
-        | Ok(expanded) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(expanded)
+        | Ok(expanded) ->
+            match identifyProgram(0)(expanded) with
+                | (identified, _nodeCount) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(identified)
 
 let inferProgramInPackage packageId program =
     inferProgramFromPackage(packageId)(emptyTypeEnvironmentForPackage(packageId))(program)
 
 let inferProgram program = inferProgramInPackage("standalone")(program)
+
+// The numbered units as the one program lowering walks: their items in unit order, then the
+// numbered trailing expression.
+let identifiedProgramSyntax (identified: IdentifiedProgramUnits) = ProgramSyntax(items = expandedProgramUnitItems(identified.units), body = identified.body)

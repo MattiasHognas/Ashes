@@ -22,6 +22,7 @@ export (
     value emitProcessWaitForExit,
     value emitProcessKill,
     value emitProcessDrop,
+    value emitProcessPanicMessage,
 )
 
 // "Process.spawn: fork failed" — stage 0's spawn error string.

@@ -1,0 +1,1142 @@
+accessor_returns_retained_string_from_rc_record	same	
+accumulator_conses_name_matched_out_of_call_result	same	
+accumulator_grown_beside_queue_rebuilt_by_append	same	
+accumulator_reset_by_literal_or_choice	same	
+accumulator_reset_by_match_releases_call_results	same	
+accumulator_reset_in_nested_if_releases_call_results	same	
+accumulator_started_afresh_beside_grown_cells	same	
+adt_constructor_multi_arg_run	same	
+adt_constructor_nullary_run	same	
+adt_constructor_values_run	same	
+adt_ctor_wrong_arity_fails	same	
+adt_field_parameterized_needs_args	same	
+adt_function_typed_fields	same	
+adt_match_maybe_unwrap	same	
+adt_match_result	same	
+adt_maybe_unwrapOr	same	
+adt_nested_match	same	
+adt_pair_match	same	
+adt_recursive_builder	same	
+adt_result_andThen_style	same	
+aggregate_result_retains_runtime_managed_children	live-differs	stage 1 more (stage0=7 stage1=17)
+aliased_tuple_tail_forwarded_drop	same	
+annotated_callbacks_release_recursive_results	same	
+annotated_nested_recursion_concatenates_its_own_result	same	
+application_calling_non_function_fails	same	
+application_oversaturated_fails	same	
+application_partial_ok	same	
+application_partial_wrong_remaining_arity_fails	same	
+arena_cell_let_head_in_record_update_argument	same	
+arena_cell_marker_successor_released_once	same	
+arena_chunk_growth_stress	same	
+arena_head_tuple_owner_duplicate_released	same	
+arena_list_cell_copies_parameter_field	same	
+arena_list_literal_head_and_constrained_lookup_released	same	
+arena_loop_parameter_copies_retained_successor	same	
+arena_loop_parameter_join_copies_lookup_part_into_arena	same	
+arena_loop_parameter_some_of_released_label_copied_into_arena	same	
+arena_record_join_of_derived_records_releases_retained_field	same	
+arena_record_join_of_record_built_from_fields_releases_retained_field	same	
+arena_record_over_let_list_in_generic_tuple_result	same	
+arena_record_over_let_list_in_generic_tuple_result_repeated	same	
+arena_record_result_owned_field_moves_into_copy	same	
+arena_record_result_read_before_return_moves_field	same	
+arena_record_result_update_replacing_field_releases_it	same	
+args_prelude_empty	same	
+arith	same	
+as_pattern_element_returned_from_consumed_list	same	
+async_all_basic	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_destructure	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_empty	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_live_local	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_nested_from_result	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_three	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_all_with_sleep	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_await_nested	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_await_outside_async	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+async_basic	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_capture_across_await	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_explicit_nested_scope	stage1-compile-fails	Unknown member 'scope' in module Ashes.Task.
+async_frame_capture_teardown	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_from_result	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_http_overlap	skipped	needs fixture (tcp loopback server)
+async_https_overlap	skipped	needs fixture (tls loopback server)
+async_let_bang	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_loop_accumulator	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_multi_await	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_nested_tasks	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_no_await_call_result	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_owned_values_across_awaits	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_owned_values_never_completes	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_owned_values_race_and_spawn	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_owned_values_spawn_reap	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_owned_values_task_lifecycle	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_race_basic	stage1-compile-fails	Unknown member 'race' in module Ashes.Task.
+async_recursive	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_return_await	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_scope_child_failure	stage1-compile-fails	Unknown member 'fromResult' in module Ashes.Task.
+async_scope_detached_capture_diagnostic	output-differs	diagnostic lacks expected text: ASH001 Undefined variable 'async'.
+async_scope_double_join_diagnostic	output-differs	diagnostic lacks expected text: ASH001 Undefined variable 'async'.
+async_scope_escape_diagnostic	output-differs	diagnostic lacks expected text: ASH001 Undefined variable 'async'.
+async_scope_fork_outside_async_diagnostic	output-differs	diagnostic lacks expected text: Unknown member 'fork' in module Ashes.Task.
+async_scope_join	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_scope_nested_cancel	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_scope_spawn	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_scope_unjoined_cancel	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_sleep	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_sleep_interleave	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_sleep_sequential	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_sleep_with_computation	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+async_spawn_from_helper_function	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_spawn_shared_list_parent_alias	stage1-compile-fails	Unknown member 'spawn' in module Ashes.Task.
+async_spawn_sleep	stage1-compile-fails	ASH001 Undefined variable 'async'.
+async_state_machine_locals	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+back_edge_helper_calling_text_builtin_is_spliced	same	
+back_edge_helper_calling_unreachable_helper_is_called	same	
+bigint_conversions	same	
+bigint_core	same	
+bigint_divmod_algorithm_d	same	
+bigint_edge	live-differs	stage 1 fewer (stage0=2 stage1=1)
+bigint_literals	same	
+bigint_pidigits	live-differs	stage 1 more (stage0=1 stage1=2)
+bigint_tco_accumulator	same	
+bitwise	same	
+bool_if	same	
+borrow_consuming_helper_still_moves	same	
+borrow_read_helper	same	
+bytes_allocate_negative	same	
+bytes_allocate_too_large	same	
+bytes_append	same	
+bytes_append_byte	same	
+bytes_binary_construction	same	
+bytes_buffer_handed_to_its_loop_through_set	same	
+bytes_compare	same	
+bytes_copy_range_destination_invalid	same	
+bytes_copy_range_source_invalid	same	
+bytes_decode_le	same	
+bytes_empty	same	
+bytes_encode_le	same	
+bytes_from_list	same	
+bytes_from_text	same	
+bytes_hash	same	
+bytes_indexof_subtext	same	
+bytes_indexof_swar_edges	same	
+bytes_ownership_provenance	same	
+bytes_record_accumulator_built_by_loop_released	same	
+bytes_scanhash	same	
+bytes_set_range_invalid	same	
+bytes_singleton	same	
+bytes_subview	same	
+bytes_write_file	same	
+call_fresh_list_argument_stored_by_callee	same	
+call_result_consed_onto_choice_accumulator	same	
+call_result_copy_out_waits_for_element_type	live-differs	stage 1 more (stage0=1 stage1=35)
+call_spine_tuple_result_feeds_worklist	same	
+callee_pair_result_releases_normalized_parameter	same	
+capability_closed_row_violation	stage1-accepts-invalid	expected: not permitted by the closed row
+capability_conformance_explicit	output-differs	stdout (stage 0 "widget total=220 stamp=1000", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_conformance_implicit	output-differs	stdout (stage 0 "widget total=220 stamp=1000", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_firstclass_operation	stage1-compile-fails	UnknownLoweringBinding("AshesPrivateType_capability_firstclass_operation_Prices.lookup")
+capability_generic_higher_order	output-differs	stdout (stage 0 "1", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_generic_recursive	output-differs	stdout (stage 0 "1", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_generic_threading	output-differs	stdout (stage 0 "123,1", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_handle_abort_unsupported	output-differs	diagnostic lacks expected text: UnsupportedOperationArmResume("AshesPrivateType_capability_handle_abort_unsupported_Clock", "now")
+capability_handle_basic	same	
+capability_handle_incomplete	stage1-accepts-invalid	expected: must handle operation 'set'
+capability_handle_nested_outer	same	
+capability_handle_tco_loop	same	
+capability_handle_transparent	same	
+capability_handle_two_handlers	same	
+capability_handler_loop_matches_literal_and_fresh_string_arms	same	
+capability_match_on_perform_result_owns_it	same	
+capability_net_annotations	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+capability_netconnect_closed_row	output-differs	diagnostic lacks expected text: codegen: unsupported IrInstructionKind for this minimal slice
+capability_netlisten_closed_row	output-differs	diagnostic lacks expected text: codegen: unsupported IrInstructionKind for this minimal slice
+capability_one_shot_post_in_tco_accumulator_loop	live-differs	stage 1 more (stage0=1 stage1=31)
+capability_one_shot_post_inside_call_argument_window	same	
+capability_one_shot_post_under_let_prefix_releases_fresh_result	same	
+capability_oneshot_conformance_explicit	output-differs	stdout (stage 0 "PASS", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_oneshot_conformance_implicit	output-differs	stdout (stage 0 "PASS", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_oneshot_lifo_posts	output-differs	stdout (stage 0 "done:ba", stage 1 "", stage 1 exit 0)
+capability_oneshot_post_with_static_provider	output-differs	stdout (stage 0 "clock:1234 done:ba", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_oneshot_tco_loop	same	
+capability_perform_non_operation	same	
+capability_perform_result_consed_into_arena_cell	same	
+capability_perform_result_passed_to_element_returning_call	same	
+capability_perform_site_owns_string_bearing_arm_result	same	
+capability_provide_ambiguous	stage1-accepts-invalid	expected: ASH027
+capability_provide_clock	output-differs	stdout (stage 0 "1720000000", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_provide_concrete	output-differs	stdout (stage 0 "5", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_provide_duplicate	stage1-accepts-invalid	expected: ASH026
+capability_provide_generic	output-differs	stdout (stage 0 "42/yes", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_provide_generic_higher_order	output-differs	stdout (stage 0 "1", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_provide_generic_wrapper	output-differs	stdout (stage 0 "5", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_provide_missing_op	stage1-accepts-invalid	expected: is missing operation
+capability_provided_without_handler_keeps_ownership_contract	output-differs	stdout (stage 0 "1010", stage 1 "Unhandled capability operation 'AshesPrivateType_capability_", stage 1 exit 1)
+capability_recursive_helper_row	same	
+capability_return_arm_releases_matched_body_value	same	
+capability_row_trait_generic_helper_keeps_open_tail	stage1-compile-fails	tests/capability_row_trait_generic_helper_keeps_open_tail.ash:27:1 ASH002 Type mismatch: {UnsafeFfi | a} vs {}.
+capability_stop_closed_row	output-differs	diagnostic lacks expected text: UnknownLoweringBinding("Stop.stop")
+capability_through_stdlib_map	same	
+capability_typing_unused	same	
+capability_unhandled	stage1-accepts-invalid	expected: Unsatisfied capability 'Clock'
+capability_unknown_in_uses	stage1-accepts-invalid	expected: Unknown capability 'Nope'
+capability_unknown_operation	output-differs	diagnostic lacks expected text: CoreUnhandledCapabilityOperation("AshesPrivateType_capability_unknown_operation_Clock", "tomorrow")
+captured_empty_list_returned_from_arm	same	
+challenge_rune_migrations	same	
+choice_accumulator_call_over_sibling_parameter	same	
+choice_accumulator_cell_borrows_pattern_head	same	
+choice_between_cells_onto_consumed_tail	stage1-crash	run signal 11 (SIGSEGV)
+closure_argument_and_self_call_result_released	same	
+closure_conses_its_parameter_onto_recursive_tail	same	
+closure_conses_record_onto_self_call_result	same	
+closure_in_escaping_aggregate_keeps_captured_owner	same	
+closure_local_helper_called_and_escaped	same	
+closure_local_helper_three_captures_direct_call	same	
+closure_local_helper_two_captures_direct_call	same	
+closure_outliving_captured_let_owner_keeps_it	same	
+closure_parameter_variant_result_from_normalizing_callee	same	
+closure_record_accumulator_loop	same	
+closure_record_parameter_entry_normalized	live-differs	stage 1 more (stage0=1 stage1=50001)
+closure_selected_shared_list	same	
+cmp_equals	same	
+cmp_not_equals	same	
+cmp_str_equals	same	
+cmp_str_not_equals	same	
+co13_indexof_memchr	same	
+compile_time_eval_factorial	same	
+compile_time_eval_recursive	same	
+concat_chain_fold_owned_part_release	same	
+cons_assoc	same	
+cons_chain_accumulator_and_joined_views_released	same	
+cons_chain_borrowed_bytes_head_over_counted_cell	same	
+cons_chain_head_reads_loop_parameter	same	
+cons_chain_onto_fresh_recursive_cell	same	
+cons_onto_self_result_let_bound_cell	same	
+cons_onto_self_result_owned_slot_append	same	
+cons_onto_self_result_walk	same	
+consed_tail_choice_hands_on_bare_tail	same	
+console_poll_stdin	same	
+constrained_alias_called_in_accumulating_loop	live-differs	stage 1 fewer (stage0=7 stage1=1)
+constrained_alias_preserves_evidence_positions	live-differs	stage 1 fewer (stage0=3 stage1=1)
+constrained_binding_argument_requirements	same	
+constrained_binding_bare_reference_in_implementation	same	
+constrained_binding_captured_monomorphic_error	same	
+constrained_binding_dictionary_order	same	
+constrained_binding_distinct_dictionary_slots	same	
+constrained_binding_late_pinned_argument	same	
+constrained_binding_late_pinned_argument_in_replay	same	
+constrained_binding_nested_independent_evidence	same	
+constrained_lookup_preserves_dictionary_positions	same	
+constrained_loop_called_with_entry_bindings_releases_snapshots	same	
+constrained_loop_called_with_literal_arguments_releases_keys	live-differs	stage 1 more (stage0=1 stage1=6298)
+constrained_loop_lowered_at_caller_types_releases_snapshots	same	
+constrained_recursive_dictionary_forwarding	same	
+constructor_owning_built_list_released_each_round	same	
+constructor_recursive_argument_preserves_wrappers	same	
+constructor_wrong_arity	same	
+consumed_argument_captured_by_lambda	live-differs	stage 1 more (stage0=1 stage1=40001)
+consumed_argument_captured_by_lambda_plateau	live-differs	stage 1 more (stage0=1 stage1=200001)
+consumed_argument_through_await	stage1-compile-fails	ASH001 Undefined variable 'async'.
+consumed_argument_through_handler	live-differs	stage 1 more (stage0=1 stage1=40001)
+consumed_argument_through_result_pipe	same	
+consumed_list_head_kept_by_generic_call_successor	live-differs	stage 1 more (stage0=1 stage1=23)
+consumed_list_head_kept_by_tuple_result	same	
+contract_parameter_returned_as_is	same	
+copied_generic_enum_argument	same	
+copied_successor_head_tuple_unannotated_released	same	
+ctor_arity2_extract	same	
+ctor_arity3_extract_order	same	
+curried_call_argument_predecessor_released	same	
+curried_constrained_local_recursive_releases_its_stage_closures	same	
+curried_local_recursive_releases_its_stage_closures	same	
+curried_loop_capturing_record_with_owned_child	same	
+curried_producer_over_tuple_heads	same	
+curried_seven_parameter_loop_with_function_argument	same	
+curried_stage_capture_outlives_caller_release	output-differs	stdout (stage 0 "6033600 1 2 name1 0", stage 1 "-2510086376034576437 1 2 name1 0", stage 1 exit 0)
+curried_string_capture_survives_source_scope	same	
+curried_string_parameter_stored_in_returned_aggregate	same	
+curry_stage_let_list_released	same	
+deep_copy_of_call_result	same	
+diag_arity_mismatch_fails	skipped	no expectation (the test runner skips it too)
+diag_ctor_wrong_arity_pattern	same	
+diag_match_branch_type_mismatch_fails	skipped	no expectation (the test runner skips it too)
+diag_module_unknown_qualified_name_fails	skipped	no expectation (the test runner skips it too)
+diag_not_a_function_fails	skipped	no expectation (the test runner skips it too)
+diag_success_smoke	skipped	no expectation (the test runner skips it too)
+diag_type_mismatch_in_call_arg_fails	skipped	no expectation (the test runner skips it too)
+diag_type_mismatch_in_if_branches_fails	skipped	no expectation (the test runner skips it too)
+diag_unknown_ctor_expr	same	
+dictionary_call_key_kept_by_loop_successor	same	
+dictionary_call_label_in_local_loop_released	live-differs	stage 1 more (stage0=1 stage1=58)
+element_specialization_caller_alias_not_owner	same	
+empty_list_field_under_cons_pattern_handed_to_curried_call	same	
+error_branch_typechecks	same	
+error_terminates	same	
+escaping_tuple_borrowed_state_string	same	
+escaping_tuple_nested_adt_lifetime	live-differs	stage 1 more (stage0=1 stage1=9)
+exit_cell_of_records_passed_to_call	same	
+exit_cell_passed_to_call	same	
+external_buffer_preserves_handle_order	same	
+external_only_letin_trailing_expr	same	
+field_list_consed_onto_parameter_kept	same	
+file_chunked_read	stage1-compile-fails	ASH008 Resource 'fh' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.
+file_mmap	same	
+file_read_after_close	same	
+file_read_all_bytes	same	
+file_read_match_arm_ok	stage1-compile-fails	ASH006 Resource 'fh' has already been closed. Using a resource after it has been closed is not allowed.
+file_readline	stage1-compile-fails	ASH008 Resource 'fh' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.
+fixpoint_comparing_rebuilt_list_borrows_operands	same	
+fixpoint_list_beside_generic_sibling_converges	same	
+fixpoint_returns_list_taken_from_helper_result	same	
+flat_toplevel_sugar_letin_rhs	same	
+float_add_left_tvar	same	
+float_add_mul	same	
+float_annotated_param_operators	same	
+float_backend_arith	same	
+float_backend_call_roundtrip	same	
+float_backend_cmp_false	same	
+float_backend_cmp_true	same	
+float_backend_div	same	
+float_backend_recursion	same	
+float_compare	same	
+float_div	same	
+float_literal_negative_print_rejected	same	
+float_literal_print_rejected	same	
+float_mixed_operands_is_error	same	
+former_keywords_as_identifiers	same	
+forwarded_generic_tuple_result_hands_contract_part_over	same	
+forwarded_independent_record_result_released_in_loop	same	
+fresh_argument_released_when_result_cannot_hold_it	same	
+fresh_bytes_buffer_read_by_builtin	same	
+fresh_call_argument_kept_by_callee_result	same	
+fresh_head_over_named_head_pushed_onto_loop_accumulator_released	same	
+fresh_list_argument_heads_kept_by_callee_pairs	same	
+fresh_list_beside_borrowed_tuple_parameter_in_result	same	
+fresh_record_handed_to_loop_returning_it	same	
+fresh_tuple_arm_beside_normalized_join_is_returned_owned	same	
+fs_exists_missing	same	
+fs_exists_present	same	
+fs_read_text	same	
+fs_read_text_invalid_utf8	same	
+fs_read_text_missing	same	
+fs_write_text_invalid_path	same	
+fs_write_text_then_read	same	
+function_result_conses_onto_match_bound_list	same	
+fuse_byte_fromlist_reverse	same	
+fuse_byte_fromlist_reverse_rc_managed_input	same	
+fuse_byte_fromlist_reverse_selector_import	same	
+fuse_byte_fromlist_reverse_shadowed_decline	same	
+fuse_map_foldleft	live-differs	stage 1 fewer (stage0=24 stage1=1)
+fuse_map_foldleft_declines	live-differs	stage 1 fewer (stage0=5 stage1=1)
+fuse_map_foldleft_shadowed_decline	live-differs	stage 1 fewer (stage0=3 stage1=1)
+general_list_tail_matched_in_tuple_released	same	
+generic_append_map_churn_plateau	same	
+generic_append_map_churn_unannotated_plateau	same	
+generic_append_of_generic_map_results_releases_after_copy	same	
+generic_call_successor_sharing_owned_value	live-differs	stage 1 more (stage0=1 stage1=82)
+generic_equality_no_imports_resolves_dictionary	live-differs	stage 1 fewer (stage0=1 stage1=0)
+generic_lookup_key_reference_released	live-differs	stage 1 more (stage0=1 stage1=169)
+generic_map_passed_as_value_keeps_closure_results	same	
+generic_map_string_churn_plateau	same	
+generic_parameter_adt_argument_not_copied_to_space	same	
+generic_parameter_list_argument_handed_over_not_copied	same	
+generic_result_beside_owned_record_releases_the_record	same	
+generic_result_consumed_by_opaque_callee_keeps_parts	same	
+generic_result_hands_over_owned_call_result	same	
+generic_result_wraps_owned_call_result	same	
+generic_reverse_retains_runtime_managed_elements	same	
+generic_tuple_copies_reference_counted_element_into_arena	same	
+generic_tuple_result_hands_contract_part_over	same	
+generic_tuple_result_through_closure_hands_contract_part_over	same	
+generic_value_beside_record_fields_releases_record	same	
+handed_over_list_parts_in_result_holding_external_handle	live-differs	stage 1 more (stage0=1 stage1=91)
+handed_over_list_parts_kept_by_arena_result_of_closure	live-differs	stage 1 more (stage0=1 stage1=91)
+handler_arm_constructed_reference_counted_result_plateau	same	
+handler_arm_reference_counted_result_plateau	live-differs	stage 1 more (stage0=1 stage1=200001)
+handler_arm_resumes_a_let_bound_outside_its_lambda	same	
+handler_builds_constructor_around_fresh_list	same	
+handler_builds_constructor_around_performed_string	same	
+handler_loop_conses_performed_values_onto_accumulator	live-differs	stage 1 more (stage0=1 stage1=5)
+handler_passes_performed_tuple_to_function	same	
+handler_post_unknown_callee_result_plateau	live-differs	stage 1 more (stage0=1 stage1=200001)
+host_tool_installed_layout	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+http_get	skipped	needs fixture (tcp loopback server)
+http_get_outside_async	skipped	needs fixture (tcp loopback server)
+http_https_get	skipped	needs fixture (tls loopback server)
+http_https_hostname_mismatch	skipped	needs fixture (tls loopback server)
+http_https_not_supported	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+http_https_trust_failure	skipped	needs fixture (tls loopback server)
+http_informational_status	skipped	needs fixture (tcp loopback server)
+http_non_success_status	skipped	needs fixture (tcp loopback server)
+http_post	skipped	needs fixture (tcp loopback server)
+if_between_capturing_closures_releases_the_owner	same	
+if_recursive_cons_preserves_list	same	
+import_alias_qualified_constructor	same	
+import_alias_std	same	
+import_selector_io_print	same	
+import_selector_io_print_alias	same	
+import_selector_library_binding_alias	same	
+import_selector_result_map	same	
+infix_arithmetic	same	
+inline_annotation_type_variable_shared_across_parameters	same	
+inline_annotation_unknown_type_reported	stage1-accepts-invalid	expected: Unknown type name 'Foo'
+inline_cons_over_parameter_releases_rewritten_record	same	
+inline_module_alias	same	
+inline_module_ash021_trailing	same	
+inline_module_ash023_reserved	same	
+inline_module_ash024_duplicate	same	
+inline_module_header_comment	same	
+inline_module_import	same	
+inline_module_import_whole_and_selector	live-differs	stage 1 fewer (stage0=3 stage1=1)
+inline_module_model_a	same	
+inline_module_nested	same	
+inline_module_qualified	same	
+inline_module_qualified_std_reference	same	
+inline_module_selector	live-differs	stage 1 fewer (stage0=3 stage1=1)
+inline_module_type_ops	same	
+inner_list_tail_handed_to_sibling	same	
+internal_deepcopy	same	
+internal_deepcopy_recursive	live-differs	stage 1 fewer (stage0=9 stage1=1)
+io_buffered_stdout	same	
+io_buffered_stdout_panic	same	
+io_directory_edge_cases	live-differs	stage 1 fewer (stage0=1 stage1=0)
+io_directory_operations	live-differs	stage 1 fewer (stage0=1 stage1=0)
+io_environment	same	
+io_file_make_executable	same	
+io_file_make_executable_errors	same	
+io_read_exact_eof	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+io_read_exact_eof_message_kept_across_calls	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+io_read_exact_ok	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+io_read_line_echo	same	
+io_read_line_empty_line	same	
+io_read_line_eof_none	same	
+io_read_line_two_lines	same	
+io_stderr_exit	live-differs	stage 1 count missing or extra (stage0=0 stage1=none)
+io_write	same	
+io_write_bytes	same	
+io_write_line	same	
+io_write_then_write_line	same	
+item_loop_closes_rebuilt_from_call_parts_released	same	
+keyed_call_result_accumulator_releases_its_keys	same	
+keyed_call_result_accumulator_shares_its_seed_suffix	same	
+lambda_bare_param	same	
+lambda_equality_typed_by_later_arguments	same	
+last_or_int	same	
+last_or_string	same	
+let_bound_if_joins_call_result_and_fresh_pair	same	
+let_bound_list_kept_by_arena_record_result	same	
+let_bound_match_of_empty_and_rebuilt_list_is_released	same	
+let_bound_self_call_before_tail_self_call	same	
+let_cons_pattern_rejected_diagnostic	same	
+let_held_taken_over_record_is_walked_before_the_let_owner_release	same	
+let_in_self_call_operand_released_once	same	
+let_rec_sugar	same	
+let_sugar_one_param	same	
+let_sugar_partial_application	same	
+let_sugar_two_params	same	
+line_tree_pair_with_nullary_leaf_released	same	
+list_argument_kept_by_copied_callee_result	same	
+list_at_some_record_head_released	same	
+list_copyout_large	same	
+list_handed_on_or_replaced_by_helper_releases_predecessor	same	
+list_literal_keeps_built_string_alive_across_call	same	
+list_literal_of_call_strings_released	same	
+list_literal_static_head_over_built_string_released	same	
+list_piped_into_applied_lambda_released_with_heads	same	
+list_piped_into_named_helper_adopted	same	
+list_sum	same	
+local_cse_duplicate_field_read	same	
+local_cse_duplicate_pure_call	same	
+logical_and_or_short_circuit	same	
+logical_not	same	
+logical_not_inferred_predicates	same	
+logical_not_rejects_integer	same	
+loop_accumulator_of_nested_lists_released	same	
+loop_arms_release_only_their_own_call_results	same	
+loop_choice_between_parameter_and_consuming_call	same	
+loop_conses_nested_tuple_beside_pass_through_arm	same	
+loop_conses_onto_consumed_tail_of_text_lists	same	
+loop_conses_record_holding_parameter_onto_threaded_list	same	
+loop_exit_agreement_cell_declines_when_a_present_agreement_is_replaced	same	
+loop_exit_agreement_cell_release_when_the_result_holds_the_label	same	
+loop_exit_concatenation_beside_fresh_start	same	
+loop_exit_record_holds_record_parameter	same	
+loop_exit_releases_the_fields_of_an_arena_agreement_cell	same	
+loop_exit_returns_fresh_pair_holding_accumulator	same	
+loop_exit_returns_head_bound_under_nested_pattern	live-differs	stage 1 more (stage0=1 stage1=28)
+loop_exit_tuple_returns_unannotated_accumulator_beside_pass_through	same	
+loop_flag_record_beside_instruction_list_released	same	
+loop_generic_association_accumulator_in_result_tuple	same	
+loop_hands_tuple_cons_chain_tail_back_to_its_parameter	same	
+loop_hands_tuple_constructor_child_back_to_its_parameter	same	
+loop_hands_whole_tuple_element_back_to_its_parameter	same	
+loop_head_binders_in_argument_tuple	live-differs	stage 1 more (stage0=0 stage1=1800)
+loop_list_literal_successor_reads_heap_sibling	same	
+loop_list_started_afresh_beside_handed_on_list	same	
+loop_literal_successor_borrows_binding_matched_from_shared_list	live-differs	stage 1 more (stage0=1 stage1=81)
+loop_literal_successor_holds_record_update_of_matched_state	same	
+loop_matches_int_list_parameter_tail_in_tuple_beside_record	same	
+loop_matches_list_parameter_tail_in_tuple_beside_record	same	
+loop_matches_maybe_of_own_non_tail_self_call	same	
+loop_parameter_bool_field_in_tuple_scrutinee	same	
+loop_parameter_handed_to_helper_returning_optional_is_released	same	
+loop_parameter_the_body_never_reads	same	
+loop_predecessor_kept_for_bare_accumulator_head	same	
+loop_predecessor_list_parts_kept_by_accumulator	same	
+loop_predecessor_released_behind_owned_call_results	same	
+loop_puts_fresh_head_back_on_inner_list	same	
+loop_rebinds_list_parameter_by_name_before_self_call	same	
+loop_rebuilds_box_around_tuple_bound_record	same	
+loop_rebuilds_cons_of_cons_out_of_tuple_scrutinee	same	
+loop_rebuilds_list_of_lists_consing_onto_matched_inner_lists	same	
+loop_record_cell_keeps_one_reference_to_parameter_field	same	
+loop_record_list_beside_name_pair_releases_each_record	same	
+loop_record_state_copy_borrows_children	same	
+loop_record_successor_built_in_place_releases_retained_field	same	
+loop_record_update_field_match_conses_onto_matched_list	same	
+loop_record_update_or_parameter_join_keeps_list_field	same	
+loop_record_update_successor_conses_onto_list_field	live-differs	stage 1 more (stage0=0 stage1=1)
+loop_releases_earlier_pair_whose_parts_it_matched	same	
+loop_releases_matched_result_beside_flag_guarded_successor	same	
+loop_result_constructor_of_parameter_fields_in_join	same	
+loop_result_part_copied_for_arena_request	same	
+loop_result_record_around_whole_parameter_releases_duplicate	live-differs	stage 1 more (stage0=1 stage1=71)
+loop_result_record_consed_parameter_part_releases_duplicate	live-differs	stage 1 more (stage0=1 stage1=71)
+loop_result_record_update_releases_unchanged_field_retains	same	
+loop_result_some_holding_a_field_of_a_list_head	same	
+loop_result_some_holding_pattern_binding	same	
+loop_result_some_holding_the_loop_parameter	same	
+loop_result_some_of_a_head_matched_out_of_a_tuple_of_lists	same	
+loop_result_some_read_after_the_match_is_kept	same	
+loop_result_some_with_a_borrowed_arm_keeps_its_field	same	
+loop_returned_cell_onto_list_parameter	same	
+loop_returned_constructor_retains_parameter	same	
+loop_returning_passthrough_result_releases_parameter	same	
+loop_returning_pattern_binding_of_its_parameter	same	
+loop_returns_last_element_matched_with_nested_empty_pattern	same	
+loop_rewrites_records_after_a_long_match_arm	same	
+loop_root_left_in_arena_not_released	same	
+loop_scalar_list_handed_a_call_result_part	same	
+loop_scrutinee_tuple_holds_borrowed_binding	same	
+loop_scrutinee_tuple_holds_borrowed_binding_let_arm	same	
+loop_shape_scrutinee_in_generic_loop	same	
+loop_shape_scrutinee_tuple_element_read_after_match	same	
+loop_shape_scrutinee_tuple_of_escaping_binder	same	
+loop_shape_scrutinee_with_read_binder	same	
+loop_shape_scrutinee_with_unread_binder	same	
+loop_sibling_receives_part_of_accumulator_element	live-differs	stage 1 more (stage0=1 stage1=489)
+loop_successor_some_of_a_matched_call_result_field_is_released_once	same	
+loop_successor_some_of_a_retained_parameter_field_is_released	same	
+loop_successor_wraps_constructor_over_parameter_in_call	same	
+loop_table_generic_lookup_part_copied_onto_heap	same	
+loop_table_guarded_lookup_part_stays_arena	same	
+loop_table_lookup_arm_outer_table_stays_arena	same	
+loop_table_lookup_through_parameter_stays_arena	same	
+loop_table_takes_part_of_lookup_result_reference_counted	same	
+loop_tuple_successor_of_record_and_list	same	
+loop_worklist_of_call_result_lists_releases_each_list	same	
+lsp_adt_smoke	same	
+map_accumulator_threaded_through_helper_releases_old_versions	live-differs	stage 1 more (stage0=1 stage1=555)
+map_insert_if_absent_key_matched_out_of_walked_pairs	live-differs	stage 1 more (stage0=1 stage1=43)
+map_int_keyed_get_and_set	live-differs	stage 1 more (stage0=1 stage1=12)
+map_loop_parameter_annotated_by_shipped_type_name	same	
+map_loop_predecessor_released_past_queue_of_strings	same	
+map_loop_successor_bound_by_let_releases_predecessor	same	
+map_of_record_field_tuples	same	
+map_upsert_closure_result_copied_into_rebuilt_node	live-differs	stage 1 more (stage0=1 stage1=40)
+map_upsert_loop_accumulator_seeded_by_empty_map	same	
+map_upsertstr	same	
+mapped_list_of_nullary_constructors_released	same	
+match_bound_string_in_tuple_head_of_producer	same	
+match_constructor_named_alias_is_binding	same	
+match_ctor_pattern_too_few_arguments	same	
+match_ctor_pattern_wrong_arity	same	
+match_ctor_patterns_maybe	same	
+match_dead_arm_elimination_nested_result_bool	same	
+match_dead_arm_elimination_recursive_param	same	
+match_dead_arm_trim_keeps_live_nested_arms	same	
+match_mixed_adts_fails	output-differs	diagnostic lacks expected text: CoreMatchCoverageError("ConstructorPatternsFromDifferentAdts(["Maybe", "Result"])")
+match_nil_beside_fresh_cell_onto_self_result	same	
+match_normalized_join_head_read_inline	same	
+match_owned_call_result_field_kinds	live-differs	stage 1 fewer (stage0=44 stage1=3)
+match_owned_scrutinee_scalar_variant_list_result	same	
+match_shared_call_result_payload	same	
+match_tag_group_nested_literal_falls_to_default	same	
+matched_head_stored_into_arena_state_for_normalizing_callee	same	
+math_float_core	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+math_integer_core	live-differs	stage 1 fewer (stage0=2 stage1=1)
+math_transcendental	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+maybe_string_constructors_typecheck	same	
+mixed_scalar_constructor_accumulator_released	same	
+mixed_tuple_join_taken_apart_into_constructor	same	
+mul_deferred_both_operands	stage1-compile-fails	tests/mul_deferred_both_operands.ash:23:4 ASH002 Type mismatch: Int vs Float.
+mutual_group_conses_fresh_some_onto_accumulator	same	
+mutual_group_conses_fresh_tuple_onto_accumulator	same	
+mutual_group_pipes_accumulator_through_sibling	same	
+mutual_recursion_bare_trailing_member_call	same	
+mutual_recursion_differing_arity_member_performs_capability	same	
+mutual_recursion_group_differing_result_types	same	
+mutual_recursion_later_sibling_contract_tuple_result	same	
+mutual_recursion_later_sibling_result_beside_fresh_tuple_arm	same	
+mutual_recursion_later_sibling_result_pair	same	
+mutual_recursion_member_performs_capability	same	
+mutual_recursion_tail_call_fresh_list_argument_released	same	
+mutual_recursion_tco_differing_arity	live-differs	stage 1 fewer (stage0=2 stage1=1)
+mutual_recursion_tco_even_odd	same	
+mutual_recursion_tco_heterogeneous_params	live-differs	stage 1 more (stage0=0 stage1=1)
+mutual_recursion_tco_non_tail_sibling_call	same	
+mutual_recursion_tco_three_cycle	same	
+mutual_recursion_tco_undefaultable_slot_fallback	same	
+mutual_recursion_tuple_part_handed_over_from_owned_slot	same	
+namespace_nested_modules	same	
+namespace_old_module_fails	stage0-fails	diagnostic lacks expected text (compile error: Unknown standard library module 'Ashes.File'. Known modules: Ashes, Ashes.Trait, Ashes.IO, Ashes.Core.Result, Ashes.Collection.List, Ashes.Number.Math, Ashes.Collection.Array, Ashes.Collection.Map, Ashes.Collection.HashMap, Ashes.Collection.HashTrie, As...
+namespace_task_parallel	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+nested_cell_in_arena_successor	same	
+nested_constrained_helper_list_argument_released	live-differs	stage 1 more (stage0=1 stage1=57)
+nested_generic_map_exit_guards	live-differs	stage 1 fewer (stage0=35 stage1=1)
+nested_generic_map_versions	same	
+nested_recursive_helper_result_released	same	
+non_tail_recursive_pipeline_argument	same	
+nontail_list_producer_linear_memory	same	
+normalized_constructor_heads_preserve_shared_paths	same	
+normalized_parameter_behind_ok_record_update	same	
+nullary_constructor_result_kept_by_curried_record_builder	same	
+ok_of_matched_record_fields_releases_the_record	same	
+ok_tuple_built_before_error_type_is_released	same	
+opaque_handle_result_releases_owned_record	same	
+ord_compared_let_in_self_call_operand_released_once	same	
+ordered_comparison_inference	live-differs	stage 1 fewer (stage0=6 stage1=4)
+ordered_trait_default_evidence	same	
+owned_call_result_passed_to_constrained_lookup	same	
+owned_operand_of_derived_equality_released	live-differs	stage 1 more (stage0=3 stage1=1003)
+owned_record_into_generic_forwarder	same	
+owned_value_behind_contract_call_result	same	
+owned_value_released_behind_list_of_pairs_result	same	
+owned_value_released_behind_optional_scalar_result	same	
+owned_values_behind_forwarded_contract_result	same	
+owner_released_on_earlier_owner_split_edge	same	
+ownership_self_recursive_adt_build_discard	same	
+pair_pushed_onto_loop_accumulator_releases_copied_spine	same	
+pairwise_head_handed_on_as_parameter	same	
+parallel_async_coexist	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_async_overlap	skipped	needs fixture (tcp loopback server)
+parallel_both	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_chunked_fold	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_grain	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_map_bounded	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_map_reduce	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_reduce_queue	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_split_chunks	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_tls_coexist	skipped	needs fixture (tls loopback server)
+parallel_with_workers_basic	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_ceiling	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_equivalence	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_invalid	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_nested	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_restore	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+parallel_with_workers_wrappers	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+param_inline_annotation	same	
+parenthesized_let_value_is_a_nested_let	same	
+partial_application_basic	same	
+partial_application_multiarg	same	
+partial_application_oversaturated_fails	same	
+pass_step_releases_state_parameter_it_pairs_with_rewrite	same	
+passthrough_rebuild_of_fresh_list_called_in_loop	same	
+passthrough_scalar_tuple_guard_released	same	
+path_pure_operations	live-differs	stage 1 fewer (stage0=4 stage1=1)
+path_shared_dynamic_input	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+pattern_as_alias	same	
+pattern_as_alias_name_diagnostic	same	
+pattern_as_resource_alias_diagnostic	stage1-accepts-invalid	expected: Resource-bearing pattern alias 'whole' cannot coexist with a nested resource-bearing binding.
+pattern_exhaustive_color	same	
+pattern_guard_adt	same	
+pattern_guard_basic	same	
+pattern_guard_fallthrough	same	
+pattern_guard_multiple	same	
+pattern_large_adt_dispatch	same	
+pattern_large_adt_exhaustive_50	same	
+pattern_large_adt_non_exhaustive_50	same	
+pattern_list_exhaustive	same	
+pattern_list_missing_cons_fails	same	
+pattern_list_missing_empty_fails	same	
+pattern_list_passed_to_borrowing_call_not_retained	same	
+pattern_missing_cases_diagnostic	same	
+pattern_nested_composition	same	
+pattern_nested_exhaustive_maybe_list	same	
+pattern_nested_missing_some_empty_list	same	
+pattern_no_redundant_arms	same	
+pattern_non_exhaustive_color	same	
+pattern_or_binding_mismatch_diagnostic	output-differs	diagnostic lacks expected text: CoreMatchCoverageError("Unreachable match arm: a catch-all pattern was already matched earlier.")
+pattern_or_guard_once	same	
+pattern_or_nested_redundant_diagnostic	same	
+pattern_or_redundant_alternative_diagnostic	same	
+pattern_or_shared_binding	stage1-compile-fails	CoreMatchCoverageError("Non-exhaustive match expression. Missing constructor(s): 'First', 'Second'.")
+pattern_owner_duplicate_in_later_function	same	
+pattern_owner_handed_to_constrained_call_released	live-differs	stage 1 more (stage0=0 stage1=140)
+pattern_owner_in_call_argument_cell	same	
+pattern_record_exhaustive	same	
+pattern_record_named_fields	same	
+pattern_record_unknown_field_diagnostic	same	
+pattern_redundant_ctor_arm_fails	same	
+pattern_string_tested_by_curried_call_released_on_every_arm	same	
+perceus_borrow_inspect_shadowing	same	
+perceus_list_fresh_if_match_arm_escapes	same	
+perceus_list_mixed_passthrough_sibling_no_leak	same	
+perceus_list_tail_sharing_stays_conservative	same	
+phantom_result_variable_keeps_owned_tuple_result	same	
+phantom_tuple_result_moves_fresh_record	same	
+pipe_basic	same	
+pipe_chain	same	
+pipe_lambda_cons_retains_argument	live-differs	stage 1 fewer (stage0=15 stage1=1)
+piped_lambda_returning_call_result_list	same	
+pipeline_step_handed_on_in_loop_released	same	
+poly_compose	same	
+poly_const	same	
+poly_flip	same	
+poly_id_multi_type	same	
+polymorphism_adt_maybe_result_multiuse	same	
+polymorphism_future_id	same	
+polymorphism_generalize_id	same	
+polymorphism_id_multiuse	same	
+polymorphism_list_match_multiuse	same	
+polymorphism_list_to_maybe_multiuse	same	
+polymorphism_occurs_check_rejects_self_apply	same	
+polymorphism_rec_monomorphic_ok	same	
+polymorphism_rec_poly_rejected	same	
+prelude_schemes_smoke	same	
+print_int_min_value	same	
+process_drop_releases_fds	same	
+process_kill	same	
+process_spawn_exit_nonzero	same	
+process_spawn_exit_zero	same	
+process_spawn_inherits_environment	same	
+process_spawn_stderr	same	
+process_spawn_stdin	same	
+process_spawn_stdout	same	
+producer_conses_tuple_of_fresh_name_under_handler	same	
+producer_returning_parameter_tail	live-differs	stage 1 more (stage0=1 stage1=4001)
+producer_string_literal_head_over_recursive_call	same	
+qualified_module_call_fresh_list_argument_released	live-differs	stage 1 more (stage0=1 stage1=28)
+rc_accumulate_and_reverse_producer_pipeline	same	
+rc_adt_argument_kept_by_callee_result	live-differs	stage 1 more (stage0=3 stage1=33)
+rc_arena_record_of_destructured_tuple_parts_in_result_tuple	same	
+rc_callee_result_field_reads_reassembled_into_record	same	
+rc_child_of_call_argument_kept_by_callee_result	same	
+rc_drop_unresolved_list_element	same	
+rc_escaping_view_backing_released	same	
+rc_field_read_off_pattern_binding_stored_in_list	same	
+rc_let_bound_aggregate_borrowing_owner_kept_by_callee	same	
+rc_let_bound_argument_kept_by_constrained_callee_result	live-differs	stage 1 more (stage0=1 stage1=14)
+rc_let_owner_named_like_an_earlier_match_binding	same	
+rc_loop_accumulator_returned_not_released	same	
+rc_loop_parameter_kept_by_callee_error_result	same	
+rc_loop_parameter_parts_kept_by_callee_result	live-differs	stage 1 more (stage0=1 stage1=5)
+rc_loop_parameter_record_update_successor	same	
+rc_nested_variant_list_producer_pipeline	same	
+rc_optional_string_variant_list_producer_pipeline	same	
+rc_owned_binding_survives_curried_call_chain	live-differs	stage 1 more (stage0=1 stage1=384001)
+rc_passthrough_or_fresh_result_pipeline	same	
+rc_record_head_list_producer_pipeline	live-differs	stage 1 more (stage0=1 stage1=15)
+rc_release_match_joined_call_result	same	
+rc_release_read_builtin_call_result	same	
+rc_release_read_builtin_join_result	same	
+rc_scalar_pattern_field_passed_to_callee_that_returns_it	same	
+rc_string_adt_list_producer_pipeline	same	
+rc_tco_cross_call_list_retain	same	
+rc_uncons_view_backing_released	same	
+read_releases_join_of_fresh_value_and_loop_parameter	same	
+readme_showcase	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+recgroup_mutual_iseven_isodd	same	
+record_basic	same	
+record_borrowing_let_list_released_after_result_copy	same	
+record_chained_update	same	
+record_consed_onto_call_result_list	same	
+record_field_access_captured	same	
+record_field_access_on_param	same	
+record_field_in_func	same	
+record_field_list_grown_by_cons	same	
+record_holding_let_list_returned_in_tuple	same	
+record_literal_field_list_grown_by_cons	same	
+record_literal_successor_with_fresh_call_field	same	
+record_loop_state_returned_beside_reversed_accumulator	same	
+record_multi_update	same	
+record_parameter_kept_by_outer_curried_stage	same	
+record_pattern_field_from_list_head_passed_to_storing_call	same	
+record_result_through_closure_parameter	same	
+record_shared_runtime_list_fields	live-differs	stage 1 more (stage0=1 stage1=5)
+record_update	same	
+record_update_call_argument_cons_over_parameter_field	same	
+record_update_direct_parameter_keeps_list_element	same	
+record_update_keeps_runtime_managed_list_element	same	
+record_update_of_loop_state_handed_to_helper	same	
+record_update_of_unplaced_loop_parameter_passed_to_call	same	
+recursive_group_sibling_pair_result_stays_reference_counted	same	
+recursive_group_threads_record_state	same	
+recursive_map_bound_tail_plateau	live-differs	stage 1 more (stage0=1 stage1=1200001)
+recursive_map_shared_tail	same	
+recursive_phantom_list_result_releases_owned_record	same	
+recursive_producer_over_tuple_scrutinee	same	
+recursive_self_call_annotated_parameter_mismatch	same	
+recursive_variant_generic_argument_released_by_its_dropper	same	
+regex_large_subject_chain	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+regress_curried_letrec_deadlock	same	
+regress_letrec_nested_captured_lambda	same	
+regress_module_in_lambda_body	same	
+regress_readline_loop_depth	same	
+regression_ash014_nonrecursive_helper_calls_recursive	same	
+resource_aggregate_closure_escape	same	
+resource_aggregate_escape	same	
+resource_borrow_helper_module_alias_let	same	
+resource_borrow_helper_module_alias_pipeline	same	
+resource_capture_escape	same	
+resource_closed_in_pipeline_stage_diagnostic	output-differs	diagnostic lacks expected text: print() does not support type ?20 yet.
+resource_closure_chain_escape	same	
+resource_closure_deterministic_close	same	
+resource_consuming_helper_let_diagnostic	same	
+resource_consuming_helper_pipeline_stage_diagnostic	stage1-accepts-invalid	expected: ASH008
+resource_recursive_adt_drop	same	
+resource_tco_loop_cleanup	same	
+resource_use_after_move	same	
+resource_use_after_move_aggregate	same	
+result_let_bind_basic_error	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_let_bind_basic_success	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_let_bind_pipeline_mix	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_let_bind_sequential	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_let_bind_shadowing	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_let_bind_typed_error	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_capability_continuation	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_error_propagation	same	
+result_pipe_fallible_function	same	
+result_pipe_map_error	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_map_error_ok_passthrough	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_mixed_success_and_error	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_mixed_success_path	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+result_pipe_pure_function	same	
+result_pipe_realistic_shape	same	
+result_stdlib_import	same	
+result_typed_error_nested_match	same	
+returned_closure_applied_at_once_is_released	same	
+reuse_closure_seed_move_elision	same	
+reuse_direct_move_elision	live-differs	stage 1 fewer (stage0=2 stage1=1)
+reuse_hashmap_set_bounded	live-differs	stage 1 more (stage0=1 stage1=1087748)
+reuse_higher_order_seed_move_elision	same	
+reuse_inplace_accumulator	live-differs	stage 1 fewer (stage0=2 stage1=1)
+reuse_inplace_helper	same	
+reuse_intermediate_linearity	same	
+reuse_internal_sharing_declines	same	
+reuse_letbound_fresh_move_elision	same	
+reuse_letbound_match_accumulator	live-differs	stage 1 more (stage0=1 stage1=2409056)
+reuse_list_record_composition	same	
+reuse_list_rewriter	same	
+reuse_lookup_then_update_bounded	live-differs	stage 1 fewer (stage0=3 stage1=1)
+reuse_map_set_seed_move_elision	live-differs	stage 1 fewer (stage0=43 stage1=1)
+reuse_map_set_seed_retained_declines	live-differs	stage 1 fewer (stage0=9 stage1=1)
+reuse_map_tco_reset_declined_seed	live-differs	stage 1 fewer (stage0=26027 stage1=1)
+reuse_move_elision_soundness	live-differs	stage 1 fewer (stage0=1051 stage1=1)
+reuse_nested_rec_specialization	same	
+reuse_nested_reentry_correct	live-differs	stage 1 fewer (stage0=6005 stage1=1)
+reuse_partial_application_fold	same	
+reuse_persistent_specialization_declines_heap_values	live-differs	stage 1 fewer (stage0=7 stage1=5)
+reuse_recursive_specialization	same	
+reuse_result_alias_move_elision	same	
+reuse_specialization_declines_unreachable_helper	same	
+reuse_specialized_call_argument_beside_loop_accumulator	same	
+reuse_specialized_result_read_by_scalar_caller	same	
+reuse_split_sibling_value	same	
+reuse_str_value_update	live-differs	stage 1 fewer (stage0=207 stage1=1)
+reuse_tuple_value_update	live-differs	stage 1 fewer (stage0=207 stage1=1)
+reuse_user_fold_specialization	live-differs	stage 1 fewer (stage0=2 stage1=1)
+reuse_user_local_helper_specialization	live-differs	stage 1 fewer (stage0=2 stage1=1)
+reused_list_cell_keeps_fresh_tuple_head	live-differs	stage 1 fewer (stage0=7 stage1=1)
+rune_ascii_classification	same	
+rune_from_int_boundaries	same	
+rune_has_no_default	output-differs	diagnostic lacks expected text: UnknownLoweringBinding("Ashes_Trait_Default.default")
+rune_invalid_literal	same	
+rune_invalid_utf8_boundary	same	
+rune_literals_and_conversions	same	
+rune_pattern	same	
+rune_surrogate_literal	same	
+rune_traits	stage1-compile-fails	UnknownLoweringBinding("Ashes_Trait_Ord.less")
+rune_type_safety	same	
+runtime_managed_adt_owns_let_bound_list_child	live-differs	stage 1 more (stage0=1 stage1=4)
+runtime_rc_branch_late_tco_promotion	same	
+runtime_rc_match_scrutinee_wrapper_drop_ordinary	same	
+runtime_rc_multi_bigint_tco	same	
+runtime_rc_normalized_parameter_returned_through_parameter_function_plateau	same	
+runtime_rc_tco_early_return_transfer	same	
+runtime_rc_tco_match_scrutinee_wrapper_drop	same	
+runtime_rc_tco_nested_tuple_pattern_alias	same	
+runtime_rc_tco_positional_adt_children	same	
+runtime_rc_whole_string_pattern_recursion	same	
+saved_sibling_list_restored_from_accumulator	live-differs	stage 1 more (stage0=1 stage1=101)
+scope_join_copied_out_of_viewed_string	same	
+selector_imported_helpers_keep_generic_case_loop_provable	same	
+self_call_beside_error_arm_keeps_error_type	same	
+self_call_result_consed_under_owned_record_head	same	
+self_call_result_handed_to_further_call_released	live-differs	stage 1 more (stage0=1 stage1=56)
+self_call_variant_result_in_scrutinee_tuple_released	same	
+sibling_call_result_requested_in_arena_is_copied_out	same	
+simplify_control_flow_match_cascade	same	
+single_constructor_unboxing	live-differs	stage 1 fewer (stage0=7 stage1=1)
+single_entry_map_built_in_loop_folded_into_string_list	same	
+source_coordinates	same	
+spine_cell_head_bound_by_let_releases_its_binding	same	
+stack_of_borrowed_strings_pushed_and_popped	same	
+std_args_empty	same	
+std_fs_qualified_names_resolve	same	
+std_implicit_open	same	
+std_import_ashes_io	same	
+std_io_read_line_match_typechecks	same	
+std_io_unknown_member_fails	same	
+std_io_unqualified_write_line_fails	output-differs	diagnostic lacks expected text: ASH001 Undefined variable 'writeLine'.
+std_io_write_line_ok	same	
+std_no_prelude_fails	same	
+std_panic	same	
+std_print	same	
+std_qualified_no_import	same	
+std_qualified_print	same	
+std_qualified_reference_keeps_names_qualified_fails	same	
+std_qualified_reference_without_import	same	
+std_root_args_removed_fails	same	
+std_root_module_reserved	same	
+std_root_panic_removed_fails	same	
+std_root_print_removed_fails	same	
+std_shadowing_and_qualified_access	same	
+stdlib_array	same	
+stdlib_hashmap	same	
+stdlib_hashtrie	same	
+stdlib_json	same	
+stdlib_list	same	
+stdlib_list_sortby	live-differs	stage 1 fewer (stage0=11 stage1=1)
+stdlib_map	live-differs	stage 1 fewer (stage0=3 stage1=1)
+stdlib_maybe	same	
+stdlib_parallel	stage1-compile-fails	Unknown member 'both' in module Ashes.Task.Parallel.
+stdlib_regex	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+stdlib_result	same	
+stdlib_rpc	stage1-compile-fails	codegen: unsupported IrInstructionKind for this minimal slice
+stdlib_string	same	
+stdlib_string_compare	same	
+stdlib_substring	same	
+store_to_load_forwarding_construct_destructure	same	
+string_ascii_case	same	
+string_call_result_compared_with_literal	same	
+string_concat_operand_release	same	
+string_literal_reuse	same	
+string_parameter_consed_onto_accumulator_while_walking	same	
+string_passed_to_generic_parameter_in_loop	same	
+strings	same	
+table_record_released_where_the_table_is_handed_on	live-differs	stage 1 fewer (stage0=22 stage1=1)
+tailpos_if_tailcall_smoke	same	
+tailpos_non_tailcall_smoke	same	
+taken_over_record_borrowed_tuple_arm_keeps_expanded_elements	same	
+taken_over_record_borrowed_tuple_join_keeps_expanded_elements	same	
+taken_over_record_fresh_constructed_arm_keeps_expanded_elements	same	
+taken_over_record_generic_let_holder_settles_expanded_elements	same	
+taken_over_record_group_hands_expanded_elements_to_its_result	same	
+taken_over_record_let_holder_closure_keeps_expanded_elements	same	
+taken_over_record_let_holder_returning_a_pattern_keeps_expanded_elements	same	
+taken_over_record_loop_hands_expanded_elements_to_its_result	same	
+tco_affine_let_two_uses_declines	live-differs	stage 1 fewer (stage0=1501 stage1=1)
+tco_affine_runtime_string_exit	same	
+tco_affine_string_append	live-differs	stage 1 fewer (stage0=2 stage1=1)
+tco_affine_string_append_let_bound	same	
+tco_arena_variant_accumulator_plateau	same	
+tco_conditional_accumulator_beside_sibling	same	
+tco_conditional_accumulator_conses_sibling_parameter	same	
+tco_deep_adt_accumulator	live-differs	stage 1 more (stage0=3 stage1=6)
+tco_direct_conditional_accumulator_borrows_child	same	
+tco_exit_path_let_append_keeps_accumulator	same	
+tco_fixed_watermark_whole_value_accumulators	same	
+tco_generic_curried_helper_result_passed_to_self_call	same	
+tco_late_resolved_closure	same	
+tco_late_typed_accumulator	live-differs	stage 1 fewer (stage0=2 stage1=1)
+tco_let_alias_of_rc_parameter	same	
+tco_let_bound_successor_keeps_owned_child	same	
+tco_let_call_result_in_accumulator_record	same	
+tco_list_accumulator_top_cell_copied_across_back_edge	same	
+tco_list_length_large	same	
+tco_list_of_adt_accumulator	same	
+tco_loop_invariant_args	same	
+tco_loop_invariant_heap_arg	live-differs	stage 1 more (stage0=1 stage1=400000)
+tco_loop_moves_split_line_into_accumulator	same	
+tco_loop_returns_parameter_or_tail_from_if_branch	live-differs	stage 1 fewer (stage0=21 stage1=1)
+tco_match_field_successor_argument	same	
+tco_multi_fresh_list_accumulator	same	
+tco_multi_heap_accumulator_arg_order	same	
+tco_multi_param	same	
+tco_non_tail_self_call_in_operator_operand	same	
+tco_owned_let_in_operand_self_call	same	
+tco_owned_let_in_tail_argument_record	same	
+tco_pattern_head_forwarded_to_other_parameter	same	
+tco_record_pair_child_consed_conditionally	same	
+tco_runtime_managed_consumed_record_heads_escape	same	
+tco_runtime_managed_find_record_head_plateau	same	
+tco_runtime_managed_find_string_head_plateau	same	
+tco_runtime_managed_fresh_list_rebuild_plateau	same	
+tco_runtime_managed_list_accumulator_plateau	same	
+tco_runtime_managed_owned_child_record_accumulator_plateau	same	
+tco_runtime_managed_param_consed_into_sibling_accumulator	same	
+tco_runtime_managed_param_field_read_into_successor	same	
+tco_runtime_managed_param_string_field_into_successor	same	
+tco_runtime_managed_record_accumulator_plateau	same	
+tco_runtime_managed_record_list_accumulator	same	
+tco_runtime_managed_record_param_consed_into_sibling_accumulator	same	
+tco_runtime_managed_str_accumulator_plateau	same	
+tco_runtime_managed_str_param_non_affine_plateau	same	
+tco_runtime_managed_str_parameter_read_twice_plateau	same	
+tco_runtime_managed_tuple_accumulator_plateau	same	
+tco_self_recursion_large	same	
+tco_single_param	same	
+tco_successor_bound_out_of_tuple_literal_keeps_arena_cell	same	
+tco_successor_children_shared_with_sibling_constructor_arm	live-differs	stage 1 more (stage0=1 stage1=1200011)
+tco_transferred_root_option_result	same	
+tco_tuple_accumulator	same	
+tco_unused_chain_parameter	same	
+tcp_close	skipped	needs fixture (tcp loopback server)
+tcp_connect_invalid_host	stage1-compile-fails	Unknown member 'run' in module Ashes.Task.
+tcp_connect_localhost	skipped	needs fixture (tcp loopback server)
+tcp_connect_outside_async	skipped	needs fixture (tcp loopback server)
+tcp_connect_success	skipped	needs fixture (tcp loopback server)
+tcp_receive	skipped	needs fixture (tcp loopback server)
+tcp_receive_bounded	skipped	needs fixture (tcp loopback server)
+tcp_receive_invalid_max_bytes	skipped	needs fixture (tcp loopback server)
+tcp_send	skipped	needs fixture (tcp loopback server)
+tcp_send_after_close	skipped	needs fixture (tcp loopback server)
+test_assert_equal	same	
+test_assert_equal_str	same	
+test_assert_polymorphic	live-differs	stage 1 fewer (stage0=17 stage1=1)
+text_byte_length_ascii	same	
+text_byte_length_empty	same	
+text_byte_length_unicode	same	
+text_byte_length_var	same	
+text_format_float_fixed	same	
+text_format_float_large	same	
+text_format_numbers	same	
+text_from_runes	same	
+text_json_parser_smoke	same	
+text_length_take_drop_large_string	same	
+text_parse_float_exponent	same	
+text_parse_float_invalid	same	
+text_parse_float_negative	same	
+text_parse_float_ok	same	
+text_parse_float_range	same	
+text_parse_int_invalid	same	
+text_parse_int_negative	same	
+text_parse_int_ok	same	
+text_parse_int_overflow	same	
+text_split_retained_segment_recursion	same	
+text_uncons_ascii	same	
+text_uncons_empty	same	
+text_uncons_unicode	same	
+tls_connect_outside_async	skipped	needs fixture (tls loopback server)
+tls_hostname_mismatch	skipped	needs fixture (tls loopback server)
+tls_send_after_close	output-differs	diagnostic lacks expected text: Unknown member 'run' in module Ashes.Task.
+tls_send_receive	skipped	needs fixture (tls loopback server)
+tls_trust_failure	skipped	needs fixture (tls loopback server)
+tmc_base_case_returns_borrowed_record_list	same	
+tmc_constructor_recursion_semantics	same	
+tmc_constructor_recursion_stack	same	
+tmc_element_specialized_map_filter_semantics	same	
+tmc_element_specialized_map_filter_stack	same	
+tmc_filter_shape_interleaved	same	
+tmc_map_shape_stack	live-differs	stage 1 fewer (stage0=7 stage1=1)
+toplevel_decls_only_no_trailing	same	
+toplevel_duplicate_binding_fails	output-differs	diagnostic lacks expected text: ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration("toplevel_duplicate_binding_fails", "x")))
+toplevel_flat_let_bare_trailing	same	
+toplevel_flat_let_rhs_letin	same	
+toplevel_flat_lets_trailing	same	
+toplevel_flat_qualified_call_decls	same	
+toplevel_flat_short_qualified_call_decls	same	
+toplevel_forward_reference_fails	same	
+toplevel_single_expression_compat	same	
+trailing_pipe_fresh_argument_released_by_program_entry	same	
+trait_ambiguous_operator_constraint_diagnostic	output-differs	diagnostic lacks expected text: MissingCoreTraitEvidence("Eq", SemFunction(SemVariable(8), SemVariable(8), None))
+trait_bare_method_reference_value	stage1-compile-fails	UnknownLoweringBinding("Ashes_Trait_Show.show")
+trait_capability_async	stage1-compile-fails	UnknownLoweringBinding("Adjust.adjust")
+trait_concrete_requirement_inside_polymorphic_function	same	
+trait_deriving	stage1-compile-fails	UnsupportedCoreDerivingExpansion("UnsupportedDerivedField("Tree", "Eq")")
+trait_deriving_self_referential_via_list	same	
+trait_inferred_evidence	live-differs	stage 1 fewer (stage0=2 stage1=1)
+trait_method_string_result_released	same	
+trait_operand_type_fixed_after_comparison	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")
+trait_operator_overloads	stage1-compile-fails	ASH002 '+' requires Int+Int, Float+Float, or Str+Str, got Box and Box.
+trait_operator_primitive_differential	stage1-compile-fails	UnknownLoweringBinding("Ashes_Trait_Add.add")
+trait_perceus_shared_dictionary	same	
+trait_primitive_matrix	stage1-compile-fails	UnsupportedCoreTraitDispatch("constrained call: UnknownValue("Ashes_Trait_Hash.hash")", SemNever)
+trait_reuse_constrained_function_argument	live-differs	stage 1 fewer (stage0=10 stage1=1)
+trait_same_trait_distinct_type_evidence	same	
+trait_standard_bootstrap	stage1-compile-fails	UnknownLoweringBinding("Ashes_Trait_Add.add")
+trait_supertrait_operator_evidence	same	
+tuple_binder_hands_list_parameter_back	stage1-crash	run signal 6 (SIGABRT)
+tuple_element_consed_onto_parameter_list_in_tuple_result	same	
+tuple_literal_smoke	same	
+tuple_loop_state_returned_inside_the_result	same	
+tuple_match	same	
+tuple_match_nested	same	
+tuple_match_sum	same	
+tuple_nested_arity_mismatch_fails	output-differs	diagnostic lacks expected text: CoreCallTypeMismatch(TypeArityMismatch(0, 1), CoreMismatchSite(span = Some(TextSpan(start = 92, end = 134)), location = Some(IrSourceLocation(filePath = "tests/tuple_nested_arity_mismatch_fails.ash", line = 4, column = 5)), argument = None))
+tuple_parse_smoke	same	
+tuple_pattern_arity_mismatch_fails	output-differs	diagnostic lacks expected text: CoreCallTypeMismatch(TypeArityMismatch(0, 1), CoreMismatchSite(span = Some(TextSpan(start = 110, end = 147)), location = Some(IrSourceLocation(filePath = "tests/tuple_pattern_arity_mismatch_fails.ash", line = 4, column = 5)), argument = None))
+tuple_pattern_arity_ok	same	
+tuple_result_holds_owned_record_field	same	
+tuple_state_successor_passes_on_its_pattern_tail	same	
+type_alias_cycle_diagnostic	stage1-accepts-invalid	expected: ASH039
+type_alias_zero_cost	stage1-compile-fails	UnsupportedCoreLoweringPattern("unknown constructor UserId")
+type_annotation_basic	same	
+type_decl_with_stitched_import	same	
+type_decl_with_stitched_import_pyramid	same	
+type_named_type	same	
+type_parse_maybe	same	
+type_symbol_registration	same	
+type_validation_duplicate_ctor	output-differs	diagnostic lacks expected text: ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration("type_validation_duplicate_ctor", "True")))
+type_validation_ok	same	
+type_zero_cost_deriving	stage1-compile-fails	Unknown constructor 'UserId'.
+type_zero_cost_ffi	stage1-compile-fails	UnsupportedCoreExternalLowering("ExternalAbiSourceTypingError(UnsupportedExternalType("Text"))")
+type_zero_cost_nominality	same	
+type_zero_cost_resource	stage1-compile-fails	Unknown constructor 'WrappedHandle'.
+uint_arithmetic	same	
+uint_bitwise	same	
+uint_comparison	same	
+uint_from_int64	same	
+uint_from_int64_type_error	output-differs	diagnostic lacks expected text: tests/uint_from_int64_type_error.ash:3:4 ASH002 Type mismatch: Int vs u8.
+uint_to_int	same	
+uint_to_int_type_error	output-differs	diagnostic lacks expected text: tests/uint_to_int_type_error.ash:3:4 ASH002 Type mismatch: u8 vs Int.
+uint_wrapping	same	
+unannotated_loop_state_in_exit_tuple	same	
+unannotated_nested_recursion_concatenates_its_own_result	same	
+unary_negation	same	
+unary_negation_float_literal	same	
+unary_negation_float_var	same	
+unnamed_predecessor_in_arena_loop	same	
+unsigned_parameter_annotation_takes_unsigned_argument	same	
+untyped_finder_some_result_released_by_its_caller	same	
+unused_ordered_helper	same	
+unused_ordered_map_helpers	same	
+user_function_type_cleanup	live-differs	stage 1 more (stage0=1 stage1=13)
+variant_accumulator_grown_through_helper_in_loop	same	
+variant_loop_field_consed_onto_copied_accumulator	same	
+variant_loop_result_beside_split_list	same	
+variant_node_holding_walked_head	same	
+viewed_backing_released_behind_normalized_result	same	
+visited_paths_survive_pending_work	same	
+windows_path_render_compares_let_bound_body	same	
+worklist_back_grown_and_emptied_released	same	
+worklist_back_only_refilled_from_helper	same	
+worklist_dequeue_keeps_duplicate_key_in_map	same	
+worklist_front_beside_queued_map_of_its_keys	same	
+worklist_front_heads_reach_seen_tree_only_as_keys	same	
+worklist_front_refilled_behind_marking_helper	same	
+worklist_front_walked_and_refilled_from_back	same	
+worklist_of_indices_refilled_in_loop_released	same	
+worklist_of_paths_walked_and_refilled	same	
+worklist_pair_released_past_unrelated_log_successor	same	
+worklist_pushes_two_cells_onto_consumed_tail	same	
+ws_app_mixed_styles	same	
+ws_app_multi_arg	same	
+ws_app_paren_expr_arg	same	
+ws_app_precedence	same	
+ws_app_qualified	same	
+ws_app_recursive	same	
+ws_app_single_arg	same	
+ws_app_std_print	same	

@@ -10,7 +10,9 @@ let identityScheme =
     ), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(0)])])
 
 let instantiatesSchemeConstraints unit =
-    match instantiate(identityScheme)(TypeVariableSupply(nextId = 10)) with
+    match 10
+    |> typeVariableSupplyFrom
+    |> instantiate(identityScheme) with
         | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = _afterFirst } ->
             let typeChecked =
                 instantiatedType
@@ -22,7 +24,9 @@ let instantiatesSchemeConstraints unit =
                     | _ -> test.fail("constraint should use the fresh variable")
 
 let instantiationAdvancesSupply unit =
-    match instantiate(identityScheme)(TypeVariableSupply(nextId = 10)) with
+    match 10
+    |> typeVariableSupplyFrom
+    |> instantiate(identityScheme) with
         | InstantiationResult { semanticType = _firstType, constraints = _firstConstraints, supply = afterFirst } ->
             match instantiate(identityScheme)(afterFirst) with
                 | InstantiationResult { semanticType = secondType, constraints = _secondConstraints, supply = _afterSecond } ->

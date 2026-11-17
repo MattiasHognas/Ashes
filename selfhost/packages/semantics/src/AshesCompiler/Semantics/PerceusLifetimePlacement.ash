@@ -21,6 +21,8 @@ import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrControlFlowGraph
 import AshesCompiler.Semantics.IrInstructions
@@ -34,14 +36,37 @@ export (
     value placeInstructionLifetimesIn,
 )
 
-// placedDominators carries the function's immediate dominators from the first owner that needed
-// them to every later owner: an owner's edits move instruction indices and change the block graph
-// only by a split edge appended after the last block, so the table is recomputed only when the
-// block count has grown, as stage 0's PlaceOwner does.
+// What is known of the function's block graph while its owners are placed one after another.
+// graphDominators carries the immediate dominators from the first owner that needed them to every
+// later owner, with the index answering dominance out of them: the table is recomputed only when
+// the block count has changed, as stage 0's PlaceOwner does. graphBlocks carries the blocks of the
+// placed instructions the same way, with per block whether it opens with a label and ends in a
+// terminator (graphKinds) and with the edges by block index (graphEdges): an owner's edits mostly
+// move instruction indices inside the blocks, so the spans are shifted and the edges kept.
+// graphBlocks is empty when the edits may have changed the blocks themselves (an emptied block, a
+// drop opening a block of its own, a split edge), and the next owner builds the graph from the
+// instructions.
+type OwnerGraph =
+    | graphBlocks: List(IrCfgBlock)
+    | graphKinds: List((Bool, Bool))
+    | graphEdges: BlockEdges
+    | graphDominators: List(Int)
+    | graphDominance: DominanceIndex
+
 type PlacedInstructions =
     | placedInstructions: List(IrInstruction)
     | placedTempCount: Int
-    | placedDominators: List(Int)
+    | placedGraph: OwnerGraph
+    | placedUses: List(List(Int))
+    | placedCopySources: List(Int)
+
+let graphSuccessors (graph: OwnerGraph) =
+    (let edges = graph.graphEdges
+    in edges.successorsOfBlock)
+
+let graphPredecessors (graph: OwnerGraph) =
+    (let edges = graph.graphEdges
+    in edges.predecessorsOfBlock)
 
 type OwnerRegion =
     | regionDefinitionIndex: Int
@@ -65,30 +90,6 @@ type BlockLiveness =
     | livenessIn: Bool
     | livenessOut: Bool
     deriving {Eq}
-
-// A `StoreLocal` of an alias into a slot, with the span of the block it sits in.
-type AliasStore =
-    | storeSlot: Int
-    | storeIndex: Int
-    | storeBlockStart: Int
-    | storeBlockEnd: Int
-    deriving {Eq}
-
-type AliasState =
-    | aliasTemps: List(Int)
-    // The aliases that are views naming the owner's own bytes, and the pieces read back out of the
-    // tuple a view-producing instruction allocates. Only these follow a field read, so an ordinary
-    // aggregate holding the owner does not lengthen the owner's liveness through every read of it.
-    | viewAliasTemps: List(Int)
-    | aliasStores: List(AliasStore)
-
-let recursive removeAt items index =
-    match items with
-        | [] -> []
-        | head :: rest ->
-            if index == 0
-            then rest
-            else head :: removeAt(rest)(index - 1)
 
 let recursive insertAllAt index added items =
     if index == 0
@@ -126,14 +127,6 @@ let recursive ownerSlots (instructions: List(IrInstruction)) (acc: List(Int)) =
                 then ownerSlots(rest)(slot :: acc)
                 else ownerSlots(rest)(acc)
 
-let recursive anchorIndices (instructions: List(IrInstruction)) (slot: Int) (index: Int) =
-    match instructions with
-        | [] -> []
-        | head :: rest ->
-            if anchorSlot(head) == slot
-            then index :: anchorIndices(rest)(slot)(index + 1)
-            else anchorIndices(rest)(slot)(index + 1)
-
 // The target of an arena- or stack-allocated ADT cell, stage 0's `CollectArenaAdtCells`: such a
 // cell never releases the fields stored into it (only a runtime-managed cell owns its field's
 // reference and releases it with its structural dropper), so a field store into one embeds an
@@ -144,29 +137,6 @@ let arenaAdtCellTarget (instruction: IrInstruction) =
         | IrInstruction { instruction = AllocAdt(target, _tag, _fieldCount, false, _tagless) } -> target
         | IrInstruction { instruction = AllocAdtStack(target, _tag, _fieldCount, _tagless) } -> target
         | _ -> -1
-
-let recursive collectArenaAdtCells (instructions: List(IrInstruction)) (acc: List(Int)) =
-    match instructions with
-        | [] -> acc
-        | head :: rest ->
-            let target = arenaAdtCellTarget(head)
-            in
-                if target >= 0
-                then
-                    acc
-                    |> sortedSetInsert(target)
-                    |> collectArenaAdtCells(rest)
-                else collectArenaAdtCells(rest)(acc)
-
-// The first `StoreLocal` into `slot`, as `(index, source temp)`.
-let recursive ownerDefinition (instructions: List(IrInstruction)) (slot: Int) (index: Int) =
-    match instructions with
-        | [] -> None
-        | IrInstruction { instruction = StoreLocal(candidate, source) } :: rest ->
-            if candidate == slot
-            then Some((index, source))
-            else ownerDefinition(rest)(slot)(index + 1)
-        | _ :: rest -> ownerDefinition(rest)(slot)(index + 1)
 
 // An earlier owner's split edge (`<function>_rc_edge_<slot>_<block>`) sits after the function's
 // last block but stands on an edge between two blocks; one that rejoins a block before the
@@ -179,302 +149,326 @@ let isSplitEdgeWithin (instructions: List(IrInstruction)) (blocks: List(IrCfgBlo
                 | _ -> false
         | _ -> false
 
-// The blocks reachable from `start` that it dominates and that lie before the boundary (an earlier
-// owner's split edge rejoining the region included), gathered in visit order with one cell per
-// block; `sortedBlocks` turns the result into the sorted set the region consumers expect.
-let recursive reachableBeforeBoundary (instructions: List(IrInstruction)) (label: Str) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: List(Int)) =
-    match pending with
-        | [] -> reachable
-        | current :: rest ->
-            if current > boundary && isSplitEdgeWithin(instructions)(blocks)(label)(boundary)(current) == false || dominates(dominators)(start)(current) == false || containsInt(current)(reachable)
-            then reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(reachable)
+// The stores of an alias into one slot: whether they sit in more than one block, and otherwise the
+// span of their block and the first of them.
+type SlotAliasStores =
+    | storesInSeveralBlocks: Bool
+    | storesBlockStart: Int
+    | storesBlockEnd: Int
+    | storesFirstIndex: Int
+
+// The alias sets of one owner as maps, with their sizes kept beside them so a fixpoint round can
+// tell whether it added anything. `aliasStoreIndices` holds the index of every `StoreLocal` of an
+// alias seen so far (one instruction is one store), and `aliasSlotStores` what a load of a slot
+// needs to know of the stores into it.
+type AliasSets =
+    | aliasSet: MapTree(Int, Bool)
+    | aliasSetSize: Int
+    // The aliases that are views naming the owner's own bytes, and the pieces read back out of the
+    // tuple a view-producing instruction allocates. Only these follow a field read, so an ordinary
+    // aggregate holding the owner does not lengthen the owner's liveness through every read of it.
+    | viewAliasSet: MapTree(Int, Bool)
+    | aliasStoreIndices: MapTree(Int, Bool)
+    | aliasStoreCount: Int
+    | aliasSlotStores: MapTree(Int, SlotAliasStores)
+
+let inTempSet (temp: Int) (set: MapTree(Int, Bool)) =
+    match Ashes.Collection.Map.getInt(temp)(set) with
+        | Some(_listed) -> true
+        | None -> false
+
+let withAliasTemp (target: Int) (sets: AliasSets) =
+    if inTempSet(target)(sets.aliasSet)
+    then sets
+    else sets with aliasSet = Ashes.Collection.Map.setInt(target)(true)(sets.aliasSet), aliasSetSize = sets.aliasSetSize + 1
+
+let withViewAliasTemp (target: Int) (sets: AliasSets) =
+    (let aliased = withAliasTemp(target)(sets)
+    in
+        if inTempSet(target)(aliased.viewAliasSet)
+        then aliased
+        else aliased with viewAliasSet = Ashes.Collection.Map.setInt(target)(true)(aliased.viewAliasSet))
+
+let slotStoresWith (index: Int) (start: Int) (end: Int) (known: Maybe(SlotAliasStores)) =
+    match known with
+        | None -> SlotAliasStores(storesInSeveralBlocks = false, storesBlockStart = start, storesBlockEnd = end, storesFirstIndex = index)
+        | Some(SlotAliasStores { storesInSeveralBlocks = several, storesBlockStart = knownStart, storesBlockEnd = knownEnd, storesFirstIndex = first }) ->
+            if several || knownStart != start || knownEnd != end
+            then SlotAliasStores(storesInSeveralBlocks = true, storesBlockStart = knownStart, storesBlockEnd = knownEnd, storesFirstIndex = first)
             else
-                if current == boundary
-                then reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
-                else
-                    match listAt(blocks)(current) with
-                        | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                            reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(append(successors)(rest))(current :: reachable)
-                        | None -> reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
+                SlotAliasStores(storesInSeveralBlocks = false, storesBlockStart = knownStart, storesBlockEnd = knownEnd, storesFirstIndex = if index < first
+                then index
+                else first)
 
-// The members of `visited` among the block indices below `count`, ascending.
-let recursive sortedBlocks (visited: List(Int)) (index: Int) (acc: List(Int)) =
-    if index < 0
-    then acc
+let withAliasStore (slot: Int) (index: Int) (start: Int) (end: Int) (sets: AliasSets) =
+    if inTempSet(index)(sets.aliasStoreIndices)
+    then sets
     else
-        if containsInt(index)(visited)
-        then sortedBlocks(visited)(index - 1)(index :: acc)
-        else sortedBlocks(visited)(index - 1)(acc)
-
-let blockSpan (blocks: List(IrCfgBlock)) (index: Int) =
-    match listAt(blocks)(index) with
-        | Some(IrCfgBlock { blockStart = start, blockEnd = end }) -> (start, end)
-        | None -> (0, 0)
-
-let recursive regionInstructions (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) =
-    match region with
-        | [] -> []
-        | blockIndex :: rest ->
-            match blockSpan(blocks)(blockIndex) with
-                | (start, end) ->
-                    rest
-                    |> regionInstructions(instructions)(blocks)
-                    |> append(indexedRange(instructions)(0)(start)(end))
-
-let recursive ownerLoadTargets (indexed: List((Int, IrInstruction))) (slot: Int) (acc: List(Int)) =
-    match indexed with
-        | [] -> acc
-        | (_index, IrInstruction { instruction = LoadLocal(target, candidate) }) :: rest ->
-            if candidate == slot
-            then
-                acc
-                |> sortedSetInsert(target)
-                |> ownerLoadTargets(rest)(slot)
-            else ownerLoadTargets(rest)(slot)(acc)
-        | _ :: rest -> ownerLoadTargets(rest)(slot)(acc)
-
-let aliasTempsGrew (before: AliasState) (after: AliasState) = length(after.aliasTemps) > length(before.aliasTemps) || length(after.aliasStores) > length(before.aliasStores)
-
-// The span of the block holding instruction `index`.
-let recursive blockSpanContaining (blocks: List(IrCfgBlock)) (index: Int) =
-    match blocks with
-        | [] -> (0, 0)
-        | IrCfgBlock { blockStart = start, blockEnd = end } :: rest ->
-            if index >= start && index < end
-            then (start, end)
-            else blockSpanContaining(rest)(index)
-
-let recursive containsStore (store: AliasStore) (stores: List(AliasStore)) =
-    match stores with
-        | [] -> false
-        | head :: rest -> head == store || containsStore(store)(rest)
+        sets with aliasStoreIndices = Ashes.Collection.Map.setInt(index)(true)(sets.aliasStoreIndices), aliasStoreCount = sets.aliasStoreCount + 1, aliasSlotStores = Ashes.Collection.Map.setInt(slot)(sets.aliasSlotStores
+        |> Ashes.Collection.Map.getInt(slot)
+        |> slotStoresWith(index)(start)(end))(sets.aliasSlotStores)
 
 // A load reads an alias out of its slot only past a store of one: a store later in the load's
 // own block is a different value (a loop parameter's successor stored after the old value was
 // read for its release walk), while a store in any other block may reach the load.
-let recursive loadSeesAliasStore (stores: List(AliasStore)) (slot: Int) (loadIndex: Int) (span: (Int, Int)) =
-    match stores with
-        | [] -> false
-        | AliasStore { storeSlot = candidate, storeIndex = storeIndex, storeBlockStart = start, storeBlockEnd = end } :: rest ->
-            match span with
-                | (loadStart, loadEnd) ->
-                    if candidate == slot && (start != loadStart || end != loadEnd || storeIndex < loadIndex)
-                    then true
-                    else loadSeesAliasStore(rest)(slot)(loadIndex)(span)
+let loadSeesStoredAlias (slot: Int) (loadIndex: Int) (start: Int) (end: Int) (sets: AliasSets) =
+    match Ashes.Collection.Map.getInt(slot)(sets.aliasSlotStores) with
+        | None -> false
+        | Some(SlotAliasStores { storesInSeveralBlocks = several, storesBlockStart = storeStart, storesBlockEnd = storeEnd, storesFirstIndex = first }) -> several || storeStart != start || storeEnd != end || first < loadIndex
 
-// One propagation step over a single instruction. An arena cell that embeds an alias without a
-// reference of its own (a list literal's cons cell, a tuple, a closure environment, or a
-// SetAdtField of an alias into an arena- or stack-allocated constructor cell) is an alias: every
-// later use of the cell reads through to the owner. So is a closure made over such an
-// environment, and the result of a call that receives an alias as its argument, closure, or
-// environment: a curried stage's returned closure captured it, and a list-building loop conses a
-// matched head into the list it returns, which the copy-out past the call window reads.
-// A view names the owner's own bytes instead of copying them, so it holds the owner as surely as
-// a borrow does: stage 0's view cases in `PropagateAlias`.
-let viewAliasOf (target: Int) (source: Int) (state: AliasState) =
-    if sortedSetContains(source)(state.aliasTemps)
-    then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps), viewAliasTemps = sortedSetInsert(target)(state.viewAliasTemps)
-    else state
-
-// One level deeper than a view: the head and tail read back out of the tuple the split allocated.
-let viewPieceOf (target: Int) (source: Int) (state: AliasState) =
-    if sortedSetContains(source)(state.viewAliasTemps)
-    then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps), viewAliasTemps = sortedSetInsert(target)(state.viewAliasTemps)
-    else state
-
-let propagateAlias (blocks: List(IrCfgBlock)) (state: AliasState) (index: Int) (arenaAdtCells: List(Int)) (instruction: IrInstruction) =
+// One propagation step over a single instruction of the block spanning `[start, end)`; the cases
+// are `propagateAlias`'s.
+let propagateAliasInto (sets: AliasSets) (index: Int) (start: Int) (end: Int) (arenaAdtCells: MapTree(Int, Bool)) (instruction: IrInstruction) =
     match instruction with
         | IrInstruction { instruction = Borrow(target, source) } ->
-            if sortedSetContains(source)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
+            if inTempSet(source)(sets.aliasSet)
+            then withAliasTemp(target)(sets)
+            else sets
         | IrInstruction { instruction = StoreLocal(slot, source) } ->
-            if sortedSetContains(source)(state.aliasTemps)
-            then
-                match blockSpanContaining(blocks)(index) with
-                    | (start, end) ->
-                        ((given (store) ->
-                            if containsStore(store)(state.aliasStores)
-                            then state
-                            else state with aliasStores = store :: state.aliasStores))(AliasStore(storeSlot = slot, storeIndex = index, storeBlockStart = start, storeBlockEnd = end))
-            else state
+            if inTempSet(source)(sets.aliasSet)
+            then withAliasStore(slot)(index)(start)(end)(sets)
+            else sets
         | IrInstruction { instruction = LoadLocal(target, slot) } ->
-            if index
-            |> blockSpanContaining(blocks)
-            |> loadSeesAliasStore(state.aliasStores)(slot)(index)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
+            if loadSeesStoredAlias(slot)(index)(start)(end)(sets)
+            then withAliasTemp(target)(sets)
+            else sets
         | IrInstruction { instruction = StoreMemOffset(basePtr, _offset, source) } ->
-            if sortedSetContains(source)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(basePtr)(state.aliasTemps)
-            else state
+            if inTempSet(source)(sets.aliasSet)
+            then withAliasTemp(basePtr)(sets)
+            else sets
         | IrInstruction { instruction = SetAdtField(ptr, _fieldIndex, source, _tagless) } ->
-            if sortedSetContains(source)(state.aliasTemps) && sortedSetContains(ptr)(arenaAdtCells)
-            then state with aliasTemps = sortedSetInsert(ptr)(state.aliasTemps)
-            else state
+            if inTempSet(source)(sets.aliasSet) && inTempSet(ptr)(arenaAdtCells)
+            then withAliasTemp(ptr)(sets)
+            else sets
         | IrInstruction { instruction = MakeClosure(target, _label, environmentPtr, _size, _managed, _returnsManaged, _acceptsManaged, _returnsOwned) } ->
-            if sortedSetContains(environmentPtr)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
+            if inTempSet(environmentPtr)(sets.aliasSet)
+            then withAliasTemp(target)(sets)
+            else sets
         | IrInstruction { instruction = MakeClosureStack(target, _label, environmentPtr, _size, _returnsManaged, _acceptsManaged, _returnsOwned) } ->
-            if sortedSetContains(environmentPtr)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
+            if inTempSet(environmentPtr)(sets.aliasSet)
+            then withAliasTemp(target)(sets)
+            else sets
         | IrInstruction { instruction = CallClosure(target, closureTemp, argument, _flag) } ->
-            if sortedSetContains(argument)(state.aliasTemps) || sortedSetContains(closureTemp)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
+            if inTempSet(argument)(sets.aliasSet) || inTempSet(closureTemp)(sets.aliasSet)
+            then withAliasTemp(target)(sets)
+            else sets
         | IrInstruction { instruction = CallKnown(target, _label, environmentTemp, argument, _flag, _borrowed) } ->
-            if sortedSetContains(argument)(state.aliasTemps) || sortedSetContains(environmentTemp)(state.aliasTemps)
-            then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
-            else state
-        | IrInstruction { instruction = TextUncons(target, textTemp, false) } -> viewAliasOf(target)(textTemp)(state)
-        | IrInstruction { instruction = TextUnconsText(target, textTemp, false) } -> viewAliasOf(target)(textTemp)(state)
-        | IrInstruction { instruction = BytesSubView(target, bytesTemp, _start, _length) } -> viewAliasOf(target)(bytesTemp)(state)
-        | IrInstruction { instruction = GetAdtField(target, ptr, _fieldIndex, _tagless) } -> viewPieceOf(target)(ptr)(state)
-        | IrInstruction { instruction = LoadMemOffset(target, basePtr, _offset) } -> viewPieceOf(target)(basePtr)(state)
-        | _ -> state
+            if inTempSet(argument)(sets.aliasSet) || inTempSet(environmentTemp)(sets.aliasSet)
+            then withAliasTemp(target)(sets)
+            else sets
+        | IrInstruction { instruction = TextUncons(target, textTemp, false) } ->
+            if inTempSet(textTemp)(sets.aliasSet)
+            then withViewAliasTemp(target)(sets)
+            else sets
+        | IrInstruction { instruction = TextUnconsText(target, textTemp, false) } ->
+            if inTempSet(textTemp)(sets.aliasSet)
+            then withViewAliasTemp(target)(sets)
+            else sets
+        | IrInstruction { instruction = BytesSubView(target, bytesTemp, _start, _length) } ->
+            if inTempSet(bytesTemp)(sets.aliasSet)
+            then withViewAliasTemp(target)(sets)
+            else sets
+        | IrInstruction { instruction = GetAdtField(target, ptr, _fieldIndex, _tagless) } ->
+            if inTempSet(ptr)(sets.viewAliasSet)
+            then withViewAliasTemp(target)(sets)
+            else sets
+        | IrInstruction { instruction = LoadMemOffset(target, basePtr, _offset) } ->
+            if inTempSet(basePtr)(sets.viewAliasSet)
+            then withViewAliasTemp(target)(sets)
+            else sets
+        | _ -> sets
 
-let recursive propagateAliases (blocks: List(IrCfgBlock)) (indexed: List((Int, IrInstruction))) (arenaAdtCells: List(Int)) (state: AliasState) =
+// One pass over the region's instructions, which run block after block in the order of `spans`
+// (block index, start, end): the span of the block an instruction sits in is the one the walk
+// stands on.
+let recursive propagateAliasesAlong (spans: List((Int, Int, Int))) (indexed: List((Int, IrInstruction, List(Int)))) (arenaAdtCells: MapTree(Int, Bool)) (sets: AliasSets) =
     match indexed with
-        | [] -> state
-        | (index, instruction) :: rest ->
-            instruction
-            |> propagateAlias(blocks)(state)(index)(arenaAdtCells)
-            |> propagateAliases(blocks)(rest)(arenaAdtCells)
+        | [] -> sets
+        | (index, instruction, _used) :: rest ->
+            match spans with
+                | [] ->
+                    instruction
+                    |> propagateAliasInto(sets)(index)(0)(0)(arenaAdtCells)
+                    |> propagateAliasesAlong([])(rest)(arenaAdtCells)
+                | (_block, start, end) :: restSpans ->
+                    if index >= end
+                    then propagateAliasesAlong(restSpans)(indexed)(arenaAdtCells)(sets)
+                    else
+                        instruction
+                        |> propagateAliasInto(sets)(index)(start)(end)(arenaAdtCells)
+                        |> propagateAliasesAlong(spans)(rest)(arenaAdtCells)
 
-let recursive aliasFixpoint (blocks: List(IrCfgBlock)) (indexed: List((Int, IrInstruction))) (arenaAdtCells: List(Int)) (state: AliasState) =
-    state
-    |> propagateAliases(blocks)(indexed)(arenaAdtCells)
-    |> (given (next) ->
-        if aliasTempsGrew(state)(next)
-        then aliasFixpoint(blocks)(indexed)(arenaAdtCells)(next)
+let recursive aliasSetFixpoint (spans: List((Int, Int, Int))) (indexed: List((Int, IrInstruction, List(Int)))) (arenaAdtCells: MapTree(Int, Bool)) (sets: AliasSets) =
+    (let next = propagateAliasesAlong(spans)(indexed)(arenaAdtCells)(sets)
+    in
+        if next.aliasSetSize > sets.aliasSetSize || next.aliasStoreCount > sets.aliasStoreCount
+        then aliasSetFixpoint(spans)(indexed)(arenaAdtCells)(next)
         else next)
 
-// Every temp aliasing the owner within the region, to a fixpoint.
-let collectOwnerAliases (blocks: List(IrCfgBlock)) (indexed: List((Int, IrInstruction))) (slot: Int) (arenaAdtCells: List(Int)) =
-    AliasState(aliasTemps = ownerLoadTargets(indexed)(slot)([]), viewAliasTemps = [], aliasStores = [])
-    |> aliasFixpoint(blocks)(indexed)(arenaAdtCells)
-    |> (given (state) -> state.aliasTemps)
+let recursive ownerLoadsInto (indexed: List((Int, IrInstruction, List(Int)))) (slot: Int) (sets: AliasSets) =
+    match indexed with
+        | [] -> sets
+        | (_index, IrInstruction { instruction = LoadLocal(target, candidate) }, _used) :: rest ->
+            if candidate == slot
+            then
+                sets
+                |> withAliasTemp(target)
+                |> ownerLoadsInto(rest)(slot)
+            else ownerLoadsInto(rest)(slot)(sets)
+        | _ :: rest -> ownerLoadsInto(rest)(slot)(sets)
 
-let recursive anyTempIn (temps: List(Int)) (aliases: List(Int)) =
+// Every temp aliasing the owner within the region, to a fixpoint.
+let collectOwnerAliasSet (spans: List((Int, Int, Int))) (indexed: List((Int, IrInstruction, List(Int)))) (slot: Int) (arenaAdtCells: MapTree(Int, Bool)) =
+    (let settled =
+        AliasSets(aliasSet = Ashes.Collection.Map.empty, aliasSetSize = 0, viewAliasSet = Ashes.Collection.Map.empty, aliasStoreIndices = Ashes.Collection.Map.empty, aliasStoreCount = 0, aliasSlotStores = Ashes.Collection.Map.empty)
+        |> ownerLoadsInto(indexed)(slot)
+        |> aliasSetFixpoint(spans)(indexed)(arenaAdtCells)
+    in settled.aliasSet)
+
+// The region's blocks with their spans, ascending, in one walk of the blocks.
+let recursive regionSpansFrom (blocks: List(IrCfgBlock)) (index: Int) (region: List(Int)) =
+    match region with
+        | [] -> []
+        | blockIndex :: restRegion ->
+            match blocks with
+                | [] -> (blockIndex, 0, 0) :: regionSpansFrom([])(index)(restRegion)
+                | IrCfgBlock { blockStart = start, blockEnd = end } :: restBlocks ->
+                    if index == blockIndex
+                    then (blockIndex, start, end) :: regionSpansFrom(restBlocks)(index + 1)(restRegion)
+                    else regionSpansFrom(restBlocks)(index + 1)(region)
+
+// The instructions of the region's blocks with their indices and their used temps, in one walk of
+// the instructions beside the function's table of used temps.
+let recursive regionInstructionsAlong (instructions: List(IrInstruction)) (uses: List(List(Int))) (index: Int) (spans: List((Int, Int, Int))) =
+    match spans with
+        | [] -> []
+        | (_block, start, end) :: restSpans ->
+            if index >= end
+            then regionInstructionsAlong(instructions)(uses)(index)(restSpans)
+            else
+                match (instructions, uses) with
+                    | (head :: rest, used :: restUses) ->
+                        if index >= start
+                        then (index, head, used) :: regionInstructionsAlong(rest)(restUses)(index + 1)(spans)
+                        else regionInstructionsAlong(rest)(restUses)(index + 1)(spans)
+                    | _ -> []
+
+let recursive anyTempInSet (temps: List(Int)) (set: MapTree(Int, Bool)) =
     match temps with
         | [] -> false
-        | temp :: rest ->
-            if sortedSetContains(temp)(aliases)
-            then true
-            else anyTempIn(rest)(aliases)
+        | temp :: rest -> inTempSet(temp)(set) || anyTempInSet(rest)(set)
 
-let recursive ownerUses (indexed: List((Int, IrInstruction))) (slot: Int) (aliases: List(Int)) =
-    match indexed with
+// Each region block's owner loads and uses, in one walk of the region's instructions along the
+// spans: the indices gather newest first and are turned when the walk leaves the block.
+let recursive blockFactsAlong (indexed: List((Int, IrInstruction, List(Int)))) (spans: List((Int, Int, Int))) (slot: Int) (aliases: MapTree(Int, Bool)) (loads: List(Int)) (uses: List(Int)) =
+    match spans with
         | [] -> []
-        | (index, IrInstruction { instruction = kind }) :: rest ->
-            ((given (isUse) ->
-                if isUse
-                then index :: ownerUses(rest)(slot)(aliases)
-                else ownerUses(rest)(slot)(aliases)))(match kind with
-                | LoadLocal(_target, candidate) -> candidate == slot
-                | _ ->
-                    anyTempIn(getUsedTemps(kind))(aliases))
+        | (blockIndex, _start, end) :: restSpans ->
+            match indexed with
+                | [] -> BlockFacts(factsBlock = blockIndex, factsLoads = reverse(loads), factsUses = reverse(uses)) :: blockFactsAlong([])(restSpans)(slot)(aliases)([])([])
+                | (index, IrInstruction { instruction = kind }, used) :: rest ->
+                    if index >= end
+                    then BlockFacts(factsBlock = blockIndex, factsLoads = reverse(loads), factsUses = reverse(uses)) :: blockFactsAlong(indexed)(restSpans)(slot)(aliases)([])([])
+                    else
+                        match kind with
+                            | LoadLocal(_target, candidate) ->
+                                if candidate == slot
+                                then blockFactsAlong(rest)(spans)(slot)(aliases)(index :: loads)(index :: uses)
+                                else blockFactsAlong(rest)(spans)(slot)(aliases)(loads)(uses)
+                            | _ ->
+                                if anyTempInSet(used)(aliases)
+                                then blockFactsAlong(rest)(spans)(slot)(aliases)(loads)(index :: uses)
+                                else blockFactsAlong(rest)(spans)(slot)(aliases)(loads)(uses)
 
-let recursive ownerLoads (indexed: List((Int, IrInstruction))) (slot: Int) =
-    match indexed with
+// The used temps of every instruction, in the instructions' order: worked out once per function
+// and kept beside the instructions through every owner's edits.
+let recursive usedTempsOf (instructions: List(IrInstruction)) =
+    match instructions with
         | [] -> []
-        | (index, IrInstruction { instruction = LoadLocal(_target, candidate) }) :: rest ->
-            if candidate == slot
-            then index :: ownerLoads(rest)(slot)
-            else ownerLoads(rest)(slot)
-        | _ :: rest -> ownerLoads(rest)(slot)
+        | IrInstruction { instruction = kind } :: rest -> getUsedTemps(kind) :: usedTempsOf(rest)
 
-let recursive blockFactsFor (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) (slot: Int) (aliases: List(Int)) =
-    match region with
+let recursive usedTempsInsertedAt (index: Int) (insertions: List((Int, IrInstruction))) =
+    match insertions with
         | [] -> []
-        | blockIndex :: rest ->
-            match blockSpan(blocks)(blockIndex) with
-                | (start, end) ->
-                    end
-                    |> indexedRange(instructions)(0)(start)
-                    |> (given (indexed) -> BlockFacts(factsBlock = blockIndex, factsLoads = ownerLoads(indexed)(slot), factsUses = ownerUses(indexed)(slot)(aliases)))
-                    |> (given (facts) -> facts :: blockFactsFor(instructions)(blocks)(rest)(slot)(aliases))
+        | (candidate, IrInstruction { instruction = kind }) :: rest ->
+            if candidate == index
+            then getUsedTemps(kind) :: usedTempsInsertedAt(index)(rest)
+            else usedTempsInsertedAt(index)(rest)
 
-let recursive factsOf (blockIndex: Int) (facts: List(BlockFacts)) =
-    match facts with
-        | [] -> BlockFacts(factsBlock = blockIndex, factsLoads = [], factsUses = [])
-        | (BlockFacts { factsBlock = candidate } as entry) :: rest ->
-            if candidate == blockIndex
-            then entry
-            else factsOf(blockIndex)(rest)
+// The table of used temps after the insertions `applyInsertions` makes at the same indices.
+let recursive applyUseInsertions (indices: List(Int)) (insertions: List((Int, IrInstruction))) (uses: List(List(Int))) =
+    match indices with
+        | [] -> uses
+        | index :: rest ->
+            uses
+            |> insertAllAt(index)(usedTempsInsertedAt(index)(insertions))
+            |> applyUseInsertions(rest)(insertions)
 
-let recursive livenessOf (blockIndex: Int) (liveness: List(BlockLiveness)) =
-    match liveness with
-        | [] -> BlockLiveness(livenessBlock = blockIndex, livenessIn = false, livenessOut = false)
-        | (BlockLiveness { livenessBlock = candidate } as entry) :: rest ->
-            if candidate == blockIndex
-            then entry
-            else livenessOf(blockIndex)(rest)
-
-let hasUse (blockIndex: Int) (facts: List(BlockFacts)) =
-    match factsOf(blockIndex)(facts) with
-        | BlockFacts { factsUses = uses } -> length(uses) > 0
-
-let livenessInOf (blockIndex: Int) (liveness: List(BlockLiveness)) =
-    match livenessOf(blockIndex)(liveness) with
-        | BlockLiveness { livenessIn = liveIn } -> liveIn
-
-let livenessOutOf (blockIndex: Int) (liveness: List(BlockLiveness)) =
-    match livenessOf(blockIndex)(liveness) with
-        | BlockLiveness { livenessOut = liveOut } -> liveOut
-
-// A back edge into the block that defines the owner (a loop whose body binds it before any branch,
-// an irrefutable tuple pattern at the loop head) re-runs the definition, which binds the next
-// iteration's own reference: the owner reaching that edge is dead there, not live around the loop.
-let recursive anyLiveSuccessor (definitionBlock: Int) (successors: List(Int)) (region: List(Int)) (liveness: List(BlockLiveness)) =
-    match successors with
-        | [] -> false
-        | successor :: rest ->
-            if successor != definitionBlock && sortedSetContains(successor)(region) && livenessInOf(successor)(liveness)
-            then true
-            else anyLiveSuccessor(definitionBlock)(rest)(region)(liveness)
-
-let recursive stepLiveness (definitionBlock: Int) (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) =
-    match remaining with
+// The sources of the copy-outs that release an arena cell's children (a tail-call back edge's
+// copy of a by-name arena successor); placement neither adds nor removes one.
+let recursive normalizingCopySources (instructions: List(IrInstruction)) =
+    match instructions with
         | [] -> []
-        | blockIndex :: rest ->
-            match listAt(blocks)(blockIndex) with
-                | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                    liveness
-                    |> anyLiveSuccessor(definitionBlock)(successors)(region)
-                    |> (given (liveOut) -> BlockLiveness(livenessBlock = blockIndex, livenessIn = hasUse(blockIndex)(facts) || liveOut, livenessOut = liveOut))
-                    |> (given (entry) -> entry :: stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)(rest))
-                | None -> stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)(rest)
+        | IrInstruction { instruction = CopyOutArena(_dest, src, _size, true, RcNormalization, _semanticType) } :: rest -> src :: normalizingCopySources(rest)
+        | _ :: rest -> normalizingCopySources(rest)
 
-let recursive fixLiveness (definitionBlock: Int) (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) =
-    region
-    |> stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)
-    |> (given (next) ->
-        if next == liveness
-        then next
-        else fixLiveness(definitionBlock)(blocks)(region)(facts)(next))
+// What one walk of the instructions finds for an owner slot: how many anchors name it, the first
+// anchor with its index and whether the owner load right before it feeds it, the slot's first
+// store, and how many instructions there are.
+type AnchorScan =
+    | scanAnchorCount: Int
+    | scanAnchorIndex: Int
+    | scanLoadFeedsAnchor: Bool
+    | scanAnchor: Maybe(OwnerAnchor)
+    | scanDefinitionIndex: Int
+    | scanDefinitionTemp: Int
+    | scanInstructionCount: Int
 
-let recursive initialLiveness (region: List(Int)) =
-    match region with
+let recursive anchorScanFrom (instructions: List(IrInstruction)) (slot: Int) (index: Int) (afterOwnerLoad: Bool) (loadTarget: Int) (anchorCount: Int) (anchorIndex: Int) (loadFeeds: Bool) (anchor: Maybe(OwnerAnchor)) (definitionIndex: Int) (definitionTemp: Int) =
+    match instructions with
+        | [] -> AnchorScan(scanAnchorCount = anchorCount, scanAnchorIndex = anchorIndex, scanLoadFeedsAnchor = loadFeeds, scanAnchor = anchor, scanDefinitionIndex = definitionIndex, scanDefinitionTemp = definitionTemp, scanInstructionCount = index)
+        | IrInstruction { instruction = kind, location = location } :: rest ->
+            match kind with
+                | RcDrop(source, typeName, ownerSlot, runtimeManaged, mayBeEmpty, dropper) ->
+                    if ownerSlot == slot
+                    then
+                        if anchorCount == 0
+                        then anchorScanFrom(rest)(slot)(index + 1)(false)(0)(1)(index)(afterOwnerLoad && loadTarget == source)(Some(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location)))(definitionIndex)(definitionTemp)
+                        else anchorScanFrom(rest)(slot)(index + 1)(false)(0)(anchorCount + 1)(anchorIndex)(loadFeeds)(anchor)(definitionIndex)(definitionTemp)
+                    else anchorScanFrom(rest)(slot)(index + 1)(false)(0)(anchorCount)(anchorIndex)(loadFeeds)(anchor)(definitionIndex)(definitionTemp)
+                | LoadLocal(target, loadSlot) -> anchorScanFrom(rest)(slot)(index + 1)(loadSlot == slot)(target)(anchorCount)(anchorIndex)(loadFeeds)(anchor)(definitionIndex)(definitionTemp)
+                | StoreLocal(candidate, source) ->
+                    if candidate == slot && definitionIndex < 0
+                    then anchorScanFrom(rest)(slot)(index + 1)(false)(0)(anchorCount)(anchorIndex)(loadFeeds)(anchor)(index)(source)
+                    else anchorScanFrom(rest)(slot)(index + 1)(false)(0)(anchorCount)(anchorIndex)(loadFeeds)(anchor)(definitionIndex)(definitionTemp)
+                | _ -> anchorScanFrom(rest)(slot)(index + 1)(false)(0)(anchorCount)(anchorIndex)(loadFeeds)(anchor)(definitionIndex)(definitionTemp)
+
+let anchorScanOf (instructions: List(IrInstruction)) (slot: Int) = anchorScanFrom(instructions)(slot)(0)(false)(0)(0)(-1)(false)(None)(-1)(0)
+
+// Takes `count` instructions out at `first`, in one walk.
+let recursive removeSpan items first count =
+    match items with
         | [] -> []
-        | blockIndex :: rest -> BlockLiveness(livenessBlock = blockIndex, livenessIn = false, livenessOut = false) :: initialLiveness(rest)
+        | head :: rest ->
+            if first == 0
+            then
+                if count <= 1
+                then rest
+                else removeSpan(rest)(0)(count - 1)
+            else head :: removeSpan(rest)(first - 1)(count)
 
-let isLiveBranch (predecessor: Int) (blocks: List(IrCfgBlock)) (region: List(Int)) (liveness: List(BlockLiveness)) =
-    match listAt(blocks)(predecessor) with
-        | Some(IrCfgBlock { blockSuccessors = successors }) -> sortedSetContains(predecessor)(region) && length(successors) > 1 && livenessOutOf(predecessor)(liveness)
-        | None -> false
-
-let recursive hasLiveBranchPredecessor (predecessors: List(Int)) (blocks: List(IrCfgBlock)) (region: List(Int)) (liveness: List(BlockLiveness)) =
-    match predecessors with
-        | [] -> false
-        | predecessor :: rest -> isLiveBranch(predecessor)(blocks)(region)(liveness) || hasLiveBranchPredecessor(rest)(blocks)(region)(liveness)
-
-let recursive allPredecessorsLiveOut (predecessors: List(Int)) (region: List(Int)) (liveness: List(BlockLiveness)) =
-    match predecessors with
-        | [] -> true
-        | predecessor :: rest -> sortedSetContains(predecessor)(region) && livenessOutOf(predecessor)(liveness) && allPredecessorsLiveOut(rest)(region)(liveness)
+let recursive arenaAdtCellSetInto (instructions: List(IrInstruction)) (cells: MapTree(Int, Bool)) =
+    match instructions with
+        | [] -> cells
+        | head :: rest ->
+            let target = arenaAdtCellTarget(head)
+            in
+                if target >= 0
+                then
+                    cells
+                    |> Ashes.Collection.Map.setInt(target)(true)
+                    |> arenaAdtCellSetInto(rest)
+                else arenaAdtCellSetInto(rest)(cells)
 
 let retargetSwitchCase (joinLabel: Str) (edgeLabel: Str) (switchCase: IrSwitchCase) =
     if switchCase.label == joinLabel
@@ -540,16 +534,6 @@ let splitLiveEdge (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock))
                 | (_, _) -> ([(joinStart, drop)], [])
         | _ -> ([], [])
 
-let recursive splitLiveEdges (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) (liveness: List(BlockLiveness)) (predecessors: List(Int)) (joinIndex: Int) (drop: IrInstruction) (label: Str) (slot: Int) =
-    match predecessors with
-        | [] -> ([], [])
-        | predecessor :: rest ->
-            match (splitLiveEdges(instructions)(blocks)(region)(liveness)(rest)(joinIndex)(drop)(label)(slot), isLiveBranch(predecessor)(blocks)(region)(liveness)) with
-                | ((restInsertions, restRetargets), true) ->
-                    match splitLiveEdge(instructions)(blocks)(predecessor)(joinIndex)(drop)(label)(slot) with
-                        | (edgeInsertions, edgeRetargets) -> (append(edgeInsertions)(restInsertions), append(edgeRetargets)(restRetargets))
-                | (restSplit, false) -> restSplit
-
 let isArenaCopyOut (instruction: IrInstruction) =
     match instruction with
         | IrInstruction { instruction = CopyOutArena(_dest, _src, _size, _managed, _purpose, _semanticType) } -> true
@@ -586,73 +570,6 @@ let placedDrop (anchor: OwnerAnchor) (slot: Int) (region: OwnerRegion) =
         instruction = RcDrop(region.regionDefinitionTemp)(anchor.anchorTypeName)(slot)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty)(anchor.anchorStructuralDropper),
         location = anchor.anchorLocation
     )
-
-// The compensating dups one owner load needs after it within its block: a record-field store of
-// an alias into a runtime-managed cell (an arena- or stack-allocated cell borrows instead, see
-// `arenaAdtCellTarget`), and a closure call handing an alias on while the owner stays live
-// afterwards. Either dup skips an empty list (a null reference) as the owner's own does.
-let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: List(Int)) (keepsLiveAfter: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
-    match indexed with
-        | [] -> (insertions, tempCount)
-        | (index, IrInstruction { instruction = kind, location = location }) :: rest ->
-            match kind with
-                | Borrow(target, source) ->
-                    if sortedSetContains(source)(aliases)
-                    then
-                        callDupsAfterLoad(rest)(sortedSetInsert(target)(aliases))(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-                | SetAdtField(ptr, _fieldIndex, source, _tagless) ->
-                    if sortedSetContains(source)(aliases) && sortedSetContains(ptr)(borrowingArenaCells) == false
-                    then
-                        callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount + 1)(append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(source)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]))(borrowingArenaCells)(borrowedCalls)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-                | CallClosure(target, _closure, argument, _flag) ->
-                    if sortedSetContains(argument)(aliases) && keepsLiveAfter && sortedSetContains(target)(borrowedCalls) == false
-                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]), tempCount + 1)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-                | _ -> callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-
-let recursive callDups (instructions: List(IrInstruction)) (blockEnd: Int) (loads: List(Int)) (liveOut: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
-    match loads with
-        | [] -> (insertions, tempCount)
-        | loadIndex :: rest ->
-            match listAt(instructions)(loadIndex) with
-                | Some(IrInstruction { instruction = LoadLocal(sourceTemp, _slot) }) ->
-                    match callDupsAfterLoad(indexedRange(instructions)(0)(loadIndex + 1)(blockEnd))([sourceTemp])(length(rest) > 0 || liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls) with
-                        | (nextInsertions, nextTempCount) -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(nextTempCount)(nextInsertions)(borrowingArenaCells)(borrowedCalls)
-                | _ -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
-
-let recursive collectInsertions (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) (definitionBlock: Int) (owner: OwnerRegion) (slot: Int) (anchor: OwnerAnchor) (label: Str) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) (tempCount: Int) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
-    match remaining with
-        | [] -> (insertions, retargets, tempCount)
-        | blockIndex :: rest ->
-            match (listAt(blocks)(blockIndex), factsOf(blockIndex)(facts), livenessOf(blockIndex)(liveness)) with
-                | (Some(IrCfgBlock { blockStart = start, blockEnd = end, blockPredecessors = predecessors }), BlockFacts { factsLoads = loads, factsUses = uses }, BlockLiveness { livenessIn = liveIn, livenessOut = liveOut }) ->
-                    ((given (dropsAndRetargets) ->
-                        match dropsAndRetargets with
-                            | (drops, edgeRetargets) ->
-                                match callDups(instructions)(end)(loads)(liveOut)(anchor)(tempCount)(append(insertions)(drops))(borrowingArenaCells)(borrowedCalls) with
-                                    | (nextInsertions, nextTempCount) ->
-                                        collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(nextTempCount)(nextInsertions)(append(retargets)(edgeRetargets))(borrowingArenaCells)(borrowedCalls)))(if length(uses) > 0 && liveOut == false
-                    then
-                        ([(uses
-                        |> lastOf
-                        |> lifetimeInsertionIndex(instructions), placedDrop(anchor)(slot)(owner))], [])
-                    else
-                        if liveIn == false && blockIndex == definitionBlock
-                        then ([(owner.regionDefinitionIndex + 1, placedDrop(anchor)(slot)(owner))], [])
-                        else
-                            if liveIn == false && hasLiveBranchPredecessor(predecessors)(blocks)(region)(liveness)
-                            then
-                                if allPredecessorsLiveOut(predecessors)(region)(liveness)
-                                then
-                                    match listAt(instructions)(start) with
-                                        | Some(IrInstruction { instruction = Label(_name) }) -> ([(start + 1, placedDrop(anchor)(slot)(owner))], [])
-                                        | _ -> ([(start, placedDrop(anchor)(slot)(owner))], [])
-                                else
-                                    splitLiveEdges(instructions)(blocks)(region)(liveness)(predecessors)(blockIndex)(placedDrop(anchor)(slot)(owner))(label)(slot)
-                            else ([], []))
-                | _ -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(tempCount)(insertions)(retargets)(borrowingArenaCells)(borrowedCalls)
 
 let recursive distinctIndicesDescending (insertions: List((Int, IrInstruction))) (acc: List(Int)) =
     match insertions with
@@ -704,102 +621,387 @@ let recursive applyRetargets (retargets: List((Int, IrInstruction))) (instructio
             |> replaceAt(instructions)(index)
             |> applyRetargets(rest)
 
-// An arena cell the owner is stored into borrows the owner's reference, unless an alias carries
-// the cell to a tail-call back edge: the back edge's copy of a by-name arena successor releases
-// the dying successor's children as owned references, so such a store retains one for it exactly
-// as a runtime-managed cell's store does (stage 0's `arenaCellsReleaseChildren`).
-let recursive arenaCellCopyOutReleasesOwner (instructions: List(IrInstruction)) (ownerAliases: List(Int)) =
-    match instructions with
+// Whether taking `removed` instructions out at `first` leaves every block in place: they sit in
+// one block that keeps an instruction of its own. They are an anchor and its load, neither a label
+// nor a terminator, so that block still opens and ends as it did.
+let recursive removalKeepsBlocks (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) =
+    match blocks with
         | [] -> false
-        | IrInstruction { instruction = CopyOutArena(_dest, src, _size, true, RcNormalization, _semanticType) } :: rest ->
-            if sortedSetContains(src)(ownerAliases)
-            then true
-            else arenaCellCopyOutReleasesOwner(rest)(ownerAliases)
-        | _ :: rest -> arenaCellCopyOutReleasesOwner(rest)(ownerAliases)
+        | IrCfgBlock { blockStart = start, blockEnd = end } :: rest ->
+            if first >= end
+            then removalKeepsBlocks(rest)(first)(removed)
+            else first >= start && first + removed <= end && end - start > removed
 
-let borrowingArenaCells (instructions: List(IrInstruction)) (ownerAliases: List(Int)) (arenaAdtCells: List(Int)) =
-    if arenaCellCopyOutReleasesOwner(instructions)(ownerAliases)
-    then []
-    else arenaAdtCells
+// The blocks once `removed` instructions are gone from the block holding `first`.
+let recursive blocksWithout (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) (shift: Int) =
+    match blocks with
+        | [] -> []
+        | block :: rest ->
+            if shift > 0
+            then (block with blockStart = block.blockStart - shift, blockEnd = block.blockEnd - shift) :: blocksWithout(rest)(first)(removed)(shift)
+            else
+                if first >= block.blockEnd
+                then block :: blocksWithout(rest)(first)(removed)(0)
+                else (block with blockEnd = block.blockEnd - removed) :: blocksWithout(rest)(first)(removed)(removed)
 
-let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
-    arenaAdtCells
-    |> collectOwnerAliases(blocks)(regionInstructions(instructions)(blocks)(region))(slot)
-    |> (given (ownerAliases) ->
-        ownerAliases
-        |> blockFactsFor(instructions)(blocks)(region)(slot)
-        |> (given (facts) ->
-            match region
-            |> initialLiveness
-            |> fixLiveness(definitionBlock)(blocks)(region)(facts)
-            |> (given (liveness) ->
-                arenaAdtCells
-                |> borrowingArenaCells(instructions)(ownerAliases)
-                |> (given (cells) -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(region)(tempCount)([])([])(cells)(borrowedCalls))) with
-                | (insertions, retargets, nextTempCount) ->
-                    PlacedInstructions(placedInstructions = instructions
-                    |> applyRetargets(retargets)
-                    |> applyInsertions(distinctIndicesDescending(insertions)([]))(insertions), placedTempCount = nextTempCount, placedDominators = dominators)))
+// The carried blocks after an anchor's removal, none when a block would be emptied.
+let carriedBlocksWithout (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) =
+    if removalKeepsBlocks(blocks)(first)(removed)
+    then blocksWithout(blocks)(first)(removed)(0)
+    else []
 
-let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
-    []
-    |> reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
-    |> (given (visited) -> sortedBlocks(visited)(length(blocks) - 1)([]))
-    |> (given (region) ->
-        if length(region) == 0
-        then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = dominators)
-        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(region)(arenaAdtCells)(borrowedCalls))
+let recursive insertionsAt (index: Int) (insertions: List((Int, IrInstruction))) (count: Int) =
+    match insertions with
+        | [] -> count
+        | (candidate, _instruction) :: rest ->
+            if candidate == index
+            then insertionsAt(index)(rest)(count + 1)
+            else insertionsAt(index)(rest)(count)
 
-let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
-    instructions
-    |> buildCfgBlocks
-    |> (given (blocks) ->
-        match (findCfgBlock(blocks)(owner.regionDefinitionIndex), owner
-        |> boundaryIndexWithin(length(instructions))
-        |> findCfgBlock(blocks)) with
-            | (definitionBlock, boundaryBlock) ->
-                if definitionBlock < 0 || boundaryBlock < 0
-                then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators)
+let recursive insertionCounts (indices: List(Int)) (insertions: List((Int, IrInstruction))) =
+    match indices with
+        | [] -> []
+        | index :: rest -> (index, insertionsAt(index)(insertions)(0)) :: insertionCounts(rest)(insertions)
+
+let nextOpensWithLabel (kinds: List((Bool, Bool))) =
+    match kinds with
+        | (opensWithLabel, _endsInTerminator) :: _ -> opensWithLabel
+        | [] -> false
+
+// How many of the inserted instructions each block takes, the insertions ascending by index;
+// `[-1]` when one of them would open a block of its own. Drops and dups are neither labels nor
+// terminators, so one inside a block grows it; one at the start of a block that opens after a
+// terminator leads that block; one before a block's opening label trails the block falling
+// through into it. One right after a terminator and before a label, or past the last
+// instruction, is a block no span covers.
+let recursive insertedByBlock (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (inserts: List((Int, Int))) (own: Int) (counts: List(Int)) =
+    match (blocks, kinds) with
+        | (IrCfgBlock { blockStart = start, blockEnd = end } :: restBlocks, (opensWithLabel, endsInTerminator) :: restKinds) ->
+            match inserts with
+                | [] -> insertedByBlock(restBlocks)(restKinds)([])(0)(own :: counts)
+                | (index, added) :: restInserts ->
+                    if index < start || index == start && opensWithLabel
+                    then [-1]
+                    else
+                        if index < end || index == end && endsInTerminator == false && nextOpensWithLabel(restKinds)
+                        then insertedByBlock(blocks)(kinds)(restInserts)(own + added)(counts)
+                        else insertedByBlock(restBlocks)(restKinds)(inserts)(0)(own :: counts)
+        | _ ->
+            match inserts with
+                | [] -> reverse(counts)
+                | _ -> [-1]
+
+let recursive blocksWithInserted (blocks: List(IrCfgBlock)) (counts: List(Int)) (shift: Int) =
+    match (blocks, counts) with
+        | (block :: restBlocks, own :: restCounts) -> (block with blockStart = block.blockStart + shift, blockEnd = block.blockEnd + shift + own) :: blocksWithInserted(restBlocks)(restCounts)(shift + own)
+        | _ -> []
+
+// The blocks of the instructions an owner's edits produce, out of the blocks they were placed
+// against: the same blocks with their spans moved while every edit stays inside a block, and none
+// (the next owner builds them again) once a jump was retargeted or an insertion opens a block.
+let carriedBlocksAfter (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (indicesDescending: List(Int)) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) =
+    match retargets with
+        | [] ->
+            match insertions with
+                | [] -> blocks
+                | _ ->
+                    match insertedByBlock(blocks)(kinds)(insertionCounts(reverse(indicesDescending))(insertions))(0)([]) with
+                        | -1 :: _ -> []
+                        | counts -> blocksWithInserted(blocks)(counts)(0)
+        | _ -> []
+
+let recursive regionBlocksFrom (blocks: List(IrCfgBlock)) (index: Int) (region: List(Int)) =
+    match region with
+        | [] -> []
+        | blockIndex :: restRegion ->
+            match blocks with
+                | [] -> []
+                | block :: restBlocks ->
+                    if index == blockIndex
+                    then block :: regionBlocksFrom(restBlocks)(index + 1)(restRegion)
+                    else regionBlocksFrom(restBlocks)(index + 1)(region)
+
+let recursive blockSetOf (blocks: List(Int)) (set: MapTree(Int, Bool)) =
+    match blocks with
+        | [] -> set
+        | block :: rest ->
+            set
+            |> Ashes.Collection.Map.setInt(block)(true)
+            |> blockSetOf(rest)
+
+// The blocks reachable from `start` that it dominates and that lie before the boundary (an earlier
+// owner's split edge rejoining the region included), as a set.
+let recursive reachableSetBeforeBoundary (instructions: List(IrInstruction)) (label: Str) (blocks: List(IrCfgBlock)) (successors: MapTree(Int, List(Int))) (dominance: DominanceIndex) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: MapTree(Int, Bool)) =
+    match pending with
+        | [] -> reachable
+        | current :: rest ->
+            if current > boundary && isSplitEdgeWithin(instructions)(blocks)(label)(boundary)(current) == false || dominatesWithin(dominance)(start)(current) == false || inBlockSet(current)(reachable)
+            then reachableSetBeforeBoundary(instructions)(label)(blocks)(successors)(dominance)(start)(boundary)(rest)(reachable)
+            else
+                if current == boundary
+                then
+                    reachable
+                    |> Ashes.Collection.Map.setInt(current)(true)
+                    |> reachableSetBeforeBoundary(instructions)(label)(blocks)(successors)(dominance)(start)(boundary)(rest)
                 else
-                    let dominators =
-                        if length(knownDominators) == length(blocks)
-                        then knownDominators
-                        else computeImmediateDominators(blocks)
-                    in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls))
+                    reachable
+                    |> Ashes.Collection.Map.setInt(current)(true)
+                    |> reachableSetBeforeBoundary(instructions)(label)(blocks)(successors)(dominance)(start)(boundary)(append(edgesAt(current)(successors))(rest))
 
-// Removes the lexical anchor (and the owner load feeding it) and places the owner's drop.
-let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
-    match placed with
-        | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators } ->
-            match (listAt(instructions)(anchorIndex), ownerDefinition(instructions)(slot)(0)) with
-                | (Some(IrInstruction { instruction = RcDrop(source, typeName, _slot, runtimeManaged, mayBeEmpty, dropper), location = location }), Some((definitionIndex, definitionTemp))) ->
-                    anchorIndex
-                    |> removeAt(instructions)
-                    |> (given (withoutAnchor) ->
-                        match listAt(withoutAnchor)(anchorIndex - 1) with
-                            | Some(IrInstruction { instruction = LoadLocal(target, loadSlot) }) ->
-                                if anchorIndex > 0 && loadSlot == slot && target == source
-                                then (removeAt(withoutAnchor)(anchorIndex - 1), anchorIndex - 1)
-                                else (withoutAnchor, anchorIndex)
-                            | _ -> (withoutAnchor, anchorIndex))
-                    |> (given (removed) ->
-                        match removed with
-                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators)(arenaAdtCells)(borrowedCalls))
-                | _ -> placed
+// The members of `visited` among the block indices up to `index`, ascending.
+let recursive sortedBlocksIn (visited: MapTree(Int, Bool)) (index: Int) (acc: List(Int)) =
+    if index < 0
+    then acc
+    else
+        if inBlockSet(index)(visited)
+        then sortedBlocksIn(visited)(index - 1)(index :: acc)
+        else sortedBlocksIn(visited)(index - 1)(acc)
 
-let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
+// The blocks with a use of the owner: live on entry, and where the liveness walk starts.
+let recursive usedBlocksInto (facts: List(BlockFacts)) (liveIn: MapTree(Int, Bool)) (worklist: List(Int)) =
+    match facts with
+        | [] -> (liveIn, worklist)
+        | BlockFacts { factsBlock = blockIndex, factsUses = uses } :: rest ->
+            match uses with
+                | [] -> usedBlocksInto(rest)(liveIn)(worklist)
+                | _ ->
+                    if inBlockSet(blockIndex)(liveIn)
+                    then usedBlocksInto(rest)(liveIn)(worklist)
+                    else
+                        usedBlocksInto(rest)(Ashes.Collection.Map.setInt(blockIndex)(true)(liveIn))(blockIndex :: worklist)
+
+// The owner's liveness over the region as the least solution of: live out of a block when live
+// into a successor in the region other than the definition block, live into a block when it has a
+// use or is live out of it. A block newly live on entry makes its region predecessors live on
+// exit, and through that on entry, until nothing is left to pass on. A back edge into the block
+// that defines the owner re-runs the definition, which binds the next iteration's own reference:
+// the owner reaching that edge is dead there, not live around the loop.
+let recursive liveBlocksFrom (definitionBlock: Int) (region: MapTree(Int, Bool)) (predecessors: MapTree(Int, List(Int))) (sources: List(Int)) (worklist: List(Int)) (liveIn: MapTree(Int, Bool)) (liveOut: MapTree(Int, Bool)) =
+    match sources with
+        | source :: rest ->
+            if inBlockSet(source)(region) && inBlockSet(source)(liveOut) == false
+            then
+                if inBlockSet(source)(liveIn)
+                then
+                    liveOut
+                    |> Ashes.Collection.Map.setInt(source)(true)
+                    |> liveBlocksFrom(definitionBlock)(region)(predecessors)(rest)(worklist)(liveIn)
+                else
+                    liveOut
+                    |> Ashes.Collection.Map.setInt(source)(true)
+                    |> liveBlocksFrom(definitionBlock)(region)(predecessors)(rest)(source :: worklist)(Ashes.Collection.Map.setInt(source)(true)(liveIn))
+            else liveBlocksFrom(definitionBlock)(region)(predecessors)(rest)(worklist)(liveIn)(liveOut)
+        | [] ->
+            match worklist with
+                | [] -> (liveIn, liveOut)
+                | block :: more ->
+                    if block == definitionBlock
+                    then liveBlocksFrom(definitionBlock)(region)(predecessors)([])(more)(liveIn)(liveOut)
+                    else
+                        liveBlocksFrom(definitionBlock)(region)(predecessors)(edgesAt(block)(predecessors))(more)(liveIn)(liveOut)
+
+let recursive livenessList (region: List(Int)) (liveIn: MapTree(Int, Bool)) (liveOut: MapTree(Int, Bool)) =
+    match region with
+        | [] -> []
+        | blockIndex :: rest -> BlockLiveness(livenessBlock = blockIndex, livenessIn = inBlockSet(blockIndex)(liveIn), livenessOut = inBlockSet(blockIndex)(liveOut)) :: livenessList(rest)(liveIn)(liveOut)
+
+let isLiveBranchOut (predecessor: Int) (successors: MapTree(Int, List(Int))) (liveOut: MapTree(Int, Bool)) =
+    inBlockSet(predecessor)(liveOut) && length(edgesAt(predecessor)(successors)) > 1
+
+let recursive anyLiveBranchOut (predecessors: List(Int)) (successors: MapTree(Int, List(Int))) (liveOut: MapTree(Int, Bool)) =
+    match predecessors with
+        | [] -> false
+        | predecessor :: rest -> isLiveBranchOut(predecessor)(successors)(liveOut) || anyLiveBranchOut(rest)(successors)(liveOut)
+
+let recursive allLiveOut (predecessors: List(Int)) (liveOut: MapTree(Int, Bool)) =
+    match predecessors with
+        | [] -> true
+        | predecessor :: rest -> inBlockSet(predecessor)(liveOut) && allLiveOut(rest)(liveOut)
+
+let recursive splitLiveEdgesOut (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (successors: MapTree(Int, List(Int))) (liveOut: MapTree(Int, Bool)) (predecessors: List(Int)) (joinIndex: Int) (drop: IrInstruction) (label: Str) (slot: Int) =
+    match predecessors with
+        | [] -> ([], [])
+        | predecessor :: rest ->
+            match (splitLiveEdgesOut(instructions)(blocks)(successors)(liveOut)(rest)(joinIndex)(drop)(label)(slot), isLiveBranchOut(predecessor)(successors)(liveOut)) with
+                | ((restInsertions, restRetargets), true) ->
+                    match splitLiveEdge(instructions)(blocks)(predecessor)(joinIndex)(drop)(label)(slot) with
+                        | (edgeInsertions, edgeRetargets) -> (append(edgeInsertions)(restInsertions), append(edgeRetargets)(restRetargets))
+                | (restSplit, false) -> restSplit
+
+let recursive dupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: List(Int)) (keepsLiveAfter: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    match indexed with
+        | [] -> (insertions, tempCount)
+        | (index, IrInstruction { instruction = kind, location = location }) :: rest ->
+            match kind with
+                | Borrow(target, source) ->
+                    if sortedSetContains(source)(aliases)
+                    then
+                        dupsAfterLoad(rest)(sortedSetInsert(target)(aliases))(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                    else dupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                | SetAdtField(ptr, _fieldIndex, source, _tagless) ->
+                    if sortedSetContains(source)(aliases) && inBlockSet(ptr)(borrowingArenaCells) == false
+                    then
+                        dupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount + 1)(append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(source)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]))(borrowingArenaCells)(borrowedCalls)
+                    else dupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                | CallClosure(target, _closure, argument, _flag) ->
+                    if sortedSetContains(argument)(aliases) && keepsLiveAfter && sortedSetContains(target)(borrowedCalls) == false
+                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]), tempCount + 1)
+                    else dupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                | _ -> dupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+
+let recursive dupsAfterLoads (instructions: List(IrInstruction)) (blockEnd: Int) (loads: List(Int)) (liveOut: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    match loads with
+        | [] -> (insertions, tempCount)
+        | loadIndex :: rest ->
+            match listAt(instructions)(loadIndex) with
+                | Some(IrInstruction { instruction = LoadLocal(sourceTemp, _slot) }) ->
+                    match dupsAfterLoad(indexedRange(instructions)(0)(loadIndex + 1)(blockEnd))([sourceTemp])(length(rest) > 0 || liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls) with
+                        | (nextInsertions, nextTempCount) -> dupsAfterLoads(instructions)(blockEnd)(rest)(liveOut)(anchor)(nextTempCount)(nextInsertions)(borrowingArenaCells)(borrowedCalls)
+                | _ -> dupsAfterLoads(instructions)(blockEnd)(rest)(liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+
+// The region's blocks, their facts and their liveness run side by side, one entry per block.
+let recursive collectInsertionsAlong (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (successors: MapTree(Int, List(Int))) (liveOutSet: MapTree(Int, Bool)) (definitionBlock: Int) (owner: OwnerRegion) (slot: Int) (anchor: OwnerAnchor) (label: Str) (regionBlocks: List(IrCfgBlock)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (tempCount: Int) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) (borrowingArenaCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    match (regionBlocks, facts, liveness) with
+        | (IrCfgBlock { blockStart = start, blockEnd = end, blockPredecessors = predecessors } :: restBlocks, BlockFacts { factsBlock = blockIndex, factsLoads = loads, factsUses = uses } :: restFacts, BlockLiveness { livenessIn = liveIn, livenessOut = liveOut } :: restLiveness) ->
+            ((given (dropsAndRetargets) ->
+                match dropsAndRetargets with
+                    | (drops, edgeRetargets) ->
+                        match dupsAfterLoads(instructions)(end)(loads)(liveOut)(anchor)(tempCount)(append(insertions)(drops))(borrowingArenaCells)(borrowedCalls) with
+                            | (nextInsertions, nextTempCount) ->
+                                collectInsertionsAlong(instructions)(blocks)(successors)(liveOutSet)(definitionBlock)(owner)(slot)(anchor)(label)(restBlocks)(restFacts)(restLiveness)(nextTempCount)(nextInsertions)(append(retargets)(edgeRetargets))(borrowingArenaCells)(borrowedCalls)))(if length(uses) > 0 && liveOut == false
+            then
+                ([(uses
+                |> lastOf
+                |> lifetimeInsertionIndex(instructions), placedDrop(anchor)(slot)(owner))], [])
+            else
+                if liveIn == false && blockIndex == definitionBlock
+                then ([(owner.regionDefinitionIndex + 1, placedDrop(anchor)(slot)(owner))], [])
+                else
+                    if liveIn == false && anyLiveBranchOut(predecessors)(successors)(liveOutSet)
+                    then
+                        if allLiveOut(predecessors)(liveOutSet)
+                        then
+                            match listAt(instructions)(start) with
+                                | Some(IrInstruction { instruction = Label(_name) }) -> ([(start + 1, placedDrop(anchor)(slot)(owner))], [])
+                                | _ -> ([(start, placedDrop(anchor)(slot)(owner))], [])
+                        else
+                            splitLiveEdgesOut(instructions)(blocks)(successors)(liveOutSet)(predecessors)(blockIndex)(placedDrop(anchor)(slot)(owner))(label)(slot)
+                    else ([], []))
+        | _ -> (insertions, retargets, tempCount)
+
+let placedGraphBlocks (placed: PlacedInstructions) =
+    (let graph = placed.placedGraph
+    in graph.graphBlocks)
+
+// The function's table of used temps for the instructions being placed, their count, and the
+// sources of its normalizing copy-outs.
+type OwnerTables =
+    | tableUses: List(List(Int))
+    | tableCount: Int
+    | tableCopySources: List(Int)
+
+let placeOwnerInRegion (instructions: List(IrInstruction)) (tables: OwnerTables) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (graph: OwnerGraph) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    (let spans = regionSpansFrom(graph.graphBlocks)(0)(region)
+    in
+        let indexed = regionInstructionsAlong(instructions)(tables.tableUses)(0)(spans)
+        in
+            let ownerAliases = collectOwnerAliasSet(spans)(indexed)(slot)(arenaAdtCells)
+            in
+                let facts = blockFactsAlong(indexed)(spans)(slot)(ownerAliases)([])([])
+                in
+                    match match usedBlocksInto(facts)(Ashes.Collection.Map.empty)([]) with
+                        | (usedBlocks, worklist) ->
+                            liveBlocksFrom(definitionBlock)(blockSetOf(region)(Ashes.Collection.Map.empty))(graphPredecessors(graph))([])(worklist)(usedBlocks)(Ashes.Collection.Map.empty) with
+                        | (liveIn, liveOut) ->
+                            let liveness = livenessList(region)(liveIn)(liveOut)
+                            in
+                                let cells =
+                                    if ownerAliases |> anyTempInSet(tables.tableCopySources)
+                                    then Ashes.Collection.Map.empty
+                                    else arenaAdtCells
+                                in
+                                    match borrowedCalls |> collectInsertionsAlong(instructions)(graph.graphBlocks)(graphSuccessors(graph))(liveOut)(definitionBlock)(owner)(slot)(anchor)(label)(regionBlocksFrom(graph.graphBlocks)(0)(region))(facts)(liveness)(tempCount)([])([])(cells) with
+                                        | (insertions, retargets, nextTempCount) ->
+                                            let indices = distinctIndicesDescending(insertions)([])
+                                            in
+                                                PlacedInstructions(placedInstructions = instructions
+                                                |> applyRetargets(retargets)
+                                                |> applyInsertions(indices)(insertions), placedTempCount = nextTempCount, placedGraph = (graph with graphBlocks = carriedBlocksAfter(graph.graphBlocks)(graph.graphKinds)(indices)(insertions)(retargets)), placedUses = applyUseInsertions(indices)(insertions)(tables.tableUses), placedCopySources = tables.tableCopySources))
+
+let unchangedPlacement (instructions: List(IrInstruction)) (tables: OwnerTables) (tempCount: Int) (graph: OwnerGraph) = PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedGraph = graph, placedUses = tables.tableUses, placedCopySources = tables.tableCopySources)
+
+let placeOwnerBetween (instructions: List(IrInstruction)) (tables: OwnerTables) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (graph: OwnerGraph) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    (let region =
+        sortedBlocksIn(reachableSetBeforeBoundary(instructions)(label)(graph.graphBlocks)(graphSuccessors(graph))(graph.graphDominance)(definitionBlock)(boundaryBlock)([definitionBlock])(Ashes.Collection.Map.empty))(length(graph.graphBlocks) - 1)([])
+    in
+        if length(region) == 0
+        then unchangedPlacement(instructions)(tables)(tempCount)(graph)
+        else placeOwnerInRegion(instructions)(tables)(slot)(owner)(anchor)(label)(tempCount)(graph)(definitionBlock)(region)(arenaAdtCells)(borrowedCalls))
+
+// The dominators are the ones carried from an earlier owner while the block count is unchanged, as
+// stage 0's PlaceOwner keeps them, and worked out again with their index otherwise.
+let withCurrentDominators (graph: OwnerGraph) =
+    if length(graph.graphDominators) == length(graph.graphBlocks)
+    then graph
+    else
+        let dominators = graph.graphEdges |> immediateDominatorsOf(graph.graphBlocks)
+        in graph with graphDominators = dominators, graphDominance = dominanceIndexOf(dominators)
+
+let placeOwnerAgainst (instructions: List(IrInstruction)) (tables: OwnerTables) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (graph: OwnerGraph) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    match (findCfgBlock(graph.graphBlocks)(owner.regionDefinitionIndex), owner
+    |> boundaryIndexWithin(tables.tableCount)
+    |> findCfgBlock(graph.graphBlocks)) with
+        | (definitionBlock, boundaryBlock) ->
+            if definitionBlock < 0 || boundaryBlock < 0
+            then unchangedPlacement(instructions)(tables)(tempCount)(graph)
+            else
+                placeOwnerBetween(instructions)(tables)(slot)(owner)(anchor)(label)(tempCount)(withCurrentDominators(graph))(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls)
+
+// The blocks are the ones carried from the owner before when its edits kept every block in place
+// (`carried`, with their kinds and edges), and built from the instructions otherwise.
+let placeOwnerRegion (instructions: List(IrInstruction)) (tables: OwnerTables) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (known: OwnerGraph) (carried: List(IrCfgBlock)) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) =
+    match carried with
+        | [] ->
+            let blocks = buildCfgBlocks(instructions)
+            in placeOwnerAgainst(instructions)(tables)(slot)(owner)(anchor)(label)(tempCount)((known with graphBlocks = blocks, graphKinds = blockBoundaryKinds(instructions)(blocks), graphEdges = blockEdgesOf(blocks)))(arenaAdtCells)(borrowedCalls)
+        | _ -> placeOwnerAgainst(instructions)(tables)(slot)(owner)(anchor)(label)(tempCount)((known with graphBlocks = carried))(arenaAdtCells)(borrowedCalls)
+
+// Removes the lexical anchor (and the owner load feeding it) in one walk of the instructions and
+// of their used temps, and places the owner's drop.
+let placeOwner (label: Str) (slot: Int) (scan: AnchorScan) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
+    match (scan.scanAnchor, scan.scanDefinitionIndex >= 0) with
+        | (Some(anchor), true) ->
+            let removed =
+                if scan.scanLoadFeedsAnchor
+                then 2
+                else 1
+            in
+                let boundary = scan.scanAnchorIndex + 1 - removed
+                in
+                    placeOwnerRegion(removeSpan(placed.placedInstructions)(boundary)(removed))(OwnerTables(tableUses = removeSpan(placed.placedUses)(boundary)(removed), tableCount = scan.scanInstructionCount - removed, tableCopySources = placed.placedCopySources))(slot)(OwnerRegion(regionDefinitionIndex = scan.scanDefinitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = scan.scanDefinitionTemp))(anchor)(label)(placed.placedTempCount)(placed.placedGraph)(carriedBlocksWithout(placedGraphBlocks(placed))(boundary)(removed))(arenaAdtCells)(borrowedCalls)
+        | _ -> placed
+
+let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: MapTree(Int, Bool)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
     match slots with
         | [] -> placed
         | slot :: rest ->
-            placeOwnerSlots(label)(rest)(arenaAdtCells)(borrowedCalls)(match anchorIndices(placed.placedInstructions)(slot)(0) with
-                | anchorIndex :: [] -> placeOwner(label)(slot)(anchorIndex)(arenaAdtCells)(borrowedCalls)(placed)
-                | _ -> placed)
+            let scan = slot |> anchorScanOf(placed.placedInstructions)
+            in
+                placeOwnerSlots(label)(rest)(arenaAdtCells)(borrowedCalls)(if scan.scanAnchorCount == 1
+                then placeOwner(label)(slot)(scan)(arenaAdtCells)(borrowedCalls)(placed)
+                else placed)
+
+let unplacedGraphOf (blockCount: Int) = OwnerGraph(graphBlocks = [], graphKinds = [], graphEdges = BlockEdges(successorsOfBlock = Ashes.Collection.Map.empty, predecessorsOfBlock = Ashes.Collection.Map.empty), graphDominators = [], graphDominance = DominanceIndex(dominanceEnter = Ashes.Collection.Map.empty, dominanceLeave = Ashes.Collection.Map.empty))
 
 // Places the lifetimes of one function body; `label` names the function, prefixing the labels of
 // the drop blocks that split a live branch edge. `borrowedCalls` are the result temps of the
-// body's closure calls that only borrow their argument, which get no compensating duplicate.
+// body's closure calls that only borrow their argument, which get no compensating duplicate. A
+// body with no anchored owner slot is left as it is, without its tables being built.
 let placeInstructionLifetimesBorrowing (label: Str) (borrowedCalls: List(Int)) (instructions: List(IrInstruction)) (tempCount: Int) =
-    placeOwnerSlots(label)(ownerSlots(instructions)([]))(collectArenaAdtCells(instructions)([]))(borrowedCalls)(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = []))
+    match ownerSlots(instructions)([]) with
+        | [] -> PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedGraph = unplacedGraphOf(0), placedUses = [], placedCopySources = [])
+        | slots ->
+            placeOwnerSlots(label)(slots)(arenaAdtCellSetInto(instructions)(Ashes.Collection.Map.empty))(borrowedCalls)(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedGraph = unplacedGraphOf(0), placedUses = usedTempsOf(instructions), placedCopySources = normalizingCopySources(instructions)))
 
 let placeInstructionLifetimesIn (label: Str) (instructions: List(IrInstruction)) (tempCount: Int) = placeInstructionLifetimesBorrowing(label)([])(instructions)(tempCount)
 

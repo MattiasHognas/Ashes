@@ -5043,6 +5043,15 @@ public static class ProjectSupport
                 break;
             case Expr.QualifiedVar qualifiedVar:
                 qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
+                // `receiver.field` spells a record field read like a module member. A lowercase
+                // receiver is a value binding, so it is a reference to that binding too.
+                if (qualifiedVar.Module.Length > 0
+                    && !qualifiedVar.Module.Contains('.', StringComparison.Ordinal)
+                    && !char.IsUpper(qualifiedVar.Module[0]))
+                {
+                    names.Add(qualifiedVar.Module);
+                }
+
                 break;
             case Expr.IntLit:
             case Expr.UIntLit:

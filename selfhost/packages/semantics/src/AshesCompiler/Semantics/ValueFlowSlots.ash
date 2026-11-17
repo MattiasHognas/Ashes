@@ -11,6 +11,8 @@ export (
     value localSlotsReachingTemps,
     value localSlotsReachingTempsThrough,
     value localSlotsReachingTempsStopping,
+    value localSlotsReachingTempsWithAliases,
+    value localSlotsReachingEachTemp,
 )
 
 type ValueFlowIndex =
@@ -203,11 +205,22 @@ let recursive markVisited (temps: List(Int)) (visited: MapTree(Int, Bool)) =
             |> Ashes.Collection.Map.setInt(temp)(true)
             |> markVisited(rest)
 
+// An owned slot holding the reference an escaping arena alias keeps of an owner it borrows is
+// reached when the alias is (stage 0's `AddAliasOwnerRetainsOfReachedAliases`); `aliases` pairs each
+// such slot with the alias as it was stored.
+let recursive aliasOwnerSlotsOfVisited (aliases: List((Int, Int))) (visited: MapTree(Int, Bool)) (slots: List(Int)) =
+    match aliases with
+        | [] -> slots
+        | (slot, aliasTemp) :: rest ->
+            match Ashes.Collection.Map.getInt(aliasTemp)(visited) with
+                | Some(_seen) -> aliasOwnerSlotsOfVisited(rest)(visited)(slot :: slots)
+                | None -> aliasOwnerSlotsOfVisited(rest)(visited)(slots)
+
 // The instructions are the function's own, most recent first; the index keeps no order. The slots of
 // `independent` hold values with references of their own (stage 0's `IndependentOwnedSlots`): the walk
 // does not follow their stores. The values of `stops` are reached but not followed: a call result
-// that holds nothing of its arguments.
-let localSlotsReachingTempsStopping (temps: List(Int)) (independent: List(Int)) (stops: List(Int)) (reversedInstructions: List(IrInstruction)) =
+// that holds nothing of its arguments. The slots of `aliases` are reached with their aliases.
+let localSlotsReachingTempsWithAliases (temps: List(Int)) (independent: List(Int)) (stops: List(Int)) (aliases: List((Int, Int))) (reversedInstructions: List(IrInstruction)) =
     (let indexed = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
     in
         let index =
@@ -215,10 +228,33 @@ let localSlotsReachingTempsStopping (temps: List(Int)) (independent: List(Int)) 
         in
             match walkValueFlow(temps)(markVisited(stops)(Ashes.Collection.Map.empty))(index)(independent)([]) with
                 | (slots, visited) ->
-                    slotsStoringVisited(Ashes.Collection.Map.toList(index.slotStores))(visited)(slots))
+                    slots
+                    |> slotsStoringVisited(Ashes.Collection.Map.toList(index.slotStores))(visited)
+                    |> aliasOwnerSlotsOfVisited(aliases)(visited))
+
+let localSlotsReachingTempsStopping (temps: List(Int)) (independent: List(Int)) (stops: List(Int)) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTempsWithAliases(temps)(independent)(stops)([])(reversedInstructions)
 
 let localSlotsReachingTempsThrough (temps: List(Int)) (independent: List(Int)) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTempsStopping(temps)(independent)([])(reversedInstructions)
 
 let localSlotsReachingTemps (temps: List(Int)) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTempsThrough(temps)([])(reversedInstructions)
 
 let localSlotsReachingTemp (temp: Int) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTemps([temp])(reversedInstructions)
+
+let recursive slotsReachingEach (temps: List(Int)) (index: ValueFlowIndex) (stores: List((Int, List(Int)))) =
+    match temps with
+        | [] -> []
+        | temp :: rest ->
+            (match walkValueFlow([temp])(Ashes.Collection.Map.empty)(index)([])([]) with
+                | (slots, visited) -> slotsStoringVisited(stores)(visited)(slots)) :: slotsReachingEach(rest)(index)(stores)
+
+// `localSlotsReachingTemp` of every one of the temps, in their order, over one index of the
+// instructions.
+let localSlotsReachingEachTemp (temps: List(Int)) (reversedInstructions: List(IrInstruction)) =
+    (let indexed = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
+    in
+        let index =
+            indexed with slotStores = forgetSlotStores(arenaDemotedSlots(reversedInstructions)([]))(indexed.slotStores)
+        in
+            index.slotStores
+            |> Ashes.Collection.Map.toList
+            |> slotsReachingEach(temps)(index))

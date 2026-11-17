@@ -9,7 +9,374 @@ See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broad
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
 for package boundaries and commands.
 
+## Known gaps deferred during Step F
+
+Scope updated on **2026-11-14**. Step F currently targets a complete, fast stage-1-to-stage-2
+compiler build. It is not a claim of full stage-0 feature parity or completion of step E. The
+following known work remains open; keep this list updated when an item is promoted or resolved.
+
+| Area | Known limitation and evidence | Deferred work / return condition |
+| --- | --- | --- |
+| Ordinary generic `Not` evidence | Ordinary custom-type and mixed Boolean/custom-type `Not` bindings lower at Core level through per-call dictionary evidence. The expression-only lowering entry points carry no replay and no standard trait module, so a constrained binding called there at a built-in type is rejected (`UnknownLoweringBinding` for the module's method), as is an alias call of a constrained binding in a program lowered without the module. [Cases and current limits](../../../selfhost/tests/logical-not-inference/README.md). | Core lowering results do not establish native stage-1 runtime or lifetime acceptance of generic `Not` calls; that validation remains pending. |
+| Custom capability context in constrained-call queries | Core capability declarations and operation schemes are not projected into the constrained-call inference environment. An argument that invokes a user capability may therefore fail re-inference even when ordinary Core lowering supports it. [Small retained probe](../../../selfhost/tests/constrained-bindings/deferred/CapabilityArgument.ash); no bootstrap dependency has been demonstrated. | Project the declared operation/provider context and validate effect/evidence handling when required. This remains deferred and is not included in the constructor/alias/external/record-field query fixes. |
+| Generic arithmetic and bitwise dictionaries | Ordinary generic operator dispatch for `Add`, `Subtract`, `Multiply`, `Divide`, `Modulo`, and bitwise traits is not implemented by the current constrained-binding path. That path admits only `Eq`, `Ord`, and `Not`; other constraints retain the existing primitive/deferred operator lowering and its type-mismatch or unsupported/missing-evidence diagnostics. Concrete primitive arithmetic support does not establish generic dictionary dispatch. | Add operator-to-dictionary lowering, physical evidence forwarding, and ownership checks for these traits when required. Preserve existing diagnostics; do not claim this broader parity from the Eq/Ord/Not bootstrap fix. |
+| Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
+| Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](../../../selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
+| Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E after F with a clean committed-tree census and fresh reproductions. Promote any item that blocks F or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
+
+The removed Round11 handoff is preserved locally, with a SHA256 manifest, under the main
+checkout's `.claude/step-f-archive/round2-20261112/artifacts/selfhost-dev/handoff-step-e/`.
+It is intentionally not restored under tracked `artifacts/`. The historical list and measurements
+remain available there; the current tracked pending-goal reproducer is linked above.
+
+### Open work after bootstrap36
+
+State on **2026-11-14**: stage 1 built with `--debug -O2` finishes the discovery pass of Core
+lowering on its own sources in about 1:45 and fails early in the replay pass with missing `Eq`
+evidence. Reproducers named below live in the worktree that found them, under its ignored `work/`
+directory; copy one into `tests/` when its fix lands.
+
+Blocking the next stage 2 attempt:
+
+- **Replay-pass evidence failure.** `MissingCoreTraitEvidence("Eq", variable)` raised from
+  `lowerConstrainedDictionaryMethods` through `lowerConstrainedCallWithName`, about 7,750 top-level
+  item steps into the replay pass, in or near `ModuleReferenceRewriting.rewriteTypeName`. A
+  single-file copy of that function compiles, so the failure needs the stitched project. Known
+  candidates: a deferred constrained call does not lower its arguments in the discovery pass, so a
+  goal nested in them is first seen on replay; and trait goal keys are a span plus trait and
+  method, which two modules can share.
+
+Lowering performance, not yet done:
+
+- The replay pass lowers the whole program a second time.
+- A recursive body with a call result that resolves late is lowered again; a local recursive
+  function inside a top-level function can be lowered up to four times.
+- Per tail self call, the owned-slot judgement is still quadratic in function size, and the
+  per-predecessor part types and blockers are not memoized.
+- Lifetime placement indexes its block list with `listAt` from the liveness, dominator and
+  reachability code; `placeOwner` walks the instruction list several times per owner.
+- Every plan of a top-level binding builds and frees a list entry per binding in scope.
+- Type-graph classification is at least 18% of the discovery pass, structural droppers 8%, the
+  ownership and tail-call analysis modules 6%.
+- The substitution is an association list; `resolvedBindingSchemes` under
+  `phantomResultVariables` resolves open bindings twice per function result.
+- `matchingFunctionLines` in the IR text printer is superlinear; only `--emit-ir` uses it.
+
+Lifetime, stage 0:
+
+- The dictionary-passing path of a constrained call leaks one owned key per loop iteration
+  (`step-f-stage0-dictionary-path-leak/work/repro/b3.ash`). Releasing the predecessor would free a
+  key the generic callee's arena result still holds, so the fix needs a dictionary call's result
+  to own its parts. Needs an ownership-contract decision.
+- A value-less association variant leaks two cells per case
+  (`step-f-stage0-dictionary-path-leak/work/repro/c1.ash`).
+- The module stitcher compiled by stage 0 ends with about six live cells per definition.
+- Heap free-list corruption when a list taken from an element of a borrowed association-list
+  parameter is returned inside `Some` and also shared at insertion
+  (`step-f-backedge-scan/work/fix2/driver` on `tests/as_pattern_element_returned_from_consumed_list.ash`).
+
+Lifetime, stage 1:
+
+- Three cells per case on the association programs `m14`, `m15`, `m17` and `b3`
+  (`step-f-stage0-dictionary-path-leak/work/repro/`).
+- `tests/loop_result_record_around_whole_parameter_releases_duplicate.ash` and
+  `tests/loop_result_record_consed_parameter_part_releases_duplicate.ash` end with 71 live cells
+  against stage 0's 1.
+- The withdrawn-part-duplicate rule is applied at the loop-result site only; stage 0 applies it at
+  the back-edge and scrutinee sites too.
+- A transfer retain is still marked newly produced; only the two rules that released it twice
+  were changed.
+
+Correctness, stage 0:
+
+- A dictionary application with a function-typed result is copied to the heap shallowly and
+  keeps pointing at dictionaries in the applying frame's arena. A partial or escaping application
+  of a constrained function crashes (`step-f-stage0-alias-evidence2/work/fx/v1.ash`), and an alias
+  of one leaks two cells per call. Options recorded by the investigation: concrete-instance
+  dictionaries as program-lifetime constants for the crash, and the alias wrapper returning its
+  stage borrowed in the caller's window for the leak. Needs an ownership-contract decision.
+- A reference with no matching active dictionary falls through to the raw function without a
+  diagnostic.
+- A tuple holding an alias of an unresolved constrained function is accepted and emits a
+  dictionary-taking closure.
+- A type name in an annotation is accepted when the module that declares it is imported only
+  transitively, which the language reference does not allow. With `A` exporting `type T`, `B`
+  importing `A`, and `Main` importing only `B`, `let get (t: T) = t.n` in `Main` compiles and
+  runs. The standalone inference rejects it with `UnknownTypeName("T")`; two modules of the
+  compiler's own source relied on it and now import what they annotate with.
+
+Correctness, stage 1:
+
+- A constrained binding whose value is a partial application of another constrained function is
+  rejected with missing evidence.
+- The entry-frame concrete copy of a constrained loop is declined for an unknown reason.
+- Concrete copies resolve other top-level functions by name, so a later rebinding of a helper
+  name could be picked up.
+- Two comparisons under one span share a trait goal key; for `Ord` and `Not` the last record wins.
+
+Parity and tests:
+
+- Stage 0's lowering changed in #1154 (a uniqueness fast path on a matched field, a dropped
+  call-argument retain, and changes around reuse) without the stage-1 port. Six lowered-IR parity
+  fixtures and `TakenOverRecordLoweringTests` stay red until it is ported or the fixtures are
+  retired under the type-inference plan below.
+- Fifteen C# unit tests fail on `main`, and the census test
+  `NullaryPatternTestsDoNotKeepLookupResultsAlive` fails without any change.
+- The full selfhost suites, the end-to-end suite and `scripts/verify.sh` have not been run on the
+  Step F branch.
+
+
+An item leaves this list only with a linked fix and relevant stage-1 regression/lifetime evidence,
+or with a fresh reproduction proving the recorded defect no longer applies. Full suites and a
+compiler census remain required at their agreed milestones; focused checks are not substitutes.
+
+## Type inference before lowering
+
+Decided on **2026-11-14**. Stage 1 lowers and infers types in the same walk, as stage 0 does.
+Because lowering meets types it does not know yet, it runs a discovery pass and then replays the
+whole program with proven types pinned, runs a speculative inference on every lambda `let` to ask
+whether the binding is trait-constrained, lowers a recursive body again when a call's result type
+resolves late, and defers operators and dictionaries it cannot decide at the site. These are the
+dominant costs of stage 1 compiling itself and the source of most Step F blockers.
+
+The direction is a dedicated inference pass that runs first and produces a typed program, with
+lowering reduced to one pass that reads types. Stage 1 no longer has to emit the same IR as stage 0
+for this work. The checks that matter are that programs compiled by stage 1 behave the same as when
+compiled by stage 0 (output and exit live-cell counts), and that stage 2 and stage 3 are identical.
+
+What is known about the starting point:
+
+- `ProgramInference.ash` and `TypeInference.ash` cover every expression and pattern form. The
+  compile command runs them only when `ASHES_SHADOW_INFERENCE` is set, and discards the result.
+  They return binding schemes, one substitution and the trailing type; no type is kept per
+  expression. An error names its package, module, declaration and innermost located expression.
+- The standalone inference infers 959 of the 1,048 test programs that should compile and the
+  compiler itself: 8,648 declarations in 147 modules in about 60 s with a 0.6 GiB peak. Capability
+  rows and programs stage 1 cannot stitch account for most of the remaining test programs.
+- Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
+  have none.
+- Lowering decides about 30 things on whether a type is still open at a site, mirroring the order
+  in which stage 0 discovers types. Final types alone do not reproduce those decisions.
+- The two inferences disagree on operators: the standalone one gives `a + b` and `a == b` a trait
+  constraint and generalizes; lowering holds the operand monomorphic, emits the integer form and
+  seals it to `Int` when nothing resolves it.
+- Of the roughly 350 type queries in lowering, about 260 classify ownership and heap layout and
+  need a type for nearly every lowered value; about 55 choose an instruction or build trait
+  evidence.
+
+Order of work. Each step lands separately and is useful if the later ones are delayed.
+
+1. **Skip the constrained-binding plan when the binding cannot be constrained.** A syntactic check
+   answers "not constrained" when the value contains no operator that maps to a trait, no reference
+   to a name whose scheme carries constraints, and no written `requires`. The generated code does
+   not change.
+2. **Make the standalone inference run on real programs.** Fix the standard-library type mismatch
+   it reports, give its errors locations, replace the association-list substitution and the linear
+   binding lookup, and run it from the compile command with its result discarded. The deliverable
+   is that it infers every test program and the compiler itself, and how long that takes.
+3. **Build the behavioural check.** Compile the test programs with stage 1 and with stage 0, run
+   both, and compare output and exit live-cell counts. This replaces lowered-IR comparison with
+   stage 0 as the acceptance check for the steps below.
+4. **Make the standalone inference complete over the language.** Lowering does not read from it
+   until this holds. It is complete when:
+   - every test program that stage 0 compiles type-checks, and the standard library and the
+     compiler itself type-check;
+   - every test program stage 0 rejects for a type, trait or capability reason is rejected, with
+     a located error;
+   - the known gaps are closed: `async` and the `Ashes.Task` builtins, capability rows and the
+     capability checks (closed rows, unhandled and ambiguous operations, `provide`), checking a
+     concrete trait constraint against the available implementations, the `Ordering` constructors
+     under their bare names, derived-trait fields, and the remaining single failures listed by the
+     inference sweep;
+   - the stitching limits that keep programs from reaching it are closed: the shipped
+     `Ashes.Task` module, the `Ashes.Task.Parallel` self-import, `MapTree`, and selector imports of
+     intrinsic members such as `Ashes.Text.fromInt`.
+   Checks that belong to lowering stay there and are not part of this gate: resource and ownership
+   diagnostics.
+5. **Compare the two inferences.** With step 4 in place, report where the standalone result and
+   lowering's own inference disagree per top-level binding. Operators and capability rows are the
+   known differences. Each disagreement is settled against the language reference.
+
+   Done for top-level schemes and binary operator sites over the 927 test programs both sides
+   accept. Lowering records what it concluded only when asked (`lowerCoreProgramObservingTypes`);
+   bindings are compared by stitched name and operator sites by span and trait. Measured:
+   - Capability rows: lowering's schemes carry none (10,769 bindings differ only there). Lowering
+     decides capability handling syntactically and from the declared operation schemes, never
+     from a row.
+   - Operators: of 17,971 sites, 17,750 agree. 148 are a generic body lowering lowers at several
+     instances; 68 sites and 39 schemes are an operator the inference generalizes with its trait
+     requirement where lowering holds it monomorphic and settles it to `Int`, as section 21.6 of
+     the reference does not; 64 are operator nodes lowering synthesizes and the table has no node
+     for.
+   - Lowering is less precise in three places: `Ashes.Collection.Map.foldLeft` and
+     `HashMap.foldLeft` lose the link between the folder's accumulator and the result, a handler
+     arm's parameters and `resume` result stay untyped, and a few bindings stay monomorphic
+     because a deferred operator holds their variable back.
+   - `panic` wrappers are `Str -> a` in the inference and `Str -> Never` in lowering; both conform
+     to the reference.
+   - Fixed in the inference: `Ashes.Text.fromInt` and `toHex` arguments are no longer generalized
+     over (stage 0 and the reference type them `Int -> Str`), and `Ashes.Trait` is inferred first,
+     so programs with inline modules no longer keep settled requirements.
+6. **Give syntax nodes an identity and record types against it.** Assign identities after
+   stitching, including synthesized nodes, and have the inference pass fill a table: a type per
+   expression, the resolved instance per operator, the instantiation and dictionaries per call,
+   the scheme per binding. A body lowered at several types reads the table through its
+   instantiation.
+
+   This is in place. `NodeIdentity.ash` wraps every expression node of the stitched,
+   deriving-expanded units in `ExprNode(id, node)`, numbered in pre-order; only the standalone
+   inference receives the numbered tree. `ProgramInferenceResult.nodeTypes` is a `NodeTypeTable`
+   of four maps keyed by node id: `types`, `operators` (trait and operand type),
+   `instantiations` (arguments, requirements, dictionaries) and `bindings` (schemes at `let`,
+   lambda and arm-body nodes). A generic body keeps its binding's quantified variables; a body
+   lowered at a concrete type applies the instantiation's arguments to the stored type. Over the
+   whole compiler every one of 398,599 nodes has exactly one recorded type.
+7. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
+   replay passes, pending and proven trait goals, deferred operators and dictionaries, the
+   per-binding plan, and body re-lowering.
+
+   First slice, in place: `lowerCoreNumberedProgram` and `lowerCoreNumberedProgramWithSourceAndReuse`
+   take the numbered, deriving-expanded program and the table (the compile command uses them when
+   `ASHES_TYPED_LOWERING=1`). Lowering sees through `ExprNode` where it sees through `ExprAt`,
+   keeps the wrapper when a rewrite copies a node, and remembers the current node. With an empty
+   table its IR is byte-identical to the old entry point's on every swept program that infers. A
+   binary operator whose operands are both still open takes its operand type from the table when
+   the recorded type has no variable and no named type (named types carry the inference's own
+   symbol ids). Three swept programs change, all to the form stage 0 emits: a string `+` in a
+   handler arm, and one whose operands only a later call resolves. Measured over the test
+   programs: deferred operator goals 73 to 47, structural equality goals 7 to 2, replay passes 15
+   to 14. Over the whole compiler: deferred operator goals 19 to 2, pending trait goals 7 to 2,
+   re-lowered bodies unchanged at 2,167 and 2,138, and the replay pass still runs (discovery
+   about 820 s and replay about 760 s with a `-O0` driver, either entry point). What keeps the
+   replay is the remaining trait goals (unary trait methods and dictionaries), not operators; what
+   keeps the re-lowerings is call results whose type the body resolves late, which the table
+   answers but lowering does not yet read.
+
+   Second slice, in place: recorded types are read as lowering's own by stitched type name
+   (lowering gives every named type symbol id 0; the inference numbers its own), with capability
+   rows dropped. Every recorded type of the test programs and of the compiler maps except the rigid
+   type parameters of generic implementations (`implement Eq(List(a))`, 128 nodes in `Ashes.Trait`),
+   which need an instantiation like any generic body. Operators read named types too; a call whose
+   callee's type is settled takes its expected result type from the table, and is lowered as before
+   if that fails; an open `Show.show` or `Hash.hash` operand and an open dictionary requirement are
+   pinned to the recorded type. Ten swept programs change: two in numbering only, three lose one
+   arena request word, and five change ownership placement around a call result lowering used to
+   see open, which wants the behavioural check.
+
+   Measured on the whole compiler (`-O0` driver, the two runs one after the other): the replay pass
+   still runs. Discovery 992 s and replay 845 s with the old entry point, 822 s and 819 s plus 106 s
+   of inference with the table (the old run shared the machine with driver builds). Pending trait
+   goals 7 to 2: the five `>=` goals are answered, the two `Show.show` goals stay because their
+   recorded operand type is not closed. Deferred operator goals 19 to 2. Bodies lowered again 2,205
+   and 2,176 to 2,121 and 2,094; 20,902 calls took a recorded expected type, none fell back. Over
+   the tests: replays 15 to 12, structural equality goals 7 to 0, bodies lowered again 6,152 to
+   6,129.
+
+   Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
+   a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
+   that point, and by values whose copy waits on a type. Taking those results from the table
+   changed ownership placement in 21 swept programs, so those decisions belong to step 8. The
+   order-dependent rules met in this work, each deciding on whether a type is still open at the site:
+   - `selfResultDeferred`: a self call whose callee is listed as deferring its result asks for an
+     arena result and records no unresolved call result.
+   - `siblingResultOpen`: a call to a group member whose arrow was open when the body began asks for
+     an arena result, also when the body is lowered again.
+   - `siblingResultPinned`: such a call whose result the group's first lowering settled uses that
+     result at the site and keeps the arena request.
+   - `deferredSelfResultNamedByConsumer`: a deferred self call whose consumer names a resolved type
+     does not ask for an arena result.
+   - `keepFirstSelfResultDeferral`: a body lowered again keeps the self calls its first lowering
+     deferred.
+   - `requestsArenaResult` and `containsUnresolvedLayout`: a call whose result layout is still open
+     asks for an arena result and joins the body's unresolved call results.
+   - `calleeResultUnsettled` (in `requestsArenaResultFromUnknownCallee`): a callee whose body has not
+     been lowered yet is asked for an arena result.
+   - `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls` and
+     `anyCallResultResolved`: a body whose unresolved call results resolved is lowered again.
+   - `bodyEncounteredRequirementClosedScope`: a body applying a mapped operator whose scope types it
+     closed is lowered again against the closed scope.
+   - `lowerInternalDeepCopy`: a copy of a value whose type is still a variable passes through and
+     asks for the body to be lowered again.
+   - `emitDeferredCoreAdd` and `emitDeferredCoreEquality`: `+`, `==` and `!=` over two open operands
+     emit the integer form, recorded for rewriting once the type is final.
+   - `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal` and
+     `pinProvenEqualityGoal`: a trait goal or dictionary whose operand is open is deferred to the
+     replay pass, which pins what the first pass proved.
+   - `activeEvidenceCoversOperator` and `traitPlanLacksActiveEvidence`: an open operand dispatches
+     through a generic body's own evidence only when that body carries it.
+
+   What the table does not yet give lowering:
+   - Nodes that lowering synthesizes (evidence rewrites, specialized copies) have no identity;
+     they need a rule such as the source node's identity plus an instantiation.
+   - Handler operation arm parameters and `resume` are not recorded.
+   - Top-level schemes are only in the environment, by stitched name.
+   - Record construction and update have no instantiation record.
+   - Operators record a trait and an operand type, not whether the instance is primitive, a user
+     instance or a dictionary.
+   - Schemes keep requirements at concrete types (`requires Multiply(Int)`), and variables
+     nothing constrains stay variables; both need a decision (drop settled requirements, default
+     unconstrained variables).
+   - `tests/trait_deriving.ash` is rejected before numbering.
+8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
+   site as rules over the final type, each with a lifetime regression.
+9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
+   compiler; stage 1 stops mirroring its internals.
+
+Steps 1 to 5 do not change generated code. Steps 7 and 8 do, in the ownership-sensitive paths, so
+step 3 must exist before they start.
+
+Decided on **2026-11-16**: the standalone inference is stage 1's type checker. `compile` and
+`run`, file and project forms, infer the stitched program before lowering it; a program it rejects
+fails with stage 0's code and message (`InferenceDiagnostics.ash` maps every error the inference
+raises), and an accepted program is lowered exactly as before, without reading the inference's
+results unless `ASHES_TYPED_LOWERING=1`. A bare unification error carries no call, argument or
+operator site, so for it lowering's own diagnostic is printed when lowering words one.
+`ASHES_SKIP_INFERENCE_CHECK=1` skips the check. This gives stage 1 the checks lowering lacks
+(capability rows, providers, handlers, written requirements, type alias cycles) and costs about
+57 s on the whole compiler and a few milliseconds on a test.
+
 ## Start here
+
+**Path forward (decided 2026-11-16; supersedes the order below where they differ).** Stage 1
+now compiles the whole compiler, so stage 2 exists; it is not yet correct. The goal is for stage 1
+to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
+
+1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
+   **Reached on 2026-11-18 (bootstrap52):** stage 2 compiles the compiler into a stage 3 that is byte-for-byte identical to stage 2 (45,851,504 bytes; stage 3 built in 11:25 at a 12.5 GiB peak). Stage 1 behaves as stage 0 on every `tests/*.ash` program apart from live-cell counts (973 same, 149 differ only in leaks, 0 crashes, 0 wrong outputs). Stage 2 matches stage 0 on 971; its 6 remaining differences are the next work. A capped run with swap disallowed was killed by the kernel with memory free; run stage 3 with swap allowed.
+   - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
+     builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
+     with stage 2 as the compiler under test, groups the crashes by function with
+     `cluster-crashes.sh`, and fixes the largest group in stage 1 with a reduced regression test.
+     Done when stage 2 compiles the compiler into a stage 3 that is byte-identical to stage 2.
+   - Parity: stage 1 behaves as stage 0 on every `tests/*.ash` (accept/reject, diagnostics,
+     output, exit code), measured by the same check against `selfhost/tests/behaviour/baseline.tsv`.
+     This includes missing features (`async` and `Ashes.Task`, static capability providers,
+     network tasks, vendored bitcode for openlibm, PCRE2 and Mbed TLS) and stage-0 bugs found on
+     the way. Leak counts are not part of this item.
+   - Stage 1 type-checks every program with the standalone inference before lowering and reports
+     its errors with stage 0's codes and wording; lowering does not read its results yet.
+2. **The standalone inference's remaining edge cases:** `deriving` on a recursive generic type, fork
+   outside `async`, the builtin integer argument it generalizes where stage 0 does not, and the
+   diagnostic wordings it cannot produce yet.
+3. **Lowering from the type table.** Finish step 7 of "Type inference before lowering" (typed
+   lowering on by default; generic bodies read through their instantiation; an identity for nodes
+   lowering synthesizes; the last open `Show.show` goals), then step 8 (rewrite the order-dependent
+   ownership rules listed under step 7 as rules over the final type, each with a lifetime test),
+   which retires the discovery and replay passes and body re-lowering. This is where compile
+   time drops.
+4. **Multithreading:** CG-17 parallel code generation and LNK-14 relocatable merge. LLVM is about
+   half of a stage-2 build.
+5. **Memory leaks last:** live-count parity with stage 0 and the leaks stage 1 shows while building
+   stage 2, resumed only after items 1 to 4.
+
+Work is verified in shared rounds: agents finish a batch, run only cheap checks (format, a
+whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
+behavioural check for all of them and the stage-2 round above.
+
+**Known work parked for later items (2026-11-17), so it is not lost:**
+- Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
+- Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
+- Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
 
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
@@ -1313,19 +1680,22 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
      exactly what would otherwise have exposed the self-mapping-substitution loop that
      `reservedBuiltinTypeVariableCount` records.
 
-     **What that leaves is one genuine type error in the shipped standard library.** Inference now
-     reaches the end of name resolution and type-checks the whole stitched stdlib, stopping on
-     `InferenceUnificationError(TypeMismatch(SemUInt(16), SemUInt(8)))` — on every program, including
-     `Ashes.IO.print("x")`, because the stitcher always pulls the same baseline modules in. It is not
-     the seeded traits colliding with the stitched `Ashes.Trait` source: the same mismatch appears
-     with the seeded traits omitted. The error carries no location, so finding it needs either a span
-     on the diagnostic or a bisection over the shipped modules.
+     **That mismatch was not a library error, and it is fixed** (2026-11-14). With a location on the
+     error it was `implement Show(u16)` in `Ashes.Trait` calling `Ashes.Number.UInt.toInt`, which
+     the builtin layout declares as `u8 -> Int` while both lowerings accept any unsigned width at
+     the call. Four more causes sat behind it and are fixed too: program inference wrapped a
+     binding's sugar parameters a second time, unary minus was typed as `Int` subtraction, the
+     stitched `Ashes_Trait_Eq` and the operators' `Eq` were two traits, and the compiler-provided
+     nominal types all shared symbol id 0. `Ashes.IO.print("x")` now infers, as do 917 of the 1,048
+     test programs that should compile. The base environment for a stitched program is
+     `withIntrinsicBuiltinSignatures` over an empty environment: the seeded standard traits overlap
+     the stitched `Ashes.Trait` source.
   4. **Concrete call sites still need evidence.** `rewriteTraitConstrainedTopLevelValue` rewrites
      references *inside* a constrained binding's value; a use in the trailing expression or in an
      unconstrained binding gets nothing. The existing test is explicit that it does not cover this —
      "No call site references `describe`: this proves the value-side rewrite alone".
 
-  So the order is: the `u16`/`u8` mismatch, then thread the environment through the CLI (a few
+  So the order is: thread the environment through the CLI (a few
   lines, built and reverted once already — it stays out while it would be inert), then concrete
   call-site evidence. Only the last is trait-dictionary work; the rest is what
   actually gates it.

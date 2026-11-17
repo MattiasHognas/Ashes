@@ -91,6 +91,44 @@ let recursive importedModuleNames (entries: List(ImportHeaderEntry)) =
 let reachedModuleNames (module: LoadedShippedModule) =
     appendList(importedModuleNames(module.imports))(module.qualifiedModules)
 
+let recursive withoutModuleName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: rest ->
+            if head == name
+            then withoutModuleName(name)(rest)
+            else head :: withoutModuleName(name)(rest)
+
+// A module the compiler provides whose members have no source: the intrinsic builtin modules,
+// and `Ashes.Task`, whose members only type inference knows.
+let isSourcelessModule (name: Str) = isIntrinsicBuiltinModule(name) || name == "Ashes.Task"
+
+// The module an import of `name` loads when `name` itself is no module: `Ashes.Collection.Map`
+// for `Ashes.Collection.Map.MapTree`, where the last segment selects a type the module exports.
+let recursive selectorParentOf (segments: List(Str)) (reversedParent: List(Str)) =
+    match segments with
+        | [] -> None
+        | _leaf :: [] ->
+            match reversedParent with
+                | [] -> None
+                | _ ->
+                    reversedParent
+                    |> reverseList
+                    |> Ashes.Text.join(".")
+                    |> Some
+        | head :: rest -> selectorParentOf(rest)(head :: reversedParent)
+
+let selectorParentModule (shipped: List(ShippedModuleText)) (name: Str) =
+    match selectorParentOf(Ashes.Text.split(name)("."))([]) with
+        | None -> None
+        | Some(parent) ->
+            match findShipped(parent)(shipped) with
+                | Some(_module) -> Some(parent)
+                | None ->
+                    if isSourcelessModule(parent)
+                    then Some(parent)
+                    else None
+
 // Splits the header off, parses the remainder, and builds the module's interface — the same
 // three steps `ProjectCompilationPlanning` performs per project module.
 let loadModuleText (shipped: List(ShippedModuleText)) name path source =
@@ -112,7 +150,9 @@ let loadModuleText (shipped: List(ShippedModuleText)) name path source =
                                 name = name,
                                 sourcePath = path,
                                 imports = imports,
-                                qualifiedModules = qualifiedShippedModulesNeedingSource(shippedModuleNames(shipped))(body),
+                                qualifiedModules = body
+                                |> qualifiedShippedModulesNeedingSource(shippedModuleNames(shipped))
+                                |> withoutModuleName(name),
                                 program = program,
                                 interface = interface
                             ))
@@ -140,7 +180,7 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                     else
                         match findShipped(name)(shipped) with
                             | None ->
-                                if isIntrinsicBuiltinModule(name)
+                                if isSourcelessModule(name)
                                 then
                                     let program = ProgramSyntax(items = [], body = None)
                                     in
@@ -161,14 +201,58 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                                     ) :: loaded
                                                 )(shipped)
                                 else
-                                    name
-                                    |> ShippedModuleMissing(importer)
-                                    |> Error
+                                    match selectorParentModule(shipped)(name) with
+                                        | Some(parent) -> loadReachable(importer)(parent :: rest)(loaded)(shipped)
+                                        | None ->
+                                            name
+                                            |> ShippedModuleMissing(importer)
+                                            |> Error
                             | Some(ShippedModuleText { sourcePath = path, source = source }) ->
                                 match loadModuleText(shipped)(name)(path)(source) with
                                     | Error(error) -> Error(error)
                                     | Ok(module) ->
                                         loadReachable(name)(appendList(reachedModuleNames(module))(rest))(module :: loaded)(shipped)
+
+let recursive exportsValue (name: Str) (exports: List(ModuleImportExport)) =
+    match exports with
+        | [] -> false
+        | ImportValueExport(candidate) :: rest -> candidate == name || exportsValue(name)(rest)
+        | _other :: rest -> exportsValue(name)(rest)
+
+// The selector imports among `entries` that name a member the compiler provides rather than one
+// a module's source defines, as (module, member).
+let recursive intrinsicSelectorImports (entries: List(ImportHeaderEntry)) =
+    match entries with
+        | [] -> []
+        | ImportHeaderEntry { modulePath = modulePath, selector = Some(member) } :: rest ->
+            match coreBuiltinKind(modulePath)(member) with
+                | Some(_kind) -> (Ashes.Internal.deepCopy(modulePath), Ashes.Internal.deepCopy(member)) :: intrinsicSelectorImports(rest)
+                | None -> intrinsicSelectorImports(rest)
+        | _entry :: rest -> intrinsicSelectorImports(rest)
+
+let recursive allIntrinsicSelectorImports (loaded: List(LoadedShippedModule)) =
+    match loaded with
+        | [] -> []
+        | module :: rest ->
+            rest
+            |> allIntrinsicSelectorImports
+            |> appendList(intrinsicSelectorImports(module.imports))
+
+let recursive exportIntrinsicMembers (requested: List((Str, Str))) (name: Str) (interface: ModuleImportInterface) =
+    match requested with
+        | [] -> interface
+        | (moduleName, member) :: rest ->
+            if moduleName == name && exportsValue(member)(interface.exports) == false
+            then
+                exportIntrinsicMembers(rest)(name)(ModuleImportInterface(name = Ashes.Internal.deepCopy(interface.name), exports = ImportValueExport(Ashes.Internal.deepCopy(member)) :: Ashes.Internal.deepCopy(interface.exports)))
+            else exportIntrinsicMembers(rest)(name)(interface)
+
+// A module's interface lists what its source defines. A member the compiler provides has no
+// definition, so a selector import of one resolves only once the interface exports it too.
+let recursive withIntrinsicMemberExports (requested: List((Str, Str))) (loaded: List(LoadedShippedModule)) =
+    match loaded with
+        | [] -> []
+        | LoadedShippedModule { name = name, sourcePath = sourcePath, imports = imports, qualifiedModules = qualifiedModules, program = program, interface = interface } :: rest -> LoadedShippedModule(name = name, sourcePath = sourcePath, imports = imports, qualifiedModules = qualifiedModules, program = program, interface = exportIntrinsicMembers(requested)(name)(interface)) :: withIntrinsicMemberExports(requested)(rest)
 
 let recursive inlineSourceText (name: Str) (inlineModules: List(InlineModuleInfo)) =
     match inlineModules with
@@ -274,12 +358,19 @@ let recursive inlineNames (inlineModules: List(InlineModuleInfo)) =
 
 // One of the entry's inline modules, loaded as project planning loads it: no import header, an
 // interface that exports its nested modules, and those nested modules ordered ahead of it.
+// An inline module that holds nothing but nested modules has no text of its own once they are
+// lifted out; it parses as the empty program.
+let parseInlineModule (source: Str) =
+    if Ashes.Text.trim(source) == ""
+    then ProgramParseResult(program = ProgramSyntax(items = [], body = None), diagnostics = [])
+    else parseProgram(source)
+
 let loadInlineModule (shipped: List(ShippedModuleText)) (entryPath: Str) (names: List(Str)) (inline: InlineModuleInfo) =
     match inline with
         | InlineModuleInfo { name = name, source = source } ->
             let path = entryPath + "#" + name
             in
-                match parseProgram(source) with
+                match parseInlineModule(source) with
                     | ProgramParseResult { program = program, diagnostics = [] } ->
                         match buildModuleInterface(name)(inlineChildNames(name)(names))(program) with
                             | Error(error) ->
@@ -361,18 +452,31 @@ let stitchExpandedEntry (entryName: Str) (entryPath: Str) (outerSource: Str) (in
                         |> reachedFromAll
                         |> appendList(reachedModuleNames(entry)))(entry :: inlines)(shipped) with
                             | Error(error) -> Error(error)
-                            | Ok(loaded) ->
-                                match loaded
-                                |> planUnits(entryName)(inlineModules)
-                                |> buildModulePlan(entryName) with
-                                    | Error(error) -> Error(ShippedPlanError(error))
-                                    | Ok(planned) ->
-                                        match stitchUnits(entryName)(loaded)(planned) with
-                                            | Error(error) -> Error(error)
-                                            | Ok(units) ->
-                                                match stitchProjectSyntax(units) with
-                                                    | Error(error) -> Error(ShippedSyntaxStitchError(error))
-                                                    | Ok(project) -> Ok(project))
+                            | Ok(reached) ->
+                                let loaded =
+                                    withIntrinsicMemberExports(allIntrinsicSelectorImports(reached))(reached)
+                                in
+                                    match loaded
+                                    |> planUnits(entryName)(inlineModules)
+                                    |> buildModulePlan(entryName) with
+                                        | Error(error) -> Error(ShippedPlanError(error))
+                                        | Ok(planned) ->
+                                            match stitchUnits(entryName)(loaded)(planned) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(units) ->
+                                                    match stitchProjectSyntax(units) with
+                                                        | Error(error) -> Error(ShippedSyntaxStitchError(error))
+                                                        | Ok(project) -> Ok(project))
+
+// An inline module the entry may not declare, worded as stage 0 words it, code first.
+let inlineModuleErrorText (path: Str) (error: InlineModuleError) =
+    match error with
+        | InlineModuleImport(name) -> "[ASH021] Inline module '" + name + "' may not contain an 'import' (" + path + ")."
+        | InlineModuleExternal(name) -> "[ASH021] Inline module '" + name + "' may not contain an 'external' declaration (" + path + ")."
+        | InlineModuleTrailingExpression(name) -> "[ASH021] Inline module '" + name + "' may not contain a trailing expression (" + path + ")."
+        | ReservedInlineModule("Ashes") -> "[ASH023] Inline module may not be named 'Ashes' (reserved for the standard library) (" + path + ")."
+        | ReservedInlineModule(name) -> "[ASH023] Inline module '" + name + "' shadows a reserved 'Ashes.*' path (" + path + ")."
+        | DuplicateInlineModule(_scope, name) -> "[ASH024] Duplicate inline module '" + name + "' in this scope (" + path + ")."
 
 // The entry's inline `module` blocks are lifted first, exactly as project planning lifts them, so
 // a single file may declare and import its own modules.
@@ -380,7 +484,7 @@ let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str
     match expandInlineModules("")(entrySource) with
         | Error(error) ->
             error
-            |> Ashes.Trait.Show.show
+            |> inlineModuleErrorText(entryPath)
             |> ShippedParseError(entryPath)
             |> Error
         | Ok(InlineModuleExpansion { source = outerSource, modules = inlineModules }) -> stitchExpandedEntry(entryName)(entryPath)(outerSource)(inlineModules)(shipped)

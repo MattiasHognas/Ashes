@@ -214,7 +214,7 @@ public sealed partial class Lowering
         for (int index = 0; index < arguments.Count; index++)
         {
             if (arguments[index] is Expr.Var variable
-                && Lookup(variable.Name) is Binding.Local or Binding.Env or Binding.Self
+                && IsSettlingArgumentBinding(Lookup(variable.Name))
                 && Prune(Lookup(variable.Name)!.Type) is { } argumentType
                 && !ContainsFreeTypeVariable(PruneConstraintType(argumentType))
                 && IsPinnableType(PruneConstraintType(argumentType))
@@ -226,6 +226,13 @@ public sealed partial class Lowering
 
         return !parameterTypes.Exists(ValueTypeRemainsAbstract);
     }
+
+    // A parameter or a capture, and a let-bound value alike: once its type holds no variable it says
+    // as much as a parameter's. The program entry binds every argument it passes that way.
+    private static bool IsSettlingArgumentBinding(Binding? binding)
+        => binding is Binding.Local or Binding.Env or Binding.Self
+            || (binding is Binding.Scheme or Binding.EnvScheme
+                && Environment.GetEnvironmentVariable("GRC_NO_LETBOUNDCONSTRAINEDARGUMENT") is null);
 
     // Whether a settled argument type fits the parameter's shape, so unifying them reports nothing.
     private bool ParameterTypeAccepts(TypeRef parameter, TypeRef argument)
@@ -256,9 +263,7 @@ public sealed partial class Lowering
             || !ConstrainedSpecializationEnabled
             || _elementSpecializationDepth != 0
             || ResolveSpecializableCalleeName(rootExpression) is not { } name
-            || (rootExpression is Expr.Var && Lookup(name) is not null)
-            || !_topLevelFunctionRefs.TryGetValue(name, out var reference)
-            || reference.Scheme.Quantified.Count == 0
+            || !(NamesLabelledGenericFunction(rootExpression, name) || NamesBoundGenericFunction(name))
             || CallResultTypeKey(rootExpression, argumentCount) is not { } key)
         {
             return;
@@ -270,6 +275,24 @@ public sealed partial class Lowering
             _pendingConstrainedCallTypes.Add((key, types));
         }
     }
+
+    private bool NamesLabelledGenericFunction(Expr rootExpression, string name)
+        => !(rootExpression is Expr.Var && Lookup(name) is not null)
+            && _topLevelFunctionRefs.TryGetValue(name, out var reference)
+            && reference.Scheme.Quantified.Count != 0;
+
+    // A generic function that captures a constrained function has no label of its own: the name is its
+    // let binding. Its call sites fix its parameter types like a labelled function's, also where the
+    // arguments are literals or call results and no variable carries the type.
+    private bool NamesBoundGenericFunction(string name)
+        => Environment.GetEnvironmentVariable("GRC_NO_BOUNDGENERICCALLTYPES") is null
+            && !_topLevelFunctionRefs.ContainsKey(name)
+            && Lookup(name) switch
+            {
+                Binding.Scheme scheme => scheme.S.Quantified.Count != 0,
+                Binding.EnvScheme captured => captured.S.Quantified.Count != 0,
+                _ => false,
+            };
 
     private Dictionary<string, List<TypeRef>> ResolveProvenConstrainedCallTypes()
     {

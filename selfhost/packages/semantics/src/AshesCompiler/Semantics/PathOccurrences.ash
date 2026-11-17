@@ -21,6 +21,7 @@ let largerOf (left: Int) (right: Int) =
 let recursive maxPathOccurrences (name: Str) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> maxPathOccurrences(name)(inner)
+        | ExprNode(_node, inner) -> maxPathOccurrences(name)(inner)
         | ExprVar(candidate) ->
             if candidate == name
             then 1

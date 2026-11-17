@@ -149,6 +149,33 @@ type CoreBuiltinKind =
     | CoreProcessReadStderrLine
     | CoreProcessWaitForExit
     | CoreProcessKill
+    // `Ashes.Task.run` drives a task to its result; `Ashes.Task.fromResult` is a task already
+    // completed with one; `sleep` is a timer task; `all` and `race` are composites over a task
+    // list; `spawn` detaches a task onto the run queue; `scope`, `fork` and `join` are the
+    // structured task scope (`fork` reads its owning coroutine frame from local 0).
+    | CoreTaskRun
+    | CoreTaskFromResult
+    | CoreTaskSleep
+    | CoreTaskAll
+    | CoreTaskRace
+    | CoreTaskSpawn
+    | CoreTaskScope
+    | CoreTaskFork
+    | CoreTaskJoin
+    // `Ashes.Task.Parallel.both` at a result type a worker can hand back: the right thunk forked onto a
+    // worker (its descriptor an `Int`), joined, and the worker released; `withWorkers`' override read
+    // and written around its action. Internal: only the rewrite of `both` and `withWorkers` calls them.
+    | CoreParallelFork
+    | CoreParallelJoin
+    | CoreParallelCleanup
+    | CoreParallelOverride
+    | CoreParallelSetOverride
+    // `Ashes.Task.Parallel.reduce` at a result type a worker can hand back: the work-conserving queue
+    // started, its element count read, its merge root awaited and the queue released.
+    | CoreParallelQueueStart
+    | CoreParallelQueueCount
+    | CoreParallelQueueAwait
+    | CoreParallelQueueCleanup
 
 type CoreBuiltinLayout =
     | moduleName: Str
@@ -292,6 +319,15 @@ let bigIntBuiltinKind memberName =
 let internalBuiltinKind memberName =
     match memberName with
         | "deepCopy" -> Some(CoreInternalDeepCopy)
+        | "parallelFork" -> Some(CoreParallelFork)
+        | "parallelJoin" -> Some(CoreParallelJoin)
+        | "parallelCleanup" -> Some(CoreParallelCleanup)
+        | "parallelOverride" -> Some(CoreParallelOverride)
+        | "setParallelOverride" -> Some(CoreParallelSetOverride)
+        | "parallelQueueStart" -> Some(CoreParallelQueueStart)
+        | "parallelQueueCount" -> Some(CoreParallelQueueCount)
+        | "parallelQueueAwait" -> Some(CoreParallelQueueAwait)
+        | "parallelQueueCleanup" -> Some(CoreParallelQueueCleanup)
         | _ -> None
 
 let regexBuiltinKind memberName =
@@ -416,6 +452,18 @@ let coreBuiltinKind moduleName memberName =
             else None
         | "Ashes.IO.Process" -> processBuiltinKind(memberName)
         | "Ashes.IO.Console" -> consoleBuiltinKind(memberName)
+        | "Ashes.Task" ->
+            match memberName with
+                | "run" -> Some(CoreTaskRun)
+                | "fromResult" -> Some(CoreTaskFromResult)
+                | "sleep" -> Some(CoreTaskSleep)
+                | "all" -> Some(CoreTaskAll)
+                | "race" -> Some(CoreTaskRace)
+                | "spawn" -> Some(CoreTaskSpawn)
+                | "scope" -> Some(CoreTaskScope)
+                | "fork" -> Some(CoreTaskFork)
+                | "join" -> Some(CoreTaskJoin)
+                | _ -> None
         | _ -> None
 
 // The module names `coreBuiltinKind` dispatches on — the builtin modules that exist without any
@@ -443,7 +491,8 @@ let intrinsicBuiltinModuleNames =
         "Ashes.Net.Tls",
         "Ashes.Net.Tls.Server",
         "Ashes.IO.Process",
-        "Ashes.IO.Console"
+        "Ashes.IO.Console",
+        "Ashes.Task"
     ]
 
 let recursive isIntrinsicBuiltinModuleIn (moduleName: Str) (names: List(Str)) =
@@ -494,6 +543,16 @@ let tlsSocketType = SemNamed(0)("TlsSocket")([])
 let stringResultOf valueType = SemNamed(0)("Result")([SemString, valueType])
 
 let stringTaskOf valueType = SemNamed(0)("Task")([SemString, valueType])
+
+// `Ashes.Task`'s schemes over its error and value types, the reserved ids `Result`'s own
+// constructors quantify.
+let polymorphicTaskOf = SemNamed(0)("Task")([SemVariable(2), SemVariable(3)])
+
+let polymorphicResultOf = SemNamed(0)("Result")([SemVariable(2), SemVariable(3)])
+
+let joinHandleOf = SemNamed(0)("JoinHandle")([SemVariable(2), SemVariable(3)])
+
+let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(argument)(result)(None), constraints = [])
 
 let monomorphicScheme body = TypeScheme(quantified = [], body = body, constraints = [])
 
@@ -810,6 +869,33 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.Rune")("isAsciiWhiteSpace")(
             TypeScheme(quantified = [], body = SemFunction(SemRune)(SemBool)(None), constraints = [])
         ),
+        standardBuiltinLayout("Ashes.Internal")("parallelFork")(
+            TypeScheme(quantified = [(4, "b")], body = SemFunction(SemFunction(unitType)(SemVariable(4))(None))(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelJoin")(
+            TypeScheme(quantified = [(4, "b")], body = SemFunction(SemInt)(SemFunction(SemFunction(unitType)(SemVariable(4))(None))(SemVariable(4))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelCleanup")(
+            TypeScheme(quantified = [(4, "b")], body = SemFunction(SemInt)(SemFunction(SemFunction(unitType)(SemVariable(4))(None))(unitType)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelOverride")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("setParallelOverride")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueStart")(
+            TypeScheme(quantified = [(4, "e"), (5, "c")], body = SemFunction(SemFunction(SemVariable(4))(SemVariable(5))(None))(SemFunction(SemFunction(SemVariable(5))(SemFunction(SemVariable(5))(SemVariable(5))(None))(None))(SemFunction(SemList(SemVariable(4)))(SemInt)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueCount")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueAwait")(
+            TypeScheme(quantified = [(5, "c")], body = SemFunction(SemInt)(SemFunction(SemVariable(5))(SemVariable(5))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueCleanup")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(unitType)(None), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.Internal")("deepCopy")(
             TypeScheme(quantified = [(4, "a")], body = SemFunction(SemVariable(4))(SemVariable(4))(None), constraints = [])
         ),
@@ -1032,6 +1118,37 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.Number.Math")("atan2")(floatBinaryScheme),
         standardBuiltinLayout("Ashes.Number.Math")("hypot")(floatBinaryScheme),
         standardBuiltinLayout("Ashes.Number.Math")("fmod")(floatBinaryScheme),
+        polymorphicResultOf
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("run"),
+        polymorphicTaskOf
+        |> taskScheme(polymorphicResultOf)
+        |> standardBuiltinLayout("Ashes.Task")("fromResult"),
+        standardBuiltinLayout("Ashes.Task")("sleep")(
+            None
+            |> SemFunction(SemInt)(stringTaskOf(SemInt))
+            |> monomorphicScheme
+        ),
+        [SemVariable(2), SemList(SemVariable(3))]
+        |> SemNamed(0)("Task")
+        |> taskScheme(SemList(polymorphicTaskOf))
+        |> standardBuiltinLayout("Ashes.Task")("all"),
+        polymorphicTaskOf
+        |> taskScheme(SemList(polymorphicTaskOf))
+        |> standardBuiltinLayout("Ashes.Task")("race"),
+        unitType
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("spawn"),
+        polymorphicTaskOf
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("scope"),
+        [SemVariable(2), joinHandleOf]
+        |> SemNamed(0)("Task")
+        |> taskScheme(polymorphicTaskOf)
+        |> standardBuiltinLayout("Ashes.Task")("fork"),
+        polymorphicTaskOf
+        |> taskScheme(joinHandleOf)
+        |> standardBuiltinLayout("Ashes.Task")("join"),
         standardBuiltinLayout("Ashes.Net.Http")("get")(
             None
             |> SemFunction(SemString)(stringTaskOf(SemString))
@@ -1342,6 +1459,24 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreRegexFind, code :: subject :: from :: [], _types) -> target3(start)(code)(subject)(from)(RegexFind)
         | (CoreRegexCaptures, code :: subject :: from :: [], _types) -> regexCaptures(start)(code)(subject)(from)
         | (CoreRegexSubstitute, code :: subject :: replacement :: [], _types) -> rsub(start)(code)(subject)(replacement)
+        | (CoreTaskRun, task :: [], _types) -> target1(start)(task)(RunTask)
+        | (CoreTaskFromResult, result :: [], _types) -> target1(start)(result)(CreateCompletedTask)
+        | (CoreTaskSleep, milliseconds :: [], _types) -> target1(start)(milliseconds)(AsyncSleep)
+        | (CoreTaskAll, tasks :: [], _types) -> target1(start)(tasks)(AsyncAll)
+        | (CoreTaskRace, tasks :: [], _types) -> target1(start)(tasks)(AsyncRace)
+        | (CoreTaskSpawn, task :: [], _types) -> emitted([SpawnTask(start)(task)])(start + 1)(CoreBuiltinUnit)
+        | (CoreTaskScope, task :: [], _types) -> emitted([CreateTaskScope(start)(true), CreateScopedTask(start + 1)(task)(start)])(start + 2)(CoreBuiltinTemp(start + 1))
+        | (CoreTaskFork, task :: [], _types) -> emitted([LoadLocal(start)(0), ForkScopedTask(start + 1)(start)(task)])(start + 2)(CoreBuiltinTemp(start + 1))
+        | (CoreTaskJoin, joinHandle :: [], _types) -> target1(start)(joinHandle)(JoinScopedTask)
+        | (CoreParallelFork, closure :: [], _types) -> target1(start)(closure)(ParallelFork)
+        | (CoreParallelJoin, desc :: _closure :: [], _types) -> target1(start)(desc)(ParallelJoin)
+        | (CoreParallelCleanup, desc :: _closure :: [], _types) -> emitted([ParallelCleanup(desc)])(start)(CoreBuiltinUnit)
+        | (CoreParallelOverride, _unit :: [], _types) -> emitted([LoadParallelWorkerOverride(start)])(start + 1)(CoreBuiltinTemp(start))
+        | (CoreParallelSetOverride, count :: [], _types) -> emitted([StoreParallelWorkerOverride(count)])(start)(CoreBuiltinUnit)
+        | (CoreParallelQueueStart, mapper :: combine :: list :: [], _types) -> emitted([ParallelQueueStart(start)(mapper)(combine)(list)])(start + 1)(CoreBuiltinTemp(start))
+        | (CoreParallelQueueCount, queue :: [], _types) -> emitted([LoadMemOffset(start)(queue)(8)])(start + 1)(CoreBuiltinTemp(start))
+        | (CoreParallelQueueAwait, queue :: _identity :: [], _types) -> target1(start)(queue)(ParallelQueueAwait)
+        | (CoreParallelQueueCleanup, queue :: [], _types) -> emitted([ParallelQueueCleanup(queue)])(start)(CoreBuiltinUnit)
         | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
         | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
         | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)

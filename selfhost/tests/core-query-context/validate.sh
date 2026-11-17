@@ -6,7 +6,7 @@ cli=$(realpath "${1:?usage: validate.sh /absolute/path/to/ashes}")
 results=work/core-query-context/results
 mkdir -p "$results"
 run() { bash /home/mattias/.claude/jobs/heavy2.sh systemd-run --user --scope -q -p MemoryMax="$1" -p MemorySwapMax=0 /usr/bin/time -v -o "$2" "${@:3}"; }
-perl selfhost/tests/core-query-context/render.pl
+bash selfhost/tests/core-query-context/render.sh
 run 8G "$results/format.time" "$cli" fmt work/core-query-context -w >"$results/format.log" 2>&1
 for flavor in plain poison; do
  flags=(ASHES_RC_LEAKCHECK=1)

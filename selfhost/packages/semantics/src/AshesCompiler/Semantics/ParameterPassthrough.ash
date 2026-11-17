@@ -32,6 +32,7 @@ let recursive terminalArmsAt (isFresh: Expr -> Bool) (parameter: Str) (depth: In
     else
         match expression with
             | ExprAt(_span, inner) -> terminalArmsAt(isFresh)(parameter)(depth)(inner)
+            | ExprNode(_node, inner) -> terminalArmsAt(isFresh)(parameter)(depth)(inner)
             | ExprLet(name, _value, body, _parameters, _annotation, _requirements) ->
                 if name == parameter
                 then (false, false)

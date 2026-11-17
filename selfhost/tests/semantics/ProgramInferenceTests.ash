@@ -229,7 +229,7 @@ let rejectWrongConstructorPatternArity unit =
         match inferProgram(ProgramSyntax(items = [Unit
         |> optionType
         |> TopLevelType], body = Some(body))) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(ConstructorPatternArityMismatch("Some"))) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(ConstructorPatternArityMismatch("Some", 1, 0))) } -> Unit
             | _ -> test.fail("constructor pattern arity should be checked"))
 
 let rejectUnknownRecordPatternField unit =

@@ -6,7 +6,9 @@
 // - The pipeline is the same one `selfhost/tests/backend` proves end to end: the entry source and
 //   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
 //   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
-//   program through `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
+//   program through the standalone type inference (the type checker: a program it rejects fails
+//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through
+//   `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
 //   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
 //   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
@@ -19,10 +21,11 @@
 //   stderr, and the exit codes are 0/1/2 for success, compilation or input failure, and usage
 //   error. `ashes run` compiles to the host temporary directory, forwards everything after `--`
 //   to the program, and propagates the program's own exit code.
-// - Source locations in a project build are computed against the entry module's text: the
-//   stitched program keeps every module's original spans, but the lowering's source context takes
-//   one text, so a diagnostic or debug line in a non-entry module is not yet mapped to that
-//   module's own lines.
+// - Source locations resolve in the file each span belongs to: the stitched program keeps every
+//   module's original spans, and lowering resolves a top-level binding's spans against the text of
+//   the module that declared it (an inline module's lifted text keeps its file's lines). Code
+//   lowering emits for one binding while lowering another (a specialized copy, an implementation
+//   method) is located in the file of the binding being lowered.
 // - `--explain <kind>[:<selector>]` is accepted by both commands, repeats, and prints the requested
 //   compiler reports to stderr between optimization and code generation
 //   (docs/md/reference/cli.md#compiler-reports). Reporting reads the decision snapshot and the
@@ -47,10 +50,17 @@ import AshesCompiler.Cli.DiagnosticIrDump
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
+import AshesCompiler.Backend.LinkNames
+import AshesCompiler.Frontend.ImportHeader.parseImportHeader
+import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
+import AshesCompiler.Frontend.Parser.parseProgram
+import AshesCompiler.Frontend.Parser.ProgramParseResult
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.InferenceDiagnostics
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.LoweringDiagnostics
 import AshesCompiler.Semantics.ExplainReport
@@ -59,6 +69,16 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceError
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.ProjectInference.IdentifiedStitchedProject
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
+import AshesCompiler.Semantics.ProjectInference.inferStitchedProjectFrom
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectManifest
@@ -344,8 +364,8 @@ let loweringErrorText (error: CoreLoweringError) =
             locationPrefix(loweringErrorLocation(error)) + codePrefix(code) + message
         | None -> Ashes.Trait.Show.show(error)
 
-let lowerStitchedProgram reuseEnabled inputPath source program =
-    match lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(program) with
+let loweredStitchedResult (lowering: CoreLoweringResult) =
+    match lowering with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
         | CoreLoweringResult { error = Some(error) } ->
             error
@@ -353,13 +373,122 @@ let lowerStitchedProgram reuseEnabled inputPath source program =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-// The stitched project lowered and optimized, with the placement facts the reports read.
-let lowerStitched reuseEnabled inputPath source stitched =
-    match stitched with
-        | StitchedSyntaxProject { program = program } ->
-            match lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
-                | Error(message) -> Error(message)
-                | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
+let lowerStitchedProgram reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    stitched.program
+    |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
+    |> loweredStitchedResult
+
+// With `ASHES_TYPED_LOWERING=1` the standalone type inference runs on the stitched program first
+// and lowering is given the numbered program with the types the inference recorded against it. A
+// program the inference rejects is not lowered; the inference's error is the compile error. Unset,
+// lowering infers the program's types as it lowers it.
+let typedLoweringRequested unit =
+    match Ashes.IO.Environment.get("ASHES_TYPED_LOWERING") with
+        | Ok(Some(value)) -> value == "1"
+        | _ -> false
+
+let typedLoweringInferenceError (result: ProgramInferenceResult) (error: ProgramInferenceError) =
+    match result.errorLocation with
+        | Some(location) -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location)
+        | None -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error)
+
+// The numbered units of a stitched project as the one program lowering walks.
+let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
+
+let lowerStitchedTyped reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    (let identified = identifyStitchedProject(stitched)
+    in
+        match inferIdentifiedStitchedProjectFrom(
+            "standalone"
+            |> emptyTypeEnvironmentForPackage
+            |> withIntrinsicBuiltinSignatures,
+            stitched,
+            identified
+        ) with
+            | ProgramInferenceResult { error = Some(error) } as result ->
+                error
+                |> typedLoweringInferenceError(result)
+                |> Error
+            | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
+                nodeTypes
+                |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
+                |> loweredStitchedResult)
+
+// With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
+// alone decides whether it is accepted, as before the check existed.
+let inferenceCheckSkipped unit =
+    match Ashes.IO.Environment.get("ASHES_SKIP_INFERENCE_CHECK") with
+        | Ok(Some(value)) -> value == "1"
+        | _ -> false
+
+let builtinInferenceEnvironment unit =
+    "standalone"
+    |> emptyTypeEnvironmentForPackage
+    |> withIntrinsicBuiltinSignatures
+
+// A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
+// program or rejects it with an error that keeps its structural form.
+let wordedLoweringError (lowering: CoreLoweringResult) =
+    match lowering with
+        | CoreLoweringResult { error = Some(error) } ->
+            match loweringErrorDiagnostic(error) with
+                | Some(_diagnostic) ->
+                    error
+                    |> loweringErrorText
+                    |> Some
+                | None -> None
+        | _ -> None
+
+// The compile error of a program the inference rejects. A bare unification error lacks the call,
+// argument or operator stage 0 words its message after, so lowering is asked for its own
+// diagnostic of the program, which has that site; every other error is the inference's own,
+// worded as stage 0 words it.
+let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxProject) builtins (result: ProgramInferenceResult) (error: ProgramInferenceError) =
+    (let inferenceText = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
+    in
+        if inferenceErrorWantsCallSiteWording(error)
+        then
+            match stitched.program
+            |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
+            |> wordedLoweringError with
+                | Some(text) -> text
+                | None -> inferenceText
+        else inferenceText)
+
+// The standalone type inference is the type checker: it runs on every stitched program before
+// lowering, and a program it rejects is not lowered further. An accepted program is lowered as it
+// is without the check, or from the inference's recorded types with `ASHES_TYPED_LOWERING=1`.
+let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    (let builtins = builtinInferenceEnvironment(Unit)
+    in
+        let identified = identifyStitchedProject(stitched)
+        in
+            match inferIdentifiedStitchedProjectFrom(builtins)(stitched)(identified) with
+                | ProgramInferenceResult { error = Some(error) } as result ->
+                    error
+                    |> rejectedProgramText(reuseEnabled)(inputPath)(source)(stitched)(builtins)(result)
+                    |> Error
+                | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
+                    if typedLoweringRequested(Unit)
+                    then
+                        nodeTypes
+                        |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
+                        |> loweredStitchedResult
+                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched))
+
+let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    if typedLoweringRequested(Unit)
+    then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
+    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
+
+// The stitched project type-checked, lowered and optimized, with the placement facts the reports
+// read.
+let lowerStitched reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    match if inferenceCheckSkipped(Unit)
+    then lowerUnchecked(reuseEnabled)(inputPath)(source)(stitched)
+    else lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
+        | Error(message) -> Error(message)
+        | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
 
 // The module-qualified name of a stitched binding for the reports. The single-file form is stage
 // 0's standalone layout, whose entry module is named `Main`; every other definition reports under
@@ -429,24 +558,116 @@ let disposeEmission buffer machine builder module_ context =
     |> (given (_) -> disposeModule(module_))
     |> (given (_) -> contextDispose(context))
 
-let emitObjectWithMachine machine builder module_ context =
+// The vendored runtime payloads directory for linux-x64, probed as stage 0's
+// `HermeticRuntimeAssets` probes it: beside the executable, beside its parent directory and its
+// grandparent (a build's `artifacts/<flavor>/` output), and under the working directory.
+let runtimePayloadCandidates (fileName: Str) =
+    (let relative = "runtimes/linux-x64/" + fileName
+    in
+        match Ashes.IO.Environment.executableDirectory(Unit) with
+            | Ok(directory) ->
+                let parentDirectory = Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(directory)
+                in
+                    [
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(directory)(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(parentDirectory)(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(parentDirectory))(relative),
+                        relative
+                    ]
+            | Error(_) -> [relative])
+
+let recursive firstExistingPayload (candidates: List(Str)) (fileName: Str) =
+    match candidates with
+        | [] -> Error("Could not locate the runtime payload " + fileName + ": no runtimes/linux-x64 directory beside the executable or under the working directory.")
+        | candidate :: rest ->
+            match Ashes.IO.File.exists(candidate) with
+                | Ok(true) -> Ok(candidate)
+                | _ -> firstExistingPayload(rest)(fileName)
+
+let runtimePayloadPath (fileName: Str) =
+    firstExistingPayload(runtimePayloadCandidates(fileName))(fileName)
+
+// The vendored bitcode payloads the program's runtime calls need: openlibm for a libm call, PCRE2
+// for `Ashes.Text.Regex` and Mbed TLS for HTTPS and TLS (stage 0's `LinkOpenlibmBitcodeIfNeeded`,
+// `LinkPcre2BitcodeIfNeeded` and the TLS runtime's payload).
+let runtimePayloadsFor (program: IrProgram) =
+    (let math =
+        if programUsesLibm(program)
+        then ["libopenlibm.bc"]
+        else []
+    in
+        let regex =
+            if programUsesRegex(program)
+            then "libpcre2.bc" :: math
+            else math
+        in
+            if programUsesTls(program)
+            then "libmbedtls.bc" :: regex
+            else regex)
+
+// Links each payload into the optimized module, as stage 0 links them after the program's passes:
+// the program's calls into the payload resolve inside the module, with no dynamic import.
+let recursive linkRuntimePayloads context module_ (payloads: List(Str)) =
+    match payloads with
+        | [] -> Ok(Unit)
+        | fileName :: rest ->
+            match runtimePayloadPath(fileName) with
+                | Error(message) -> Error(message)
+                | Ok(path) ->
+                    match linkBitcodeFile(context)(module_)(linuxX64Triple)(path) with
+                        | Error(message) -> Error(message)
+                        | Ok(_) -> linkRuntimePayloads(context)(module_)(rest)
+
+// Stage 0's `VerifyModule`: with `ASH_DBG_DUMP_IR` set, a module that fails verification is
+// written to /tmp/ashes_bad_ir.ll.
+let dumpBrokenModule module_ =
+    match Ashes.IO.Environment.get("ASH_DBG_DUMP_IR") with
+        | Ok(Some(_)) ->
+            match printModuleToString(module_) with
+                | Ok(text) ->
+                    match Ashes.IO.File.writeText("/tmp/ashes_bad_ir.ll")(text) with
+                        | _ -> Unit
+                | Error(_) -> Unit
+        | _ -> Unit
+
+// Stage 0's `VerifyModule` before the optimization passes: a broken module fails the compile with
+// the verifier's report instead of being optimized into a broken program.
+let verifyGeneratedModule module_ =
+    match verifyModule(module_)(verifierReturnStatusAction) with
+        | (false, _report) -> Ok(Unit)
+        | (true, report) ->
+            let detail =
+                match report with
+                    | Ok(Some(text)) -> text
+                    | _ -> "unknown error"
+            in
+                let _ = dumpBrokenModule(module_)
+                in Error("LLVM module verification failed: " + detail)
+
+let emitObjectWithMachine (payloads: List(Str)) machine builder module_ context =
     (let _ = setTarget(module_)(linuxX64Triple)
     in
         let _ = applyDataLayout(module_)(machine)
         in
-            let _ = runOptimizationPasses(module_)(machine)
-            in
-                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
-                    | (false, _, None) -> Error("LLVM produced no object buffer.")
-                    | (false, _, Some(buffer)) ->
-                        let bytesResult =
-                            buffer
-                            |> getBufferSize
-                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                        in
-                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
-                            in bytesResult)
+            match verifyGeneratedModule(module_) with
+                | Error(message) -> Error(message)
+                | Ok(_) ->
+                    let _ = runOptimizationPasses(module_)(machine)
+                    in
+                        match linkRuntimePayloads(context)(module_)(payloads) with
+                            | Error(message) -> Error(message)
+                            | Ok(_) ->
+                                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
+                                    | (false, _, None) -> Error("LLVM produced no object buffer.")
+                                    | (false, _, Some(buffer)) ->
+                                        let bytesResult =
+                                            buffer
+                                            |> getBufferSize
+                                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                                        in
+                                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
+                                            in bytesResult)
 
 // A target machine for `triple` tuned to the host CPU, as `selfhost/tests/backend` resolves it:
 // LLVM's default optimization level and static relocations, matching stage 0's own default build
@@ -482,7 +703,8 @@ let emitObject lowered =
                 | (module_, builder) ->
                     match resolveHostTargetMachine(linuxX64Triple) with
                         | Error(message) -> Error(message)
-                        | Ok(machine) -> emitObjectWithMachine(machine)(builder)(module_)(context))
+                        | Ok(machine) ->
+                            emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
 
 let linkExecutable program objectBytes =
     program
@@ -515,26 +737,122 @@ let writeExecutable outputPath executableBytes =
                             |> Ashes.Byte.length
                             |> Ok
 
+// With `ASHES_LINK_MAP` set to a path, the link map of the executable (one line per function,
+// `<hex address> <hex size> <name>`, sorted by address) is written there, and the origin of every
+// IR function to `<path>.names`. The executable itself is the same either way.
+let writeLinkMapFiles path optimized objectBytes =
+    match linuxLinkMapText(objectBytes) with
+        | Error(message) -> Error(message)
+        | Ok(mapText) ->
+            match Ashes.IO.File.writeText(path)(mapText) with
+                | Error(message) -> Error("Could not write " + path + ": " + message)
+                | Ok(_) ->
+                    match optimized
+                    |> linkNamesText
+                    |> Ashes.IO.File.writeText(path + ".names") with
+                        | Error(message) -> Error("Could not write " + path + ".names: " + message)
+                        | Ok(_) -> Ok(Unit)
+
+let writeRequestedLinkMap optimized objectBytes =
+    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
+        | Ok(Some(path)) when path != "" -> writeLinkMapFiles(path)(optimized)(objectBytes)
+        | _ -> Ok(Unit)
+
 let emitAndLink outputPath optimized =
     match emitObject(optimized) with
         | Error(message) -> Error(message)
         | Ok(objectBytes) ->
-            match linkExecutable(optimized)(objectBytes) with
+            match writeRequestedLinkMap(optimized)(objectBytes) with
                 | Error(message) -> Error(message)
-                | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                | Ok(_) ->
+                    match linkExecutable(optimized)(objectBytes) with
+                        | Error(message) -> Error(message)
+                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+
+// With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
+// the stitched program before it is lowered and reports one line to stderr: whether it succeeded
+// and how long it took. Its result is discarded, so the emitted image is the same either way; with
+// the variable unset nothing but the environment lookup happens.
+let shadowInferenceLocation (result: ProgramInferenceResult) =
+    match result.errorLocation with
+        | Some(location) -> Ashes.Trait.Show.show(location)
+        | None -> "no location"
+
+let shadowInferenceReport (result: ProgramInferenceResult) (elapsedMillis: Int) =
+    match result.error with
+        | None -> "shadow inference: ok in " + Ashes.Text.fromInt(elapsedMillis) + " ms"
+        | Some(error) -> "shadow inference: error in " + Ashes.Text.fromInt(elapsedMillis) + " ms: " + Ashes.Trait.Show.show(error) + " at " + shadowInferenceLocation(result)
+
+let runShadowInference stitched =
+    match Ashes.IO.Environment.get("ASHES_SHADOW_INFERENCE") with
+        | Ok(Some("")) -> Unit
+        | Ok(Some(_value)) ->
+            let start = Ashes.IO.Console.monotonicMillis(Unit)
+            in
+                let result =
+                    inferStitchedProjectFrom(
+                        "standalone"
+                        |> emptyTypeEnvironmentForPackage
+                        |> withIntrinsicBuiltinSignatures,
+                        stitched
+                    )
+                in
+                    Ashes.IO.Console.monotonicMillis(Unit) - start
+                    |> shadowInferenceReport(result)
+                    |> Ashes.IO.writeErrorLine
+        | _ -> Unit
 
 // Lowers, reports, emits, and links an already stitched program to `outputPath`, returning the
 // written byte count; `inputPath` and `source` are the text source locations are computed from.
 let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
-    match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
-        | Error(message) -> Error(message)
-        | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
-            optimized
-            |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-            |> (given (_) ->
-                match writeDiagnosticIrDump(lowered)(optimized) with
-                    | Error(message) -> Error(message)
-                    | Ok(_) -> emitAndLink(outputPath)(optimized))
+    (let _ = runShadowInference(stitched)
+    in
+        match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
+            | Error(message) -> Error(message)
+            | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
+                optimized
+                |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
+                |> (given (_) ->
+                    match writeDiagnosticIrDump(lowered)(optimized) with
+                        | Error(message) -> Error(message)
+                        | Ok(_) -> emitAndLink(outputPath)(optimized)))
+
+let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> 0
+        | TypeConstructor { name = candidate } :: rest ->
+            if candidate == name
+            then 1 + constructorCount(name)(rest)
+            else constructorCount(name)(rest)
+
+// The type of the entry program that declares the constructor `name` more than once.
+let recursive typeDeclaringTwice (name: Str) (items: List(TopLevelItem)) =
+    match items with
+        | [] -> None
+        | TopLevelAt(_span, inner) :: rest -> typeDeclaringTwice(name)(inner :: rest)
+        | TopLevelType(TypeDecl { name = typeName, constructors = constructors }) :: rest ->
+            if constructorCount(name)(constructors) > 1
+            then Some(typeName)
+            else typeDeclaringTwice(name)(rest)
+        | _item :: rest -> typeDeclaringTwice(name)(rest)
+
+let duplicateConstructorOwner (source: Str) (name: Str) =
+    match parseImportHeader(source) with
+        | Ok(ParsedImportHeader { sourceWithoutImports = body }) ->
+            match parseProgram(body) with
+                | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
+        | Error(_error) -> None
+
+// A stitching failure as stage 0 words it: a constructor a type of the entry program declares
+// twice, or a binding the entry program declares twice. Every other failure prints its structural
+// form.
+let stitchErrorText (source: Str) (error: ShippedStitchError) =
+    match error with
+        | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
+            match duplicateConstructorOwner(source)(name) with
+                | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
+                | None -> "ASH013 Duplicate top-level binding '" + name + "'."
+        | other -> Ashes.Trait.Show.show(other)
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
@@ -548,7 +866,7 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                     match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
                         | Error(error) ->
                             error
-                            |> Ashes.Trait.Show.show
+                            |> stitchErrorText(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
 

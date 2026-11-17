@@ -2755,9 +2755,19 @@ public sealed partial class Lowering
         EmitRuntimeManagedTcoSourceChildRelease(headTemp, elementType, element, ListCellConstructionWord(constructionTemp, HeapLayouts.ListHeadIndex));
     }
 
+    // A child the construction stored as a borrowed read of a binding (`State(refs = [text])` with
+    // `text` matched out of the list the loop walks) took no reference: the binding's owner releases
+    // the reference it holds, so the dying successor's cell only borrowed it.
+    private bool IsBorrowedBindingChild(Expr? sourceExpression, int? storedTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_BORROWEDBINDINGCHILDKEEP") is null
+            && sourceExpression is Expr.Var
+            && storedTemp is int stored
+            && IsDefinedBy<IrInst.Borrow>(stored);
+
     private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null, int? storedTemp = null)
     {
-        if (sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
+        if ((sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
+            || IsBorrowedBindingChild(sourceExpression, storedTemp))
         {
             return;
         }
@@ -2872,6 +2882,7 @@ public sealed partial class Lowering
             IrInst.RcDup duplicate => duplicate.Target == temp,
             IrInst.GetAdtField field => field.Target == temp,
             IrInst.LoadLocal load => load.Target == temp,
+            IrInst.Borrow borrow => borrow.Target == temp,
             IrInst.Alloc allocation => allocation.Target == temp,
             _ => false,
         });
@@ -3444,7 +3455,9 @@ public sealed partial class Lowering
         // needs the same early expected-type unification an ordinary Expr.Lambda argument gets
         // below, so its parameter type is pinned before its body's constraint is resolved instead of
         // staying an unconstrained variable that can never be discharged.
-        bool forwardsExpectedType = e is Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
+        // A variable reference takes the expected type too: a reference to a constrained binding
+        // settles its instantiation against it before choosing among the dictionaries in scope.
+        bool forwardsExpectedType = e is Expr.Var or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
             or RecursiveGroupExpr or Expr.If or Expr.Match or Expr.Handle or Expr.Call
             or Expr.ListLit or Expr.Cons or Expr.TupleLit
             || e is Expr.QualifiedVar qualifiedTraitMethod && TryGetTraitMethod(qualifiedTraitMethod, out _, out _);
@@ -3452,7 +3465,7 @@ public sealed partial class Lowering
         var lowered = LowerExprDispatch(
             e,
             forwardsExpectedType ? request : request.WithoutExpectedType());
-        if (expectedType is not null && !forwardsExpectedType)
+        if (expectedType is not null && (!forwardsExpectedType || e is Expr.Var))
         {
             UnifyUnderRequest(expectedType, lowered.Type, request);
             lowered = (lowered.Temp, Prune(lowered.Type));
@@ -3591,11 +3604,11 @@ public sealed partial class Lowering
         RecordInlinedFreshArgumentRead(b, v.Name, materialized: false);
         if (b is null)
         {
-            return LowerVarUnbound(v, request);
+            return LowerVarUnbound(v, request.WithoutExpectedType());
         }
 
         RecordElementSpecializationRecursion(v.Name);
-        var result = LowerVarBound(v, b);
+        var result = LowerVarBound(v, b, request);
 
         RecordHoverType(
             GetSpan(v),
@@ -3723,9 +3736,9 @@ public sealed partial class Lowering
             : LowerExpr(BuildConstructorLambda(ctorSym)).AsPair();
     }
 
-    private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
+    private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b, LoweredValueRequest request)
     {
-        if (TryLowerActiveTraitDictionaryReference(v, b) is { } traitReference)
+        if (TryLowerActiveTraitDictionaryReference(v, b, request) is { } traitReference)
         {
             return traitReference;
         }
@@ -4534,7 +4547,7 @@ public sealed partial class Lowering
             CountSourceLambdaParameters(let.Value),
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
         LoweredValueRequest valueRequest = usesTraitDictionary
-            ? request
+            ? WithTraitDictionaryValueType(request, let.Value, inferenceSeedType, traitDictionaryInfo!)
             : ApplyInferenceSeedType(request, inferenceSeedType);
         (int valueTemp, TypeRef runtimeValueType) = usesTraitDictionary
             ? LowerExpr(loweredValue, valueRequest).AsPair()
@@ -4659,9 +4672,13 @@ public sealed partial class Lowering
 
         request = LoopSuccessorLetRequest(let, request);
         TcoContext? outerSuccessorLetLoop = _arenaSuccessorLetLoop;
+        TcoContext? outerKeptSuccessorLetLoop = _arenaKeptSuccessorLetLoop;
         if (IsArenaLoopSuccessorLet(let))
         {
             _arenaSuccessorLetLoop = _tcoCtx;
+            _arenaKeptSuccessorLetLoop = _tcoCtx is { } loop && SelfCallOrdinalPassing(let.Body, let.Name, loop.SelfName) is null
+                ? loop
+                : null;
         }
 
         Expr? outerSuccessorJoin = EnterArenaSuccessorLetJoin(let);
@@ -4675,8 +4692,30 @@ public sealed partial class Lowering
         finally
         {
             _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+            _arenaKeptSuccessorLetLoop = outerKeptSuccessorLetLoop;
             _arenaSuccessorJoin = outerSuccessorJoin;
         }
+    }
+
+    // The loop whose arena successor keeps the value of the `let` being lowered through a later
+    // binding (a join's arm, a cell's head or tail) rather than as the binding the self-call passes.
+    private TcoContext? _arenaKeptSuccessorLetLoop;
+
+    // A binding's owned value an aggregate built for such a successor stores: the arena keeps the
+    // successor until the loop ends while the binding is released at the back edge, and no back edge
+    // copy reads the aggregate. The aggregate takes an arena copy, which lives as long as the
+    // successor, instead of a retain nothing would release.
+    private bool StoresArenaCopyForKeptSuccessor(TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        return _arenaKeptSuccessorLetLoop is { } loop
+            && ReferenceEquals(loop, _tcoCtx)
+            && GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_KEPTSUCCESSORARENACOPY") is null
+            && !CanArenaReset(pruned)
+            && pruned is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(pruned, [])
+            && IsGeneralRcAdmissible(pruned);
     }
 
     // A binding the loop's self-call passes on becomes the next iteration's parameter exactly like
@@ -4690,9 +4729,86 @@ public sealed partial class Lowering
     private bool IsArenaLoopSuccessorLet(Expr.Let let)
         => _tcoCtx is { } tco
             && Environment.GetEnvironmentVariable("GRC_NO_LETSUCCESSOR") is null
-            && SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName) is { } ordinal
+            && (SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName)
+                ?? KeepingLetOrdinalPassing(let.Body, let.Name, tco.SelfName, KeptSuccessorLetHops)) is { } ordinal
             && ordinal < tco.ParamSlots.Count
             && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]);
+
+    // How many bindings a value may pass through on its way into a loop's successor (`let w =
+    // Rec(...) in let acc2 = w :: acc in let next = if c then acc2 else acc2 in go(next)`).
+    private const int KeptSuccessorLetHops = 6;
+
+    // The position at which a self-call passes on a later binding whose value keeps the name (as a
+    // join's arm, a cell's head or tail, a constructor's or tuple's field), directly or through
+    // further such bindings: the name's value becomes part of the successor exactly like a binding
+    // the self-call passes itself. Only the bindings on the body's path to its result are followed.
+    private int? KeepingLetOrdinalPassing(Expr expression, string name, string selfName, int hops)
+    {
+        if (hops <= 0 || Environment.GetEnvironmentVariable("GRC_NO_KEPTLETSUCCESSOR") is not null)
+        {
+            return null;
+        }
+
+        switch (expression)
+        {
+            case Expr.Let let:
+                if (!string.Equals(let.Name, name, StringComparison.Ordinal)
+                    && ValueKeepsName(let.Value, name)
+                    && (SelfCallOrdinalPassing(let.Body, let.Name, selfName)
+                        ?? KeepingLetOrdinalPassing(let.Body, let.Name, selfName, hops - 1)) is int found)
+                {
+                    return found;
+                }
+
+                return string.Equals(let.Name, name, StringComparison.Ordinal)
+                    ? null
+                    : KeepingLetOrdinalPassing(let.Body, name, selfName, hops);
+            case Expr.If iff:
+                return KeepingLetOrdinalPassing(iff.Then, name, selfName, hops)
+                    ?? KeepingLetOrdinalPassing(iff.Else, name, selfName, hops);
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    if (KeepingLetOrdinalPassing(matchCase.Body, name, selfName, hops) is int inArm)
+                    {
+                        return inArm;
+                    }
+                }
+
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    // Whether the value of the expression may hold the named binding's value itself: it is the
+    // result of a join arm, or stored in a cell, tuple, list or constructor built there.
+    private bool ValueKeepsName(Expr expression, string name)
+    {
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return string.Equals(variable.Name, name, StringComparison.Ordinal);
+            case Expr.Let let:
+                return !string.Equals(let.Name, name, StringComparison.Ordinal) && ValueKeepsName(let.Body, name);
+            case Expr.If iff:
+                return ValueKeepsName(iff.Then, name) || ValueKeepsName(iff.Else, name);
+            case Expr.Match match:
+                return match.Cases.Any(matchCase => ValueKeepsName(matchCase.Body, name));
+            case Expr.Cons cons:
+                return ValueKeepsName(cons.Head, name) || ValueKeepsName(cons.Tail, name);
+            case Expr.TupleLit tuple:
+                return tuple.Elements.Any(element => ValueKeepsName(element, name));
+            case Expr.ListLit list:
+                return list.Elements.Any(element => ValueKeepsName(element, name));
+            case Expr.RecordUpdate update:
+                return ValueKeepsName(update.Target, name) || update.Updates.Any(field => ValueKeepsName(field.Value, name));
+            default:
+                return TryDescribeConstructorExpression(expression, out _, out List<Expr>? arguments, out _)
+                    && arguments is not null
+                    && arguments.Exists(argument => ValueKeepsName(argument, name));
+        }
+    }
 
     // The loop whose arena successor a `let` value being lowered becomes: its back edge balances the
     // retains the cells it builds hold.
@@ -7685,7 +7801,7 @@ public sealed partial class Lowering
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
         if (savedTcoCtx is not null) savedTcoCtx.ResultType = retTy;
-        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, selfName);
+        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, retTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
         LowerLambdaCoreFinalizeTcoOwnership(
@@ -8305,6 +8421,7 @@ public sealed partial class Lowering
         TypeRef paramTy,
         int argSlot,
         TypeRef rowTy,
+        TypeRef resultType,
         string? selfName)
     {
         (string, int, TypeRef)? outerNormalizedParameter = _normalizedAlwaysReturnedParameter;
@@ -8319,7 +8436,7 @@ public sealed partial class Lowering
         _normalizedParameterMovedIntoAggregate = false;
         bool outerParameterCloned = _normalizedParameterClonedIntoArenaTuple;
         _normalizedParameterClonedIntoArenaTuple = false;
-        (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, resultType, selfName);
         if (_normalizedParameterMovedIntoAggregate)
         {
             _normalizedParameterMovedLabels.Add(label);
@@ -10593,7 +10710,7 @@ public sealed partial class Lowering
         return outerTcoCtx;
     }
 
-    private (int Temp, TypeRef Type) LowerLambdaCoreLowerBody(Expr.Lambda lam, TypeRef rowTy, string? selfName)
+    private (int Temp, TypeRef Type) LowerLambdaCoreLowerBody(Expr.Lambda lam, TypeRef rowTy, TypeRef resultType, string? selfName)
     {
         bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
         // If this lambda parameter is a capability op-parameter, mark it active so a call at a
@@ -10608,10 +10725,16 @@ public sealed partial class Lowering
         // AllowsOrdinaryRcPlacement — every other function reachable from a live handler post keeps
         // the plain LowerExpr fallback it always had, since LowerEscapingResult's WithEscapingConsumerOwnership
         // treatment is not just an RC-placement question.
+        // A hidden dictionary parameter's body is the binding's own value: once the binding's source
+        // type is known it is the type that value is lowered against, so a reference to another
+        // constrained binding there is settled before its evidence is chosen.
+        LoweredValueRequest bodyRequest = traitDictionaryScope is not null && Prune(resultType) is not TypeRef.TVar
+            ? default(LoweredValueRequest).WithExpectedType(resultType)
+            : default;
         var (bodyTemp, bodyType) = AllowsAsyncIndependentRcPlacement
             && (AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult)
-            ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
-            : LowerExpr(lam.Body).AsPair();
+            ? LowerEscapingResult(lam.Body, normalizeStaticString: true, request: bodyRequest)
+            : LowerExpr(lam.Body, bodyRequest).AsPair();
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitTraitDictionaryParameterScope(traitDictionaryScope);
@@ -14876,6 +14999,9 @@ public sealed partial class Lowering
         }
 
         bool previousRetainCollection = BeginCallArgumentRetains(argumentRequest.TransfersRuntimeManagedChildren);
+        // A call's argument escapes into the callee's result, not into the loop's arena successor.
+        TcoContext? outerKeptSuccessorLetLoop = _arenaKeptSuccessorLetLoop;
+        _arenaKeptSuccessorLetLoop = null;
         Expr.Cons? outerArgumentCell = _callArgumentCell;
         _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren
             || (Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLANYCALL") is null && MayHoldListCell(funType.Ret))
@@ -14885,6 +15011,7 @@ public sealed partial class Lowering
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();
         _callArgumentCell = outerArgumentCell;
+        _arenaKeptSuccessorLetLoop = outerKeptSuccessorLetLoop;
         EndCallArgumentRetains(previousRetainCollection);
         if (argumentRequest.TransfersRuntimeManagedChildren)
         {
@@ -18525,9 +18652,10 @@ public sealed partial class Lowering
         bool savedTailPos,
         LoweredValueRequest request)
     {
-        // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) takes a
-        // tail built the same way, so every cell of the chain is reference-counted, not only the first.
-        LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
+        // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) or of a
+        // reference-counted literal chain takes a tail built the same way.
+        bool tailKeepsRequest = ConsTailKeepsRequest(cons, request);
+        LoweredValueRequest tailRequest = tailKeepsRequest
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
         bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
@@ -18559,9 +18687,7 @@ public sealed partial class Lowering
 
         // A reference-counted cell never points at an arena one: a chain cell whose tail cell stayed
         // in the arena (its head could not be reference-counted) stays there too.
-        if (cons.Tail is Expr.Cons
-            && request.RuntimeTcoListTailSlot is not null
-            && !IsRuntimeManagedResultTemp(tailTemp))
+        if (tailKeepsRequest && !IsRuntimeManagedResultTemp(tailTemp))
         {
             request = request with
             {
@@ -18583,6 +18709,17 @@ public sealed partial class Lowering
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
+
+    // Every cell of a chain consed onto a loop's list parameter is reference-counted, not only the
+    // first. A reference-counted cell over the rest of a literal chain (`1 :: 2 :: []` as a
+    // function's result) is followed by reference-counted cells too, as a list literal's are: an
+    // arena cell there is reclaimed with the call window while the head cell still points at it.
+    private bool ConsTailKeepsRequest(Expr.Cons cons, LoweredValueRequest request)
+        => cons.Tail is Expr.Cons
+            && (request.RuntimeTcoListTailSlot is not null
+                || (Environment.GetEnvironmentVariable("GRC_NO_LITERALCHAINTAIL") is null
+                    && request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                    && IsFreshListConstructionExpression(cons.Tail)));
 
     // A cell of a chain consed onto a loop's list parameter over a reference-counted cell is
     // reference-counted too. An arena cell there would be the only holder of the cells after it: the
@@ -18627,9 +18764,14 @@ public sealed partial class Lowering
     {
         int retainedTemp = RetainRuntimeManagedAggregateChild(tail, tailTemp, tailType);
         if (!RecordCallArgumentArenaRetain(tailTemp, retainedTemp, tailType)
-            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null
+            && KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSKIP") is null)
         {
-            KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType);
+            // The slot releases the retain, so a release of the cell's children (a back edge's copy
+            // of a successor that holds the cell in a field, dropping the source it copied) skips
+            // the tail.
+            _ownedSlotConstructorArguments.Add(tail);
         }
 
         return retainedTemp;
@@ -18637,7 +18779,8 @@ public sealed partial class Lowering
 
     // Any list type qualifies, not only the contract's: a list the function's result copies out (a
     // `List(Str)`) is copied before the owned slots are released, so the copy holds its own cells.
-    private void KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
+    // True when the retain went to an owned slot.
+    private bool KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
     {
         if (retainedTemp == tailTemp
             || !GeneralRcEnabled
@@ -18647,12 +18790,13 @@ public sealed partial class Lowering
             || Prune(tailType) is not TypeRef.TList
             || ContainsUnresolvedLayoutType(Prune(tailType), []))
         {
-            return;
+            return false;
         }
 
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(tailType));
+        return true;
     }
 
     // An arena cell that escapes (a call's argument the callee's result may reach) holding a value

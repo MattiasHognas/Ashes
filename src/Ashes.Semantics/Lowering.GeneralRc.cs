@@ -136,8 +136,9 @@ public sealed partial class Lowering
     // Branches names the match arms and if branches the slot was stored inside, outermost first.
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
-    // Origin, on a predecessor, is the owned slot whose earlier value it holds.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false, bool PartDuplicate = false);
+    // Origin, on a predecessor, is the owned slot whose earlier value it holds. AliasTemp, on the
+    // reference an escaping arena alias keeps of an owner it borrows, is the alias as it was stored.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false, bool PartDuplicate = false, int AliasTemp = -1);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);

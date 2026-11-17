@@ -57,12 +57,14 @@ and anyRecordFieldBindsName (fields: List((Str, Pattern))) (name: Str) =
 let recursive callSpineOf (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> callSpineOf(inner)(arguments)
+        | ExprNode(_node, inner) -> callSpineOf(inner)(arguments)
         | ExprCall(callee, argument, _sugar, _layout) -> callSpineOf(callee)(argument :: arguments)
         | root -> (root, arguments)
 
 let recursive reachesAt (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (expression: Expr) (variable: Str) =
     match expression with
         | ExprAt(_span, inner) -> reachesAt(constructors)(callees)(cells)(inner)(variable)
+        | ExprNode(_node, inner) -> reachesAt(constructors)(callees)(cells)(inner)(variable)
         | ExprVar(name) -> name == variable
         | ExprLambda(parameter, body, _annotation) -> parameter != variable && reachesAt(constructors)(callees)(cells)(body)(variable)
         | ExprLet(name, _value, body, _parameters, _annotation, _constraints) -> name != variable && reachesAt(constructors)(callees)(cells)(body)(variable)

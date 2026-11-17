@@ -15,14 +15,14 @@ Active implementation evidence still dispatches first. The seven public lowering
 entry points without replay start with pinned goals, preventing executable
 placeholder IR from escaping.
 
-Ordinary constrained generic `Not` bindings still lack mapped evidence in some
-paths. Non-Boolean and mixed Boolean/custom-type uses remain explicit errors.
-Boolean-only use-driven resolution is not full polymorphic `Not` support. Tests
-preserve that limitation rather than silently forcing every operand to Bool.
+Ordinary constrained generic `Not` bindings take their evidence per call. A custom
+operand keeps its own type, and one binding serves a Boolean and a custom-type use
+in the same program. The expression-only entry points have no replay and no
+standard trait module, so a constrained binding called there is still rejected.
 
 ## Focused real-Core checks
 
-From the worktree root, `perl selfhost/tests/logical-not-inference/render.pl`
+From the worktree root, `bash selfhost/tests/logical-not-inference/render.sh`
 generates `work/logical-not-inference/ashes.json`. Compile that project using the
 stage-0 CLI with `--debug -O0`, inside the agreed heavy-job wrapper and 20G systemd
 scope; run the result in a 4G scope. No arguments runs the assertions. The optional
@@ -31,8 +31,8 @@ source without rebuilding the driver.
 
 `CoreLogicalNotInferenceTests.ash` checks inferred and annotated predicates,
 identity calls, single/mutual recursion, the bootstrap's list-predicate shape,
-invalid Int, active generic implementation evidence, unsupported explicit/inferred
-custom Not and mixed uses. Direct expression checks require an unresolved error,
+invalid Int, active generic implementation evidence, explicit/inferred custom Not
+and mixed Boolean/custom uses through per-call evidence. Direct expression checks require an error for a constrained binding,
 real `CmpIntEq` for a concrete Bool, and rejection of missing Show evidence.
 The module is also registered in the normal semantics suite.
 
@@ -57,7 +57,7 @@ Final integrated stage-1 acceptance and another stage-2 attempt remain required.
 
 ## Lifetime check: stage-1 discrepancy remains unresolved
 
-`perl selfhost/tests/logical-not-inference/render-lifetime.pl` extracts the actual
+`bash selfhost/tests/logical-not-inference/render-lifetime.sh` extracts the actual
 production helpers for goal discovery, proof-map creation, replay, binding and
 cache invalidation into `work/logical-not-lifetime/ashes.json`. Prelude and
 assertions model the relevant state; instruction emission and trait dispatch are
@@ -80,7 +80,191 @@ Bootstrap28 SHA256:
 `ecd48b70e3c1e5f20796a6eee67425a394641b9fe7d0bd2681d7302c55f0d9a3`.
 Stage 1 has no poison backend. Evidence is retained under
 `work/logical-not-lifetime/`, including the failing `validate-more.sh` comparison.
-An independent allocation/watchpoint investigation is in progress; attribution to
-an existing compiler defect versus a newly exercised owner is not yet established.
-The semantic fix is therefore not claimed lifetime-accepted. No full suites or
-successful stage-2 compilation are claimed by this change.
+An independent baseline reproduction removes `finishOrDeferCoreLogicalNot`
+entirely. It constructs a dynamic key in the existing pending-goal state, binds its
+type, and calls the unchanged `resolvedTraitGoals` helper. Bootstrap28 emits live
+counts 2/1001/10001 at 1/1000/10000 rounds; a literal pending-list control stays
+flat at 1/1. Seed creation, key creation, empty proof lookup, deferral alone, and
+binding alone are also flat. Adding `resolvedTraitGoals` introduces the growth;
+the later proof-map and pinning steps add none.
+
+The leaked cell is a reference-counted string (`2:3:Not:not` in the reduced case),
+still at reference count 1. This establishes an existing stage-1 ownership defect
+in the borrowed pending-list to resolved-list path, newly exercised by logical
+negation. It does not establish a safe release fix. The failing equality check
+remains required, and the semantic fix is not claimed lifetime-accepted. No full
+suites or successful stage-2 compilation are claimed by this change.
+
+The frozen minimal sources, watchpoint observations, and a counter-equality runner
+are tracked in [pending-goal-lifetime](../pending-goal-lifetime/README.md).
+
+## Recursive-group discovery during whole-program replay
+
+Final bootstrap29 passed each small predicate case individually, but the combined
+native fixture failed at `!odd(n - 1)` in `even`. The same combined source also
+failed in the direct-Core driver; this was a missing combination test, not evidence
+of a CLI-only difference. GDB showed `traitGoalsPinned = true` with only the earlier
+`invert` site's Boolean proof in the map. The mutual group's first member pass
+could no longer infer its later sibling's result, although the group's ordinary
+unpinned discovery/replay path handled the group successfully on its own.
+
+The recursive-group helper now permits discovery in its disposable first member
+pass. Its final member pass starts from the original group state plus settled
+sibling proofs, preserving the caller's pinned flag. If no sibling result settled
+and discovery's append-only pending-goal list is empty, restore that flag on the
+first result and reuse it. Otherwise a pinned caller takes the final pass; no
+provisional expression may escape through a public expression API. Tests combine an inferred `invert` with
+mutual predicates and cover concrete and unresolved recursive expressions.
+
+The known pending-goal string ownership defect above remains outstanding. This
+inference correction does not change its releases or relax its equality check.
+
+The revised real-Core driver compiled in 3:25.13 (peak 10,151,556 KiB).
+Its dynamic source checks now accept the combined `invert`/mutual program; the
+previous driver rejects that identical source. Explicit and inferred custom Not
+still report the expected Not/Bit error, and mixed uses retain their call mismatch.
+A valid nested recursive Boolean expression lowers successfully, while an abstract
+recursive `invert` still reports Not/SemVariable. Production Core SHA256 for this
+candidate is `3f61297ff2a69465768239a1502dbb6ca8b6758470c447ff659191381d199eac`.
+
+The expanded registered test module has **not yet passed as a whole**: its first
+run stopped at a malformed new test using nested mutual `and ... in` syntax.
+Mutual groups are top-level syntax. That test now uses a valid nested single
+recursive binding, whose success/error cases were checked through the existing
+driver's dynamic expression mode. The corrected registered module awaits the
+combined real-Core validation build; no extra compiler build was started for it.
+Evidence is in `work/logical-not-inference/recursive-compile.{log,time}`,
+`check-recursive.{stdout,stderr,time}`, and
+`work/not-inference/{s29-invert-mutual-gdb.log,recursive-*.stdout}`.
+
+
+## Ordered inference and combined replay validation
+
+Bootstrap29 reached `List.sort` with its unannotated `left <= right` comparator
+already defaulted to `Int`, then rejected the compiler's string callers. Ordered
+operators now unify operands before numeric fallback, defer unresolved `Ord`
+goals, and replay against the type established by their callers. Active evidence
+and known structural instances dispatch directly. Required dictionaries lower
+standard default predicates through the same mapped operator path, inside their
+typed wrapper; explicit implementation methods remain untouched.
+
+The renderer now includes `CoreOrderedInferenceTests.ash` alongside the complete
+logical-not module. Ordering coverage includes all four string comparisons,
+Int/Float primitives, one-known-operand inference, custom implementations,
+active required evidence, supplied predicate overrides, generic implementation
+heads, the actual `Collection.List.ash` declarations, and invalid/unresolved
+operands. Mixed concrete uses of an ordinary constrained binding remain an
+explicit call-type error: this is not full constrained polymorphism.
+
+Combined updated-Core validation passed both registered modules, exit 0:
+
+- Build: 3:29.06, peak 10,249,448 KiB, `--debug -O0`.
+- Run: 1.41s, peak 99,892 KiB; stdout `logical-not inference passed` and
+  `ordered inference passed`.
+- Core source SHA256:
+  `a5f2c892c8ee655dbc5772d314dfc62e03e8fcf123827368dce34d8614c0c3a6`.
+- Dynamic unresolved program and expression checks both return
+  `MissingCoreTraitEvidence("Ord", SemVariable(6))`.
+- `tests/ordered_comparison_inference.ash`: plain/poison stage-0 passes,
+  stdout `true,true,true,true,a,m,z` (1.33s/1.22s suites).
+- `tests/ordered_trait_default_evidence.ash`: plain/poison stage-0 passes,
+  stdout `false,true` (0.55s/0.57s suites).
+- The extracted [recursive replay callback check](../recursive-replay/README.md)
+  passes plain and poisoned with exact callback counts: the pinned empty-goal
+  case takes one member pass; a new unresolved goal still forces a rejecting
+  pinned pass. Builds took 0.69s/0.68s; runs were below 0.01s.
+
+Evidence is retained locally in `work/combined-inference/build3.{log,time}`,
+`run3.{stdout,stderr,time}`, and `work/recursive-replay/`. The first combined run
+exposed the default dictionary's unresolved `Ord.compare` reference; that test
+was retained and now passes. These checks establish lowering and stage-0 runtime
+behavior. Final integrated stage-1 runtime guards and stage-2 compilation remain
+required. The pending-goal ownership defect above is still unresolved; none of
+these semantic checks establishes leak-free acceptance.
+
+## Unused imported ordering helpers
+
+Bootstrap30 compiled the ordering guards, but its combined logical-not CLI guard
+failed with `MissingCoreTraitEvidence("Ord", SemVariable(204))`. The same error
+reproduces in the actual-Core driver by loading `Trait.ash` and all of
+`Collection.List.ash`, then calling only `length([1, 2])`. Imported `sort` was
+unused, so its inferred comparison operand never acquired a concrete type.
+
+After a successful discovery pass, final replay now omits only nonrecursive
+top-level lambda declarations with zero references in a conservative map.
+Callees, aliases, captures, method/provider bodies, exports and qualified owners
+are included; unknown syntax prevents omission. Initializers with effects stay,
+and a failed discovery retains the original declarations during replay. This
+neither emits provisional bodies nor defaults unresolved comparisons to Int.
+Unused dependency chains, recursive declarations and mixed constrained uses
+retain their existing limitations.
+
+The expanded registered Not/Ord modules pass together against updated Core:
+
+- Build: 3:33.42, peak 10,250,332 KiB; run: 1.64s, peak 102,792 KiB, exit 0.
+- Production Core SHA256:
+  `ffc6e47635331dbe372c16519b64c7947a2adaa001580ff244a53a1b8243460c`.
+- Coverage includes unused comparator emission (no retained function body),
+  actual library `length` without `sort`, alias and implementation-only uses,
+  malformed unused bodies and eager initializer retention.
+- `tests/unused_ordered_helper.ash` passes stage 0 plain and poisoned with stdout
+  `kept|2`; its eager initializer writes the prefix before the final print.
+- The [reference-index test](../unused-lambda-references/README.md) covers direct
+  AST branches and unchanged ownership-analysis mode. Its map lifetime guard
+  is flat at 10 live cells for 1000 and 10000 rounds, plain and poisoned.
+
+Evidence is under `work/unused-ordered/{build2,run2}.*` and
+`work/unused-lambda-references/`. The first expanded test run caught an incorrect
+assertion counting the entry function inside `IrProgram.functions`; the entry is
+stored separately. The corrected entire module was rebuilt and passed. Final
+integrated stage-1 guards and stage-2 compilation remain required. These focused
+map checks do not resolve the separate pending-goal string leak documented above.
+
+
+## Reachable function chains during replay
+
+Bootstrap31 passed the final CLI logical-not and ordering guards, but compiling
+its reference-map lifetime fixture failed at `Ord(SemVariable(264))`. The actual
+Core driver reproduced this with the complete `Trait.ash` and `Collection.Map.ash`
+declarations and a concrete `getStr`/`setStr` call. GDB located the unresolved
+comparison in generic `Map.get`'s nested `go`, at `searchKey < key`: unused
+`contains` retained `get`. Omitting that wrapper exposed the analogous generic
+`set` chain through unused `insert = set` and `fromList`.
+
+The replay filter now builds a dependency map for nonrecursive lambdas and pure
+aliases of earlier proven functions. A visited-name worklist starts from executed
+initializers, trailing code, recursive declarations, methods, providers and
+exports. Unreachable wrapper/alias chains need no final body. Escaped aliases
+retain their target chain and still reject unresolved evidence. Unknown syntax
+and duplicate top-level names conservatively retain everything. The successful
+discovery prerequisite remains: malformed unused bodies cannot be hidden.
+
+`CoreOrderedInferenceTests` covers the complete Map declarations, unreachable and
+escaping chains, and both the original logical-not fixture and the new Map fixture
+through actual shipped-module stitching. The native dependency-map harness
+exercises both omitted chains and reachable worklists, with strict plain/poison
+live-cell equality at 1000/10000 rounds. Final-stage-1 compilation and execution
+of that lifetime fixture remain separate acceptance gates. Recursive declarations
+remain roots, ordinary mixed constrained polymorphism remains unsupported, and
+the pending-goal string leak is unchanged.
+
+The complete updated modules passed together, exit 0, with stdout
+`logical-not inference passed` and `ordered inference passed`:
+
+- Build: 3:46.14, peak 10,455,604 KiB, `--debug -O0`.
+- Run: 2.57s, peak 114,952 KiB.
+- Core source SHA256:
+  `70dd3cad3540b066a796be0ec497a8222c1fe53c9ac9b9ada1d02c096675cfdd`.
+- Ordered test module SHA256:
+  `2c387228941c39d8a9dfbad1abc8bb00c1420d2f3bae13782371c073b7edf6de`.
+- `tests/unused_ordered_map_helpers.ash`: plain and poisoned stage-0 passes,
+  exact stdout `kept|true`; suite times 1.21s/1.23s.
+- Native dependency-map assertions and plateau: **10 → 10 live cells**, normal
+  and poisoned, at 1000 and 10000 repetitions, including reachable worklists.
+
+Evidence is retained under `work/replay-chains/core-{build2,run2}.*` and
+`core-input2.sha256`. The first expanded compile caught an ambiguous record-field
+access and a nonexistent test-loader helper; both were corrected before this
+complete successful build. These results establish actual-Core behavior and
+stage-0 native ownership checks, not a successful stage-2 bootstrap or resolution
+of the separate stage-1 pending-goal leak.

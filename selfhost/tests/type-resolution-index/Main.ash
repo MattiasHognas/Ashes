@@ -77,14 +77,53 @@ let recursive referenceProvenance symbolId definitions =
             else referenceProvenance(symbolId)(rest)
         | _ :: rest -> referenceProvenance(symbolId)(rest)
 
-let recursive referenceRepresentation symbolId name definitions =
+let recursive latestZeroCostWithId symbolId definitions =
     match definitions with
-        | [] -> SemNamed(symbolId)(name)([])
-        | ZeroCostTypeDefinition(candidate, _name, _parameters, representation, _provenance) :: rest ->
+        | [] -> None
+        | ZeroCostTypeDefinition(candidate, name, _parameters, representation, _provenance) :: rest ->
             if candidate == symbolId
-            then representation
-            else referenceRepresentation(symbolId)(name)(rest)
-        | _ :: rest -> referenceRepresentation(symbolId)(name)(rest)
+            then Some((name, representation))
+            else latestZeroCostWithId(symbolId)(rest)
+        | _ :: rest -> latestZeroCostWithId(symbolId)(rest)
+
+let recursive latestDefinitionNamed name definitions =
+    match definitions with
+        | [] -> None
+        | NominalTypeDefinition(_symbolId, candidate, _arity, _provenance) :: rest ->
+            if candidate == name
+            then Some(None)
+            else latestDefinitionNamed(name)(rest)
+        | ZeroCostTypeDefinition(symbolId, candidate, _parameters, representation, _provenance) :: rest ->
+            if candidate == name
+            then Some(Some((symbolId, representation)))
+            else latestDefinitionNamed(name)(rest)
+        | AliasTypeDefinition(candidate, _parameters, _target) :: rest ->
+            if candidate == name
+            then Some(None)
+            else latestDefinitionNamed(name)(rest)
+        | ExternalTypeDefinition(candidate, _destructor) :: rest ->
+            if candidate == name
+            then Some(None)
+            else latestDefinitionNamed(name)(rest)
+
+// A named type's zero-cost representation: the latest zero-cost definition under its id when that
+// one has its name, or else the latest definition of its name when that is a zero-cost one with the
+// same id. The name is checked because core lowering gives every program type the id 0.
+let referenceRepresentation symbolId name definitions =
+    (let byName =
+        match latestDefinitionNamed(name)(definitions) with
+            | Some(Some((candidate, representation))) ->
+                if candidate == symbolId
+                then representation
+                else SemNamed(symbolId)(name)([])
+            | _ -> SemNamed(symbolId)(name)([])
+    in
+        match latestZeroCostWithId(symbolId)(definitions) with
+            | Some((definitionName, representation)) ->
+                if definitionName == name
+                then representation
+                else byName
+            | None -> byName)
 
 let recursive referenceDestructor name definitions =
     match definitions with

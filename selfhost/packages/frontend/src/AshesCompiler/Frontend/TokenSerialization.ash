@@ -8,6 +8,7 @@
 //   float rendering while still detecting a lexer that decoded the spelling incorrectly.
 // - Every line ends with LF regardless of the host platform.
 
+import AshesCompiler.Frontend.FloatLiteral
 import AshesCompiler.Frontend.Token
 export (
     value tokenSerializationSchema,
@@ -53,7 +54,7 @@ let tokenTextHex value =
 let tokenFloatPayload (token: Token) =
     match token.kind with
         | Float ->
-            match Ashes.Text.parseFloat(token.text) with
+            match floatLiteralValue(token.text) with
                 | Ok(value) ->
                     if value == token.floatValue
                     then token.text

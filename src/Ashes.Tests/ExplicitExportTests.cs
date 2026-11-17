@@ -64,6 +64,30 @@ public sealed class ExplicitExportTests
     }
 
     [Test]
+    public void Field_read_on_a_module_level_value_references_that_value()
+    {
+        const string library =
+            "type Environment =\n" +
+            "    | entries: List(Int)\n" +
+            "    | label: Str\n" +
+            "let standard = Environment(entries = [1, 2], label = \"x\")\n" +
+            "let shared = Environment(entries = [3], label = \"y\")\n" +
+            "let entries = standard.entries\n" +
+            "let check = given (unit) ->\n" +
+            "    match (entries, shared.entries) with\n" +
+            "        | (_ :: _, _ :: _) -> true\n" +
+            "        | _ -> false\n";
+        string directory = WriteProject(
+            ("Library", "export (value check, value shared, type Environment(..))\n" + library),
+            ("Main", "import Library\nLibrary.check(Unit)\n"));
+
+        CombinedCompilationLayout layout = BuildLayout(directory);
+        layout.Source.ShouldContain("__ashes_private_value_Library_standard.entries");
+        layout.Source.ShouldContain("Library_shared.entries");
+        Lower(directory, layout);
+    }
+
+    [Test]
     public void Hidden_value_is_indistinguishable_from_an_unknown_qualified_member()
     {
         string directory = WriteProject(

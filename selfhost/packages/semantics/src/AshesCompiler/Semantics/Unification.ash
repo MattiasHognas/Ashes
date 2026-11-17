@@ -12,6 +12,7 @@ export (
     type UnificationError(..),
     type UnificationResult(..),
     value unify,
+    value unifyFlatRows,
 )
 
 type UnificationError =
@@ -71,6 +72,22 @@ let recursive capabilitiesMissingFrom candidates reference reversed =
                         | Some(_) -> capabilitiesMissingFrom(tail)(reference)(reversed)
                 | None -> capabilitiesMissingFrom(tail)(reference)(head :: reversed)
 
+let recursive appendCapabilities : List(SemanticType) -> List(SemanticType) -> List(SemanticType) =
+    given (left) ->
+        given (right) ->
+            match left with
+                | [] -> right
+                | head :: tail -> head :: appendCapabilities(tail)(right)
+
+let recursive flatRow (flat: Bool) (capabilities: List(SemanticType)) (tail: Maybe(SemanticType)) =
+    if flat
+    then
+        match tail with
+            | Some(SemRow(innerCapabilities, innerTail)) ->
+                flatRow(flat)(appendCapabilities(capabilities)(innerCapabilities))(innerTail)
+            | _ -> SemRow(capabilities)(tail)
+    else SemRow(capabilities)(tail)
+
 let bindVariable variableId semanticType substitution =
     (let resolvedType = applySubstitution(substitution)(semanticType)
     in
@@ -87,13 +104,13 @@ let bindVariable variableId semanticType substitution =
                     |> unificationFailure(substitution)
                 else unificationSuccess((variableId, resolvedType) :: substitution))
 
-let recursive unifyTypeLists left right substitution =
+let recursive unifyTypeLists (flat: Bool) left right substitution =
     match (left, right) with
         | ([], []) -> unificationSuccess(substitution)
         | (leftHead :: leftTail, rightHead :: rightTail) ->
-            match unifyWith(substitution)(leftHead)(rightHead) with
+            match unifyWith(flat)(substitution)(leftHead)(rightHead) with
                 | UnificationResult { substitution = nextSubstitution, error = None } ->
-                    unifyTypeLists(
+                    unifyTypeLists(flat)(
                         leftTail,
                         rightTail,
                         nextSubstitution
@@ -104,7 +121,7 @@ let recursive unifyTypeLists left right substitution =
             |> typeListLength
             |> TypeArityMismatch(typeListLength(left))
             |> unificationFailure(substitution)
-and unifyCommonCapabilities left right substitution =
+and unifyCommonCapabilities (flat: Bool) left right substitution =
     match left with
         | [] -> unificationSuccess(substitution)
         | head :: tail ->
@@ -116,37 +133,37 @@ and unifyCommonCapabilities left right substitution =
                     |> unificationFailure(substitution)
                 | Some(name) ->
                     match findCapability(name)(right) with
-                        | None -> unifyCommonCapabilities(tail)(right)(substitution)
+                        | None -> unifyCommonCapabilities(flat)(tail)(right)(substitution)
                         | Some(matching) ->
-                            match unifyWith(substitution)(head)(matching) with
+                            match unifyWith(flat)(substitution)(head)(matching) with
                                 | UnificationResult { substitution = nextSubstitution, error = None } ->
-                                    unifyCommonCapabilities(
+                                    unifyCommonCapabilities(flat)(
                                         tail,
                                         right,
                                         nextSubstitution
                                     )
                                 | failure -> failure
-and unifyOptionalRows left right substitution =
+and unifyOptionalRows (flat: Bool) left right substitution =
     match (left, right) with
         | (None, None) -> unificationSuccess(substitution)
-        | (Some(leftRow), Some(rightRow)) -> unifyWith(substitution)(leftRow)(rightRow)
+        | (Some(leftRow), Some(rightRow)) -> unifyWith(flat)(substitution)(leftRow)(rightRow)
         | (None, Some(rightRow)) ->
-            unifyWith(substitution)(SemRow([])(None))(rightRow)
+            unifyWith(flat)(substitution)(SemRow([])(None))(rightRow)
         | (Some(leftRow), None) ->
             None
             |> SemRow([])
-            |> unifyWith(substitution)(leftRow)
+            |> unifyWith(flat)(substitution)(leftRow)
 // When both rows are open, one shared fresh tail prevents either unmatched capability set from
 // being assigned independently to both row variables.
-and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution leftRow rightRow =
-    match unifyCommonCapabilities(leftCapabilities)(rightCapabilities)(substitution) with
+and unifyRows (flat: Bool) leftCapabilities leftTail rightCapabilities rightTail substitution leftRow rightRow =
+    match unifyCommonCapabilities(flat)(leftCapabilities)(rightCapabilities)(substitution) with
         | UnificationResult { substitution = afterCommon, error = None } ->
             let leftOnly = capabilitiesMissingFrom(leftCapabilities)(rightCapabilities)([])
             in
                 let rightOnly = capabilitiesMissingFrom(rightCapabilities)(leftCapabilities)([])
                 in
                     match (leftOnly, rightOnly) with
-                        | ([], []) -> unifyOptionalRows(leftTail)(rightTail)(afterCommon)
+                        | ([], []) -> unifyOptionalRows(flat)(leftTail)(rightTail)(afterCommon)
                         | ([], _) ->
                             match leftTail with
                                 | None ->
@@ -154,7 +171,7 @@ and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution
                                     |> TypeMismatch(leftRow)
                                     |> unificationFailure(afterCommon)
                                 | Some(leftTailType) ->
-                                    unifyWith(
+                                    unifyWith(flat)(
                                         afterCommon,
                                         leftTailType,
                                         SemRow(rightOnly)(rightTail)
@@ -166,7 +183,7 @@ and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution
                                     |> TypeMismatch(leftRow)
                                     |> unificationFailure(afterCommon)
                                 | Some(rightTailType) ->
-                                    unifyWith(
+                                    unifyWith(flat)(
                                         afterCommon,
                                         rightTailType,
                                         SemRow(leftOnly)(leftTail)
@@ -176,13 +193,13 @@ and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution
                                 | (Some(leftTailType), Some(rightTailType)) ->
                                     let freshTail = SemVariable(-(1000000 + substitutionLength(afterCommon)))
                                     in
-                                        match unifyWith(
+                                        match unifyWith(flat)(
                                             afterCommon,
                                             leftTailType,
                                             SemRow(rightOnly)(Some(freshTail))
                                         ) with
                                             | UnificationResult { substitution = afterLeftTail, error = None } ->
-                                                unifyWith(
+                                                unifyWith(flat)(
                                                     afterLeftTail,
                                                     rightTailType,
                                                     SemRow(leftOnly)(Some(freshTail))
@@ -193,7 +210,7 @@ and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution
                                     |> TypeMismatch(leftRow)
                                     |> unificationFailure(afterCommon)
         | failure -> failure
-and unifyWith substitution left right =
+and unifyWith (flat: Bool) substitution left right =
     (let resolvedLeft = applySubstitution(substitution)(left)
     in
         let resolvedRight = applySubstitution(substitution)(right)
@@ -214,23 +231,45 @@ and unifyWith substitution left right =
                             |> TypeMismatch(resolvedLeft)
                             |> unificationFailure(substitution)
                     | (SemList(leftElement), SemList(rightElement)) ->
-                        unifyWith(
+                        unifyWith(flat)(
                             substitution,
                             leftElement,
                             rightElement
                         )
+                    // The empty tuple a standard trait's method type writes (`Default.default`) and
+                    // external typing gives `void` is the language's `Unit`.
+                    | (SemTuple([]), SemNamed(_unitId, unitName, [])) ->
+                        if unitName == "Unit"
+                        then unificationSuccess(substitution)
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
+                    | (SemNamed(_unitId, unitName, []), SemTuple([])) ->
+                        if unitName == "Unit"
+                        then unificationSuccess(substitution)
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
                     | (SemTuple(leftElements), SemTuple(rightElements)) ->
-                        unifyTypeLists(
-                            leftElements,
-                            rightElements,
-                            substitution
-                        )
+                        if typeListLength(leftElements) == typeListLength(rightElements)
+                        then
+                            unifyTypeLists(flat)(
+                                leftElements,
+                                rightElements,
+                                substitution
+                            )
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
                     | (SemFunction(leftArgument, leftResult, leftRow), SemFunction(rightArgument, rightResult, rightRow)) ->
-                        match unifyWith(substitution)(leftArgument)(rightArgument) with
+                        match unifyWith(flat)(substitution)(leftArgument)(rightArgument) with
                             | UnificationResult { substitution = afterArgument, error = None } ->
-                                match unifyWith(afterArgument)(leftResult)(rightResult) with
+                                match unifyWith(flat)(afterArgument)(leftResult)(rightResult) with
                                     | UnificationResult { substitution = afterResult, error = None } ->
-                                        unifyOptionalRows(
+                                        unifyOptionalRows(flat)(
                                             leftRow,
                                             rightRow,
                                             afterResult
@@ -239,24 +278,27 @@ and unifyWith substitution left right =
                             | failure -> failure
                     | (SemCapability(leftName, leftArguments), SemCapability(rightName, rightArguments)) ->
                         if leftName == rightName
-                        then unifyTypeLists(leftArguments)(rightArguments)(substitution)
+                        then unifyTypeLists(flat)(leftArguments)(rightArguments)(substitution)
                         else
                             resolvedRight
                             |> TypeMismatch(resolvedLeft)
                             |> unificationFailure(substitution)
                     | (SemRow(leftCapabilities, leftTail), SemRow(rightCapabilities, rightTail)) ->
-                        unifyRows(
-                            leftCapabilities,
-                            leftTail,
-                            rightCapabilities,
-                            rightTail,
-                            substitution,
-                            resolvedLeft,
-                            resolvedRight
-                        )
+                        match (flatRow(flat)(leftCapabilities)(leftTail), flatRow(flat)(rightCapabilities)(rightTail)) with
+                            | (SemRow(leftFlat, leftFlatTail), SemRow(rightFlat, rightFlatTail)) ->
+                                unifyRows(flat)(
+                                    leftFlat,
+                                    leftFlatTail,
+                                    rightFlat,
+                                    rightFlatTail,
+                                    substitution,
+                                    resolvedLeft,
+                                    resolvedRight
+                                )
+                            | _ -> unificationSuccess(substitution)
                     | (SemNamed(leftId, _leftName, leftArguments), SemNamed(rightId, _rightName, rightArguments)) ->
                         if leftId == rightId
-                        then unifyTypeLists(leftArguments)(rightArguments)(substitution)
+                        then unifyTypeLists(flat)(leftArguments)(rightArguments)(substitution)
                         else
                             resolvedRight
                             |> TypeMismatch(resolvedLeft)
@@ -276,7 +318,7 @@ and unifyWith substitution left right =
                             |> TypeMismatch(resolvedLeft)
                             |> unificationFailure(substitution)
                     | (SemPointer(leftPointee), SemPointer(rightPointee)) ->
-                        unifyWith(
+                        unifyWith(flat)(
                             substitution,
                             leftPointee,
                             rightPointee
@@ -286,4 +328,9 @@ and unifyWith substitution left right =
                         |> TypeMismatch(resolvedLeft)
                         |> unificationFailure(substitution))
 
-let unify left right = unifyWith([])(left)(right)
+let unify left right = unifyWith(false)([])(left)(right)
+
+// Unifies with every row read as one list of capabilities and one tail, however the
+// substitution chained it. Read as chained, two rows that differ at two depths are given the same
+// shared tail twice.
+let unifyFlatRows left right = unifyWith(true)([])(left)(right)

@@ -63,6 +63,7 @@ export (
     value buildRet,
     value buildRetVoid,
     value verifyModule,
+    value printModuleToString,
     value verifierAbortProcessAction,
     value verifierPrintMessageAction,
     value verifierReturnStatusAction,
@@ -78,6 +79,15 @@ export (
     value getBufferStart,
     value getBufferSize,
     value disposeMemoryBuffer,
+    value createMemoryBufferWithContentsOfFile,
+    value parseBitcodeInContext,
+    value linkModules,
+    value linkBitcodeFile,
+    value constIntToPtr,
+    value atomicRmwXchg,
+    value atomicRmwAdd,
+    value atomicOrderingSequentiallyConsistent,
+    value buildAtomicRmw,
     value objectFileType,
     value assemblyFileType,
     value relocModeStatic,
@@ -103,6 +113,7 @@ export (
     value buildSelect,
     value buildTrunc,
     value buildZExt,
+    value buildSExt,
     value buildPtrToInt,
     value buildIntToPtr,
     value buildICmp,
@@ -157,6 +168,7 @@ export (
     value setInitializer,
     value setGlobalConstant,
     value setLinkage,
+    value addFunctionEnumAttribute,
     value linkageExternal,
     value linkageInternal,
     value int64Type,
@@ -181,6 +193,7 @@ external type LLVMTargetRef
 external type LLVMTargetMachineRef
 external type LLVMMemoryBufferRef
 external type LLVMTargetDataRef
+external type LLVMAttributeRef
 external LLVMContextCreate() -> LLVMContextRef = "LLVMContextCreate@libLLVM.so"
 external LLVMContextDispose(LLVMContextRef) -> void = "LLVMContextDispose@libLLVM.so"
 external LLVMModuleCreateWithNameInContext(Str, LLVMContextRef) -> LLVMModuleRef = "LLVMModuleCreateWithNameInContext@libLLVM.so"
@@ -201,6 +214,7 @@ external LLVMBuildRet(LLVMBuilderRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuild
 external LLVMBuildRetVoid(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildRetVoid@libLLVM.so"
 external LLVMDisposeMessage(*u8) -> void = "LLVMDisposeMessage@libLLVM.so"
 external LLVMVerifyModule(LLVMModuleRef, u32, out FfiStr(owned LLVMDisposeMessage)) -> Bool = "LLVMVerifyModule@libLLVM.so"
+external LLVMPrintModuleToString(LLVMModuleRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMPrintModuleToString@libLLVM.so"
 external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@libLLVM.so"
 external LLVMInitializeX86Target() -> void = "LLVMInitializeX86Target@libLLVM.so"
 external LLVMInitializeX86TargetMC() -> void = "LLVMInitializeX86TargetMC@libLLVM.so"
@@ -225,6 +239,11 @@ external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
 external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemoryBuffer@libLLVM.so"
+external LLVMCreateMemoryBufferWithContentsOfFile(Str, out LLVMMemoryBufferRef, out *u8) -> Bool = "LLVMCreateMemoryBufferWithContentsOfFile@libLLVM.so"
+external LLVMParseBitcodeInContext2(LLVMContextRef, LLVMMemoryBufferRef, out LLVMModuleRef) -> Bool = "LLVMParseBitcodeInContext2@libLLVM.so"
+external LLVMLinkModules2(LLVMModuleRef, LLVMModuleRef) -> Bool = "LLVMLinkModules2@libLLVM.so"
+external LLVMConstIntToPtr(LLVMValueRef, LLVMTypeRef) -> LLVMValueRef = "LLVMConstIntToPtr@libLLVM.so"
+external LLVMBuildAtomicRMW(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, u32, Bool) -> LLVMValueRef = "LLVMBuildAtomicRMW@libLLVM.so"
 external LLVMCreateTargetDataLayout(LLVMTargetMachineRef) -> LLVMTargetDataRef = "LLVMCreateTargetDataLayout@libLLVM.so"
 external LLVMCopyStringRepOfTargetData(LLVMTargetDataRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMCopyStringRepOfTargetData@libLLVM.so"
 external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetData@libLLVM.so"
@@ -261,6 +280,7 @@ external LLVMBuildURem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMV
 external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
 external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
 external LLVMBuildZExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildZExt@libLLVM.so"
+external LLVMBuildSExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildSExt@libLLVM.so"
 external LLVMBuildPtrToInt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildPtrToInt@libLLVM.so"
 external LLVMBuildIntToPtr(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildIntToPtr@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
@@ -282,6 +302,9 @@ external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMV
 external LLVMSetVolatile(LLVMValueRef, Bool) -> void = "LLVMSetVolatile@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
 external LLVMSetTailCallKind(LLVMValueRef, u32) -> void = "LLVMSetTailCallKind@libLLVM.so"
+external LLVMGetEnumAttributeKindForName(Str, u64) -> u32 = "LLVMGetEnumAttributeKindForName@libLLVM.so"
+external LLVMCreateEnumAttribute(LLVMContextRef, u32, u64) -> LLVMAttributeRef = "LLVMCreateEnumAttribute@libLLVM.so"
+external LLVMAddAttributeAtIndex(LLVMValueRef, u32, LLVMAttributeRef) -> void = "LLVMAddAttributeAtIndex@libLLVM.so"
 external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMAddGlobal@libLLVM.so"
 external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitializer@libLLVM.so"
 external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
@@ -343,6 +366,10 @@ let verifierReturnStatusAction = 2u32
 let functionType returnType paramTypes paramCount isVarArg = LLVMFunctionType(returnType)(paramTypes)(paramCount)(isVarArg)
 
 let verifyModule module_ action = LLVMVerifyModule(module_)(action)
+
+// The module's textual IR (`LLVMPrintModuleToString`), for a dump of a module that failed
+// verification.
+let printModuleToString module_ = LLVMPrintModuleToString(module_)
 
 let initializeX86TargetInfo _ = LLVMInitializeX86TargetInfo(Unit)
 
@@ -468,6 +495,8 @@ let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)
 let buildTrunc builder value destType name = LLVMBuildTrunc(builder)(value)(destType)(name)
 
 let buildZExt builder value destType name = LLVMBuildZExt(builder)(value)(destType)(name)
+
+let buildSExt builder value destType name = LLVMBuildSExt(builder)(value)(destType)(name)
 
 let buildPtrToInt builder value destType name = LLVMBuildPtrToInt(builder)(value)(destType)(name)
 
@@ -651,6 +680,22 @@ let tailCallKindMustTail = 2u32
 
 let setTailCallKind call kind = LLVMSetTailCallKind(call)(kind)
 
+// `LLVMAttributeFunctionIndex`: the position that names the function itself rather than its
+// return value or one of its parameters.
+let attributeFunctionIndex = 4294967295u32
+
+// Adds the enum attribute called `name` (`optnone`, `noinline`) to `function_` itself.
+let addFunctionEnumAttribute context function_ (name: Str) =
+    (let kind =
+        name
+        |> Ashes.Text.byteLength
+        |> Ashes.Number.UInt.fromInt64
+        |> LLVMGetEnumAttributeKindForName(name)
+    in
+        0u64
+        |> LLVMCreateEnumAttribute(context)(kind)
+        |> LLVMAddAttributeAtIndex(function_)(attributeFunctionIndex))
+
 let addGlobal module_ type_ name = LLVMAddGlobal(module_)(type_)(name)
 
 let setInitializer global constant = LLVMSetInitializer(global)(constant)
@@ -673,6 +718,20 @@ let voidType context = LLVMVoidTypeInContext(context)
 
 let pointerType context addressSpace = LLVMPointerTypeInContext(context)(addressSpace)
 
+// A constant integer address as a pointer of `type_`: with an address-space-256 pointer type, a
+// GS-relative slot that every load and store through it reaches as `%gs:offset`.
+let constIntToPtr value type_ = LLVMConstIntToPtr(value)(type_)
+
+// `LLVMAtomicRMWBinOp`'s exchange and add, and `LLVMAtomicOrderingSequentiallyConsistent`.
+let atomicRmwXchg = 0u32
+
+let atomicRmwAdd = 1u32
+
+let atomicOrderingSequentiallyConsistent = 7u32
+
+// An atomic read-modify-write of the word at `pointer`, answering the word it held before.
+let buildAtomicRmw builder (operation: u32) pointer value (ordering: u32) = LLVMBuildAtomicRMW(builder)(operation)(pointer)(value)(ordering)(false)
+
 let structType context elementTypes elementCount packed = LLVMStructTypeInContext(context)(elementTypes)(elementCount)(packed)
 
 // The first index of `indices` steps through `ptr` itself (almost always the constant `0`, since
@@ -687,3 +746,28 @@ let arrayType elementType elementCount = LLVMArrayType2(elementType)(elementCoun
 let constArray elementType constantValues length = LLVMConstArray2(elementType)(constantValues)(length)
 
 let constStruct context constantValues count packed = LLVMConstStructInContext(context)(constantValues)(count)(packed)
+
+// Returns `(failed, memoryBuffer, errorMessage)`: `memoryBuffer` is `Some` when the file was read.
+let createMemoryBufferWithContentsOfFile path = LLVMCreateMemoryBufferWithContentsOfFile(path)
+
+// Returns `(failed, module)`: `module` is `Some` when the buffer held valid bitcode. The buffer is
+// not taken over, and the module is complete once parsed.
+let parseBitcodeInContext context memoryBuffer = LLVMParseBitcodeInContext2(context)(memoryBuffer)
+
+// Links `source` into `destination`, consuming `source`; `true` on failure.
+let linkModules destination source = LLVMLinkModules2(destination)(source)
+
+// Parses the bitcode file at `path` in `context` and links it into `module_`, the target triple of
+// the payload set to the program's first. `Error` names what failed.
+let linkBitcodeFile context module_ triple (path: Str) =
+    match createMemoryBufferWithContentsOfFile(path) with
+        | (false, Some(buffer), _message) ->
+            match parseBitcodeInContext(context)(buffer) with
+                | (false, Some(payload)) ->
+                    let _ = LLVMSetTarget(payload)(triple)
+                    in
+                        if linkModules(module_)(payload)
+                        then Error("Failed to link " + path + " into the program module.")
+                        else Ok(Unit)
+                | _ -> Error("Failed to parse the bitcode in " + path + ".")
+        | _ -> Error("Could not read " + path + ".")

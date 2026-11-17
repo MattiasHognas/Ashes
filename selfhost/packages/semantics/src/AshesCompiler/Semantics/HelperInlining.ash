@@ -15,12 +15,14 @@ export (
 let recursive unspanExpression (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanExpression(inner)
+        | ExprNode(_node, inner) -> unspanExpression(inner)
         | other -> other
 
 // The parameters of a curried lambda value, innermost first, and its innermost body.
 let recursive lambdaChain (value: Expr) (reversedParameters: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> lambdaChain(inner)(reversedParameters)
+        | ExprNode(_node, inner) -> lambdaChain(inner)(reversedParameters)
         | ExprLambda(parameter, body, _annotation) -> lambdaChain(body)(parameter :: reversedParameters)
         | body -> (reversedParameters, body)
 
@@ -40,6 +42,7 @@ and guardHasCallOrAggregate (guard: Maybe(Expr)) =
 and exprHasCallOrAggregate (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> exprHasCallOrAggregate(inner)
+        | ExprNode(_node, inner) -> exprHasCallOrAggregate(inner)
         | ExprCall(_function, _argument, _isSugar, _layout) -> true
         | ExprTuple(_elements) -> true
         | ExprList(_elements, _trailing) -> true
@@ -88,6 +91,7 @@ and exprHasCallOrAggregate (expression: Expr) =
 let recursive pastLeadingLets (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> pastLeadingLets(inner)
+        | ExprNode(_node, inner) -> pastLeadingLets(inner)
         | ExprLet(_name, _value, body, _parameters, _annotation, _constraints) -> pastLeadingLets(body)
         | other -> other
 

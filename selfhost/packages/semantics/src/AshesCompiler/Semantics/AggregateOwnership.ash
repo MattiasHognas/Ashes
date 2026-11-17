@@ -36,6 +36,7 @@ export (
 let recursive unspan (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspan(inner)
+        | ExprNode(_node, inner) -> unspan(inner)
         | other -> other
 
 let recursive anyMentions (name: Str) (expressions: List(Expr)) =
@@ -65,6 +66,7 @@ and anyHandlerMentions (name: Str) (arms: List((Maybe(Str), Str, List(Pattern), 
 and mentionsName (name: Str) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> mentionsName(name)(inner)
+        | ExprNode(_node, inner) -> mentionsName(name)(inner)
         | ExprVar(candidate) -> candidate == name
         | ExprAdd(left, right) -> anyMentions(name)([left, right])
         | ExprSubtract(left, right) -> anyMentions(name)([left, right])
@@ -109,6 +111,7 @@ and mentionsName (name: Str) (expression: Expr) =
 let recursive isFreshListConstruction (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> isFreshListConstruction(inner)
+        | ExprNode(_node, inner) -> isFreshListConstruction(inner)
         | ExprList(_elements, _isMultiline) -> true
         | ExprCons(_head, tail) -> isFreshListConstruction(tail)
         | _ -> false
@@ -186,6 +189,7 @@ let isImmediateRecordMatchUse (name: Str) (body: Expr) =
 let recursive isImmediateCopyUseOfRecord (name: Str) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> isImmediateCopyUseOfRecord(name)(inner)
+        | ExprNode(_node, inner) -> isImmediateCopyUseOfRecord(name)(inner)
         | ExprInt(_value) -> true
         | ExprUInt(_value, _bits, _text) -> true
         | ExprBigInt(_digits) -> true
@@ -220,6 +224,7 @@ and bothCopyUses (name: Str) (left: Expr) (right: Expr) = isImmediateCopyUseOfRe
 let recursive collectTerminals (body: Expr) (reversed: List(Expr)) =
     match body with
         | ExprAt(_span, inner) -> collectTerminals(inner)(reversed)
+        | ExprNode(_node, inner) -> collectTerminals(inner)(reversed)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             reversed
             |> collectTerminals(thenBranch)

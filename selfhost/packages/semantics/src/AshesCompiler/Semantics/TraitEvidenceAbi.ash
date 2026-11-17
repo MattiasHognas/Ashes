@@ -13,6 +13,7 @@ import Ashes.Text.compare as compareText
 export (
     type TraitDictionaryAbiShape(..),
     value planTraitEvidenceAbi,
+    value substituteEvidenceType,
 )
 
 type TraitDictionaryAbiShape =

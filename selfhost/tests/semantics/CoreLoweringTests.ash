@@ -3,6 +3,8 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
+import AshesCompiler.Semantics.CoreLowering.Owners.pruneDeadCaptures
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrText
@@ -1108,7 +1110,7 @@ let pruneInstruction kind = IrInstruction(instruction = kind, location = None)
 let recursive pruneBindings (names: List(Str)) =
     match names with
         | [] -> []
-        | name :: rest -> CoreBinding(name = name, scheme = TypeScheme(quantified = [], body = SemInt, constraints = []), location = CoreLocal(0), ownedRead = false, patternOwner = None) :: pruneBindings(rest)
+        | name :: rest -> CoreBinding(name = name, scheme = TypeScheme(quantified = [], body = SemInt, constraints = []), location = CoreLocal(0), ownedRead = false, patternOwner = None, closedScheme = true) :: pruneBindings(rest)
 
 let recursive bindingNames (bindings: List(CoreBinding)) =
     match bindings with

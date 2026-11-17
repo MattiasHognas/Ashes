@@ -3,6 +3,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeGraphIndex
+import AshesCompiler.Semantics.TypeGraphQueries.typeGraphResolvedNode
 import AshesCompiler.Semantics.HeapLayoutClassification.heapNamedTypeConstructors as referenceConstructors
 export (
     value runTypeGraphIndexTests,
@@ -47,6 +48,7 @@ let recursive checkReference types index =
                 | (node, next) ->
                     node.constructorGroups
                     |> test.assertEqual(referenceConstructors(node.resolvedType)(index.environment))
+                    |> (given (_) -> test.assertEqual(node.sourceType == node.resolvedType)(node.sourceMatchesResolved))
                     |> (given (_) -> checkReference(rest)(next))
 
 let testInstantiatedStructure unit =
@@ -189,6 +191,43 @@ let testDuplicateGroupsKeepFirst unit =
             |> typeGraphNode(named(0)("Other")([])) with
                 | (node, _index) -> test.assertEqual([("Other", [SemString])])(node.constructorGroups))
 
+// The same source key resolves differently in distinct immutable environments. A cached
+// alias answer must stay with its node/index, including after resolving and revisiting it.
+let testResolutionIdentity unit =
+    (let source = named(91)("Identity")([])
+    in
+        let environment = emptyTypeEnvironment(Unit)
+        in
+            let context = addZeroCostTypeDefinitionWithProvenance(91)("Identity")([])(SemString)(DeclarationProvenance(packageId = "identity-test"))(environment.typeResolutionContext)
+            in
+                match typeGraphNode(source)(emptyTypeGraphIndex((environment with typeResolutionContext = context))) with
+                    | (alias, aliasIndex) ->
+                        alias.sourceMatchesResolved
+                        |> test.assertEqual(false)
+                        |> (given (_) -> test.assertEqual(SemString)(alias.resolvedType))
+                        |> (given (_) ->
+                            match typeGraphResolvedNode(source)(aliasIndex) with
+                                | (resolved, next) ->
+                                    resolved.sourceMatchesResolved
+                                    |> test.assertEqual(true)
+                                    |> (given (_) -> test.assertEqual(SemString)(resolved.sourceType))
+                                    |> (given (_) -> test.assertEqual(2)(next.nodeCount))
+                                    |> (given (_) ->
+                                        match typeGraphResolvedNode(source)(next) with
+                                            | (repeated, unchanged) ->
+                                                repeated.nodeId
+                                                |> test.assertEqual(resolved.nodeId)
+                                                |> (given (_) -> test.assertEqual(2)(unchanged.nodeCount))))
+                        |> (given (_) ->
+                            match environment
+                            |> emptyTypeGraphIndex
+                            |> typeGraphResolvedNode(source) with
+                                | (nominal, nominalIndex) ->
+                                    nominal.sourceMatchesResolved
+                                    |> test.assertEqual(true)
+                                    |> (given (_) -> test.assertEqual(source)(nominal.resolvedType))
+                                    |> (given (_) -> test.assertEqual(1)(nominalIndex.nodeCount))))
+
 // Each call creates dynamic names, an environment and several exact instantiations, then releases
 // every graph root. Native lifetime harnesses repeatedly call this function without retaining an
 // index between iterations; repeated-hit checks alone would miss growth from whole dead caches.
@@ -291,6 +330,7 @@ let runTypeGraphIndexTests unit =
     |> testFactSeparation
     |> testZeroCostAndEnvironmentScope
     |> testDuplicateGroupsKeepFirst
+    |> testResolutionIdentity
     |> (given (_) -> runFreshTypeGraphIndexTest(17))
 
 // Distinct IDs separated by the fingerprint modulus collide through nested type structure too.

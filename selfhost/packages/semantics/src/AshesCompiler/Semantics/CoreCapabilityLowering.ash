@@ -20,8 +20,10 @@ export (
     type CoreCapabilityHandleEmission(..),
     type ParsedHandlerArms(..),
     value emitDynamicPerform,
+    value capabilityDisplayName,
     value emitStaticProviderCall,
     value findCapabilityLayout,
+    value findStaticProviderExact,
     value findCapabilityOperationIndex,
     value findStaticProvider,
     value findProviderOperation,
@@ -75,6 +77,23 @@ let recursive findCapabilityOperationIndex (opName: Str) (ops: List(CoreCapabili
             if opName == candidate
             then Some(idx)
             else findCapabilityOperationIndex(opName)(tail)
+
+let recursive lastPart (parts: List(Str)) =
+    match parts with
+        | [] -> ""
+        | part :: [] -> part
+        | _part :: rest -> lastPart(rest)
+
+// The name a capability was declared with, for a diagnostic: stitching renames a capability that
+// is private to its module `AshesPrivateType_<module>_<name>`, and the declared name is what follows
+// the last underscore.
+let capabilityDisplayName (name: Str) =
+    if Ashes.Text.startsWith(name)("AshesPrivateType_")
+    then
+        "_"
+        |> Ashes.Text.split(name)
+        |> lastPart
+    else name
 
 let recursive findStaticProviderExact (capabilityName: Str) (requiredTypeArguments: List(SemanticType)) (providers: List(CoreStaticProviderLayout)) =
     match providers with

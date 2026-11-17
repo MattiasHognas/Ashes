@@ -6,11 +6,11 @@
 // - Folds scalar results (Int, Float, Bool) into LoadConst instructions.
 // - Tracks straight-line constant state and invalidates across control-flow boundaries.
 
-import Ashes.Collection.List.append
-import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -19,6 +19,7 @@ export (
     value evaluateCompileTimeConstants,
     value isInstructionModeledPure,
     value computeEvaluableFunctions,
+    value isEvaluableLabel,
 )
 
 type CtValue =
@@ -33,12 +34,12 @@ type CtValue =
 
 type InterpreterState =
     | stepsLeft: Int
-    | temps: List((IrTemp, CtValue))
-    | locals: List((IrLocal, CtValue))
+    | temps: MapTree(Int, Maybe(CtValue))
+    | locals: MapTree(Int, Maybe(CtValue))
 
 type CallerScanState =
-    | temps: List((IrTemp, CtValue))
-    | slots: List((IrLocal, CtValue))
+    | temps: MapTree(Int, Maybe(CtValue))
+    | slots: MapTree(Int, Maybe(CtValue))
 
 let stepBudget = 50000
 
@@ -53,37 +54,25 @@ let recursive lookupLabelPosition (key: Str) (entries: List((Str, Int))) =
             then Some(position)
             else lookupLabelPosition(key)(tail)
 
-let recursive lookupTempAssociation (key: Int) (entries: List((Int, CtValue))) =
-    match entries with
-        | [] -> None
-        | (k, v) :: tail ->
-            if k == key
-            then Some(v)
-            else lookupTempAssociation(key)(tail)
+let lookupTempAssociation (key: Int) (entries: MapTree(Int, Maybe(CtValue))) =
+    match Ashes.Collection.Map.getInt(key)(entries) with
+        | Some(known) -> known
+        | None -> None
 
-let recursive setAssociation key value entries =
-    match entries with
-        | [] -> [(key, value)]
-        | (k, v) :: tail ->
-            if k == key
-            then (key, value) :: tail
-            else (k, v) :: setAssociation(key)(value)(tail)
+let setAssociation (key: Int) (value: CtValue) (entries: MapTree(Int, Maybe(CtValue))) = Ashes.Collection.Map.setInt(key)(Some(value))(entries)
 
-let recursive removeAssociation key entries =
-    match entries with
-        | [] -> []
-        | (k, v) :: tail ->
-            if k == key
-            then tail
-            else (k, v) :: removeAssociation(key)(tail)
+// A forgotten key keeps its node and holds None, so forgetting never rebuilds the map.
+let removeAssociation (key: Int) (entries: MapTree(Int, Maybe(CtValue))) =
+    match Ashes.Collection.Map.getInt(key)(entries) with
+        | Some(Some(_)) -> Ashes.Collection.Map.setInt(key)(None)(entries)
+        | _ -> entries
 
-let recursive listContains item xs =
-    match xs with
-        | [] -> false
-        | head :: tail ->
-            if head == item
-            then true
-            else listContains(item)(tail)
+let noAssociations : MapTree(Int, Maybe(CtValue)) = Ashes.Collection.Map.empty
+
+let isEvaluableLabel (label: Str) (evaluable: MapTree(Str, IrFunction)) =
+    match Ashes.Collection.Map.getStr(label)(evaluable) with
+        | Some(_) -> true
+        | None -> false
 
 let isModeledPureLeaf inst =
     match inst with
@@ -151,10 +140,10 @@ let isModeledPureLeaf inst =
 
 let isInstructionModeledPure evaluable inst =
     match inst with
-        | MakeClosure(_, label, _, _, _, _, _, _) -> listContains(label)(evaluable)
-        | MakeClosureStack(_, label, _, _, _, _, _) -> listContains(label)(evaluable)
-        | LoadFuncAddr(_, label) -> listContains(label)(evaluable)
-        | CallKnown(_, label, _, _, _, _) -> listContains(label)(evaluable)
+        | MakeClosure(_, label, _, _, _, _, _, _) -> isEvaluableLabel(label)(evaluable)
+        | MakeClosureStack(_, label, _, _, _, _, _) -> isEvaluableLabel(label)(evaluable)
+        | LoadFuncAddr(_, label) -> isEvaluableLabel(label)(evaluable)
+        | CallKnown(_, label, _, _, _, _) -> isEvaluableLabel(label)(evaluable)
         | _ -> isModeledPureLeaf(inst)
 
 let recursive allInstructionsModeledPure evaluable instructions =
@@ -165,41 +154,35 @@ let recursive allInstructionsModeledPure evaluable instructions =
             then allInstructionsModeledPure(evaluable)(tail)
             else false
 
-let recursive lookupFunction label functions =
-    match functions with
-        | [] -> None
-        | (IrFunction { label = l } as fn) :: tail ->
-            if l == label
-            then Some(fn)
-            else lookupFunction(label)(tail)
+let lookupFunction (label: Str) (evaluable: MapTree(Str, IrFunction)) = Ashes.Collection.Map.getStr(label)(evaluable)
 
+let recursive functionsByLabel (functions: List(IrFunction)) (acc: MapTree(Str, IrFunction)) =
+    match functions with
+        | [] -> acc
+        | (IrFunction { label = l } as fn) :: tail ->
+            acc
+            |> Ashes.Collection.Map.setStr(l)(fn)
+            |> functionsByLabel(tail)
+
+let recursive keepModeledPure (evaluable: MapTree(Str, IrFunction)) (functions: List(IrFunction)) (acc: List(IrFunction)) =
+    match functions with
+        | [] -> reverse(acc)
+        | (IrFunction { instructions = instructions } as fn) :: tail ->
+            if allInstructionsModeledPure(evaluable)(instructions)
+            then keepModeledPure(evaluable)(tail)(fn :: acc)
+            else keepModeledPure(evaluable)(tail)(acc)
+
+// The evaluable functions, by label: the largest set whose members only call and close over members.
 let computeEvaluableFunctions (program: IrProgram) =
-    match program with
-        | IrProgram { entryFunction = entryFunction, functions = functions } ->
-            let allFunctions = entryFunction :: functions
+    (let recursive fixpoint (candidates: List(IrFunction)) =
+        let evaluable = functionsByLabel(candidates)(Ashes.Collection.Map.empty)
+        in
+            let kept = keepModeledPure(evaluable)(candidates)([])
             in
-                let initialCandidates =
-                    map(given (f) ->
-                        match f with
-                            | IrFunction { label = l } -> l)(allFunctions)
-                in
-                    let recursive fixpoint candidates =
-                        let filtered =
-                            filter(
-                                given (label) ->
-                                    match lookupFunction(label)(allFunctions) with
-                                        | None -> false
-                                        | Some(fn) ->
-                                            match fn with
-                                                | IrFunction { instructions = instructions } -> allInstructionsModeledPure(candidates)(instructions)
-                            )(
-                                candidates
-                            )
-                        in
-                            if length(filtered) == length(candidates)
-                            then candidates
-                            else fixpoint(filtered)
-                    in fixpoint(initialCandidates)
+                if length(kept) == length(candidates)
+                then evaluable
+                else fixpoint(kept)
+    in fixpoint(program.entryFunction :: program.functions))
 
 let recursive lookupStringLiteral label literals =
     match literals with
@@ -842,7 +825,10 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
             else
                 let labelIndex = buildLabelIndex(fn.instructions)(0)
                 in
-                    let initialLocals = [(0, env), (1, arg)]
+                    let initialLocals =
+                        noAssociations
+                        |> setAssociation(0)(env)
+                        |> setAssociation(1)(arg)
                     in
                         let recursive runLoop pc (state: InterpreterState) =
                             if state.stepsLeft <= 0
@@ -887,12 +873,12 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                                                         | Some(nextPc) -> runLoop(nextPc)(stepState)
                                                             | _ -> (None, nextSteps)
                                                     | CallKnown(target, calleeLabel, envTemp, argTemp, _, _) ->
-                                                        if !listContains(calleeLabel)(evaluable)
+                                                        if !isEvaluableLabel(calleeLabel)(evaluable)
                                                         then (None, nextSteps)
                                                         else
                                                             let calleeOpt =
                                                                 lookupFunction(calleeLabel)(
-                                                                    program.entryFunction :: program.functions
+                                                                    evaluable
                                                                 )
                                                             in
                                                                 let calleeEnv =
@@ -934,7 +920,7 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                                     | CallClosure(target, closureTemp, argTemp, _) ->
                                                         match lookupTempAssociation(closureTemp)(stepState.temps) with
                                                             | Some(CtClosure(calleeLabel, closureEnv)) ->
-                                                                if !listContains(calleeLabel)(evaluable)
+                                                                if !isEvaluableLabel(calleeLabel)(evaluable)
                                                                 then (None, nextSteps)
                                                                 else
                                                                     match lookupTempAssociation(argTemp)(stepState.temps) with
@@ -942,7 +928,7 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                                                         | Some(calleeArg) ->
                                                                             let calleeOpt =
                                                                                 lookupFunction(calleeLabel)(
-                                                                                    program.entryFunction :: program.functions
+                                                                                    evaluable
                                                                                 )
                                                                             in
                                                                                 match calleeOpt with
@@ -984,7 +970,7 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                             runLoop(0)(
                                 InterpreterState(
                                     stepsLeft = steps,
-                                    temps = [],
+                                    temps = noAssociations,
                                     locals = initialLocals
                                 )
                             )
@@ -1116,7 +1102,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )
                     | CallKnown(target, calleeLabel, envTemp, argTemp, _, _) ->
                         let foldOpt =
-                            if listContains(calleeLabel)(evaluable)
+                            if isEvaluableLabel(calleeLabel)(evaluable)
                             then
                                 match lookupTempAssociation(argTemp)(state.temps) with
                                     | None -> None
@@ -1128,7 +1114,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                                         in
                                             let calleeOpt =
                                                 lookupFunction(calleeLabel)(
-                                                    program.entryFunction :: program.functions
+                                                    evaluable
                                                 )
                                             in
                                                 match calleeOpt with
@@ -1207,14 +1193,14 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                         let foldOpt =
                             match lookupTempAssociation(closureTemp)(state.temps) with
                                 | Some(CtClosure(calleeLabel, closureEnv)) ->
-                                    if listContains(calleeLabel)(evaluable)
+                                    if isEvaluableLabel(calleeLabel)(evaluable)
                                     then
                                         match lookupTempAssociation(argTemp)(state.temps) with
                                             | None -> None
                                             | Some(argVal) ->
                                                 let calleeOpt =
                                                     lookupFunction(calleeLabel)(
-                                                        program.entryFunction :: program.functions
+                                                        evaluable
                                                     )
                                                 in
                                                     match calleeOpt with
@@ -1294,13 +1280,13 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                                         )(
                                             irInst :: acc
                                         )
-                    | Label(_) -> scanInstructions(tail)(CallerScanState(temps = [], slots = []))(irInst :: acc)
-                    | Jump(_) -> scanInstructions(tail)(CallerScanState(temps = [], slots = []))(irInst :: acc)
-                    | JumpIfFalse(_, _) -> scanInstructions(tail)(CallerScanState(temps = [], slots = []))(irInst :: acc)
-                    | SwitchTag(_, _, _) -> scanInstructions(tail)(CallerScanState(temps = [], slots = []))(irInst :: acc)
+                    | Label(_) -> scanInstructions(tail)(CallerScanState(temps = noAssociations, slots = noAssociations))(irInst :: acc)
+                    | Jump(_) -> scanInstructions(tail)(CallerScanState(temps = noAssociations, slots = noAssociations))(irInst :: acc)
+                    | JumpIfFalse(_, _) -> scanInstructions(tail)(CallerScanState(temps = noAssociations, slots = noAssociations))(irInst :: acc)
+                    | SwitchTag(_, _, _) -> scanInstructions(tail)(CallerScanState(temps = noAssociations, slots = noAssociations))(irInst :: acc)
                     | _ -> scanInstructions(tail)(state)(irInst :: acc)
     in
-        let newInstructions = scanInstructions(fn.instructions)(CallerScanState(temps = [], slots = []))([])
+        let newInstructions = scanInstructions(fn.instructions)(CallerScanState(temps = noAssociations, slots = noAssociations))([])
         in
             IrFunction(
                 label = fn.label,
@@ -1318,7 +1304,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
 let evaluateCompileTimeConstants (program: IrProgram) =
     (let evaluable = computeEvaluableFunctions(program)
     in
-        if length(evaluable) == 0
+        if Ashes.Collection.Map.isEmpty(evaluable)
         then program
         else
             let newEntry = rewriteFunctionCalls(program)(evaluable)(program.entryFunction)

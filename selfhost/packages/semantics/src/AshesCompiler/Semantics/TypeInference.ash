@@ -9,6 +9,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
@@ -29,6 +30,7 @@ export (
     type TraitInferenceDefinition(..),
     type TraitMethodInferenceDefinition(..),
     type TraitImplementationInferenceDefinition(..),
+    type TraitImplementationSite(..),
     type TraitImplementationMethodInferenceDefinition(..),
     type TypeInferenceError(..),
     type TypeInferenceResult(..),
@@ -37,6 +39,7 @@ export (
     value emptyTypeEnvironmentForPackage,
     value withInferencePackage,
     value inferencePackageId,
+    value withInferenceUnit,
     value addTypeBinding,
     value addInferenceTypeDefinition,
     value addInferenceZeroCostTypeDefinition,
@@ -51,18 +54,35 @@ export (
     value resolveCapabilityOperation,
     value addCapabilityProvider,
     value resolveCapabilityProvider,
+    value canonicalTraitName,
+    value withProgramInferenceRules,
+    value withoutProgramInferenceRules,
+    value withClosedGeneralizationScope,
     value addTraitBinding,
     value resolveTraitBinding,
     value resolveTraitMethod,
     value addTraitImplementation,
+    value addTraitImplementationAt,
     value resolveTraitImplementations,
     value inferenceTypeResolutionContext,
     value inferenceEnvironmentSchemes,
     value applyInferenceConstraints,
     value simplifyTraitConstraints,
+    value firstAmbiguousTraitRequirementUnder,
+    value resolveWrittenTypeBinding,
+    value requirementsLeftToWrite,
+    value defaultBuiltinArguments,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
+    value seedRecursiveSignature,
     value inferExpressionFrom,
+    value inferExpressionFromLocated,
+    value inferTopLevelExpressionLocated,
+    value checkTrailingRequirements,
+    value isBuiltinRuntimeCapability,
+    value inferTopLevelBindingLocated,
+    value inferenceErrorSpan,
+    value unlocatedInferenceError,
     value inferTopLevelBinding,
     value inferExpression,
     value matchCoverageError,
@@ -121,16 +141,32 @@ type TraitImplementationMethodInferenceDefinition =
     | implementation: Expr
     | semanticType: SemanticType
 
+// Where an implementation was declared: the inferred unit it belongs to, the offset of its declaration
+// in that unit's text, and the unit's file once the caller maps units to files.
+type TraitImplementationSite =
+    | unitIndex: Int
+    | offset: Int
+    | sourcePath: Maybe(Str)
+    deriving {Eq, Show}
+
 type TraitImplementationInferenceDefinition =
     | traitName: Str
     | typeArguments: List(SemanticType)
     | requirements: List(TraitConstraint)
     | methods: List(TraitImplementationMethodInferenceDefinition)
+    | site: Maybe(TraitImplementationSite)
 
 type ExternalFunctionInferenceDefinition =
     | name: Str
     | directScheme: TypeScheme
     | firstClassScheme: Maybe(TypeScheme)
+
+// Name-keyed views of an environment's value bindings, constructors and record constructors.
+// Each answers what a scan of the list it mirrors answers: the youngest entry for a name.
+type BindingLookupIndex =
+    | valuesByName: MapTree(Str, TypeScheme)
+    | constructorsByName: MapTree(Str, ConstructorInferenceDefinition)
+    | recordsByTypeName: MapTree(Str, ConstructorInferenceDefinition)
 
 type HeapConstructorLookupIndex =
     | groups: MapTree(Int, MapTree(Str, ConstructorFieldGroup))
@@ -138,6 +174,8 @@ type HeapConstructorLookupIndex =
 
 type TypeEnvironment =
     | packageId: Str
+    // The index of the unit a program's inference is in, among the units it infers.
+    | currentUnit: Int
     | bindings: List((Str, TypeScheme))
     | constructors: List(ConstructorInferenceDefinition)
     | constructorFieldGroups: List(ConstructorFieldGroup)
@@ -149,6 +187,20 @@ type TypeEnvironment =
     | handledCapabilities: List(Str)
     | externalFunctions: List(ExternalFunctionInferenceDefinition)
     | typeResolutionContext: TypeResolutionContext
+    // When present, the only schemes of `bindings` that can hold a free type variable; every
+    // other binding is closed. Generalization then scans these instead of the whole environment.
+    | generalizationSchemes: Maybe(List(TypeScheme))
+    // Bindings a lookup by name reaches only after `bindings` has no entry for the name.
+    | fallbackBindings: List((Str, TypeScheme))
+    // Whether the rules only whole-program inference applies are on: a stitched standard trait's
+    // compiler name (`Ashes_Trait_Eq`) is stored and looked up under its bare name, and `0 - x` is
+    // the negation of `x`. Program inference turns it on; an environment built for lowering
+    // leaves it off, so its speculative inference is unchanged.
+    | programInferenceRules: Bool
+    // When present, mirrors `bindings` and `constructors` by name. Only an environment that
+    // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
+    // program inference does, an environment built for lowering does not.
+    | lookupIndex: Maybe(BindingLookupIndex)
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -156,7 +208,12 @@ type TypeInferenceError =
     | InferenceTypeResolutionError(TypeResolutionError)
     | DuplicatePatternBinding(Str)
     | UnknownPatternConstructor(Str)
-    | ConstructorPatternArityMismatch(Str)
+    | ConstructorPatternArityMismatch(Str, Int, Int)
+    // A match arm's tuple pattern against a scrutinee tuple of another length: (expected, actual).
+    | TuplePatternArityMismatch(Int, Int)
+    // An argument of another type than `Int` passed to a builtin that converts from `Int`, named by
+    // its qualified name, with the argument's type.
+    | BuiltinIntArgumentMismatch(Str, SemanticType)
     | UnknownRecordPatternField(Str, Str)
     | DuplicateRecordPatternField(Str)
     | UnknownRecordType(Str)
@@ -164,25 +221,36 @@ type TypeInferenceError =
     | MissingRecordField(Str, Str)
     | UnknownRecordField(Str, Str)
     | DuplicateRecordField(Str)
+    // The left operand of a Result-aware pipe is not a Result.
     | ExpectedResultType(SemanticType)
+    // The value of a `let?` is not a Result.
+    | LetResultRequiresResult(SemanticType)
+    // The body of a `let?` is not a Result.
+    | LetResultBodyRequiresResult(SemanticType)
     | ExpectedTaskType(SemanticType)
     | PerformRequiresCapabilityOperation
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InvalidHandler(Str)
     | AmbiguousCapabilitySatisfaction(Str)
+    | UnsatisfiedCapability(Str)
+    | UnknownCapabilityInRow(Str)
     | InconsistentOrPatternBindings
     | UnknownWrittenTraitRequirement(Str)
     | WrittenTraitRequirementArityMismatch(Str, Int, Int)
-    | MissingWrittenTraitRequirement(Str)
-    | UnjustifiedWrittenTraitRequirement(Str)
-    | AmbiguousTraitRequirement(Str)
+    | MissingWrittenTraitRequirement(Str, List(SemanticType))
+    | UnjustifiedWrittenTraitRequirement(Str, List(SemanticType))
+    | AmbiguousTraitRequirement(Str, List(SemanticType))
+    | NoTraitImplementation(Str, List(SemanticType))
     | ExternalFunctionRequiresDirectCall(Str)
     | NonExhaustiveMatch(Str)
     | UnreachableMatchArm(Str)
     | ConstructorPatternsFromDifferentAdts(List(Str))
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
+    // An error with the span of the innermost located expression it was raised in. Only the
+    // `Located` entry points return it; every other entry point reports the bare error.
+    | InferenceErrorAt(TextSpan, TypeInferenceError)
     deriving {Eq, Show}
 
 type TypeInferenceResult =
@@ -274,7 +342,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -282,17 +350,56 @@ let emptyTypeEnvironment unit = emptyTypeEnvironmentForPackage("standalone")
 
 let withInferencePackage packageId (environment: TypeEnvironment) = environment with packageId = packageId
 
+let withInferenceUnit unitIndex (environment: TypeEnvironment) = environment with currentUnit = unitIndex
+
 let inferencePackageId environment =
     match environment with
         | TypeEnvironment { packageId = packageId } -> packageId
 
+let recursive constructorResultTypeName semanticType =
+    match semanticType with
+        | SemFunction(_argument, result, None) -> constructorResultTypeName(result)
+        | SemNamed(_symbolId, name, _arguments) -> Some(name)
+        | _ -> None
+
+let indexValueBinding name scheme (index: Maybe(BindingLookupIndex)) =
+    match index with
+        | None -> None
+        | Some(lookup) -> Some((lookup with valuesByName = Ashes.Collection.Map.setStr(name)(scheme)(lookup.valuesByName)))
+
+let indexRecordConstructor (definition: ConstructorInferenceDefinition) (lookup: BindingLookupIndex) =
+    match (definition.fieldNames, definition.scheme) with
+        | (_field :: _rest, TypeScheme { body = body }) ->
+            match constructorResultTypeName(body) with
+                | Some(typeName) -> lookup with recordsByTypeName = Ashes.Collection.Map.setStr(typeName)(definition)(lookup.recordsByTypeName)
+                | None -> lookup
+        | _ -> lookup
+
+let indexConstructorBinding (definition: ConstructorInferenceDefinition) (index: Maybe(BindingLookupIndex)) =
+    match index with
+        | None -> None
+        | Some(lookup) ->
+            Some(
+                indexRecordConstructor(
+                    definition,
+                    lookup with constructorsByName = Ashes.Collection.Map.setStr(definition.name)(definition)(lookup.constructorsByName)
+                )
+            )
+
 let addTypeBinding name scheme (environment: TypeEnvironment) =
     match environment with
-        | TypeEnvironment { bindings = bindings } -> environment with bindings = (name, scheme) :: bindings
+        | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes, lookupIndex = index } ->
+            let extended =
+                match schemes with
+                    | Some(open) -> Some(scheme :: open)
+                    | None -> None
+            in environment with bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
-        | TypeEnvironment { constructors = constructors } as withBinding -> withBinding with constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, heapConstructorIndex = None
+        | TypeEnvironment { constructors = constructors, lookupIndex = index } as withBinding ->
+            let definition = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames)
+            in withBinding with constructors = definition :: constructors, heapConstructorIndex = None, lookupIndex = indexConstructorBinding(definition)(index)
 
 let addCapabilityBinding name scheme operations (environment: TypeEnvironment) =
     match environment with
@@ -372,13 +479,16 @@ let recursive findTypeBinding name bindings =
             then Some(scheme)
             else findTypeBinding(name)(tail)
 
-let resolveTypeBinding name environment =
+let resolveWrittenTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
-            findTypeBinding(
-                name,
-                bindings
-            )
+        | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { valuesByName = values }), fallbackBindings = fallback } ->
+            match Ashes.Collection.Map.getStr(name)(values) with
+                | Some(scheme) -> Some(scheme)
+                | None -> findTypeBinding(name)(fallback)
+        | TypeEnvironment { bindings = bindings, fallbackBindings = fallback } ->
+            match findTypeBinding(name)(bindings) with
+                | Some(scheme) -> Some(scheme)
+                | None -> findTypeBinding(name)(fallback)
 
 let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinition) -> Maybe(ConstructorInferenceDefinition) =
     given (name) ->
@@ -393,13 +503,36 @@ let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinitio
                         )
                     else findConstructorBinding(name)(tail)
 
-let resolveConstructorBinding name environment =
+let resolveWrittenConstructorBinding name environment =
     match environment with
+        | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { constructorsByName = indexed }) } -> Ashes.Collection.Map.getStr(name)(indexed)
         | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             findConstructorBinding(
                 name,
                 constructors
             )
+
+// `Ordering` and its constructors are declared by the stitched `Ashes.Trait` module under
+// module-qualified compiler names, and are in scope everywhere under their bare names. Under the
+// program rules a constructor name nothing else declares is looked up under that module's spelling.
+let resolveConstructorBinding (name: Str) (environment: TypeEnvironment) =
+    match resolveWrittenConstructorBinding(name)(environment) with
+        | Some(definition) -> Some(definition)
+        | None ->
+            if environment.programInferenceRules
+            then resolveWrittenConstructorBinding("Ashes_Trait_" + name)(environment)
+            else None
+
+let resolveTypeBinding (name: Str) (environment: TypeEnvironment) =
+    match resolveWrittenTypeBinding(name)(environment) with
+        | Some(scheme) -> Some(scheme)
+        | None ->
+            if environment.programInferenceRules
+            then
+                match resolveWrittenConstructorBinding("Ashes_Trait_" + name)(environment) with
+                    | Some(ConstructorInferenceDefinition { scheme = scheme }) -> Some(scheme)
+                    | None -> None
+            else None
 
 let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition) -> Maybe(CapabilityInferenceDefinition) =
     given (name) ->
@@ -442,10 +575,65 @@ let resolveCapabilityOperation capabilityName operationName environment =
                 operations
             )
 
+// A trait declared by the stitched `Ashes.Trait` module keeps its module-qualified compiler name
+// (`Ashes_Trait_Eq`), while the operators, derived implementations and the seeded standard
+// environment name the same trait bare (`Eq`). The environment stores and looks traits up under
+// the bare name, so every spelling reaches one trait.
+let canonicalTraitName (name: Str) =
+    if Ashes.Text.startsWith(name)("Ashes_Trait_")
+    then Ashes.Text.substring(name)(12)(Ashes.Text.length(name) - 12)
+    else name
+
+let traitNameIn (environment: TypeEnvironment) (name: Str) =
+    if environment.programInferenceRules
+    then canonicalTraitName(name)
+    else name
+
+let withIndexedValue name scheme (lookup: BindingLookupIndex) = lookup with valuesByName = Ashes.Collection.Map.setStr(name)(scheme)(lookup.valuesByName)
+
+let withIndexedConstructor (definition: ConstructorInferenceDefinition) (lookup: BindingLookupIndex) =
+    indexRecordConstructor(
+        definition,
+        lookup with constructorsByName = Ashes.Collection.Map.setStr(definition.name)(definition)(lookup.constructorsByName)
+    )
+
+let recursive indexValueBindings bindings (lookup: BindingLookupIndex) =
+    match bindings with
+        | [] -> lookup
+        | (name, scheme) :: older ->
+            lookup
+            |> indexValueBindings(older)
+            |> withIndexedValue(name)(scheme)
+
+let recursive indexConstructorBindings (definitions: List(ConstructorInferenceDefinition)) (lookup: BindingLookupIndex) =
+    match definitions with
+        | [] -> lookup
+        | definition :: older ->
+            lookup
+            |> indexConstructorBindings(older)
+            |> withIndexedConstructor(definition)
+
+// Program inference's own view of an environment: the program-only rules on and the bindings
+// indexed by name, oldest first so the youngest entry for a name is the one kept.
+let withProgramInferenceRules (environment: TypeEnvironment) =
+    environment with programInferenceRules = true, lookupIndex = Some(
+        BindingLookupIndex(valuesByName = Ashes.Collection.Map.empty, constructorsByName = Ashes.Collection.Map.empty, recordsByTypeName = Ashes.Collection.Map.empty)
+        |> indexValueBindings(environment.bindings)
+        |> indexConstructorBindings(environment.constructors)
+    )
+
+let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false, lookupIndex = None, generalizationSchemes = None
+
+// Between two top-level declarations every binding in scope is generalized, so none holds a free
+// type variable: a declaration's generalization only has to look at what it adds itself.
+let withClosedGeneralizationScope (environment: TypeEnvironment) = environment with generalizationSchemes = Some([])
+
+let appliesProgramInferenceRules (environment: TypeEnvironment) = environment.programInferenceRules
+
 let addTraitBinding name parameterCount parameters methods supertraits (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { packageId = packageId, traits = traits } ->
-            environment with traits = TraitInferenceDefinition(name = name, parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = canonicalizeTraitConstraints(
+            environment with traits = TraitInferenceDefinition(name = traitNameIn(environment)(name), parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = canonicalizeTraitConstraints(
                 supertraits
             ), provenance = DeclarationProvenance(packageId = packageId)) :: traits
 
@@ -464,7 +652,7 @@ let resolveTraitBinding name environment =
     match environment with
         | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             findTraitBinding(
-                name,
+                traitNameIn(environment)(name),
                 traits
             )
 
@@ -488,27 +676,29 @@ let resolveTraitMethod traitName methodName environment =
                 methods
             )
 
-let addTraitImplementation traitName typeArguments requirements methods (environment: TypeEnvironment) =
+let addTraitImplementationAt (site: Maybe(TraitImplementationSite)) traitName typeArguments requirements methods (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { traitImplementations = traitImplementations } ->
-            let definition = TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = methods)
+            let definition = TraitImplementationInferenceDefinition(traitName = traitNameIn(environment)(traitName), typeArguments = typeArguments, requirements = requirements, methods = methods, site = site)
             in environment with traitImplementations = definition :: traitImplementations
+
+let addTraitImplementation traitName typeArguments requirements methods (environment: TypeEnvironment) = addTraitImplementationAt(None)(traitName)(typeArguments)(requirements)(methods)(environment)
 
 let recursive filterTraitImplementations traitName implementations =
     match implementations with
         | [] -> []
-        | TraitImplementationInferenceDefinition { traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods } :: tail ->
+        | TraitImplementationInferenceDefinition { traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods, site = site } :: tail ->
             let rest = filterTraitImplementations(traitName)(tail)
             in
                 if traitName == candidateName
-                then TraitImplementationInferenceDefinition(traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods) :: rest
+                then TraitImplementationInferenceDefinition(traitName = candidateName, typeArguments = typeArguments, requirements = requirements, methods = methods, site = site) :: rest
                 else rest
 
 let resolveTraitImplementations traitName environment =
     match environment with
         | TypeEnvironment { traitImplementations = implementations } ->
             filterTraitImplementations(
-                traitName,
+                traitNameIn(environment)(traitName),
                 implementations
             )
 
@@ -776,6 +966,187 @@ let inferenceFailure semanticType substitution supply error =
         error
     ))
 
+// The identity directly around `expression`, looking through its location, or -1.
+let recursive identifiedNode expression =
+    match expression with
+        | ExprAt(_span, inner) -> identifiedNode(inner)
+        | ExprNode(node, _inner) -> node
+        | _ -> -1
+
+// Recording against identified nodes happens only under the program inference rules and only
+// where a node is known, so an inference run for lowering writes nothing.
+let recordsAt (environment: TypeEnvironment) (node: Int) = environment.programInferenceRules && node >= 0
+
+let recordNodeType (node: Int) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { semanticType = semanticType, supply = supply, error = None } ->
+            result with supply = withNodeNote(NodeTypeNote(node)(semanticType))(supply)
+        | _ -> result
+
+let noteOperator (environment: TypeEnvironment) (node: Int) (traitName: Str) operandType (result: TypeInferenceResult) =
+    if recordsAt(environment)(node)
+    then
+        match result with
+            | TypeInferenceResult { supply = supply, error = None } ->
+                result with supply = withNodeNote(NodeOperatorNote(node)(traitName)(operandType))(supply)
+            | _ -> result
+    else result
+
+// The literal zero of `0 - x` is not inferred as a value; it stands at the type its operand has.
+let noteNegatedZero (environment: TypeEnvironment) (node: Int) (result: TypeInferenceResult) =
+    if recordsAt(environment)(node)
+    then recordNodeType(node)(result)
+    else result
+
+let noteBinding (environment: TypeEnvironment) (node: Int) (name: Str) (scheme: TypeScheme) supply =
+    if recordsAt(environment)(node)
+    then
+        withNodeNote(NodeBindingNote(node)(name)(scheme))(supply)
+    else supply
+
+let recursive noteBindingsIn (environment: TypeEnvironment) (node: Int) (names: List(Str)) (scope: TypeEnvironment) supply =
+    if recordsAt(environment)(node)
+    then
+        match names with
+            | [] -> supply
+            | name :: rest ->
+                match resolveWrittenTypeBinding(name)(scope) with
+                    | Some(scheme) ->
+                        supply
+                        |> withNodeNote(NodeBindingNote(node)(name)(scheme))
+                        |> noteBindingsIn(environment)(node)(rest)(scope)
+                    | None -> noteBindingsIn(environment)(node)(rest)(scope)(supply)
+    else supply
+
+// `instantiate` mints one variable per quantified variable, in order, from `firstId`.
+let recursive instantiationArguments (quantified: List((Int, Str))) (firstId: Int) =
+    match quantified with
+        | [] -> []
+        | (variable, _name) :: rest -> (variable, SemVariable(firstId)) :: instantiationArguments(rest)(firstId + 1)
+
+let recursive mentionsQuantified (quantified: List((Int, Str))) (variable: Int) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variable || mentionsQuantified(rest)(variable)
+
+let recursive anyMentionsQuantified (quantified: List((Int, Str))) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | head :: rest -> mentionsQuantified(quantified)(head) || anyMentionsQuantified(quantified)(rest)
+
+let recursive typesMentionQuantified (quantified: List((Int, Str))) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> false
+        | head :: rest ->
+            anyMentionsQuantified(quantified)(freeTypeVariables(head)) || typesMentionQuantified(quantified)(rest)
+
+let recursive instantiatedTypes (arguments: List((Int, SemanticType))) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> []
+        | head :: rest -> applySubstitution(arguments)(head) :: instantiatedTypes(arguments)(rest)
+
+// The requirements of a scheme that depend on what it quantifies, at one instantiation and in the
+// scheme's own order.
+let recursive dictionaryRequirements (quantified: List((Int, Str))) (arguments: List((Int, SemanticType))) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: rest ->
+            if typesMentionQuantified(quantified)(typeArguments)
+            then TraitConstraint(traitName = traitName, typeArguments = instantiatedTypes(arguments)(typeArguments)) :: dictionaryRequirements(quantified)(arguments)(rest)
+            else dictionaryRequirements(quantified)(arguments)(rest)
+
+// Notes at `node` the instantiation `instantiate(scheme)(before)` made.
+let noteInstantiationAt (environment: TypeEnvironment) (node: Int) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
+    if recordsAt(environment)(node)
+    then
+        match scheme.quantified with
+            | [] -> after
+            | quantified ->
+                let arguments = instantiationArguments(quantified)(before.nextId)
+                in
+                    withNodeNote(scheme.constraints
+                    |> dictionaryRequirements(quantified)(arguments)
+                    |> NodeInstantiationNote(node)(arguments)(requirements))(after)
+    else after
+
+// The names a pattern binds, read off its shape. An or-pattern's alternatives bind the same
+// names, so the first one speaks for all.
+let recursive patternVariableNames pattern (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternVariableNames(inner)(names)
+        | PatternVar(name) -> name :: names
+        | PatternCons(head, tail) ->
+            names
+            |> patternVariableNames(head)
+            |> patternVariableNames(tail)
+        | PatternTuple(elements) -> patternVariableNamesIn(elements)(names)
+        | PatternConstructor(_name, arguments) -> patternVariableNamesIn(arguments)(names)
+        | PatternRecord(_name, fields) -> patternFieldVariableNames(fields)(names)
+        | PatternAs(inner, name) -> name :: patternVariableNames(inner)(names)
+        | PatternOr(first :: _rest) -> patternVariableNames(first)(names)
+        | _ -> names
+and patternVariableNamesIn patterns (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | head :: tail ->
+            names
+            |> patternVariableNames(head)
+            |> patternVariableNamesIn(tail)
+and patternFieldVariableNames (fields: List((Str, Pattern))) (names: List(Str)) =
+    match fields with
+        | [] -> names
+        | (_field, pattern) :: tail ->
+            names
+            |> patternVariableNames(pattern)
+            |> patternFieldVariableNames(tail)
+
+// Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
+let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
+    if recordsAt(environment)(before.currentNode)
+    then
+        match scheme.quantified with
+            | [] -> after
+            | quantified ->
+                let arguments = instantiationArguments(quantified)(before.nextId)
+                in
+                    withNodeNote(scheme.constraints
+                    |> dictionaryRequirements(quantified)(arguments)
+                    |> NodeInstantiationNote(before.currentNode)(arguments)(requirements))(after)
+    else after
+
+// Unary `-x` reaches inference as `0 - x`: the parser has no negation node. A subtraction whose
+// left operand is the literal zero is therefore the operand's own negation, at the operand's type.
+let recursive isZeroLiteralExpression expression =
+    match expression with
+        | ExprAt(_span, inner) -> isZeroLiteralExpression(inner)
+        | ExprNode(_id, inner) -> isZeroLiteralExpression(inner)
+        | ExprInt(0) -> true
+        | _ -> false
+
+// Attaches `span` to a failure that has no location yet, so the innermost located expression
+// around the failing node is the one reported.
+let locateInferenceError span (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = None } -> result
+        | TypeInferenceResult { error = Some(InferenceErrorAt(_, _)) } -> result
+        | TypeInferenceResult { error = Some(error) } ->
+            result with error = Some(InferenceErrorAt(span)(error))
+
+let inferenceErrorSpan error =
+    match error with
+        | InferenceErrorAt(span, _) -> Some(span)
+        | _ -> None
+
+let unlocatedInferenceError error =
+    match error with
+        | InferenceErrorAt(_, inner) -> inner
+        | _ -> error
+
+let unlocatedInferenceResult (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceErrorAt(_, inner)) } -> result with error = Some(inner)
+        | _ -> result
+
 let recursive appendConstraints left right =
     match left with
         | [] -> right
@@ -972,7 +1343,7 @@ let recursive resolveBindingRequirements requirements context environment revers
                                         tail,
                                         context,
                                         environment,
-                                        TraitConstraint(traitName = traitName, typeArguments = resolvedArguments) :: reversed
+                                        TraitConstraint(traitName = traitNameIn(environment)(traitName), typeArguments = resolvedArguments) :: reversed
                                     )
                                 | (_resolvedArguments, Some(error)) ->
                                     BindingRequirementResolution(constraints = reverse(
@@ -1018,12 +1389,61 @@ let recursive firstConstraintMissingFrom candidates available =
             in
                 if constraintWithKeyExists(traitConstraintStableKey(candidate))(available)
                 then firstConstraintMissingFrom(tail)(available)
-                else Some(traitName)
+                else Some((traitName, typeArguments))
 
 let recursive appendSubstitution left right =
     match left with
         | [] -> right
         | head :: tail -> head :: appendSubstitution(tail)(right)
+
+// Unifying two open rows that each hold a capability the other lacks gives both one shared tail.
+// The unifier has no variable supply and numbers that tail from the size of its own local
+// substitution, below every supplied id, so two unifications produce the same variable. Under the
+// program rules each such tail is replaced by a variable from the supply before the local
+// substitution joins the running one.
+let recursive mintedRowTailsIn (variables: List(Int)) (found: List(Int)) =
+    match variables with
+        | [] -> found
+        | head :: tail ->
+            if head <= -1000000
+            then
+                if integerExists(head)(found)
+                then mintedRowTailsIn(tail)(found)
+                else mintedRowTailsIn(tail)(head :: found)
+            else mintedRowTailsIn(tail)(found)
+
+let recursive mintedRowTails (entries: List((Int, SemanticType))) (found: List(Int)) =
+    match entries with
+        | [] -> found
+        | (variableId, semanticType) :: tail ->
+            found
+            |> mintedRowTailsIn(variableId :: freeTypeVariables(semanticType))
+            |> mintedRowTails(tail)
+
+let recursive supplyRowTails (minted: List(Int)) supply (renaming: List((Int, SemanticType))) =
+    match minted with
+        | [] -> (renaming, supply)
+        | head :: tail ->
+            match freshTypeVariable(supply) with
+                | (suppliedTail, nextSupply) -> supplyRowTails(tail)(nextSupply)((head, suppliedTail) :: renaming)
+
+let recursive renameRowTails (renaming: List((Int, SemanticType))) (entries: List((Int, SemanticType))) =
+    match entries with
+        | [] -> []
+        | (variableId, semanticType) :: tail ->
+            match applySubstitution(renaming)(SemVariable(variableId)) with
+                | SemVariable(renamedId) -> (renamedId, applySubstitution(renaming)(semanticType)) :: renameRowTails(renaming)(tail)
+                | _ -> (variableId, applySubstitution(renaming)(semanticType)) :: renameRowTails(renaming)(tail)
+
+let settleRowTails (environment: TypeEnvironment) supply (entries: List((Int, SemanticType))) =
+    if environment.programInferenceRules
+    then
+        match mintedRowTails(entries)([]) with
+            | [] -> (entries, supply)
+            | minted ->
+                match supplyRowTails(minted)(supply)([]) with
+                    | (renaming, nextSupply) -> (renameRowTails(renaming)(entries), nextSupply)
+    else (entries, supply)
 
 let patternSuccess semanticType environment substitution supply names = PatternInferenceResult(semanticType = semanticType, environment = environment, substitution = substitution, supply = supply, names = names, error = None)
 
@@ -1035,9 +1455,11 @@ let patternFailure semanticType environment substitution supply names error =
 let mergePatternUnification currentSubstitution result supply fallbackType environment names =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
-            let combined = appendSubstitution(unificationSubstitution)(currentSubstitution)
-            in
-                patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(supply)(names)
+            match settleRowTails(environment)(supply)(unificationSubstitution) with
+                | (settled, settledSupply) ->
+                    let combined = appendSubstitution(settled)(currentSubstitution)
+                    in
+                        patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(settledSupply)(names)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } ->
             patternFailure(
                 fallbackType,
@@ -1105,6 +1527,54 @@ let recursive coverageLength items (acc: Int) =
         | [] -> acc
         | _ :: rest -> coverageLength(rest)(acc + 1)
 
+// A match arm whose whole pattern is a tuple of another length than the scrutinee's tuple type.
+let tuplePatternArityError (scrutineeType: SemanticType) pattern =
+    match (scrutineeType, coverageUnwrap(pattern)) with
+        | (SemTuple(elements), PatternTuple(patterns)) ->
+            let expected = coverageLength(elements)(0)
+            in
+                let actual = coverageLength(patterns)(0)
+                in
+                    if expected == actual
+                    then None
+                    else
+                        actual
+                        |> TuplePatternArityMismatch(expected)
+                        |> Some
+        | _ -> None
+
+// The builtins that convert from `Int` and that stage 0 checks at the call, naming the builtin when
+// the argument has another type.
+let intArgumentBuiltins = ["Ashes.Rune.fromInt", "Ashes.Number.BigInt.fromInt", "Ashes.Number.UInt.fromInt", "Ashes.Number.UInt.fromInt64"]
+
+let recursive calledVariableName expression =
+    match expression with
+        | ExprAt(_span, inner) -> calledVariableName(inner)
+        | ExprNode(_id, inner) -> calledVariableName(inner)
+        | ExprVar(name) -> Some(name)
+        | ExprQualifiedVar(moduleName, member) -> Some(moduleName + "." + member)
+        | _ -> None
+
+let recursive textListContains (items: List(Str)) (wanted: Str) =
+    match items with
+        | [] -> false
+        | head :: rest ->
+            if head == wanted
+            then true
+            else textListContains(rest)(wanted)
+
+// A failed call of an `Int`-converting builtin reads as that builtin's argument error.
+let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeInferenceResult) =
+    match calledVariableName(function) with
+        | Some(name) ->
+            if textListContains(intArgumentBuiltins)(name)
+            then
+                failure with error = Some(argumentType
+                |> applySubstitution(failure.substitution)
+                |> BuiltinIntArgumentMismatch(name))
+            else failure
+        | None -> failure
+
 let recursive coverageWildcards (count: Int) acc =
     if count <= 0
     then acc
@@ -1144,18 +1614,20 @@ let coverageConstructorName pattern environment =
     match coverageUnwrap(pattern) with
         | PatternConstructor(name, _patterns) ->
             match resolveConstructorBinding(name)(environment) with
-                | Some(_) -> Some(name)
+                | Some(ConstructorInferenceDefinition { name = declaredName }) -> Some(declaredName)
                 | None -> None
         | PatternVar(name) ->
-            if isNullaryConstructorName(name)(environment)
-            then Some(name)
-            else None
+            match resolveConstructorBinding(name)(environment) with
+                | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = SemFunction(_, _, _) } }) -> None
+                | Some(ConstructorInferenceDefinition { name = declaredName }) -> Some(declaredName)
+                | None -> None
         | _ -> None
 
-// Every constructor of an ADT, in declaration order, as (name, arity).
+// Every constructor of an ADT, in declaration order, as (name, arity). The environment holds the
+// most recently added constructor first, so collecting them front to back restores the order.
 let recursive coverageAdtConstructors (definitions: List(ConstructorInferenceDefinition)) (adtName: Str) acc =
     match definitions with
-        | [] -> reverse(acc)
+        | [] -> acc
         | ConstructorInferenceDefinition { name = name, scheme = TypeScheme { body = body } } :: rest ->
             match splitConstructorType(body)([]) with
                 | ConstructorTypeShape { parameters = parameters, resultType = SemNamed(_id, candidate, _arguments) } ->
@@ -1884,9 +2356,14 @@ let matchCoverageError cases (valueType: SemanticType) environment =
                     | Some(error) -> Some(error)
                     | None -> coverageExhaustiveness(environment)(valueType)(expanded))
 
+// Arms whose constructor patterns belong to different ADTs fail to unify with each other; that
+// failure is reported as the arms' own error, as stage 0 reports it.
 let checkMatchCoverage cases scrutineeType environment (result: TypeInferenceResult) =
     match result with
-        | TypeInferenceResult { error = Some(_error) } -> result
+        | TypeInferenceResult { error = Some(_error) } ->
+            match coverageDistinctAdts(coverageExpandCases(cases)(environment)([]))(environment)([]) with
+                | first :: second :: more -> result with error = Some(ConstructorPatternsFromDifferentAdts(first :: second :: more))
+                | _ -> result
         | TypeInferenceResult { substitution = substitution } ->
             match matchCoverageError(cases)(applySubstitution(substitution)(scrutineeType))(environment) with
                 | None -> result
@@ -1902,6 +2379,24 @@ let recursive findRecordFieldType : Str -> List(Str) -> List(SemanticType) -> Ma
                         then Some(fieldType)
                         else findRecordFieldType(fieldName)(nameTail)(typeTail)
                     | _ -> None
+
+// Field-name inference is allowed only for one visible record definition. Keep
+// first-match constructor shadowing, as ordinary constructor lookup does.
+let recursive recordFieldCandidates fieldName definitions seen found =
+    match definitions with
+        | [] -> found
+        | (ConstructorInferenceDefinition { name = name, fieldNames = fields } as definition) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_present) -> recordFieldCandidates(fieldName)(rest)(seen)(found)
+                | None ->
+                    let nextSeen = Ashes.Collection.Map.setStr(name)(true)(seen)
+                    in
+                        if patternNameExists(fieldName)(fields)
+                        then
+                            match found with
+                                | [] -> recordFieldCandidates(fieldName)(rest)(nextSeen)([definition])
+                                | _ -> definition :: found
+                        else recordFieldCandidates(fieldName)(rest)(nextSeen)(found)
 
 let recursive findMissingRecordField requiredFields providedFields =
     match requiredFields with
@@ -1977,6 +2472,143 @@ let mergeUnification currentSubstitution result supply fallbackType =
                 supply,
                 InferenceUnificationError(error)
             )
+
+let unifyIn (environment: TypeEnvironment) left right =
+    if environment.programInferenceRules
+    then unifyFlatRows(left)(right)
+    else unify(left)(right)
+
+let mergeUnificationIn (environment: TypeEnvironment) currentSubstitution result supply fallbackType =
+    match result with
+        | UnificationResult { substitution = unificationSubstitution, error = None } ->
+            match settleRowTails(environment)(supply)(unificationSubstitution) with
+                | (settled, settledSupply) ->
+                    let combined = appendSubstitution(settled)(currentSubstitution)
+                    in
+                        inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(settledSupply)
+        | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } ->
+            inferenceFailure(
+                fallbackType,
+                currentSubstitution,
+                supply,
+                InferenceUnificationError(error)
+            )
+
+let inferRecordFieldDefinition receiverType fieldName (definition: ConstructorInferenceDefinition) substitution supply constraints =
+    match instantiate(definition.scheme)(supply) with
+        | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
+            match splitConstructorType(constructorType)([]) with
+                | ConstructorTypeShape { parameters = fieldTypes, resultType = recordType } ->
+                    match findRecordFieldType(fieldName)(definition.fieldNames)(fieldTypes) with
+                        | None ->
+                            fieldName
+                            |> UnknownRecordField(definition.name)
+                            |> inferenceFailure(SemNever)(substitution)(constructorSupply)
+                        | Some(fieldType) ->
+                            addConstraints(appendConstraints(constraints)(constructorConstraints))(
+                                mergeUnification(substitution)(unify(applySubstitution(substitution)(receiverType))(recordType))(constructorSupply)(fieldType)
+                            )
+
+// A record's constructor is found by the type it constructs: a stitched project
+// spells the type and its constructor differently, so the names cannot be compared.
+let recursive findRecordDefinitionByType typeName definitions =
+    match definitions with
+        | [] -> None
+        | (ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = _field :: _rest } as definition) :: rest ->
+            match splitConstructorType(body)([]) with
+                | ConstructorTypeShape { resultType = SemNamed(_symbolId, candidate, _arguments) } ->
+                    if candidate == typeName
+                    then Some(definition)
+                    else findRecordDefinitionByType(typeName)(rest)
+                | _ -> findRecordDefinitionByType(typeName)(rest)
+        | _definition :: rest -> findRecordDefinitionByType(typeName)(rest)
+
+let resolveRecordDefinitionByType typeName (environment: TypeEnvironment) =
+    match environment.lookupIndex with
+        | Some(BindingLookupIndex { recordsByTypeName = records }) -> Ashes.Collection.Map.getStr(typeName)(records)
+        | None -> findRecordDefinitionByType(typeName)(environment.constructors)
+
+// The constructor a record update rebuilds. Under the program-only rules a type whose constructor
+// is spelled differently (an exported type with a private constructor in a stitched project) is
+// found by the type it constructs, as a field access finds it.
+let recordUpdateDefinition name (environment: TypeEnvironment) =
+    match resolveConstructorBinding(name)(environment) with
+        | Some(definition) -> Some(definition)
+        | None ->
+            if environment.programInferenceRules
+            then resolveRecordDefinitionByType(name)(environment)
+            else None
+
+let inferRecordField receiverType fieldName (environment: TypeEnvironment) substitution supply constraints =
+    match applySubstitution(substitution)(receiverType) with
+        | SemNamed(_symbolId, name, _arguments) ->
+            match resolveRecordDefinitionByType(name)(environment) with
+                | Some(definition) -> inferRecordFieldDefinition(receiverType)(fieldName)(definition)(substitution)(supply)(constraints)
+                | None ->
+                    fieldName
+                    |> UnknownRecordField(name)
+                    |> inferenceFailure(SemNever)(substitution)(supply)
+        | SemVariable(_id) as unresolved ->
+            match recordFieldCandidates(fieldName)(environment.constructors)(Ashes.Collection.Map.empty)([]) with
+                | definition :: [] -> inferRecordFieldDefinition(unresolved)(fieldName)(definition)(substitution)(supply)(constraints)
+                | _ -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(unresolved))
+        | other -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(other))
+
+// The capabilities the runtime itself provides. They declare no operations a handler could take,
+// so one left in a program's top-level row is not an unsatisfied requirement.
+let isBuiltinRuntimeCapability (name: Str) =
+    match name with
+        | "ConsoleIO" -> true
+        | "FileRead" -> true
+        | "FileWrite" -> true
+        | "ProcessSpawn" -> true
+        | "ProcessExit" -> true
+        | "TimeRead" -> true
+        | "EnvironmentRead" -> true
+        | "Entropy" -> true
+        | "UnsafeFfi" -> true
+        | "NetListen" -> true
+        | "NetConnect" -> true
+        | "Stop" -> true
+        | _ -> false
+
+let recursive firstUnknownCapabilityIn semanticTypes (environment: TypeEnvironment) =
+    match semanticTypes with
+        | [] -> None
+        | head :: tail ->
+            match firstUnknownCapability(head)(environment) with
+                | Some(name) -> Some(name)
+                | None -> firstUnknownCapabilityIn(tail)(environment)
+and firstUnknownCapability semanticType (environment: TypeEnvironment) =
+    match semanticType with
+        | SemList(element) -> firstUnknownCapability(element)(environment)
+        | SemTuple(elements) -> firstUnknownCapabilityIn(elements)(environment)
+        | SemFunction(argument, result, None) -> firstUnknownCapabilityIn([argument, result])(environment)
+        | SemFunction(argument, result, Some(row)) -> firstUnknownCapabilityIn([argument, result, row])(environment)
+        | SemCapability(name, arguments) ->
+            if isBuiltinRuntimeCapability(name)
+            then firstUnknownCapabilityIn(arguments)(environment)
+            else
+                match resolveCapabilityBinding(name)(environment) with
+                    | None -> Some(name)
+                    | Some(_) -> firstUnknownCapabilityIn(arguments)(environment)
+        | SemRow(capabilities, None) -> firstUnknownCapabilityIn(capabilities)(environment)
+        | SemRow(capabilities, Some(tail)) -> firstUnknownCapabilityIn(tail :: capabilities)(environment)
+        | SemNamed(_symbolId, _name, arguments) -> firstUnknownCapabilityIn(arguments)(environment)
+        | SemPointer(pointee) -> firstUnknownCapability(pointee)(environment)
+        | _ -> None
+
+// A written type may name only declared capabilities and the runtime's own in its `needs` rows.
+let resolveWrittenType typeExpression context (environment: TypeEnvironment) =
+    match resolveTypeExpression(typeExpression)(context) with
+        | TypeResolutionResult { semanticType = semanticType, error = None } ->
+            if environment.programInferenceRules
+            then
+                match firstUnknownCapability(semanticType)(environment) with
+                    | Some(name) -> (semanticType, Some(UnknownCapabilityInRow(name)))
+                    | None -> (semanticType, None)
+            else (semanticType, None)
+        | TypeResolutionResult { semanticType = semanticType, error = Some(error) } -> (semanticType, Some(InferenceTypeResolutionError(error)))
 
 let recursive anyAbstractSemanticType values =
     match values with
@@ -2056,49 +2688,63 @@ and resolveProvidedCapabilityRow semanticType environment =
                                     ), error = None)
         | _ -> ProviderRowResolution(semanticType = semanticType, error = None)
 
+// A row closed or extended through its tail reads the same as one written out: under the program
+// rules it is brought to that form before it is asked whether it is empty, closed or open.
+let recursive writtenOutRow (environment: TypeEnvironment) row =
+    if environment.programInferenceRules
+    then
+        match row with
+            | SemRow(capabilities, Some(SemRow(inner, innerTail))) ->
+                innerTail
+                |> SemRow(append(capabilities)(inner))
+                |> writtenOutRow(environment)
+            | _ -> row
+    else row
+
+// The ambient row is resolved only where it is unified. A call whose row is empty never reads
+// it, and resolving an open row walks the whole substitution.
 let subsumeCapabilityRow capabilityRow environment ambientRow substitution supply resultType =
     (let resolvedRow = applySubstitution(substitution)(capabilityRow)
     in
-        let resolvedAmbient = applySubstitution(substitution)(ambientRow)
-        in
-            match resolveProvidedCapabilityRow(resolvedRow)(environment) with
-                | ProviderRowResolution { semanticType = _providerResolvedRow, error = Some(error) } ->
-                    inferenceFailure(
-                        resultType,
-                        substitution,
-                        supply,
-                        error
-                    )
-                | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
-                    match providerResolvedRow with
-                        | SemRow([], None) ->
-                            inferenceSuccess(
-                                applySubstitution(substitution)(resultType),
-                                substitution,
-                                supply
-                            )
-                        | SemRow(capabilities, None) ->
-                            match freshTypeVariable(supply) with
-                                | (tailType, nextSupply) ->
-                                    mergeUnification(
-                                        substitution,
-                                        Some(tailType)
-                                        |> SemRow(capabilities)
-                                        |> unify(resolvedAmbient),
-                                        nextSupply,
-                                        resultType
-                                    )
-                        | _ ->
-                            mergeUnification(
-                                substitution,
-                                unify(resolvedAmbient)(providerResolvedRow),
-                                supply,
-                                resultType
-                            ))
+        match resolveProvidedCapabilityRow(resolvedRow)(environment) with
+            | ProviderRowResolution { semanticType = _providerResolvedRow, error = Some(error) } ->
+                inferenceFailure(
+                    resultType,
+                    substitution,
+                    supply,
+                    error
+                )
+            | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
+                match writtenOutRow(environment)(providerResolvedRow) with
+                    | SemRow([], None) ->
+                        inferenceSuccess(
+                            applySubstitution(substitution)(resultType),
+                            substitution,
+                            supply
+                        )
+                    | SemRow(capabilities, None) ->
+                        match freshTypeVariable(supply) with
+                            | (tailType, nextSupply) ->
+                                mergeUnificationIn(environment)(
+                                    substitution,
+                                    Some(tailType)
+                                    |> SemRow(capabilities)
+                                    |> unifyIn(environment)(applySubstitution(substitution)(ambientRow)),
+                                    nextSupply,
+                                    resultType
+                                )
+                    | _ ->
+                        mergeUnificationIn(environment)(
+                            substitution,
+                            unifyIn(environment)(applySubstitution(substitution)(ambientRow))(providerResolvedRow),
+                            supply,
+                            resultType
+                        ))
 
 let recursive capabilityOperationCallRoot expression sawArgument =
     match expression with
         | ExprAt(_span, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
+        | ExprNode(_id, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
         | ExprCall(function, _argument, _whitespace, _layout) -> capabilityOperationCallRoot(function)(true)
         | ExprQualifiedVar(capabilityName, operationName) ->
             if sawArgument
@@ -2131,25 +2777,44 @@ let subsumeUnsignedCapabilityOperation function environment ambientRow result =
 let checkInferenceAnnotation annotation expectedType environment substitution supply =
     match prepareTypeResolutionContext(annotation)(inferenceTypeResolutionContext(environment))(supply) with
         | TypeResolutionPreparationResult { context = preparedContext, supply = preparedSupply } ->
-            match resolveTypeExpression(annotation)(preparedContext) with
-                | TypeResolutionResult { semanticType = annotationType, error = None } ->
-                    mergeUnification(
+            match resolveWrittenType(annotation)(preparedContext)(environment) with
+                | (annotationType, None) ->
+                    mergeUnificationIn(environment)(
                         substitution,
-                        unify(applySubstitution(substitution)(expectedType))(annotationType),
+                        unifyIn(environment)(applySubstitution(substitution)(expectedType))(annotationType),
                         preparedSupply,
                         expectedType
                     )
-                | TypeResolutionResult { semanticType = _annotationType, error = Some(error) } ->
+                | (_annotationType, Some(error)) ->
                     inferenceFailure(
                         expectedType,
                         substitution,
                         preparedSupply,
-                        InferenceTypeResolutionError(error)
+                        error
                     )
+
+// A recursive binding's written signature types the uses of the binding inside its own value. Left
+// to the body alone, a call the binding makes to itself has an unknown row, which takes on the row
+// of the function it is made in and so puts that row on every arrow of the binding.
+let seedRecursiveSignature annotation recursiveType (environment: TypeEnvironment) substitution supply =
+    match annotation with
+        | None -> inferenceSuccess(recursiveType)(substitution)(supply)
+        | Some(typeExpression) ->
+            if environment.programInferenceRules
+            then
+                checkInferenceAnnotation(
+                    typeExpression,
+                    recursiveType,
+                    environment,
+                    substitution,
+                    supply
+                )
+            else inferenceSuccess(recursiveType)(substitution)(supply)
 
 let inferenceEnvironmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
+        | TypeEnvironment { generalizationSchemes = Some(open) } -> open
+        | TypeEnvironment { bindings = bindings } ->
             let recursive schemes values =
                 match values with
                     | [] -> []
@@ -2170,30 +2835,330 @@ let recursive firstAmbiguousTraitRequirement constraints bindingType environment
                         |> freeEnvironmentVariables
                     in
                         if firstAmbiguousRequirementVariable(variables)(bodyVariables)(environmentVariables)
-                        then Some(traitName)
+                        then Some((traitName, typeArguments))
                         else firstAmbiguousTraitRequirement(tail)(bindingType)(environment)
+
+let recursive resolvedVariablesOf substitution variables =
+    match variables with
+        | [] -> []
+        | variable :: rest ->
+            rest
+            |> resolvedVariablesOf(substitution)
+            |> append(SemVariable(variable)
+            |> applySubstitution(substitution)
+            |> freeTypeVariables)
+
+let recursive firstAmbiguousResolvedRequirement constraints bodyVariables environmentVariables =
+    match constraints with
+        | [] -> None
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail ->
+            if firstAmbiguousRequirementVariable(freeTypeVariables(SemTuple(typeArguments)))(bodyVariables)(environmentVariables)
+            then Some((traitName, typeArguments))
+            else firstAmbiguousResolvedRequirement(tail)(bodyVariables)(environmentVariables)
+
+// The ambiguity check with the environment's free variables resolved first, as generalization
+// resolves them: a monomorphic variable in scope can have become an arrow while the binding was
+// inferred, and a requirement on its parameter or result still belongs to the environment.
+let firstAmbiguousTraitRequirementUnder substitution constraints bindingType environment =
+    firstAmbiguousResolvedRequirement(
+        applyInferenceConstraints(substitution)(constraints),
+        bindingType
+        |> applySubstitution(substitution)
+        |> freeTypeVariables,
+        environment
+        |> inferenceEnvironmentSchemes
+        |> freeEnvironmentVariables
+        |> resolvedVariablesOf(substitution)
+    )
+
+let bindingRequirementAmbiguity constraints bindingType environment substitution =
+    if appliesProgramInferenceRules(environment)
+    then firstAmbiguousTraitRequirementUnder(substitution)(constraints)(bindingType)(environment)
+    else firstAmbiguousTraitRequirement(constraints)(bindingType)(environment)
+
+// Whether the implementations in scope supply a requirement. A requirement on a type that is not
+// settled yet, or on a type parameter the enclosing declaration may itself require, is open: only
+// one whose outermost types are known and that no implementation head can fit has failed.
+type ImplementationHeadFit =
+    | HeadFits(List((Int, SemanticType)))
+    | HeadMayFit
+    | HeadDiffers
+
+type RequirementStanding =
+    | RequirementHolds
+    | RequirementOpen
+    | RequirementFails
+
+let recursive headParameterType (parameterId: Int) (bindings: List((Int, SemanticType))) =
+    match bindings with
+        | [] -> None
+        | (candidateId, bound) :: tail ->
+            if parameterId == candidateId
+            then Some(bound)
+            else headParameterType(parameterId)(tail)
+
+let recursive withHeadParameters (bindings: List((Int, SemanticType))) semanticType =
+    match semanticType with
+        | SemParameter(parameterId, _name) ->
+            match headParameterType(parameterId)(bindings) with
+                | Some(bound) -> bound
+                | None -> semanticType
+        | SemList(element) ->
+            element
+            |> withHeadParameters(bindings)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> withHeadParametersIn(bindings)
+            |> SemTuple
+        | SemFunction(argument, result, row) ->
+            SemFunction(withHeadParameters(bindings)(argument))(withHeadParameters(bindings)(result))(row)
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> withHeadParametersIn(bindings)
+            |> SemNamed(symbolId)(name)
+        | SemPointer(pointee) ->
+            pointee
+            |> withHeadParameters(bindings)
+            |> SemPointer
+        | other -> other
+and withHeadParametersIn (bindings: List((Int, SemanticType))) semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail -> withHeadParameters(bindings)(head) :: withHeadParametersIn(bindings)(tail)
+
+let recursive requirementsWithHeadParameters (bindings: List((Int, SemanticType))) (requirements: List(TraitConstraint)) =
+    match requirements with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail -> TraitConstraint(traitName = traitName, typeArguments = withHeadParametersIn(bindings)(typeArguments)) :: requirementsWithHeadParameters(bindings)(tail)
+
+let recursive implementationHeadsFit heads semanticTypes (bindings: List((Int, SemanticType))) (uncertain: Bool) =
+    match (heads, semanticTypes) with
+        | ([], []) ->
+            if uncertain
+            then HeadMayFit
+            else HeadFits(bindings)
+        | (head :: otherHeads, semanticType :: otherTypes) ->
+            match implementationHeadFits(head)(semanticType)(bindings) with
+                | HeadDiffers -> HeadDiffers
+                | HeadMayFit -> implementationHeadsFit(otherHeads)(otherTypes)(bindings)(true)
+                | HeadFits(nextBindings) -> implementationHeadsFit(otherHeads)(otherTypes)(nextBindings)(uncertain)
+        | _ -> HeadDiffers
+and implementationHeadFits head semanticType (bindings: List((Int, SemanticType))) =
+    match head with
+        | SemParameter(parameterId, _name) -> HeadFits((parameterId, semanticType) :: bindings)
+        | SemVariable(_) -> HeadFits(bindings)
+        | _ ->
+            match semanticType with
+                | SemVariable(_) -> HeadMayFit
+                | SemParameter(_, _) -> HeadMayFit
+                | SemNever -> HeadMayFit
+                | _ ->
+                    match (head, semanticType) with
+                        | (SemList(headElement), SemList(element)) -> implementationHeadFits(headElement)(element)(bindings)
+                        | (SemTuple(headElements), SemTuple(elements)) -> implementationHeadsFit(headElements)(elements)(bindings)(false)
+                        | (SemFunction(headArgument, headResult, _headRow), SemFunction(argument, result, _row)) -> implementationHeadsFit([headArgument, headResult])([argument, result])(bindings)(false)
+                        | (SemNamed(headId, headName, headArguments), SemNamed(symbolId, name, arguments)) ->
+                            if headId == symbolId
+                            then implementationHeadsFit(headArguments)(arguments)(bindings)(false)
+                            else
+                                if headName == name
+                                then implementationHeadsFit(headArguments)(arguments)(bindings)(false)
+                                else HeadDiffers
+                        | (SemPointer(headPointee), SemPointer(pointee)) -> implementationHeadFits(headPointee)(pointee)(bindings)
+                        | _ ->
+                            if head == semanticType
+                            then HeadFits(bindings)
+                            else HeadDiffers
+
+let recursive requirementStanding (fuel: Int) (environment: TypeEnvironment) (constraint: TraitConstraint) =
+    if fuel <= 0
+    then RequirementOpen
+    else
+        match resolveTraitBinding(constraint.traitName)(environment) with
+            | None -> RequirementOpen
+            | Some(_) ->
+                implementationsStanding(fuel)(environment)(constraint.typeArguments)(resolveTraitImplementations(constraint.traitName)(environment))(false)
+and implementationsStanding (fuel: Int) (environment: TypeEnvironment) typeArguments (implementations: List(TraitImplementationInferenceDefinition)) (uncertain: Bool) =
+    match implementations with
+        | [] ->
+            if uncertain
+            then RequirementOpen
+            else RequirementFails
+        | implementation :: tail ->
+            match implementationHeadsFit(implementation.typeArguments)(typeArguments)([])(false) with
+                | HeadDiffers -> implementationsStanding(fuel)(environment)(typeArguments)(tail)(uncertain)
+                | HeadMayFit -> implementationsStanding(fuel)(environment)(typeArguments)(tail)(true)
+                | HeadFits(bindings) ->
+                    implementation.requirements
+                    |> requirementsWithHeadParameters(bindings)
+                    |> requirementsStanding(fuel - 1)(environment)
+and requirementsStanding (fuel: Int) (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> RequirementHolds
+        | head :: tail ->
+            match requirementStanding(fuel)(environment)(head) with
+                | RequirementFails -> RequirementFails
+                | RequirementHolds -> requirementsStanding(fuel)(environment)(tail)
+                | RequirementOpen ->
+                    match requirementsStanding(fuel)(environment)(tail) with
+                        | RequirementFails -> RequirementFails
+                        | _ -> RequirementOpen
+
+let recursive firstFailedRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> None
+        | head :: tail ->
+            match requirementStanding(16)(environment)(head) with
+                | RequirementFails -> Some(head)
+                | _ -> firstFailedRequirement(environment)(tail)
+
+let recursive requirementsNotHeld (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | head :: tail ->
+            match requirementStanding(16)(environment)(head) with
+                | RequirementHolds -> requirementsNotHeld(environment)(tail)
+                | _ -> head :: requirementsNotHeld(environment)(tail)
+
+// Under the program rules a binding's requirements are weighed against the implementations: one
+// that no implementation supplies is an error where it arises, and one an implementation settles
+// is not something the binding's written `requires` has to repeat.
+let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then firstFailedRequirement(environment)(constraints)
+    else None
+
+// The requirements a binding still has to carry: one that the implementations in scope already
+// supply names an instance, so a scheme that kept it would pass it on to every binding that uses
+// this one. Only the program inference rules drop them; lowering's own inference keeps them all.
+let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then requirementsNotHeld(environment)(constraints)
+    else constraints
+
+// A requirement no implementation can fit, on a type that is still partly unknown, is reported as
+// ambiguous: nothing says which type was meant. On a known type it has no implementation.
+let failedRequirementError (traitName: Str) (typeArguments: List(SemanticType)) =
+    match freeTypeVariables(SemTuple(typeArguments)) with
+        | [] -> NoTraitImplementation(traitName)(typeArguments)
+        | _ -> AmbiguousTraitRequirement(traitName)(typeArguments)
+
+// The trailing expression is generalized by nothing, so a requirement that has failed there has
+// failed for good.
+let checkSettledTrailingRequirements (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    if environment.programInferenceRules
+    then
+        match result with
+            | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None } ->
+                let settled =
+                    constraints
+                    |> applyInferenceConstraints(substitution)
+                    |> simplifyTraitConstraints(environment)
+                in
+                    match firstFailedRequirement(environment)(settled) with
+                        | Some(TraitConstraint { traitName = traitName, typeArguments = typeArguments }) ->
+                            inferenceFailure(
+                                semanticType,
+                                substitution,
+                                supply,
+                                failedRequirementError(traitName)(typeArguments)
+                            )
+                        | None -> result
+            | _ -> result
+    else result
 
 let bindingSignatureSuccess semanticType substitution supply constraints = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None)
 
 let validateWrittenBindingRequirements inferred written semanticType substitution supply =
     match firstConstraintMissingFrom(inferred)(written) with
-        | Some(traitName) ->
+        | Some((traitName, typeArguments)) ->
             inferenceFailure(
                 semanticType,
                 substitution,
                 supply,
-                MissingWrittenTraitRequirement(traitName)
+                MissingWrittenTraitRequirement(traitName)(typeArguments)
             )
         | None ->
             match firstConstraintMissingFrom(written)(inferred) with
-                | Some(traitName) ->
+                | Some((traitName, typeArguments)) ->
                     inferenceFailure(
                         semanticType,
                         substitution,
                         supply,
-                        UnjustifiedWrittenTraitRequirement(traitName)
+                        UnjustifiedWrittenTraitRequirement(traitName)(typeArguments)
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
+
+// `Ashes.Text.fromInt` and `Ashes.Text.toHex` are typed `Int -> Str` and take an unsigned width
+// only where the argument is already known to be one, so a requirement of theirs on a variable the
+// binding would generalize over settles that variable to `Int` instead.
+let defaultsBuiltinArgumentToInt (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+
+let recursive variableListed (variableId: Int) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | head :: tail -> head == variableId || variableListed(variableId)(tail)
+
+let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List(Int)) =
+    match constraints with
+        | [] -> found
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            if defaultsBuiltinArgumentToInt(traitName)
+            then
+                match applySubstitution(substitution)(argument) with
+                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)(variableId :: found)
+                    | _ -> builtinArgumentCandidates(rest)(substitution)(found)
+            else builtinArgumentCandidates(rest)(substitution)(found)
+        | _ :: rest -> builtinArgumentCandidates(rest)(substitution)(found)
+
+let recursive bindBuiltinArgumentDefaults (candidates: List(Int)) (environmentVariables: List(Int)) substitution =
+    match candidates with
+        | [] -> substitution
+        | variableId :: rest ->
+            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(rest)
+            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(substitution)
+            else bindBuiltinArgumentDefaults(rest)(environmentVariables)((variableId, SemInt) :: substitution)
+
+// The substitution with every such variable bound to `Int`, under the program inference rules
+// only; the environment is scanned only when a candidate exists.
+let defaultBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    if environment.programInferenceRules
+    then
+        match builtinArgumentCandidates(constraints)(substitution)([]) with
+            | [] -> substitution
+            | candidates ->
+                bindBuiltinArgumentDefaults(candidates)(resolveEnvironmentVariables(substitution)(environment
+                |> inferenceEnvironmentSchemes
+                |> freeEnvironmentVariables)([]))(substitution)
+    else substitution
+
+let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
+    match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
+        | Some((traitName, typeArguments)) ->
+            inferenceFailure(
+                semanticType,
+                substitution,
+                supply,
+                AmbiguousTraitRequirement(traitName)(typeArguments)
+            )
+        | None ->
+            match requirements with
+                | [] ->
+                    if environment.programInferenceRules
+                    then
+                        let defaulted = defaultBuiltinArguments(environment)(selected)(substitution)
+                        in
+                            selected
+                            |> applyInferenceConstraints(defaulted)
+                            |> requirementsLeftToWrite(environment)
+                            |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
+                    else
+                        selected
+                        |> requirementsLeftToWrite(environment)
+                        |> bindingSignatureSuccess(semanticType)(substitution)(supply)
+                | _ ->
+                    validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
 
 let validateBindingRequirementSet requirements inferred written semanticType environment substitution supply =
     (let selected =
@@ -2201,18 +3166,15 @@ let validateBindingRequirementSet requirements inferred written semanticType env
             | [] -> inferred
             | _ -> written
     in
-        match firstAmbiguousTraitRequirement(selected)(semanticType)(environment) with
-            | Some(traitName) ->
+        match failedBindingRequirement(environment)(inferred) with
+            | Some(TraitConstraint { traitName = failedTrait, typeArguments = failedArguments }) ->
                 inferenceFailure(
                     semanticType,
                     substitution,
                     supply,
-                    AmbiguousTraitRequirement(traitName)
+                    failedRequirementError(failedTrait)(failedArguments)
                 )
-            | None ->
-                match requirements with
-                    | [] -> bindingSignatureSuccess(semanticType)(substitution)(supply)(selected)
-                    | _ -> validateWrittenBindingRequirements(inferred)(written)(semanticType)(substitution)(supply))
+            | None -> validateSettledBindingRequirements(requirements)(inferred)(written)(selected)(semanticType)(environment)(substitution)(supply))
 
 let finishInferenceBindingSignature requirements context checkedType inferredConstraints environment substitution supply =
     match resolveBindingRequirements(requirements)(context)(environment)([]) with
@@ -2255,20 +3217,20 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                 match annotation with
                     | None -> inferenceSuccess(expectedType)(substitution)(preparedSupply)
                     | Some(typeExpression) ->
-                        match resolveTypeExpression(typeExpression)(context) with
-                            | TypeResolutionResult { semanticType = annotationType, error = None } ->
-                                mergeUnification(
+                        match resolveWrittenType(typeExpression)(context)(environment) with
+                            | (annotationType, None) ->
+                                mergeUnificationIn(environment)(
                                     substitution,
-                                    unify(applySubstitution(substitution)(expectedType))(annotationType),
+                                    unifyIn(environment)(applySubstitution(substitution)(expectedType))(annotationType),
                                     preparedSupply,
                                     expectedType
                                 )
-                            | TypeResolutionResult { semanticType = _annotationType, error = Some(error) } ->
+                            | (_annotationType, Some(error)) ->
                                 inferenceFailure(
                                     expectedType,
                                     substitution,
                                     preparedSupply,
-                                    InferenceTypeResolutionError(error)
+                                    error
                                 )
             in
                 match annotationResult with
@@ -2283,6 +3245,48 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                             checkedSupply
                         )
                     | failure -> failure
+
+let checkTrailingRequirements expression (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    match expression with
+        | ExprAt(span, _inner) ->
+            result
+            |> checkSettledTrailingRequirements(environment)
+            |> locateInferenceError(span)
+        | _ -> checkSettledTrailingRequirements(environment)(result)
+
+// The empty tuple a standard trait's method scheme writes for `Unit` (`Default.default`), as the
+// type of the `Unit` value the environment defines.
+let recursive withEnvironmentUnit (unitType: SemanticType) (semanticType: SemanticType) =
+    match semanticType with
+        | SemTuple([]) -> unitType
+        | SemFunction(parameter, result, row) ->
+            SemFunction(withEnvironmentUnit(unitType)(parameter))(withEnvironmentUnit(unitType)(result))(row)
+        | other -> other
+
+let schemeWithEnvironmentUnit (environment: TypeEnvironment) (scheme: TypeScheme) =
+    match resolveConstructorBinding("Unit")(environment) with
+        | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = unitType } }) ->
+            match scheme with
+                | TypeScheme { body = body } -> scheme with body = withEnvironmentUnit(unitType)(body)
+        | None -> scheme
+
+// A trait's method named through the trait (`Eq.equal`, `Hash.hash`) where no value binding answers
+// to it, as in a constrained binding's inference environment: the method's own scheme, its
+// requirement on the trait included, instantiated as a variable's would be. The scheme's `()` is
+// the environment's `Unit`, so `Default.default(Unit)` takes the value the program passes.
+let inferTraitMethodReference (methodScheme: TypeScheme) (environment: TypeEnvironment) substitution supply =
+    (let scheme = schemeWithEnvironmentUnit(environment)(methodScheme)
+    in
+        match instantiate(scheme)(supply) with
+            | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } ->
+                addConstraints(
+                    instantiatedConstraints,
+                    inferenceSuccess(
+                        applySubstitution(substitution)(instantiatedType),
+                        substitution,
+                        noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
+                    )
+                ))
 
 let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
@@ -2312,12 +3316,12 @@ and inferListElements expressions elementType environment substitution supply am
             match inferWith(head)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = inferredType, substitution = nextSubstitution, supply = nextSupply, constraints = inferredConstraints, error = None } ->
                     let unification =
-                        unify(
+                        unifyIn(environment)(
                             applySubstitution(nextSubstitution)(elementType),
                             applySubstitution(nextSubstitution)(inferredType)
                         )
                     in
-                        match mergeUnification(nextSubstitution)(unification)(nextSupply)(elementType) with
+                        match mergeUnificationIn(environment)(nextSubstitution)(unification)(nextSupply)(elementType) with
                             | TypeInferenceResult { semanticType = unifiedElement, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
                                 addConstraints(
                                     inferredConstraints,
@@ -2362,7 +3366,7 @@ and inferConstructorPatternArguments constructorName patterns parameterTypes res
                 | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
                     match mergePatternUnification(
                         patternSubstitution,
-                        unify(
+                        unifyIn(environment)(
                             applySubstitution(patternSubstitution)(parameterType),
                             applySubstitution(patternSubstitution)(patternType)
                         ),
@@ -2391,7 +3395,9 @@ and inferConstructorPatternArguments constructorName patterns parameterTypes res
                 substitution,
                 supply,
                 names,
-                ConstructorPatternArityMismatch(constructorName)
+                0
+                |> coverageLength(patterns)
+                |> ConstructorPatternArityMismatch(constructorName)(coverageLength(parameterTypes)(0))
             )
 and inferRecordPatternFields constructorName fields fieldNames fieldTypes resultType environment substitution supply names seenFields =
     match fields with
@@ -2424,7 +3430,7 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                             | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
                                 match mergePatternUnification(
                                     patternSubstitution,
-                                    unify(
+                                    unifyIn(environment)(
                                         applySubstitution(patternSubstitution)(fieldType),
                                         applySubstitution(patternSubstitution)(patternType)
                                     ),
@@ -2486,9 +3492,9 @@ and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultTy
                     | Some(fieldType) ->
                         match inferWith(fieldExpression)(environment)(substitution)(supply)(ambientRow) with
                             | TypeInferenceResult { semanticType = expressionType, substitution = expressionSubstitution, supply = expressionSupply, constraints = expressionConstraints, error = None } ->
-                                match mergeUnification(
+                                match mergeUnificationIn(environment)(
                                     expressionSubstitution,
-                                    unify(
+                                    unifyIn(environment)(
                                         applySubstitution(expressionSubstitution)(fieldType),
                                         applySubstitution(expressionSubstitution)(expressionType)
                                     ),
@@ -2533,9 +3539,9 @@ and inferResultSuccessPipe left right environment substitution supply ambientRow
                                                         Some(mapperRow)
                                                     )
                                                 in
-                                                    match mergeUnification(
+                                                    match mergeUnificationIn(environment)(
                                                         mapperSubstitution,
-                                                        unify(
+                                                        unifyIn(environment)(
                                                             applySubstitution(mapperSubstitution)(mapperType),
                                                             expectedMapper
                                                         ),
@@ -2579,9 +3585,9 @@ and inferResultSuccessPipe left right environment substitution supply ambientRow
                                                                                     )
                                                                                 )
                                                                             | Some(ResultTypeShape { symbolId = mappedSymbolId, errorType = mappedErrorType, successType = mappedSuccessType }) ->
-                                                                                match mergeUnification(
+                                                                                match mergeUnificationIn(environment)(
                                                                                     subsumedSubstitution,
-                                                                                    unify(
+                                                                                    unifyIn(environment)(
                                                                                         applySubstitution(
                                                                                             subsumedSubstitution,
                                                                                             errorType
@@ -2641,9 +3647,9 @@ and inferResultErrorPipe left right environment substitution supply ambientRow =
                                                             )]
                                                         )
                                                     in
-                                                        match mergeUnification(
+                                                        match mergeUnificationIn(environment)(
                                                             mapperSubstitution,
-                                                            unify(
+                                                            unifyIn(environment)(
                                                                 applySubstitution(mapperSubstitution)(mapperType),
                                                                 expectedMapper
                                                             ),
@@ -2678,9 +3684,9 @@ and inferAwait task environment substitution supply ambientRow =
                             let expectedTask =
                                 SemNamed(resolveTaskSymbolId(environment))("Task")([errorType, successType])
                             in
-                                match mergeUnification(
+                                match mergeUnificationIn(environment)(
                                     taskSubstitution,
-                                    unify(applySubstitution(taskSubstitution)(taskType))(expectedTask),
+                                    unifyIn(environment)(applySubstitution(taskSubstitution)(taskType))(expectedTask),
                                     successSupply,
                                     expectedTask
                                 ) with
@@ -2716,7 +3722,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                             SemNever,
                             valueSubstitution,
                             valueSupply,
-                            ExpectedResultType(resolvedValue)
+                            LetResultRequiresResult(resolvedValue)
                         )
                     | Some(ResultTypeShape { symbolId = _symbolId, errorType = errorType, successType = successType }) ->
                         let binding = TypeScheme(quantified = [], body = successType, constraints = [])
@@ -2725,7 +3731,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                 body,
                                 addTypeBinding(name)(binding)(environment),
                                 valueSubstitution,
-                                valueSupply,
+                                noteBinding(environment)(currentNodeOf(supply))(name)(binding)(valueSupply),
                                 ambientRow
                             ) with
                                 | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
@@ -2737,7 +3743,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                                     SemNever,
                                                     bodySubstitution,
                                                     bodySupply,
-                                                    ExpectedResultType(resolvedBody)
+                                                    LetResultBodyRequiresResult(resolvedBody)
                                                 )
                                             | Some(ResultTypeShape { symbolId = bodySymbolId, errorType = bodyErrorType, successType = bodySuccessType }) ->
                                                 let resultType =
@@ -2749,9 +3755,9 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                                 in
                                                     addConstraints(
                                                         appendConstraints(valueConstraints)(bodyConstraints),
-                                                        mergeUnification(
+                                                        mergeUnificationIn(environment)(
                                                             bodySubstitution,
-                                                            unify(
+                                                            unifyIn(environment)(
                                                                 applySubstitution(bodySubstitution)(errorType),
                                                                 bodyErrorType
                                                             ),
@@ -2827,7 +3833,7 @@ and inferHandlerParameters patterns parameterTypes environment substitution supp
                 | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
                     match mergePatternUnification(
                         patternSubstitution,
-                        unify(
+                        unifyIn(environment)(
                             applySubstitution(patternSubstitution)(parameterType),
                             applySubstitution(patternSubstitution)(patternType)
                         ),
@@ -2903,13 +3909,15 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                                                         body,
                                                         addTypeBinding("resume")(resumeScheme)(armEnvironment),
                                                         parameterSubstitution,
-                                                        parameterSupply,
+                                                        parameterSupply
+                                                        |> noteBinding(environment)(identifiedNode(body))("resume")(resumeScheme)
+                                                        |> noteBindingsIn(environment)(identifiedNode(body))(patternVariableNamesIn(parameters)([]))(armEnvironment),
                                                         ambientRow
                                                     ) with
                                                         | TypeInferenceResult { semanticType = armType, substitution = armSubstitution, supply = armSupply, constraints = armConstraints, error = None } ->
-                                                            match mergeUnification(
+                                                            match mergeUnificationIn(environment)(
                                                                 armSubstitution,
-                                                                unify(
+                                                                unifyIn(environment)(
                                                                     applySubstitution(armSubstitution)(handlerResult),
                                                                     applySubstitution(armSubstitution)(armType)
                                                                 ),
@@ -2965,7 +3973,7 @@ and unifyOrPatternBindings names expectedEnvironment actualEnvironment substitut
                 | (Some(TypeScheme { quantified = _expectedQuantified, body = expectedType, constraints = _expectedConstraints }), Some(TypeScheme { quantified = _actualQuantified, body = actualType, constraints = _actualConstraints })) ->
                     match mergePatternUnification(
                         substitution,
-                        unify(
+                        unifyIn(expectedEnvironment)(
                             applySubstitution(substitution)(expectedType),
                             applySubstitution(substitution)(actualType)
                         ),
@@ -3034,7 +4042,7 @@ and inferOrPatternAlternatives alternatives baseEnvironment expectedEnvironment 
                             then
                                 match mergePatternUnification(
                                     alternativeSubstitution,
-                                    unify(
+                                    unifyIn(baseEnvironment)(
                                         applySubstitution(alternativeSubstitution)(firstType),
                                         applySubstitution(alternativeSubstitution)(alternativeType)
                                     ),
@@ -3138,7 +4146,7 @@ and inferPattern pattern environment substitution supply names =
                             in
                                 mergePatternUnification(
                                     tailSubstitution,
-                                    unify(applySubstitution(tailSubstitution)(tailType))(listType),
+                                    unifyIn(environment)(applySubstitution(tailSubstitution)(tailType))(listType),
                                     tailSupply,
                                     listType,
                                     tailEnvironment,
@@ -3199,16 +4207,31 @@ and inferPattern pattern environment substitution supply names =
                         | InstantiationResult { semanticType = constructorType, constraints = _constraints, supply = constructorSupply } ->
                             match splitConstructorType(constructorType)([]) with
                                 | ConstructorTypeShape { parameters = parameterTypes, resultType = resultType } ->
-                                    inferConstructorPatternArguments(
-                                        name,
-                                        patterns,
-                                        parameterTypes,
-                                        resultType,
-                                        environment,
-                                        substitution,
-                                        constructorSupply,
-                                        names
-                                    )
+                                    let expectedCount = coverageLength(parameterTypes)(0)
+                                    in
+                                        let actualCount = coverageLength(patterns)(0)
+                                        in
+                                            if expectedCount != actualCount
+                                            then
+                                                patternFailure(
+                                                    SemNever,
+                                                    environment,
+                                                    substitution,
+                                                    constructorSupply,
+                                                    names,
+                                                    ConstructorPatternArityMismatch(name)(expectedCount)(actualCount)
+                                                )
+                                            else
+                                                inferConstructorPatternArguments(
+                                                    name,
+                                                    patterns,
+                                                    parameterTypes,
+                                                    resultType,
+                                                    environment,
+                                                    substitution,
+                                                    constructorSupply,
+                                                    names
+                                                )
         | PatternRecord(name, fields) ->
             match resolveConstructorBinding(name)(environment) with
                 | None ->
@@ -3269,33 +4292,43 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                 inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply)
             )
         | (pattern, body, guard) :: tail ->
-            match inferPattern(pattern)(environment)(substitution)(supply)([]) with
-                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _patternNames, error = None } ->
-                    match mergePatternUnification(
-                        patternSubstitution,
-                        unify(
-                            applySubstitution(patternSubstitution)(scrutineeType),
-                            applySubstitution(patternSubstitution)(patternType)
-                        ),
-                        patternSupply,
-                        scrutineeType,
-                        patternEnvironment,
-                        []
-                    ) with
-                        | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } ->
-                            inferMatchGuard(
-                                guard,
-                                body,
-                                tail,
+            match tuplePatternArityError(applySubstitution(substitution)(scrutineeType))(pattern) with
+                | Some(arityError) -> inferenceFailure(SemNever)(substitution)(supply)(arityError)
+                | None ->
+                    match inferPattern(pattern)(environment)(substitution)(supply)([]) with
+                        | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
+                            match mergePatternUnification(
+                                patternSubstitution,
+                                unifyIn(environment)(
+                                    applySubstitution(patternSubstitution)(scrutineeType),
+                                    applySubstitution(patternSubstitution)(patternType)
+                                ),
+                                patternSupply,
                                 scrutineeType,
-                                resultType,
-                                environment,
-                                matchedEnvironment,
-                                matchedSubstitution,
-                                matchedSupply,
-                                ambientRow,
-                                accumulatedConstraints
-                            )
+                                patternEnvironment,
+                                []
+                            ) with
+                                | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } ->
+                                    inferMatchGuard(
+                                        guard,
+                                        body,
+                                        tail,
+                                        scrutineeType,
+                                        resultType,
+                                        environment,
+                                        matchedEnvironment,
+                                        matchedSubstitution,
+                                        noteBindingsIn(environment)(identifiedNode(body))(patternNames)(matchedEnvironment)(matchedSupply),
+                                        ambientRow,
+                                        accumulatedConstraints
+                                    )
+                                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
+                                    inferenceFailure(
+                                        failedType,
+                                        failedSubstitution,
+                                        failedSupply,
+                                        error
+                                    )
                         | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
                             inferenceFailure(
                                 failedType,
@@ -3303,13 +4336,6 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                                 failedSupply,
                                 error
                             )
-                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
-                    inferenceFailure(
-                        failedType,
-                        failedSubstitution,
-                        failedSupply,
-                        error
-                    )
 and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match guard with
         | None ->
@@ -3328,9 +4354,9 @@ and inferMatchGuard guard body tail scrutineeType resultType environment pattern
         | Some(guardExpression) ->
             match inferWith(guardExpression)(patternEnvironment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = guardType, substitution = guardSubstitution, supply = guardSupply, constraints = guardConstraints, error = None } ->
-                    match mergeUnification(
+                    match mergeUnificationIn(environment)(
                         guardSubstitution,
-                        unify(applySubstitution(guardSubstitution)(guardType))(SemBool),
+                        unifyIn(environment)(applySubstitution(guardSubstitution)(guardType))(SemBool),
                         guardSupply,
                         SemBool
                     ) with
@@ -3352,11 +4378,11 @@ and inferMatchGuard guard body tail scrutineeType resultType environment pattern
 and inferMatchBody body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match inferWith(body)(patternEnvironment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
-            match mergeUnification(
+            match mergeUnificationIn(environment)(
                 bodySubstitution,
                 bodyType
                 |> applySubstitution(bodySubstitution)
-                |> unify(applySubstitution(bodySubstitution)(resultType)),
+                |> unifyIn(environment)(applySubstitution(bodySubstitution)(resultType)),
                 bodySupply,
                 resultType
             ) with
@@ -3379,12 +4405,12 @@ and inferBinaryTrait traitName returnsBool left right environment substitution s
             match inferWith(right)(environment)(leftSubstitution)(leftSupply)(ambientRow) with
                 | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
                     let unification =
-                        unify(
+                        unifyIn(environment)(
                             applySubstitution(rightSubstitution)(leftType),
                             applySubstitution(rightSubstitution)(rightType)
                         )
                     in
-                        match mergeUnification(rightSubstitution)(unification)(rightSupply)(leftType) with
+                        match mergeUnificationIn(environment)(rightSubstitution)(unification)(rightSupply)(leftType) with
                             | TypeInferenceResult { semanticType = unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
                                 let resultType =
                                     if returnsBool
@@ -3397,13 +4423,13 @@ and inferBinaryTrait traitName returnsBool left right environment substitution s
                                             unifiedType
                                         )])
                                     in
-                                        addConstraints(
+                                        noteOperator(environment)(currentNodeOf(supply))(traitName)(unifiedType)(addConstraints(
                                             appendConstraints(
                                                 leftConstraints,
                                                 appendConstraints(rightConstraints)([constraint])
                                             ),
                                             inferenceSuccess(resultType)(unifiedSubstitution)(unifiedSupply)
-                                        )
+                                        ))
                             | failure -> failure
                 | failure -> failure
         | failure -> failure
@@ -3414,31 +4440,42 @@ and inferUnaryTrait traitName operand environment substitution supply ambientRow
             in
                 let constraint = TraitConstraint(traitName = traitName, typeArguments = [resolvedOperand])
                 in
-                    addConstraints(
+                    noteOperator(environment)(currentNodeOf(supply))(traitName)(resolvedOperand)(addConstraints(
                         appendConstraints(operandConstraints)([constraint]),
                         inferenceSuccess(resolvedOperand)(operandSubstitution)(operandSupply)
-                    )
+                    ))
         | failure -> failure
+// Outside program inference `0 - x` stays the integer subtraction it was, except over an operand
+// whose type is already known not to be `Int` (`-5u32`, `-5N` as a call argument), which only
+// reads as the negation the parser wrote it for.
+and negatedOperandIsNotInteger operand environment substitution supply ambientRow =
+    match inferWith(operand)(environment)(substitution)(supply)(ambientRow) with
+        | TypeInferenceResult { semanticType = operandType, substitution = operandSubstitution, error = None } ->
+            match applySubstitution(operandSubstitution)(operandType) with
+                | SemInt -> false
+                | SemVariable(_id) -> false
+                | _ -> true
+        | _ -> false
 and inferHandlerReturn returnArm bodyType handlerResult environment substitution supply ambientRow accumulatedConstraints =
     match returnArm with
         | None ->
             addConstraints(
                 accumulatedConstraints,
-                mergeUnification(
+                mergeUnificationIn(environment)(
                     substitution,
                     bodyType
                     |> applySubstitution(substitution)
-                    |> unify(applySubstitution(substitution)(handlerResult)),
+                    |> unifyIn(environment)(applySubstitution(substitution)(handlerResult)),
                     supply,
                     handlerResult
                 )
             )
         | Some((pattern, returnBody)) ->
             match inferPattern(pattern)(environment)(substitution)(supply)([]) with
-                | PatternInferenceResult { semanticType = patternType, environment = returnEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _names, error = None } ->
+                | PatternInferenceResult { semanticType = patternType, environment = returnEnvironment, substitution = patternSubstitution, supply = patternSupply, names = returnNames, error = None } ->
                     match mergePatternUnification(
                         patternSubstitution,
-                        unify(
+                        unifyIn(environment)(
                             applySubstitution(patternSubstitution)(bodyType),
                             applySubstitution(patternSubstitution)(patternType)
                         ),
@@ -3452,15 +4489,15 @@ and inferHandlerReturn returnArm bodyType handlerResult environment substitution
                                 returnBody,
                                 unifiedEnvironment,
                                 unifiedSubstitution,
-                                unifiedSupply,
+                                noteBindingsIn(environment)(identifiedNode(returnBody))(returnNames)(unifiedEnvironment)(unifiedSupply),
                                 ambientRow
                             ) with
                                 | TypeInferenceResult { semanticType = returnType, substitution = returnSubstitution, supply = returnSupply, constraints = returnConstraints, error = None } ->
                                     addConstraints(
                                         appendConstraints(accumulatedConstraints)(returnConstraints),
-                                        mergeUnification(
+                                        mergeUnificationIn(environment)(
                                             returnSubstitution,
-                                            unify(
+                                            unifyIn(environment)(
                                                 applySubstitution(returnSubstitution)(handlerResult),
                                                 applySubstitution(returnSubstitution)(returnType)
                                             ),
@@ -3573,7 +4610,18 @@ and inferHandler body arms environment substitution supply ambientRow =
                                                             | failure -> failure
 and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
-        | ExprAt(_span, inner) -> inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
+            )
+        | ExprNode(node, inner) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferCalledFunction(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprVar(name) ->
             match resolveExternalFunctionBinding(name)(environment) with
                 | None -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
@@ -3585,7 +4633,7 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                 inferenceSuccess(
                                     applySubstitution(substitution)(instantiatedType),
                                     substitution,
-                                    nextSupply
+                                    noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                 )
                             )
         | ExprQualifiedVar(capabilityName, operationName) ->
@@ -3608,13 +4656,122 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+and inferSeededRecursiveValue annotation recursiveType value recursiveEnvironment environment substitution supply ambientRow =
+    match seedRecursiveSignature(annotation)(recursiveType)(environment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> inferWith(value)(recursiveEnvironment)(seededSubstitution)(seededSupply)(ambientRow)
+        | failure -> failure
+// A shipped trait's method is bound under the trait's own name (`Hash.hash`); a reference that
+// stitching qualified (`Ashes_Trait_Hash.hash`) finds it there when nothing answers to the
+// qualified name itself.
+and inferQualifiedValue moduleName name environment substitution supply ambientRow =
+    (let qualified =
+        match (resolveTypeBinding(traitNameIn(environment)(moduleName) + "." + name)(environment), resolveTypeBinding(canonicalTraitName(moduleName) + "." + name)(environment)) with
+            | (None, Some(_canonical)) -> canonicalTraitName(moduleName) + "." + name
+            | _ -> traitNameIn(environment)(moduleName) + "." + name
+    in
+        match resolveTypeBinding(qualified)(environment) with
+            | Some(_scheme) -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
+            | None ->
+                match resolveTypeBinding(moduleName)(environment) with
+                    | None ->
+                        match resolveTraitMethod(canonicalTraitName(moduleName))(name)(environment) with
+                            | Some(TraitMethodInferenceDefinition { scheme = methodScheme }) -> inferTraitMethodReference(methodScheme)(environment)(substitution)(supply)
+                            | None -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
+                    | Some(_receiver) ->
+                        match inferWith(ExprVar(moduleName))(environment)(substitution)(supply)(ambientRow) with
+                            | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } -> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)(receiverConstraints)
+                            | failed -> failed)
+// A value inferred against the type its binding's signature writes: a lambda takes its parameter
+// type from the signature instead of a fresh variable, so what its body does with the parameter
+// can depend on that type. Anything that is not a lambda is inferred as it is.
+and inferAgainst expected expression environment substitution supply ambientRow =
+    match expression with
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
+            )
+        | ExprNode(node, inner) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferAgainst(expected)(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprLambda(name, body, None) ->
+            match applySubstitution(substitution)(expected) with
+                | SemFunction(expectedParameter, expectedResult, _expectedRow) ->
+                    let parameterScheme = TypeScheme(quantified = [], body = expectedParameter, constraints = [])
+                    in
+                        match freshTypeVariable(supply) with
+                            | (bodyAmbientRow, bodyAmbientSupply) ->
+                                match inferAgainst(expectedResult)(body)(addTypeBinding(name)(parameterScheme)(environment))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
+                                    | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                        addConstraints(
+                                            bodyConstraints,
+                                            inferenceSuccess(
+                                                SemFunction(
+                                                    applySubstitution(bodySubstitution)(expectedParameter),
+                                                    applySubstitution(bodySubstitution)(bodyType),
+                                                    bodyAmbientRow
+                                                    |> applySubstitution(bodySubstitution)
+                                                    |> Some
+                                                ),
+                                                bodySubstitution,
+                                                bodySupply
+                                            )
+                                        )
+                                    | failure -> failure
+                | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+        | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+// The second inference of a binding's value, against its written signature. `direct` is the
+// failure the value gave on its own, which stays the answer unless this inference succeeds.
+and inferAgainstSignature typeExpression value environment substitution supply ambientRow direct =
+    match freshTypeVariable(supply) with
+        | (expected, expectedSupply) ->
+            match checkInferenceAnnotation(
+                typeExpression,
+                expected,
+                environment,
+                substitution,
+                expectedSupply
+            ) with
+                | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } ->
+                    let seeded = inferAgainst(expected)(value)(environment)(seededSubstitution)(seededSupply)(ambientRow)
+                    in
+                        match seeded with
+                            | TypeInferenceResult { error = None } -> seeded
+                            | _ -> direct
+                | _ -> direct
+// A binding's value. Under the program inference rules, a value that does not infer on its own
+// and whose binding writes a signature is inferred once more against that signature.
+and inferAnnotatedValue annotation value environment substitution supply ambientRow =
+    (let direct = inferWith(value)(environment)(substitution)(supply)(ambientRow)
+    in
+        match (direct, annotation) with
+            | (TypeInferenceResult { error = Some(_error) }, Some(typeExpression)) ->
+                if appliesProgramInferenceRules(environment)
+                then inferAgainstSignature(typeExpression)(value)(environment)(substitution)(supply)(ambientRow)(direct)
+                else direct
+            | _ -> direct)
 and inferWith expression environment substitution supply ambientRow =
     match expression with
-        | ExprAt(_span, inner) -> inferWith(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferWith(inner)(environment)(substitution)(supply)(ambientRow)
+            )
+        | ExprNode(node, inner) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferWith(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferWith(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprInt(_) -> inferenceSuccess(SemInt)(substitution)(supply)
         | ExprBigInt(_) -> inferenceSuccess(SemBigInt)(substitution)(supply)
         | ExprUInt(_value, bits, _text) -> inferenceSuccess(SemUInt(bits))(substitution)(supply)
@@ -3642,12 +4799,12 @@ and inferWith expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | ExprQualifiedVar(moduleName, name) ->
             match resolveCapabilityBinding(moduleName)(environment) with
-                | None -> inferWith(ExprVar(moduleName + "." + name))(environment)(substitution)(supply)(ambientRow)
+                | None -> inferQualifiedValue(moduleName)(name)(environment)(substitution)(supply)(ambientRow)
                 | Some(_) ->
                     match resolveCapabilityOperation(moduleName)(name)(environment) with
                         | None ->
@@ -3672,7 +4829,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | ExprPerform(operation) ->
@@ -3716,7 +4873,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                     body,
                                                     bodyEnvironment,
                                                     annotationSubstitution,
-                                                    bodyAmbientSupply,
+                                                    noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply),
                                                     bodyAmbientRow
                                                 ) with
                                                     | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
@@ -3764,12 +4921,12 @@ and inferWith expression environment substitution supply ambientRow =
                                             let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
                                             in
                                                 let unification =
-                                                    unify(
+                                                    unifyIn(environment)(
                                                         applySubstitution(argumentSubstitution)(functionType),
                                                         expectedFunction
                                                     )
                                                 in
-                                                    match mergeUnification(
+                                                    match mergeUnificationIn(environment)(
                                                         argumentSubstitution,
                                                         unification,
                                                         callRowSupply,
@@ -3798,13 +4955,13 @@ and inferWith expression environment substitution supply ambientRow =
                                                                         callResult
                                                                     )
                                                                 )
-                                                        | failure -> failure
+                                                        | failure -> builtinArgumentFailure(function)(argumentType)(failure)
                         | failure -> failure
                 | failure -> failure
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
-            match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
+            match inferAnnotatedValue(annotation)(value)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                     match checkInferenceBindingSignature(
                         annotation,
@@ -3819,14 +4976,16 @@ and inferWith expression environment substitution supply ambientRow =
                             let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
                             in
                                 let scheme =
-                                    generalize(
+                                    generalizeUnderSubstitution(
                                         inferenceEnvironmentSchemes(environment),
+                                        checkedSubstitution,
                                         resolvedValue,
                                         selectedConstraints
                                     )
                                 in
                                     let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
-                                    in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)(ambientRow)
+                                    in
+                                        inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
                         | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) ->
@@ -3836,15 +4995,15 @@ and inferWith expression environment substitution supply ambientRow =
                     in
                         let recursiveEnvironment = addTypeBinding(name)(recursiveScheme)(environment)
                         in
-                            match inferWith(value)(recursiveEnvironment)(substitution)(afterRecursive)(ambientRow) with
+                            match inferSeededRecursiveValue(annotation)(recursiveType)(value)(recursiveEnvironment)(environment)(substitution)(afterRecursive)(ambientRow) with
                                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                                     let unification =
-                                        unify(
+                                        unifyIn(environment)(
                                             applySubstitution(valueSubstitution)(recursiveType),
                                             applySubstitution(valueSubstitution)(valueType)
                                         )
                                     in
-                                        match mergeUnification(
+                                        match mergeUnificationIn(environment)(
                                             valueSubstitution,
                                             unification,
                                             valueSupply,
@@ -3868,8 +5027,9 @@ and inferWith expression environment substitution supply ambientRow =
                                                             )
                                                         in
                                                             let scheme =
-                                                                generalize(
+                                                                generalizeUnderSubstitution(
                                                                     inferenceEnvironmentSchemes(environment),
+                                                                    checkedSubstitution,
                                                                     resolvedType,
                                                                     selectedConstraints
                                                                 )
@@ -3878,7 +5038,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                                     body,
                                                                     addTypeBinding(name)(scheme)(environment),
                                                                     checkedSubstitution,
-                                                                    checkedSupply,
+                                                                    noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply),
                                                                     ambientRow
                                                                 )
                                                     | failure -> failure
@@ -3888,9 +5048,9 @@ and inferWith expression environment substitution supply ambientRow =
             match inferWith(condition)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = conditionType, substitution = conditionSubstitution, supply = conditionSupply, constraints = conditionConstraints, error = None } ->
                     let conditionUnification =
-                        unify(applySubstitution(conditionSubstitution)(conditionType))(SemBool)
+                        unifyIn(environment)(applySubstitution(conditionSubstitution)(conditionType))(SemBool)
                     in
-                        match mergeUnification(
+                        match mergeUnificationIn(environment)(
                             conditionSubstitution,
                             conditionUnification,
                             conditionSupply,
@@ -3914,7 +5074,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         ) with
                                             | TypeInferenceResult { semanticType = elseType, substitution = elseSubstitution, supply = elseSupply, constraints = elseConstraints, error = None } ->
                                                 let branchUnification =
-                                                    unify(
+                                                    unifyIn(environment)(
                                                         applySubstitution(elseSubstitution)(thenType),
                                                         applySubstitution(elseSubstitution)(elseType)
                                                     )
@@ -3924,7 +5084,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                             conditionConstraints,
                                                             appendConstraints(thenConstraints)(elseConstraints)
                                                         ),
-                                                        mergeUnification(
+                                                        mergeUnificationIn(environment)(
                                                             elseSubstitution,
                                                             branchUnification,
                                                             elseSupply,
@@ -3962,7 +5122,7 @@ and inferWith expression environment substitution supply ambientRow =
                     match inferWith(tail)(environment)(headSubstitution)(headSupply)(ambientRow) with
                         | TypeInferenceResult { semanticType = tailType, substitution = tailSubstitution, supply = tailSupply, constraints = tailConstraints, error = None } ->
                             let unification =
-                                unify(
+                                unifyIn(environment)(
                                     applySubstitution(tailSubstitution)(tailType),
                                     headType
                                     |> applySubstitution(tailSubstitution)
@@ -3971,7 +5131,7 @@ and inferWith expression environment substitution supply ambientRow =
                             in
                                 addConstraints(
                                     appendConstraints(headConstraints)(tailConstraints),
-                                    mergeUnification(tailSubstitution)(unification)(tailSupply)(tailType)
+                                    mergeUnificationIn(environment)(tailSubstitution)(unification)(tailSupply)(tailType)
                                 )
                         | failure -> failure
                 | failure -> failure
@@ -3994,7 +5154,7 @@ and inferWith expression environment substitution supply ambientRow =
                                             true,
                                             environment,
                                             substitution,
-                                            constructorSupply,
+                                            noteInstantiation(environment)(scheme)(supply)(constructorConstraints)(constructorSupply),
                                             ambientRow,
                                             [],
                                             []
@@ -4005,7 +5165,7 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = targetType, substitution = targetSubstitution, supply = targetSupply, constraints = targetConstraints, error = None } ->
                     match applySubstitution(targetSubstitution)(targetType) with
                         | SemNamed(_symbolId, name, _arguments) ->
-                            match resolveConstructorBinding(name)(environment) with
+                            match recordUpdateDefinition(name)(environment) with
                                 | None ->
                                     inferenceFailure(
                                         SemNever,
@@ -4018,13 +5178,13 @@ and inferWith expression environment substitution supply ambientRow =
                                         | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
                                             match splitConstructorType(constructorType)([]) with
                                                 | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } ->
-                                                    match mergeUnification(
+                                                    match mergeUnificationIn(environment)(
                                                         targetSubstitution,
-                                                        unify(
+                                                        unifyIn(environment)(
                                                             applySubstitution(targetSubstitution)(targetType),
                                                             resultType
                                                         ),
-                                                        constructorSupply,
+                                                        noteInstantiationAt(environment)(currentNodeOf(supply))(scheme)(targetSupply)(constructorConstraints)(constructorSupply),
                                                         resultType
                                                     ) with
                                                         | TypeInferenceResult { semanticType = unifiedResult, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
@@ -4116,16 +5276,25 @@ and inferWith expression environment substitution supply ambientRow =
                 ambientRow
             )
         | ExprSubtract(left, right) ->
-            inferBinaryTrait(
-                "Subtract",
-                false,
-                left,
-                right,
-                environment,
-                substitution,
-                supply,
+            if appliesProgramInferenceRules(environment) && isZeroLiteralExpression(left)
+            then
                 ambientRow
-            )
+                |> inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)
+                |> noteNegatedZero(environment)(identifiedNode(left))
+            else
+                if isZeroLiteralExpression(left) && negatedOperandIsNotInteger(right)(environment)(substitution)(supply)(ambientRow)
+                then inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow)
+                else
+                    inferBinaryTrait(
+                        "Subtract",
+                        false,
+                        left,
+                        right,
+                        environment,
+                        substitution,
+                        supply,
+                        ambientRow
+                    )
         | ExprMultiply(left, right) ->
             inferBinaryTrait(
                 "Multiply",
@@ -4294,18 +5463,18 @@ and inferWith expression environment substitution supply ambientRow =
             match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
                     let leftUnification =
-                        unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                        unifyIn(environment)(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
-                        match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
+                        match mergeUnificationIn(environment)(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
                                         let rightUnification =
-                                            unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                            unifyIn(environment)(applySubstitution(rightSubstitution)(rightType))(SemBool)
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),
-                                                mergeUnification(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
+                                                mergeUnificationIn(environment)(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
                                             )
                                     | failure -> failure
                             | failure -> failure
@@ -4314,18 +5483,18 @@ and inferWith expression environment substitution supply ambientRow =
             match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
                     let leftUnification =
-                        unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                        unifyIn(environment)(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
-                        match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
+                        match mergeUnificationIn(environment)(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
                                         let rightUnification =
-                                            unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                            unifyIn(environment)(applySubstitution(rightSubstitution)(rightType))(SemBool)
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),
-                                                mergeUnification(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
+                                                mergeUnificationIn(environment)(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
                                             )
                                     | failure -> failure
                             | failure -> failure
@@ -4338,12 +5507,69 @@ and inferWith expression environment substitution supply ambientRow =
                 UnsupportedInferenceExpression("expression case is not implemented yet")
             )
 
-let inferExpressionFrom expression environment substitution supply =
+let inferExpressionFromLocated expression environment substitution supply =
     match freshTypeVariable(supply) with
         | (ambientRow, nextSupply) -> inferWith(expression)(environment)(substitution)(nextSupply)(ambientRow)
 
-let inferTopLevelBinding name value annotation requirements environment substitution supply =
-    match inferExpressionFrom(value)(environment)(substitution)(supply) with
+// What is left of a top-level expression's row once handlers and providers have taken theirs has
+// nothing to satisfy it, unless the runtime does.
+let recursive firstUnsatisfiedCapability row (environment: TypeEnvironment) =
+    match row with
+        | SemRow([], Some(tail)) -> firstUnsatisfiedCapability(tail)(environment)
+        | SemRow((SemCapability(name, _arguments) as needed) :: rest, tail) ->
+            if isBuiltinRuntimeCapability(name)
+            then
+                firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+            else
+                match resolveCapabilityProvider(needed)(environment) with
+                    | Some(_) ->
+                        firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+                    | None -> Some(name)
+        | SemRow(_other :: rest, tail) ->
+            firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+        | _ -> None
+
+let checkResidualRow ambientRow (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    if environment.programInferenceRules
+    then
+        match result with
+            | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = supply, constraints = _constraints, error = None } ->
+                match firstUnsatisfiedCapability(applySubstitution(substitution)(ambientRow))(environment) with
+                    | Some(name) ->
+                        inferenceFailure(
+                            semanticType,
+                            substitution,
+                            supply,
+                            UnsatisfiedCapability(name)
+                        )
+                    | None -> result
+            | _ -> result
+    else result
+
+// A top-level value or the program's trailing expression: nothing encloses it, so its row has to
+// be satisfied here.
+let inferTopLevelExpressionLocated expression environment substitution supply =
+    match freshTypeVariable(supply) with
+        | (ambientRow, nextSupply) ->
+            ambientRow
+            |> inferWith(expression)(environment)(substitution)(nextSupply)
+            |> checkResidualRow(ambientRow)(environment)
+
+// As `inferTopLevelExpressionLocated`, for the value of a binding that may write a signature.
+let inferTopLevelValueLocated annotation value environment substitution supply =
+    match freshTypeVariable(supply) with
+        | (ambientRow, nextSupply) ->
+            ambientRow
+            |> inferAnnotatedValue(annotation)(value)(environment)(substitution)(nextSupply)
+            |> checkResidualRow(ambientRow)(environment)
+
+let inferExpressionFrom expression environment substitution supply =
+    unlocatedInferenceResult(
+        inferExpressionFromLocated(expression)(environment)(substitution)(supply)
+    )
+
+let inferTopLevelBindingLocated name value annotation requirements environment substitution supply =
+    match inferTopLevelValueLocated(annotation)(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             match checkInferenceBindingSignature(
                 annotation,
@@ -4358,8 +5584,9 @@ let inferTopLevelBinding name value annotation requirements environment substitu
                     let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
                     in
                         let scheme =
-                            generalize(
+                            generalizeUnderSubstitution(
                                 inferenceEnvironmentSchemes(environment),
+                                checkedSubstitution,
                                 resolvedValue,
                                 selectedConstraints
                             )
@@ -4377,6 +5604,14 @@ let inferTopLevelBinding name value annotation requirements environment substitu
             TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(
                 error
             ))
+
+let inferTopLevelBinding name value annotation requirements environment substitution supply =
+    match inferTopLevelBindingLocated(name)(value)(annotation)(requirements)(environment)(substitution)(supply) with
+        | TopLevelBindingInferenceResult { environment = failedEnvironment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(InferenceErrorAt(_, inner)) } ->
+            TopLevelBindingInferenceResult(environment = failedEnvironment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(
+                inner
+            ))
+        | result -> result
 
 // Starts above the reserved ids for the same reason `initialProgramInferenceState` does: an
 // environment carrying statically embedded schemes (the builtin signatures, the standard traits'

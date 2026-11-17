@@ -1,0 +1,7 @@
+ConstructorValue.ash	constructor query passed
+ExternalArgument.ash	external query passed
+IntrinsicBuiltin.ash	intrinsic query passed
+NamedAnnotation.ash	named annotation query passed
+QualifiedTrait.ash	qualified trait query passed
+RecordField.ash	record field query passed
+TypeAliasAnnotation.ash	alias annotation query passed

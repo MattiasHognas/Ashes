@@ -27,6 +27,8 @@ import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Arena
 import Ashes.Number.UInt
 import Ashes.Text
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 export (
     type PersistentRegion(..),
     type CopyRuntime(..),
@@ -37,6 +39,7 @@ export (
     value emitCopyFixedInto,
     value emitCopyStringIntoOrFresh,
     value emitCopyFixedIntoOrFresh,
+    value collectClosureNormalizers,
     value emitCopyOutClosure,
     value emitCopyOutTcoListCell,
 )
@@ -63,11 +66,26 @@ let regionCursorGlobalOf (region: PersistentRegion) = region.regionCursorGlobal
 
 let regionEndGlobalOf (region: PersistentRegion) = region.regionEndGlobal
 
-let definePersistentRegion module_ i64 name =
-    PersistentRegion(
-        regionCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_cursor"),
-        regionEndGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_end")
-    )
+// A persistent region's cursor and end: two `.bss` globals, or, in a module whose arena lives in
+// thread control blocks, the calling thread's slots at `slotOffset` and `slotOffset + 8`.
+let definePersistentRegion module_ context i64 (arena: ArenaRuntime) name (slotOffset: Int) =
+    if arena.arenaThreadSlots
+    then
+        PersistentRegion(
+            regionCursorGlobal = threadSlotPointer(context)(i64)(slotOffset),
+            regionEndGlobal = threadSlotPointer(context)(i64)(slotOffset + 8)
+        )
+    else
+        PersistentRegion(
+            regionCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_cursor"),
+            regionEndGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_end")
+        )
+
+// The pointer type the region grow helper takes its cursor and end through.
+let regionSlotType context ptrType (arena: ArenaRuntime) =
+    if arena.arenaThreadSlots
+    then pointerType(context)(256u32)
+    else ptrType
 
 // `void __ashes_region_grow(ptr cursor, ptr end, i64 needed)`: the arena grow body over the slots
 // passed in, shared by both persistent regions.
@@ -85,11 +103,11 @@ let emitRegionGrowBody context builder i64 i8 ptrType (arena: ArenaRuntime) (cop
 // body with `builder` (repositioned by the caller afterwards).
 let defineCopyRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) =
     false
-    |> functionType(voidType(context))([ptrType, ptrType, i64])(3u32)
+    |> functionType(voidType(context))([regionSlotType(context)(ptrType)(arena), regionSlotType(context)(ptrType)(arena), i64])(3u32)
     |> (given (growType) ->
         CopyRuntime(
-            toSpaceRegion = definePersistentRegion(module_)(i64)("tospace"),
-            blobRegion = definePersistentRegion(module_)(i64)("blob"),
+            toSpaceRegion = definePersistentRegion(module_)(context)(i64)(arena)("tospace")(24),
+            blobRegion = definePersistentRegion(module_)(context)(i64)(arena)("blob")(40),
             regionGrowFn = addInternalFunction(module_)("__ashes_region_grow")(growType),
             regionGrowType = growType
         ))
@@ -277,24 +295,16 @@ let emitCopyFixedIntoOrFresh context function_ builder i64 i8 ptrType (copy: Cop
 let endsWith (text: Str) (suffix: Str) =
     Ashes.Text.length(text) >= Ashes.Text.length(suffix) && Ashes.Text.substring(text)(Ashes.Text.length(text) - Ashes.Text.length(suffix))(Ashes.Text.length(suffix)) == suffix
 
-let recursive findLiftedFunction (label: Str) (liftedFunctions: List((Str, LLVMValueRef))) =
-    match liftedFunctions with
-        | [] -> None
-        | (candidate, function_) :: rest ->
-            if candidate == label
-            then Some(function_)
-            else findLiftedFunction(label)(rest)
-
 // Every `(closure, normalizer)` function pair in the program: a lifted `L$env_normalize` whose
 // closure `L` is itself lifted. The normalizer takes `(sourceEnv, destinationEnv, 0)` under the
 // closure calling convention and returns the copied environment's dropper address.
-let recursive collectClosureNormalizers (liftedFunctions: List((Str, LLVMValueRef))) (candidates: List((Str, LLVMValueRef))) =
+let recursive collectClosureNormalizers (liftedFunctions: MapTree(Str, LLVMValueRef)) (candidates: List((Str, LLVMValueRef))) =
     match candidates with
         | [] -> []
         | (label, normalizer) :: rest ->
             if endsWith(label)(closureNormalizerSuffix)
             then
-                match findLiftedFunction(Ashes.Text.substring(label)(0)(Ashes.Text.length(label) - Ashes.Text.length(closureNormalizerSuffix)))(liftedFunctions) with
+                match Ashes.Collection.Map.getStr(Ashes.Text.substring(label)(0)(Ashes.Text.length(label) - Ashes.Text.length(closureNormalizerSuffix)))(liftedFunctions) with
                     | Some(closure) -> (closure, normalizer) :: collectClosureNormalizers(liftedFunctions)(rest)
                     | None -> collectClosureNormalizers(liftedFunctions)(rest)
             else collectClosureNormalizers(liftedFunctions)(rest)
@@ -321,7 +331,7 @@ let recursive emitNormalizerDispatch context function_ builder i64 closureFnType
 
 // Fills the fresh environment block: an arena copy is the raw bytes; a runtime-managed copy runs
 // the closure's normalizer when the program has one for its code address, else the raw bytes.
-let emitNormalizeOrCopyClosureEnvironment context function_ builder i64 ptrType (copyOut: CopyOutRuntime) closureFnType liftedFunctions runtimeManaged code sourceEnv destinationEnv envSize dropperSlot =
+let emitNormalizeOrCopyClosureEnvironment context function_ builder i64 ptrType (copyOut: CopyOutRuntime) closureFnType normalizers runtimeManaged code sourceEnv destinationEnv envSize dropperSlot =
     if runtimeManaged == false
     then
         Unit
@@ -331,10 +341,7 @@ let emitNormalizeOrCopyClosureEnvironment context function_ builder i64 ptrType 
         match (appendBasicBlock(context)(function_)("copy_closure_raw_env"), appendBasicBlock(context)(function_)("copy_closure_env_copied")) with
             | (rawCopyBlock, copiedBlock) ->
                 Unit
-                |> (given (_) ->
-                    liftedFunctions
-                    |> collectClosureNormalizers(liftedFunctions)
-                    |> emitNormalizerDispatch(context)(function_)(builder)(i64)(closureFnType)(code)(sourceEnv)(destinationEnv)(dropperSlot)(copiedBlock))
+                |> (given (_) -> normalizers |> emitNormalizerDispatch(context)(function_)(builder)(i64)(closureFnType)(code)(sourceEnv)(destinationEnv)(dropperSlot)(copiedBlock))
                 |> (given (_) -> buildBr(builder)(rawCopyBlock))
                 |> (given (_) -> positionBuilderAtEnd(builder)(rawCopyBlock))
                 |> (given (_) -> emitMoveBytes(builder)(i64)(ptrType)(copyOut)(destinationEnv)(sourceEnv)(envSize)("copy_closure_env"))
@@ -393,7 +400,7 @@ let loadClosureCopyState builder i64 i8 ptrType runtimeManaged srcRef =
 
 // A nil environment (no captures) is kept as nil; otherwise a fresh block of the environment's
 // size is filled by `emitNormalizeOrCopyClosureEnvironment` and its address stored in the slot.
-let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType liftedFunctions runtimeManaged (state: ClosureCopyState) =
+let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizers runtimeManaged (state: ClosureCopyState) =
     match (appendBasicBlock(context)(function_)("copy_closure_env_copy"), appendBasicBlock(context)(function_)("copy_closure_env_merge")) with
         | (copyBlock, mergeBlock) ->
             Unit
@@ -403,19 +410,19 @@ let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (aren
             |> (given (_) -> emitClosureCopyBlock(context)(function_)(builder)(i64)(i8)(arena)(mallocFn)(mallocType)(runtimeManaged)(state.closureEnvSize)("copy_closure_new_env"))
             |> (given (newEnv) ->
                 Unit
-                |> (given (_) -> emitNormalizeOrCopyClosureEnvironment(context)(function_)(builder)(i64)(ptrType)(copyOut)(closureFnType)(liftedFunctions)(runtimeManaged)(state.closureCode)(state.closureEnv)(newEnv)(state.closureEnvSize)(state.newDropperSlot))
+                |> (given (_) -> emitNormalizeOrCopyClosureEnvironment(context)(function_)(builder)(i64)(ptrType)(copyOut)(closureFnType)(normalizers)(runtimeManaged)(state.closureCode)(state.closureEnv)(newEnv)(state.closureEnvSize)(state.newDropperSlot))
                 |> (given (_) -> buildStore(builder)(newEnv)(state.newEnvSlot)))
             |> (given (_) -> buildBr(builder)(mergeBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(mergeBlock))
 
 // `CopyOutClosure`: the environment copied first (see above), then a fresh 32-byte closure holding
 // the same code word and packed size, the new environment, and the possibly normalized dropper.
-let emitCopyOutClosure context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType liftedFunctions runtimeManaged srcRef name =
+let emitCopyOutClosure context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizers runtimeManaged srcRef name =
     srcRef
     |> loadClosureCopyState(builder)(i64)(i8)(ptrType)(runtimeManaged)
     |> (given (state) ->
         Unit
-        |> (given (_) -> emitCopyOutClosureEnvironment(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType)(closureFnType)(liftedFunctions)(runtimeManaged)(state))
+        |> (given (_) -> emitCopyOutClosureEnvironment(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType)(closureFnType)(normalizers)(runtimeManaged)(state))
         |> (given (_) ->
             emitClosureCopyBlock(context)(function_)(builder)(i64)(i8)(arena)(mallocFn)(mallocType)(runtimeManaged)(arenaConst(i64)(closureSizeBytes))(name))
         |> (given (newClosure) ->

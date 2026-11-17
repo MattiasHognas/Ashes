@@ -2151,6 +2151,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot = EmitEntryScratchSlot(state, state.I64, "step_tls_send_status_slot");
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
 
+        LlvmValueHandle acceptedBytesSlot = EmitEntryScratchSlot(state, state.I64, "step_tls_send_accepted_bytes_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), acceptedBytesSlot);
         LlvmValueHandle alreadyDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, sentSoFar, totalLen, "step_tls_send_already_done");
         (LlvmBasicBlockHandle sendBlock, LlvmBasicBlockHandle applyBlock, LlvmBasicBlockHandle flushCheckBlock, LlvmBasicBlockHandle flushBlock, LlvmBasicBlockHandle flushRetryCheckBlock, LlvmBasicBlockHandle finalizeBlock, LlvmBasicBlockHandle partialReadCheckBlock, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle completeBlock, LlvmBasicBlockHandle finishBlock) = AppendTlsSendBlocks(state);
         LlvmApi.BuildCondBr(builder, alreadyDone, flushCheckBlock, sendBlock);
@@ -2158,8 +2160,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, sendBlock);
         LlvmValueHandle remaining = LlvmApi.BuildSub(builder, totalLen, sentSoFar, "step_tls_send_remaining");
         LlvmValueHandle cursorPtr = LlvmApi.BuildGEP2(builder, state.I8, GetStringBytesPointer(state, textRef, "step_tls_send_bytes"), [sentSoFar], "step_tls_send_cursor_ptr");
-        LlvmValueHandle acceptedBytesSlot = EmitEntryScratchSlot(state, state.I64, "step_tls_send_accepted_bytes_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), acceptedBytesSlot);
         LlvmValueHandle writeStatus = EmitTlsConnectionWrite(
             state,
             EmitLoadTlsSessionSsl(state, session, "step_tls_send_connection"),
@@ -2175,7 +2175,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, nextSent, "step_tls_send_store_sent");
         LlvmApi.BuildBr(builder, flushCheckBlock);
 
-        EmitStepTlsSendFlush(state, taskPtr, globals, session, totalLen, statusSlot, flushCheckBlock, flushBlock, flushRetryCheckBlock, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
+        EmitStepTlsSendFlush(state, taskPtr, globals, session, totalLen, statusSlot, acceptedBytesSlot, flushCheckBlock, flushBlock, flushRetryCheckBlock, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_send_status");
@@ -2205,6 +2205,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle session,
         LlvmValueHandle totalLen,
         LlvmValueHandle statusSlot,
+        LlvmValueHandle acceptedBytesSlot,
         LlvmBasicBlockHandle flushCheckBlock,
         LlvmBasicBlockHandle flushBlock,
         LlvmBasicBlockHandle flushRetryCheckBlock,
@@ -2239,7 +2240,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle flushWouldBlock = EmitTlsIoResultIsWouldBlock(state, flushStatus, "step_tls_send_flush_would_block");
         LlvmApi.BuildCondBr(builder, flushWouldBlock, pendingWriteBlock, failBlock);
 
-        EmitStepTlsSendFinalize(state, taskPtr, session, totalLen, statusSlot, flushConnection, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
+        EmitStepTlsSendFinalize(state, taskPtr, session, totalLen, statusSlot, acceptedBytesSlot, flushConnection, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
     }
 
     private static void EmitStepTlsSendFinalize(
@@ -2248,6 +2249,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle session,
         LlvmValueHandle totalLen,
         LlvmValueHandle statusSlot,
+        LlvmValueHandle acceptedBytesSlot,
         LlvmValueHandle flushConnection,
         LlvmBasicBlockHandle finalizeBlock,
         LlvmBasicBlockHandle partialReadCheckBlock,
@@ -2282,7 +2284,14 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_send_finalize_has_read");
         LlvmBasicBlockHandle pendingReadStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_read_store");
-        LlvmApi.BuildCondBr(builder, wantsRead, pendingReadStoreBlock, failBlock);
+        LlvmBasicBlockHandle partialWriteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_partial_write");
+        LlvmApi.BuildCondBr(builder, wantsRead, pendingReadStoreBlock, partialWriteBlock);
+
+        // Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
+        // nothing left to flush or read waits for the socket to accept more and sends the rest.
+        LlvmApi.PositionBuilderAtEnd(builder, partialWriteBlock);
+        LlvmValueHandle madeProgress = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, LlvmApi.BuildLoad2(builder, state.I64, acceptedBytesSlot, "step_tls_send_partial_accepted"), LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_send_made_progress");
+        LlvmApi.BuildCondBr(builder, madeProgress, pendingWriteBlock, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, pendingReadStoreBlock);
         LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitTlsWantRead, EmitLoadTlsSessionSocket(state, session, "step_tls_send_pending_read_socket"), "step_tls_send_pending_read"), statusSlot);

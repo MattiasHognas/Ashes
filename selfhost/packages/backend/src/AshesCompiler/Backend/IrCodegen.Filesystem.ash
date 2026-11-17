@@ -27,6 +27,7 @@ export (
     value emitReadLineFinish,
     value emitReadLineFromFd,
     value emitReadLine,
+    value emitReadExact,
     value emitUtf8ByteInRange,
     value emitUtf8ContinuationChain,
     value emitUtf8ValidateSequence,
@@ -1649,3 +1650,87 @@ let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder arena ma
                                     |> (given (status) ->
                                         buildICmp(builder)(intPredicateSge)(status)(constInt(i64)(0u64)(false))("file_executable_succeeded"))
                                     |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileMakeExecutableErrorCodes)("file_executable")))
+
+// "readExact: unexpected EOF" — stage 0's `EmitReadExact` error text.
+let readExactEofCodes = [114, 101, 97, 100, 69, 120, 97, 99, 116, 58, 32, 117, 110, 101, 120, 112, 101, 99, 116, 101, 100, 32, 69, 79, 70]
+
+// `Ashes.IO.readExact(n)`: exactly `n` bytes from stdin as `Result(Str, Str)`, stage 0's
+// `EmitReadExact`. The bytes are read straight into a fresh arena string of length `n`, one `read`
+// syscall per chunk the kernel hands back; a `read` that returns nothing before `n` bytes arrived
+// is `Error("readExact: unexpected EOF")`. `readLine` here reads one byte at a time and keeps no
+// read-ahead, so there is no buffered input to drain first.
+let emitReadExact context function_ i64 i8 ptrType builder arena countValue =
+    (let stringRef =
+        "read_exact_string" |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(countValue)(constInt(i64)(8u64)(false))("read_exact_size"))
+    in
+        let _ = storeWordAt(builder)(i64)(i8)(ptrType)(stringRef)(0)(countValue)("read_exact_len")
+        in
+            let destAddr =
+                buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))("read_exact_dest")
+            in
+                let readSoFarSlot = buildEntryAlloca(builder)(i64)("read_exact_so_far")
+                in
+                    let resultSlot = buildEntryAlloca(builder)(i64)("read_exact_result")
+                    in
+                        let loopBlock = appendBasicBlock(context)(function_)("read_exact_loop")
+                        in
+                            let readBlock = appendBasicBlock(context)(function_)("read_exact_read")
+                            in
+                                let advanceBlock = appendBasicBlock(context)(function_)("read_exact_advance")
+                                in
+                                    let errorBlock = appendBasicBlock(context)(function_)("read_exact_error")
+                                    in
+                                        let okBlock = appendBasicBlock(context)(function_)("read_exact_ok")
+                                        in
+                                            let doneBlock = appendBasicBlock(context)(function_)("read_exact_done")
+                                            in
+                                                let _ =
+                                                    buildStore(builder)(constInt(i64)(0u64)(false))(readSoFarSlot)
+                                                in
+                                                    let _ = buildBr(builder)(loopBlock)
+                                                    in
+                                                        let _ = positionBuilderAtEnd(builder)(loopBlock)
+                                                        in
+                                                            let readSoFar = buildLoad(builder)(i64)(readSoFarSlot)("read_exact_so_far_value")
+                                                            in
+                                                                let complete = buildICmp(builder)(intPredicateUge)(readSoFar)(countValue)("read_exact_complete")
+                                                                in
+                                                                    let _ = buildCondBr(builder)(complete)(okBlock)(readBlock)
+                                                                    in
+                                                                        let _ = positionBuilderAtEnd(builder)(readBlock)
+                                                                        in
+                                                                            let readCount =
+                                                                                "read_exact_remaining"
+                                                                                |> buildSub(builder)(countValue)(readSoFar)
+                                                                                |> emitLinuxRead(builder)(i64)(constInt(i64)(0u64)(false))(buildAdd(builder)(destAddr)(readSoFar)("read_exact_cursor"))
+                                                                            in
+                                                                                let failed =
+                                                                                    buildICmp(builder)(intPredicateSle)(readCount)(constInt(i64)(0u64)(false))("read_exact_failed")
+                                                                                in
+                                                                                    let _ = buildCondBr(builder)(failed)(errorBlock)(advanceBlock)
+                                                                                    in
+                                                                                        let _ = positionBuilderAtEnd(builder)(advanceBlock)
+                                                                                        in
+                                                                                            let _ =
+                                                                                                buildStore(builder)(buildAdd(builder)(readSoFar)(readCount)("read_exact_so_far_next"))(readSoFarSlot)
+                                                                                            in
+                                                                                                let _ = buildBr(builder)(loopBlock)
+                                                                                                in
+                                                                                                    let _ = positionBuilderAtEnd(builder)(errorBlock)
+                                                                                                    in
+                                                                                                        let message = emitAsciiLiteralString(context)(builder)(i64)(i8)(readExactEofCodes)("read_exact_eof_msg")
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(message)("read_exact_err"))(resultSlot)
+                                                                                                            in
+                                                                                                                let _ = buildBr(builder)(doneBlock)
+                                                                                                                in
+                                                                                                                    let _ = positionBuilderAtEnd(builder)(okBlock)
+                                                                                                                    in
+                                                                                                                        let _ =
+                                                                                                                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(stringRef)("read_exact_ok"))(resultSlot)
+                                                                                                                        in
+                                                                                                                            let _ = buildBr(builder)(doneBlock)
+                                                                                                                            in
+                                                                                                                                let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                in buildLoad(builder)(i64)(resultSlot)("read_exact_value"))

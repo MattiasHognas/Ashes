@@ -18,7 +18,9 @@ export (
     type TraitConstrainedReferenceRewriting(..),
     type TraitConstrainedTopLevelValueRewriting(..),
     value selectedTraitMethodBindingName,
+    value traitMethodParameterName,
     value rewriteTraitConstrainedValue,
+    value rewriteCoreConstrainedValue,
     value rewriteTraitConstrainedReference,
     value rewriteSelectedTraitMethodImplementation,
     value bindingTraitConstraints,
@@ -191,6 +193,10 @@ and rewriteTraitMethodReferences shapes expression =
             inner
             |> rewriteTraitMethodReferences(shapes)
             |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> rewriteTraitMethodReferences(shapes)
+            |> ExprNode(node)
         | ExprQualifiedVar(qualifier, methodName) ->
             match resolveTraitMethodRewrite(shapes)(qualifier)(methodName) with
                 | TraitMethodRewriteUnique(parameterName) -> ExprVar(parameterName)
@@ -433,6 +439,47 @@ let rewriteTraitConstrainedValue value constraints environment =
             |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
             |> prependTraitDictionaryParameters(shapes)
 
+// Core's curried-loop analysis must see every physical parameter before the
+// first body expression. Dictionary destructuring is a pure, type-proven
+// projection, so place it after the original source lambda chain.
+let recursive destructureCoreDictionaries shapes body =
+    match shapes with
+        | [] -> body
+        | (TraitDictionaryAbiShape { parameterIndex = index } as shape) :: rest ->
+            body
+            |> destructureCoreDictionaries(rest)
+            |> destructureTraitDictionary(shape)("root")(index
+            |> traitEvidenceParameterName
+            |> ExprVar)
+
+let recursive destructureCoreLambdaBody shapes value =
+    match value with
+        | ExprAt(span, inner) ->
+            inner
+            |> destructureCoreLambdaBody(shapes)
+            |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> destructureCoreLambdaBody(shapes)
+            |> ExprNode(node)
+        | ExprLambda(name, body, annotation) ->
+            ExprLambda(name)(destructureCoreLambdaBody(shapes)(body))(annotation)
+        | body -> destructureCoreDictionaries(shapes)(body)
+
+let recursive prependCoreDictionaryParameters shapes body =
+    match shapes with
+        | [] -> body
+        | TraitDictionaryAbiShape { parameterIndex = index } :: rest ->
+            ExprLambda(traitEvidenceParameterName(index))(prependCoreDictionaryParameters(rest)(body))(None)
+
+let rewriteCoreConstrainedValue value constraints environment =
+    (let shapes = planTraitEvidenceAbi(constraints)(environment)
+    in
+        value
+        |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
+        |> destructureCoreLambdaBody(shapes)
+        |> prependCoreDictionaryParameters(shapes))
+
 let rewriteSelectedTraitMethodImplementation traitName methodName implementation =
     (let rewritten =
         rewriteTraitMethodReferences(TraitMethodRewriteSelected(traitName)(methodName))(implementation)
@@ -511,12 +558,14 @@ let rewriteTraitConstrainedReference reference requiredConstraints activeConstra
 let recursive outermostLambdaParameterNames expression =
     match expression with
         | ExprAt(_span, inner) -> outermostLambdaParameterNames(inner)
+        | ExprNode(_node, inner) -> outermostLambdaParameterNames(inner)
         | ExprLambda(name, body, _annotation) -> name :: outermostLambdaParameterNames(body)
         | _ -> []
 
 let recursive stripTraitCallSiteAt expression =
     match expression with
         | ExprAt(_span, inner) -> stripTraitCallSiteAt(inner)
+        | ExprNode(_node, inner) -> stripTraitCallSiteAt(inner)
         | _ -> expression
 
 type TraitReferenceRewriting =
@@ -645,6 +694,9 @@ and rewriteTraitCallSiteReferences activeConstraints ownParameters locals enviro
         | ExprAt(span, inner) ->
             match rewriteTraitCallSiteReferences(activeConstraints)(ownParameters)(locals)(environment)(inner) with
                 | TraitReferenceRewriting { expression = innerExpr, error = error } -> TraitReferenceRewriting(expression = ExprAt(span)(innerExpr), error = error)
+        | ExprNode(node, inner) ->
+            match rewriteTraitCallSiteReferences(activeConstraints)(ownParameters)(locals)(environment)(inner) with
+                | TraitReferenceRewriting { expression = innerExpr, error = error } -> TraitReferenceRewriting(expression = ExprNode(node)(innerExpr), error = error)
         | ExprAdd(left, right) ->
             match rewriteTraitCallSiteBinaryOperand(activeConstraints)(ownParameters)(locals)(environment)(left)(right) with
                 | (leftExpr, rightExpr, error) -> TraitReferenceRewriting(expression = ExprAdd(leftExpr)(rightExpr), error = error)

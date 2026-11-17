@@ -301,6 +301,11 @@ public sealed partial class Lowering
             return argumentTemp;
         }
 
+        if (StoresArenaCopyForKeptSuccessor(argumentType))
+        {
+            return EmitArenaCopyOfReferenceCounted(argumentTemp, Prune(argumentType), releasesSource: false);
+        }
+
         if (MayUseEmptyListRepresentation(Prune(argumentType)))
         {
             return EmitRuntimeManagedNullableDup(argumentTemp);
@@ -445,7 +450,7 @@ public sealed partial class Lowering
 
             if (keepOwned)
             {
-                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type);
+                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type, storedTemp);
             }
         }
     }
@@ -453,8 +458,9 @@ public sealed partial class Lowering
     // The reference an escaping arena alias took of an owner it borrows: the arena aggregate never
     // releases it, and a result normalized onto the reference-counted heap retains the owner's value
     // again. It is recorded for the call it is an argument of, or goes to an owned slot released
-    // once the function's result holds references of its own.
-    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType)
+    // once the function's result holds references of its own. The slot remembers the alias it keeps
+    // the owner alive for: a result reaching the alias reaches the slot.
+    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType, int aliasTemp)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERSLOT") is not null
@@ -471,7 +477,11 @@ public sealed partial class Lowering
 
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
-        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
+        if (AliasOwnerReachRuleEnabled)
+        {
+            _generalRcOwnedSlots[^1] = owned with { AliasTemp = aliasTemp };
+        }
     }
 
     // A reference-counted value the lowering produced or took a reference to, rather than a
@@ -3781,16 +3791,32 @@ public sealed partial class Lowering
 
     private void AttachRuntimeManagedClosureNormalizer(string closureLabel, IReadOnlyList<string> captures)
     {
-        List<(int EnvOffset, TypeRef Type)> normalizableCaptures = [];
-        for (int index = 0; index < captures.Count; index++)
+        List<Binding> bindings = [];
+        foreach (string capture in captures)
         {
-            Binding? capture = Lookup(captures[index]);
-            if (capture is null || !CanRuntimeNormalizeClosureCapture(capture.Type))
+            if (Lookup(capture) is not { } binding)
             {
                 return;
             }
 
-            normalizableCaptures.Add((index * 8, Prune(capture.Type)));
+            bindings.Add(binding);
+        }
+
+        if (CopiesCapturedSelfClosure && bindings.Any(binding => binding is Binding.Self))
+        {
+            AttachCapturedSelfCopyNormalizer(closureLabel, captures, bindings);
+            return;
+        }
+
+        List<(int EnvOffset, TypeRef Type)> normalizableCaptures = [];
+        for (int index = 0; index < bindings.Count; index++)
+        {
+            if (!CanRuntimeNormalizeClosureCapture(bindings[index].Type))
+            {
+                return;
+            }
+
+            normalizableCaptures.Add((index * 8, Prune(bindings[index].Type)));
         }
 
         if (normalizableCaptures.Count == 0)
@@ -3798,8 +3824,42 @@ public sealed partial class Lowering
             return;
         }
 
-        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures);
+        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures, []);
     }
+
+    // A closure that captured the recursive function it is built in (`uniquePaths` captured by the
+    // closure its first stage returns) holds a closure built at that reference, inside the call's
+    // arena window. Copied out of the arena at the call boundary, it copies that closure too, since
+    // the caller resets the window once the copy is taken; the copy's dropper releases it.
+    // Every other capture is shared word for word, as a copy without a normalizer shares it; only
+    // the self reference is built during the call. A closure holding a resource is left alone.
+    private void AttachCapturedSelfCopyNormalizer(string closureLabel, IReadOnlyList<string> captures, List<Binding> bindings)
+    {
+        List<(int EnvOffset, TypeRef Type)> selfCaptures = [];
+        List<int> sharedCaptureOffsets = [];
+        for (int index = 0; index < bindings.Count; index++)
+        {
+            if (LookupOwnedValue(captures[index]) is { IsResource: true } or { IsResourceBearing: true })
+            {
+                return;
+            }
+
+            TypeRef captureType = Prune(bindings[index].Type);
+            if (bindings[index] is Binding.Self)
+            {
+                selfCaptures.Add((index * 8, captureType));
+            }
+            else
+            {
+                sharedCaptureOffsets.Add(index * 8);
+            }
+        }
+
+        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, selfCaptures, sharedCaptureOffsets);
+    }
+
+    private static bool CopiesCapturedSelfClosure
+        => Environment.GetEnvironmentVariable("GRC_NO_CLOSURECAPTURECOPY") is null;
 
     private bool CanRuntimeNormalizeClosureCapture(TypeRef type)
     {
@@ -3818,7 +3878,8 @@ public sealed partial class Lowering
 
     private string SynthesizeRuntimeManagedClosureNormalizer(
         string closureLabel,
-        List<(int EnvOffset, TypeRef Type)> captures)
+        List<(int EnvOffset, TypeRef Type)> captures,
+        IReadOnlyList<int> sharedCaptureOffsets)
     {
         string key = closureLabel;
         if (_runtimeManagedClosureNormalizerLabels.TryGetValue(key, out string? existing))
@@ -3848,6 +3909,13 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadMemOffset(capturedTemp, sourceEnvTemp, envOffset));
             int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(capturedTemp, type);
             Emit(new IrInst.StoreMemOffset(targetEnvTemp, envOffset, normalizedTemp));
+        }
+
+        foreach (int envOffset in sharedCaptureOffsets)
+        {
+            int sharedTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(sharedTemp, sourceEnvTemp, envOffset));
+            Emit(new IrInst.StoreMemOffset(targetEnvTemp, envOffset, sharedTemp));
         }
 
         int resultTemp = NewTemp();
@@ -3927,6 +3995,7 @@ public sealed partial class Lowering
 
         string typeName = pruned switch
         {
+            TypeRef.TFun => "Function",
             TypeRef.TStr => "String",
             TypeRef.TBytes => "Bytes",
             TypeRef.TBigInt => "BigInt",

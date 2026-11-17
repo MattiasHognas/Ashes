@@ -52,6 +52,7 @@ type MatchArmResult =
 let recursive unspanned (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanned(inner)
+        | ExprNode(_node, inner) -> unspanned(inner)
         | other -> other
 
 let combineStringArms (left: Maybe(Bool)) (right: Maybe(Bool)) =

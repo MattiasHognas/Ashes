@@ -27,6 +27,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
+import AshesCompiler.Semantics.TypeInference
 export (
     value classifyHeapResourceIndexed,
     value classifyHeapOwnedChildrenDroppableIndexed,
@@ -354,7 +355,7 @@ and indexedNamed gate (named: SemanticType) path (index: TypeGraphIndex) =
             let groups = node.sourceConstructorGroups
             in
                 let fields =
-                    if node.sourceType == node.resolvedType
+                    if node.sourceMatchesResolved
                     then node.fields
                     else heapFlattenFieldGroups(groups)
                 in

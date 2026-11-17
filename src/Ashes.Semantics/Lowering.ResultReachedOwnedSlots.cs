@@ -19,7 +19,9 @@ public sealed partial class Lowering
             return [];
         }
 
-        HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps);
+        HashSet<int> visitedTemps = [];
+        HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps, visitedTemps);
+        AddAliasOwnerRetainsOfReachedAliases(reached, visitedTemps, ownedSlots);
         AddPredecessorsOfReachedSlots(reached, ownedSlots);
         return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
     }
@@ -42,6 +44,24 @@ public sealed partial class Lowering
         foreach (GeneralRcOwnedSlot owned in ownedSlots)
         {
             if (owned.Predecessor && owned.Origin >= 0 && reached.Contains(owned.Origin))
+            {
+                reached.Add(owned.Slot);
+            }
+        }
+    }
+
+    private static bool AliasOwnerReachRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERREACH") is null;
+
+    // The reference an escaping arena alias keeps of an owner it borrows sits in a slot of its own,
+    // which no value flowing into the result is read from: the alias points at the owner's value
+    // while the slot alone holds it. A result reaching the alias reaches that slot, so the owner is
+    // not released while the result still points into it.
+    private static void AddAliasOwnerRetainsOfReachedAliases(HashSet<int> reached, HashSet<int> visitedTemps, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        foreach (GeneralRcOwnedSlot owned in ownedSlots)
+        {
+            if (owned.AliasTemp >= 0 && visitedTemps.Contains(owned.AliasTemp))
             {
                 reached.Add(owned.Slot);
             }
@@ -492,7 +512,7 @@ public sealed partial class Lowering
     /// </summary>
     private HashSet<int> LocalSlotsReachingTemp(int temp) => LocalSlotsReachingTemps([temp]);
 
-    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps, HashSet<int>? independentSlots = null, HashSet<int>? independentTemps = null)
+    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps, HashSet<int>? independentSlots = null, HashSet<int>? independentTemps = null, HashSet<int>? visitedTemps = null)
     {
         var definitions = new Dictionary<int, List<IrInst>>();
         var slotStores = new Dictionary<int, List<int>>();
@@ -538,6 +558,7 @@ public sealed partial class Lowering
             }
         }
 
+        visitedTemps?.UnionWith(visited);
         return slots;
     }
 

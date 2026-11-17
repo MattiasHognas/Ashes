@@ -13,6 +13,7 @@ cat > "$out/Main.ash" <<'ASH'
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
+import Ashes.Collection.List.append
 import Ashes.Collection.Map.MapTree
 ASH
 awk '/^type CoreConstructorLayout =/ {copying=1} copying && /^type CoreBindingLocation =/ {exit} copying {print}' "$core" >> "$out/Main.ash"

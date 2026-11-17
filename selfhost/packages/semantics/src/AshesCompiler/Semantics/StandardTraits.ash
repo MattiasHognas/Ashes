@@ -375,6 +375,216 @@ let standardTraitEnvironment unit =
     |> registerPrimitiveImplementations
     |> registerStructuralImplementations
 
+// The compiler-provided nominal types. The builtin layouts write every one of them with symbol id
+// 0, which lowering tells apart by name; inference identifies a nominal type by its id alone, so
+// each gets its own here and the builtin signatures are rewritten to it. `Maybe`, `Result` and
+// `Task` keep the ids `standardTraitEnvironment` gives them.
+let intrinsicTypeSymbolId name =
+    match name with
+        | "Maybe" -> 1
+        | "Result" -> 2
+        | "Task" -> 3
+        | "Unit" -> 4
+        | "FileHandle" -> 5
+        | "Process" -> 6
+        | "Socket" -> 7
+        | "TlsSocket" -> 8
+        | _ -> -1
+
+let recursive withIntrinsicTypeIds semanticType =
+    match semanticType with
+        | SemList(element) ->
+            element
+            |> withIntrinsicTypeIds
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> withIntrinsicTypeIdsOf
+            |> SemTuple
+        | SemFunction(argument, result, row) ->
+            SemFunction(withIntrinsicTypeIds(argument))(withIntrinsicTypeIds(result))(
+                match row with
+                    | Some(rowType) ->
+                        rowType
+                        |> withIntrinsicTypeIds
+                        |> Some
+                    | None -> None
+            )
+        | SemCapability(name, arguments) ->
+            arguments
+            |> withIntrinsicTypeIdsOf
+            |> SemCapability(name)
+        | SemRow(capabilities, tail) ->
+            SemRow(withIntrinsicTypeIdsOf(capabilities))(
+                match tail with
+                    | Some(tailType) ->
+                        tailType
+                        |> withIntrinsicTypeIds
+                        |> Some
+                    | None -> None
+            )
+        | SemNamed(symbolId, name, arguments) ->
+            let intrinsicId = intrinsicTypeSymbolId(name)
+            in
+                if intrinsicId < 0
+                then
+                    arguments
+                    |> withIntrinsicTypeIdsOf
+                    |> SemNamed(symbolId)(name)
+                else
+                    arguments
+                    |> withIntrinsicTypeIdsOf
+                    |> SemNamed(intrinsicId)(name)
+        | SemPointer(pointee) ->
+            pointee
+            |> withIntrinsicTypeIds
+            |> SemPointer
+        | other -> other
+and withIntrinsicTypeIdsOf semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail -> withIntrinsicTypeIds(head) :: withIntrinsicTypeIdsOf(tail)
+
+let schemeWithIntrinsicTypeIds scheme =
+    match scheme with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } -> TypeScheme(quantified = quantified, body = withIntrinsicTypeIds(body), constraints = constraints)
+
+let intrinsicMaybeType = SemNamed(1)("Maybe")([SemVariable(1)])
+
+let intrinsicResultType = SemNamed(2)("Result")([SemVariable(2), SemVariable(3)])
+
+let intrinsicResultScheme payload = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(payload)(intrinsicResultType)(None), constraints = [])
+
+let withIntrinsicTypes environment =
+    environment
+    |> addInferenceTypeDefinition(1)("Maybe")(1)
+    |> addInferenceTypeDefinition(2)("Result")(2)
+    |> addInferenceTypeDefinition(3)("Task")(2)
+    |> addInferenceTypeDefinition(4)("Unit")(0)
+    |> addInferenceTypeDefinition(5)("FileHandle")(0)
+    |> addInferenceTypeDefinition(6)("Process")(0)
+    |> addInferenceTypeDefinition(7)("Socket")(0)
+    |> addInferenceTypeDefinition(8)("TlsSocket")(0)
+    |> addConstructorBinding("Unit")(TypeScheme(quantified = [], body = SemNamed(4)("Unit")([]), constraints = []))([])
+    |> addConstructorBinding("None")(TypeScheme(quantified = [(1, "a")], body = intrinsicMaybeType, constraints = []))([])
+    |> addConstructorBinding("Some")(TypeScheme(quantified = [(1, "a")], body = SemFunction(SemVariable(1))(intrinsicMaybeType)(None), constraints = []))([])
+    |> addConstructorBinding("Ok")(intrinsicResultScheme(SemVariable(3)))([])
+    |> addConstructorBinding("Error")(intrinsicResultScheme(SemVariable(2)))([])
+
+// The task builtins and `async`. Lowering has no layout for them yet, so they are not among
+// `standardBuiltinLayouts`; their signatures are the language reference's (19, Async/Await).
+let intrinsicTaskOf errorType valueType = SemNamed(3)("Task")([errorType, valueType])
+
+let intrinsicJoinHandleType = SemNamed(9)("JoinHandle")([SemVariable(2), SemVariable(3)])
+
+let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(argument)(result)(None), constraints = [])
+
+let polymorphicTask = intrinsicTaskOf(SemVariable(2))(SemVariable(3))
+
+let asyncTaskScheme =
+    TypeScheme(quantified = [(3, "a")], body = SemFunction(SemVariable(3))(intrinsicTaskOf(SemString)(SemVariable(3)))(None), constraints = [])
+
+// The two members of `Ashes.Task.Parallel` the compiler provides take thunks: `both` runs two and
+// pairs their results, `withWorkers` runs one under a worker count.
+let parallelThunkType result =
+    SemFunction(SemNamed(4)("Unit")([]))(result)(None)
+
+let withTaskSignatures environment =
+    environment
+    |> addInferenceTypeDefinition(9)("JoinHandle")(2)
+    |> addTypeBinding("Ashes.Task.run")(taskScheme(polymorphicTask)(intrinsicResultType))
+    |> addTypeBinding("Ashes.Task.task")(asyncTaskScheme)
+    |> addTypeBinding("async")(asyncTaskScheme)
+    |> addTypeBinding("Ashes.Task.fromResult")(taskScheme(intrinsicResultType)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.sleep")(TypeScheme(quantified = [], body = SemFunction(SemInt)(intrinsicTaskOf(SemString)(SemInt))(None), constraints = []))
+    |> addTypeBinding("Ashes.Task.all")(SemList(SemVariable(3))
+    |> intrinsicTaskOf(SemVariable(2))
+    |> taskScheme(SemList(polymorphicTask)))
+    |> addTypeBinding("Ashes.Task.race")(taskScheme(SemList(polymorphicTask))(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.spawn")([]
+    |> SemNamed(4)("Unit")
+    |> taskScheme(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.scope")(taskScheme(polymorphicTask)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.fork")(intrinsicJoinHandleType
+    |> intrinsicTaskOf(SemVariable(2))
+    |> taskScheme(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.join")(taskScheme(intrinsicJoinHandleType)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.Parallel.both")(TypeScheme(quantified = [(2, "a"), (3, "b")], body = SemFunction(parallelThunkType(SemVariable(2)))(SemFunction(parallelThunkType(SemVariable(3)))(SemTuple([SemVariable(2), SemVariable(3)]))(None))(None), constraints = []))
+    |> addTypeBinding("Ashes.Task.Parallel.withWorkers")(TypeScheme(quantified = [(3, "a")], body = SemFunction(SemInt)(SemFunction(parallelThunkType(SemVariable(3)))(SemVariable(3))(None))(None), constraints = []))
+    |> addTypeBinding("Stop.stop")(TypeScheme(quantified = [], body = None
+    |> SemRow([SemCapability("Stop")([])])
+    |> Some
+    |> SemFunction(SemNamed(4)("Unit")([]))(SemNamed(4)("Unit")([])), constraints = []))
+
+// The runtime capability a builtin acquires, per the language reference's built-in runtime
+// capabilities. The layout schemes carry no rows, so inference adds the row here.
+let builtinRuntimeCapability (moduleName: Str) (memberName: Str) =
+    match moduleName with
+        | "Ashes.IO" ->
+            match memberName with
+                | "args" -> None
+                | "exit" -> Some("ProcessExit")
+                | _ -> Some("ConsoleIO")
+        | "Ashes.IO.Console" ->
+            match memberName with
+                | "monotonicMillis" -> Some("TimeRead")
+                | _ -> Some("ConsoleIO")
+        | "Ashes.IO.File" ->
+            match memberName with
+                | "readText" -> Some("FileRead")
+                | "readAllBytes" -> Some("FileRead")
+                | "mmap" -> Some("FileRead")
+                | "exists" -> Some("FileRead")
+                | "open" -> Some("FileRead")
+                | "writeText" -> Some("FileWrite")
+                | "writeBytes" -> Some("FileWrite")
+                | "replace" -> Some("FileWrite")
+                | "makeExecutable" -> Some("FileWrite")
+                | _ -> None
+        | "Ashes.IO.Directory" ->
+            match memberName with
+                | "entries" -> Some("FileRead")
+                | "createAll" -> Some("FileWrite")
+                | "removeTree" -> Some("FileWrite")
+                | _ -> None
+        | "Ashes.IO.Environment" -> Some("EnvironmentRead")
+        | "Ashes.IO.Process" ->
+            match memberName with
+                | "spawn" -> Some("ProcessSpawn")
+                | _ -> None
+        | "Ashes.Ffi" ->
+            match memberName with
+                | "copyBytes" -> Some("UnsafeFfi")
+                | _ -> None
+        | "Ashes.Net.Tcp.Server" ->
+            match memberName with
+                | "listen" -> Some("NetListen")
+                | "forkWorkers" -> Some("NetListen")
+                | _ -> None
+        | "Ashes.Net.Tcp" ->
+            match memberName with
+                | "connect" -> Some("NetConnect")
+                | _ -> None
+        | "Ashes.Net.Http" -> Some("NetConnect")
+        | "Ashes.Net.Tls" ->
+            match memberName with
+                | "connect" -> Some("NetConnect")
+                | _ -> None
+        | _ -> None
+
+let recursive withRowOnInnermostArrow row semanticType =
+    match semanticType with
+        | SemFunction(argument, SemFunction(_, _, _) as result, outerRow) ->
+            SemFunction(argument)(withRowOnInnermostArrow(row)(result))(outerRow)
+        | SemFunction(argument, result, _row) -> SemFunction(argument)(result)(Some(row))
+        | other -> other
+
+let schemeWithRuntimeCapability moduleName memberName scheme =
+    match (builtinRuntimeCapability(moduleName)(memberName), scheme) with
+        | (Some(capabilityName), TypeScheme { quantified = quantified, body = body, constraints = constraints }) ->
+            TypeScheme(quantified = quantified, body = withRowOnInnermostArrow(SemRow([SemCapability(capabilityName)([])])(None))(body), constraints = constraints)
+        | (None, _) -> scheme
+
 // `standardTraitEnvironment` plus the intrinsic builtins' own signatures. The intrinsic modules
 // (`Ashes.IO`, `Ashes.Byte`, `Ashes.Text` and the rest of `coreBuiltinKind`'s) have no shipped
 // `.ash` source, so a stitched program never declares them: lowering knows them through
@@ -386,10 +596,61 @@ let recursive addBuiltinSignatures layouts environment =
         | [] -> environment
         | CoreBuiltinLayout { moduleName = moduleName, memberName = memberName, scheme = scheme } :: rest ->
             environment
-            |> addTypeBinding(moduleName + "." + memberName)(scheme)
+            |> addTypeBinding(moduleName + "." + memberName)(scheme
+            |> schemeWithIntrinsicTypeIds
+            |> schemeWithRuntimeCapability(moduleName)(memberName))
             |> addBuiltinSignatures(rest)
+
+// Three intrinsics accept more than one argument type at a saturated call, which neither compiler
+// expresses in the layout scheme: `Ashes.Number.UInt.toInt` takes any unsigned width,
+// `Ashes.Text.fromInt` an `Int` or an unsigned width up to 32 bits, and `Ashes.Text.toHex` an `Int`
+// or any unsigned width. Inference gives each a variable argument constrained by a
+// compiler-private trait with one implementation per accepted type, so the rule holds whatever
+// order the argument's type is discovered in. The names cannot be written in source.
+let unsignedIntegerArgumentTrait = "$UnsignedIntegerArgument"
+
+let textFromIntArgumentTrait = "$TextFromIntArgument"
+
+let textToHexArgumentTrait = "$TextToHexArgument"
+
+// `Ashes.IO.print` takes an `Int`, an unsigned width below 64 bits, a `Str` or a `Bool`.
+let printArgumentTrait = "$PrintArgument"
+
+let recursive addArgumentWidthImplementations traitName heads environment =
+    match heads with
+        | [] -> environment
+        | head :: tail ->
+            environment
+            |> addTraitImplementation(traitName)([head])([])([])
+            |> addArgumentWidthImplementations(traitName)(tail)
+
+let addArgumentWidthTrait traitName heads environment =
+    environment
+    |> addTraitBinding(traitName)(1)([SemVariable(0)])([])([])
+    |> addArgumentWidthImplementations(traitName)(heads)
+
+let argumentWidthScheme traitName resultType =
+    TypeScheme(quantified = [(0, "a")], body = SemFunction(SemVariable(0))(resultType)(None), constraints = [TraitConstraint(traitName = traitName, typeArguments = [SemVariable(
+        0
+    )])])
+
+let withArgumentWidthSignatures environment =
+    environment
+    |> addArgumentWidthTrait(unsignedIntegerArgumentTrait)([SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64)])
+    |> addArgumentWidthTrait(textFromIntArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32)])
+    |> addArgumentWidthTrait(textToHexArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64)])
+    |> addArgumentWidthTrait(printArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32), SemString, SemBool])
+    |> addTypeBinding("Ashes.Number.UInt.toInt")(argumentWidthScheme(unsignedIntegerArgumentTrait)(SemInt))
+    |> addTypeBinding("Ashes.Text.fromInt")(argumentWidthScheme(textFromIntArgumentTrait)(SemString))
+    |> addTypeBinding("Ashes.Text.toHex")(argumentWidthScheme(textToHexArgumentTrait)(SemString))
+    |> addTypeBinding("Ashes.IO.print")([]
+    |> SemNamed(4)("Unit")
+    |> argumentWidthScheme(printArgumentTrait)
+    |> schemeWithRuntimeCapability("Ashes.IO")("print"))
 
 let withIntrinsicBuiltinSignatures environment =
     environment
-    |> addInferenceTypeDefinition(0)("Unit")(0)
+    |> withIntrinsicTypes
     |> addBuiltinSignatures(standardBuiltinLayouts)
+    |> withArgumentWidthSignatures
+    |> withTaskSignatures

@@ -136,7 +136,7 @@ let expectCrossPackageOrphanRejection unit =
             |> requireStitched
             |> expectOrphanProjectShape
             |> inferStitchedProject with
-                | ProgramInferenceResult { error = Some(OrphanTraitImplementation("Domain_Comparable")) } -> Unit
+                | ProgramInferenceResult { error = Some(OrphanTraitImplementation("Domain_Comparable", _orphanHead, _orphanPackage)) } -> Unit
                 | ProgramInferenceResult { error = Some(error) } ->
                     test.fail(
                         "unexpected cross-package orphan result: " + Ashes.Trait.Show.show(error)
@@ -171,7 +171,7 @@ let expectProgramGlobalCoherence unit =
                 match [domain, extension, main]
                 |> requireStitched
                 |> inferStitchedProject with
-                    | ProgramInferenceResult { error = Some(OverlappingTraitImplementations("Domain_Comparable")) } -> Unit
+                    | ProgramInferenceResult { error = Some(OverlappingTraitImplementations("Domain_Comparable", _firstSite, _conflictingSite)) } -> Unit
                     | ProgramInferenceResult { error = Some(error) } ->
                         test.fail(
                             "unexpected global coherence result: " + Ashes.Trait.Show.show(error)

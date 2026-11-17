@@ -395,6 +395,9 @@ let recursive fusionCallSpine expression =
         | ExprAt(span, inner) ->
             match fusionCallSpine(inner) with
                 | (root, arguments) -> (ExprAt(span)(root), arguments)
+        | ExprNode(node, inner) ->
+            match fusionCallSpine(inner) with
+                | (root, arguments) -> (ExprNode(node)(root), arguments)
         | ExprCall(function, argument, _whitespace, _layout) ->
             match fusionCallSpine(function) with
                 | (root, arguments) -> (root, appendList(arguments)([argument]))
@@ -403,6 +406,7 @@ let recursive fusionCallSpine expression =
 let recursive fusionCalleeResolvesTo project moduleName boundary qualifiedName root =
     match root with
         | ExprAt(_span, inner) -> fusionCalleeResolvesTo(project)(moduleName)(boundary)(qualifiedName)(inner)
+        | ExprNode(_node, inner) -> fusionCalleeResolvesTo(project)(moduleName)(boundary)(qualifiedName)(inner)
         | ExprQualifiedVar(qualifier, name) ->
             match resolveStitchedQualified(moduleName)(qualifier)(StitchedValue)(name)(project) with
                 | Some(StitchedDefinition { qualifiedName = actual }) -> actual == qualifiedName
@@ -416,6 +420,7 @@ let recursive fusionCalleeResolvesTo project moduleName boundary qualifiedName r
 let recursive isByteFromListReference expression =
     match expression with
         | ExprAt(_span, inner) -> isByteFromListReference(inner)
+        | ExprNode(_node, inner) -> isByteFromListReference(inner)
         | ExprQualifiedVar("Ashes.Byte", "fromList") -> true
         | _ -> false
 
@@ -514,6 +519,10 @@ and rewriteExpression project moduleName boundary locals expression =
             inner
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
             |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            inner
+            |> rewriteExpression(project)(moduleName)(boundary)(locals)
+            |> ExprNode(node)
         | ExprVar(name) -> resolveExpressionVariable(project)(moduleName)(boundary)(locals)(name)
         | ExprQualifiedVar(qualifier, name) ->
             rewriteQualifiedExpression(

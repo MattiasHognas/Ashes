@@ -627,13 +627,19 @@ type ReachConstructor =
     | soleNullary: Bool
     deriving {Eq, Show}
 
-let recursive lookupConstructor (name: Str) (constructors: List(ReachConstructor)) =
+// Files constructors by name, keeping the first of each name: the one a walk of the list meets.
+let recursive indexConstructors (constructors: List(ReachConstructor)) (index: MapTree(Str, ReachConstructor)) =
     match constructors with
-        | [] -> None
-        | (ReachConstructor { name = candidate } as constructor) :: rest ->
-            if candidate == name
-            then Some(constructor)
-            else lookupConstructor(name)(rest)
+        | [] -> index
+        | (ReachConstructor { name = name } as constructor) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(index) with
+                | Some(_first) -> indexConstructors(rest)(index)
+                | None ->
+                    index
+                    |> Ashes.Collection.Map.setStr(name)(constructor)
+                    |> indexConstructors(rest)
+
+let lookupConstructor (name: Str) (constructorsByName: MapTree(Str, ReachConstructor)) = Ashes.Collection.Map.getStr(name)(constructorsByName)
 
 let recursive lookupTypeErasure (name: Str) (erasures: List((Str, TypeExpr))) =
     match erasures with
@@ -743,9 +749,11 @@ type ReachFunction =
 
 // `byKey` and `byIdentity` index `functions` by their key and by `name@identity`, so a call site
 // and a binding find their function without a walk over every function of the program.
+// `constructorsByName` holds the first constructor of each name in `constructors`.
 type ReachRegistry =
     | functions: List(ReachFunction)
     | constructors: List(ReachConstructor)
+    | constructorsByName: MapTree(Str, ReachConstructor)
     | valueNames: MapTree(Str, Bool)
     | byKey: MapTree(Str, ReachFunction)
     | byIdentity: MapTree(Str, ReachFunction)
@@ -759,6 +767,7 @@ type ReachSummary =
 let recursive stripSpans (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripSpans(inner)
+        | ExprNode(_node, inner) -> stripSpans(inner)
         | other -> other
 
 // The source offset identifying a function's lambda value: the first located node through its
@@ -766,12 +775,14 @@ let recursive stripSpans (expr: Expr) =
 let recursive lambdaIdentityOf (value: Expr) =
     match value with
         | ExprAt(TextSpan { start = start }, _inner) -> start
+        | ExprNode(_node, inner) -> lambdaIdentityOf(inner)
         | ExprLambda(_parameter, body, _annotation) -> lambdaIdentityOf(body)
         | _ -> -1
 
 let recursive lambdaChainOf (value: Expr) (parameters: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> lambdaChainOf(inner)(parameters)
+        | ExprNode(_node, inner) -> lambdaChainOf(inner)(parameters)
         | ExprLambda(parameter, body, _annotation) -> lambdaChainOf(body)(parameter :: parameters)
         | body -> (reverse(parameters), body)
 
@@ -783,6 +794,7 @@ let isLambda (expr: Expr) =
 let recursive nestedShapeOf (value: Expr) (outer: List(Str)) =
     match value with
         | ExprAt(_span, inner) -> nestedShapeOf(inner)(outer)
+        | ExprNode(_node, inner) -> nestedShapeOf(inner)(outer)
         | ExprLambda(parameter, body, _annotation) -> nestedShapeOf(body)(parameter :: outer)
         | ExprLetRecursive(name, recursiveValue, letBody, _parameters, _annotation, _requirements) ->
             match (outer, stripSpans(recursiveValue), stripSpans(letBody)) with
@@ -935,6 +947,7 @@ let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identit
 let recursive registerExpr (expr: Expr) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match expr with
         | ExprAt(_span, inner) -> registerExpr(inner)(enclosing)(scope)(registration)
+        | ExprNode(_node, inner) -> registerExpr(inner)(enclosing)(scope)(registration)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) -> registerBinding(false)(name)(value)(Some(body))(enclosing)(scope)(registration)
         | ExprLetResult(name, value, body) -> registerBinding(false)(name)(value)(Some(body))(enclosing)(scope)(registration)
         | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) -> registerBinding(true)(name)(value)(Some(body))(enclosing)(scope)(registration)
@@ -1111,7 +1124,7 @@ let recursive indexFunctions (functions: List(ReachFunction)) (byKey: MapTree(St
 // A registry with its two function indexes built once over its functions.
 let indexedRegistry (functions: List(ReachFunction)) (constructors: List(ReachConstructor)) (valueNames: MapTree(Str, Bool)) =
     match indexFunctions(functions)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
-        | (byKey, byIdentity) -> ReachRegistry(functions = functions, constructors = constructors, valueNames = valueNames, byKey = byKey, byIdentity = byIdentity)
+        | (byKey, byIdentity) -> ReachRegistry(functions = functions, constructors = constructors, constructorsByName = indexConstructors(constructors)(Ashes.Collection.Map.empty), valueNames = valueNames, byKey = byKey, byIdentity = byIdentity)
 
 let buildReachRegistry (program: ProgramSyntax) =
     match program with
@@ -1243,9 +1256,9 @@ let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
             then Some(reach)
             else lookupEnv(name)(rest)
 
-let constructorsOf (context: ReachContext) =
+let constructorsByNameOf (context: ReachContext) =
     match context with
-        | ReachContext { registry = ReachRegistry { constructors = constructors } } -> constructors
+        | ReachContext { registry = ReachRegistry { constructorsByName = constructorsByName } } -> constructorsByName
 
 let functionsOf (context: ReachContext) =
     match context with
@@ -1265,7 +1278,7 @@ let isCapitalized (name: Str) =
 // A bare pattern name that is a data constructor matches a nullary tag and binds nothing.
 let isConstructorName (context: ReachContext) (name: Str) =
     match context
-    |> constructorsOf
+    |> constructorsByNameOf
     |> lookupConstructor(name) with
         | Some(_constructor) -> true
         | None -> isCapitalized(name)
@@ -1278,7 +1291,7 @@ let variableReach (context: ReachContext) (env: List((Str, ResultReachState))) (
         | Some(reach) -> reach
         | None ->
             match context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(name) with
                 | Some(ReachConstructor { arity = 0, soleNullary = true }) -> reachBottom(Unit)
                 | Some(_constructor) -> reachPoisoned(UnmodelledReach)
@@ -1354,6 +1367,7 @@ let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value:
 let recursive callSpineOf (expr: Expr) (arguments: List(Expr)) =
     match expr with
         | ExprAt(_span, inner) -> callSpineOf(inner)(arguments)
+        | ExprNode(_node, inner) -> callSpineOf(inner)(arguments)
         | ExprCall(function, argument, _isSugar, _layout) -> callSpineOf(function)(argument :: arguments)
         | root -> (root, arguments)
 
@@ -1405,6 +1419,7 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
             then
                 stepOf(reachOfToken("#S" + Ashes.Text.fromInt(token)))(token + 1)
             else reachOf(context)(env)(scope)(token)(inner)
+        | ExprNode(_node, inner) -> reachOf(context)(env)(scope)(token)(inner)
         | ExprInt(_value) ->
             stepOf(reachBottom(Unit))(token)
         | ExprBigInt(_value) ->
@@ -1492,7 +1507,7 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
             Unit
             |> reachBottom
             |> sumFields(context)(env)(scope)(token)(context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(typeName))(fields)
             |> withRecordConstruction(context)
         | ExprRecordUpdate(target, fields) ->
@@ -1590,7 +1605,7 @@ and bindPatternReach (context: ReachContext) (pattern: Pattern) (parent: ResultR
                     bindPatternReach(context)(tail)(extendPaths(1)(parent))(headEnv)(afterHead)
         | PatternRecord(typeName, fields) ->
             match context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(typeName) with
                 | Some(ReachConstructor { fieldNames = fieldNames }) -> bindRecordPatterns(context)(fieldNames)(fields)(parent)(env)(token)
                 | None -> (env, token)
@@ -1622,7 +1637,7 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
             then selfRecursiveReach(context)(env)(scope)(token)(arguments)
             else
                 match context
-                |> constructorsOf
+                |> constructorsByNameOf
                 |> lookupConstructor(name) with
                     | Some(constructor) -> constructorReach(context)(env)(scope)(token)(constructor)(arguments)
                     | None ->
@@ -1872,6 +1887,7 @@ and overApplyReach (context: ReachContext) (body: Expr) (markers: List(Str)) (in
         | Some(marker) ->
             match body with
                 | ExprAt(_span, inner) -> overApplyReach(context)(inner)(markers)(index)(env)(scope)(token)
+                | ExprNode(_node, inner) -> overApplyReach(context)(inner)(markers)(index)(env)(scope)(token)
                 | ExprLambda(parameter, lambdaBody, _annotation) ->
                     overApplyReach(context)(lambdaBody)(markers)(index + 1)((parameter, reachOfToken(marker)) :: env)(removeScopeNames([parameter])(scope))(token)
                 | ExprIf(_condition, thenBranch, elseBranch) ->
@@ -1939,6 +1955,8 @@ let functionReach (registry: ReachRegistry) (table: ReachTable) (function: Reach
 let recursive dependencyKeys (registry: ReachRegistry) (scope: ReachScope) (expr: Expr) (keys: MapTree(Str, Bool)) =
     match expr with
         | ExprAt(_span, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprNode(_node, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprNode(_id, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
         | ExprInt(_value) -> keys
         | ExprBigInt(_value) -> keys
         | ExprUInt(_value, _width, _text) -> keys
@@ -2167,6 +2185,7 @@ let initialTable (functions: List(ReachFunction)) = initialTableInto(functions)(
 let recursive mustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> mustReach(registry)(table)(scope)(name)(inner)
+        | ExprNode(_node, inner) -> mustReach(registry)(table)(scope)(name)(inner)
         | ExprVar(candidate) -> candidate == name
         | ExprLambda(parameter, body, _annotation) -> parameter != name && mustReach(registry)(table)(scope)(name)(body)
         | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->
@@ -2199,7 +2218,7 @@ and everyArmMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str)))
 and callMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (spine: (Expr, List(Expr))) =
     match spine with
         | (ExprVar(callee), arguments) ->
-            match lookupConstructor(callee)(registry.constructors) with
+            match lookupConstructor(callee)(registry.constructorsByName) with
                 | Some(_constructor) -> anyMustReach(registry)(table)(scope)(name)(arguments)
                 | None ->
                     match lookupScope(callee)(scope) with

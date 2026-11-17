@@ -75,18 +75,21 @@ let isTailPosition pos =
 let recursive countLambdaArity depth expr =
     match expr with
         | ExprAt(_span, inner) -> countLambdaArity(depth)(inner)
+        | ExprNode(_node, inner) -> countLambdaArity(depth)(inner)
         | ExprLambda(_param, inner, _ann) -> countLambdaArity(depth + 1)(inner)
         | _ -> depth
 
 let recursive collectLambdaParamNames acc expr =
     match expr with
         | ExprAt(_span, inner) -> collectLambdaParamNames(acc)(inner)
+        | ExprNode(_node, inner) -> collectLambdaParamNames(acc)(inner)
         | ExprLambda(name, inner, _ann) -> collectLambdaParamNames(name :: acc)(inner)
         | _ -> reverse(acc)
 
 let recursive collectInnermostBody expr =
     match expr with
         | ExprAt(_span, inner) -> collectInnermostBody(inner)
+        | ExprNode(_node, inner) -> collectInnermostBody(inner)
         | ExprLambda(_param, inner, _ann) -> collectInnermostBody(inner)
         | _ -> expr
 
@@ -101,6 +104,7 @@ let recursive containsName name list =
 let recursive findCalledTarget targetNames arity count expr =
     match expr with
         | ExprAt(_span, inner) -> findCalledTarget(targetNames)(arity)(count)(inner)
+        | ExprNode(_node, inner) -> findCalledTarget(targetNames)(arity)(count)(inner)
         | ExprCall(f, _arg, _sugar, _layout) -> findCalledTarget(targetNames)(arity)(count + 1)(f)
         | ExprVar(v) ->
             if count == arity
@@ -131,6 +135,7 @@ let recursive collectTailCallsInExpr targetNames arity inTail expr acc =
     else
         match expr with
             | ExprAt(_span, inner) -> collectTailCallsInExpr(targetNames)(arity)(inTail)(inner)(acc)
+            | ExprNode(_node, inner) -> collectTailCallsInExpr(targetNames)(arity)(inTail)(inner)(acc)
             | ExprIf(_cond, t, e) ->
                 let accThen = collectTailCallsInExpr(targetNames)(arity)(InTailPos)(t)(acc)
                 in collectTailCallsInExpr(targetNames)(arity)(InTailPos)(e)(accThen)
@@ -169,6 +174,7 @@ let recursive hasTmcConsSelfCallsIn funcName arity inTail expr =
     else
         match expr with
             | ExprAt(_span, inner) -> hasTmcConsSelfCallsIn(funcName)(arity)(inTail)(inner)
+            | ExprNode(_node, inner) -> hasTmcConsSelfCallsIn(funcName)(arity)(inTail)(inner)
             | ExprIf(_cond, t, e) ->
                 if hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(t)
                 then true

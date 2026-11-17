@@ -15,12 +15,14 @@ import AshesCompiler.Semantics.TaglessAdtLayout.adtAllocationSizeBytes
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import Ashes.Number.UInt
+import Ashes.Collection.Map
 export (
     type CoreLlvmTypes(..),
     value coreLlvmTypes,
     value lookupIndexedInt,
     value lookupIndexedStr,
-    value findIndexed,
+    value indexIntEntries,
+    value indexStrEntries,
     value lookupIndexedAll,
     value emitStringParts,
     value emitWriteStrBytesToFd,
@@ -95,42 +97,46 @@ let coreLlvmTypes context =
         ptrType = pointerType(context)(0u32)
     )
 
-let recursive countBound env total =
-    match env with
-        | [] -> total
-        | _entry :: rest -> countBound(rest)(total + 1)
-
 // Concrete keys keep comparison and diagnostic formatting independent of deferred trait evidence.
 // The values remain polymorphic: slots, labels and globals carry different LLVM handle types.
-let recursive lookupIndexedIntIn (key: Int) env full =
-    match env with
-        | [] ->
-            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(countBound(full)(0)))
-        | (boundKey, value) :: rest ->
-            if boundKey == key
-            then value
-            else lookupIndexedIntIn(key)(rest)(full)
+let lookupIndexedInt (key: Int) env =
+    match Ashes.Collection.Map.getInt(key)(env) with
+        | Some(value) -> value
+        | None ->
+            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(Ashes.Collection.Map.size(env)))
 
-let lookupIndexedInt (key: Int) env = lookupIndexedIntIn(key)(env)(env)
+let lookupIndexedStr (key: Str) env =
+    match Ashes.Collection.Map.getStr(key)(env) with
+        | Some(value) -> value
+        | None ->
+            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(Ashes.Collection.Map.size(env)))
 
-let recursive lookupIndexedStrIn (key: Str) env full =
-    match env with
-        | [] ->
-            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(countBound(full)(0)))
-        | (boundKey, value) :: rest ->
-            if boundKey == key
-            then value
-            else lookupIndexedStrIn(key)(rest)(full)
+// The map of an association list in which the first entry of a key is the one a lookup finds.
+let recursive indexIntEntriesInto entries acc =
+    match entries with
+        | [] -> acc
+        | (key, value) :: rest ->
+            match Ashes.Collection.Map.getInt(key)(acc) with
+                | Some(_) -> indexIntEntriesInto(rest)(acc)
+                | None ->
+                    acc
+                    |> Ashes.Collection.Map.setInt(key)(value)
+                    |> indexIntEntriesInto(rest)
 
-let lookupIndexedStr (key: Str) env = lookupIndexedStrIn(key)(env)(env)
+let indexIntEntries entries = indexIntEntriesInto(entries)(Ashes.Collection.Map.empty)
 
-let recursive findIndexed key env =
-    match env with
-        | [] -> None
-        | (boundKey, value) :: rest ->
-            if boundKey == key
-            then Some(value)
-            else findIndexed(key)(rest)
+let recursive indexStrEntriesInto entries acc =
+    match entries with
+        | [] -> acc
+        | (key, value) :: rest ->
+            match Ashes.Collection.Map.getStr(key)(acc) with
+                | Some(_) -> indexStrEntriesInto(rest)(acc)
+                | None ->
+                    acc
+                    |> Ashes.Collection.Map.setStr(key)(value)
+                    |> indexStrEntriesInto(rest)
+
+let indexStrEntries entries = indexStrEntriesInto(entries)(Ashes.Collection.Map.empty)
 
 // Every key's value, in the keys' own order: an instruction carrying a list of operand temps
 // resolves them all at once.

@@ -2053,10 +2053,42 @@ public sealed partial class Lowering
             || _generalRcOwnedSlots.Any(owned => !owned.PartDuplicate);
         if (copiesAnyway)
         {
+            foreach (GeneralRcOwnedSlot owned in _generalRcOwnedSlots)
+            {
+                if (owned.PartDuplicate)
+                {
+                    LeaveWithdrawnPartDuplicateToItsCell(owned.Slot);
+                }
+            }
+
             _generalRcOwnedSlots.RemoveAll(owned => owned.PartDuplicate);
         }
 
         return contractResult;
+    }
+
+    // A withdrawn part duplicate's slot is never read, yet its store still reads the duplicate, and the
+    // rules that settle a copied cell's retains act only on a retain the cell alone reads
+    // (WithdrawLoopParameterRetain, CollectRetainsHeldByCell). The store takes the borrowed value
+    // instead, in place, which leaves the cell the duplicate's only reader. A slot some path does read
+    // (a back edge releasing it) keeps its store.
+    private void LeaveWithdrawnPartDuplicateToItsCell(int slot)
+    {
+        if (_inst.Exists(instruction => instruction is IrInst.LoadLocal load && load.Slot == slot))
+        {
+            return;
+        }
+
+        for (int index = 0; index < _inst.Count; index++)
+        {
+            if (_inst[index] is IrInst.StoreLocal store
+                && store.Slot == slot
+                && _inst.FindLast(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == store.Source)
+                    is IrInst.RcDup stored)
+            {
+                _inst[index] = store with { Source = stored.SourceTemp };
+            }
+        }
     }
 
     private void KeepLoopResultPartDuplicatesOfArenaCell(List<(int Temp, TypeRef Type)> duplicates, bool cellReferenceCounted)

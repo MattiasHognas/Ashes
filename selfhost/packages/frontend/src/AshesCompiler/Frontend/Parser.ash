@@ -580,16 +580,19 @@ let parserNeedsParts (needsRow: NeedsRowSyntax) =
                 capabilities
             ), tailVariable)
 
+// A pipe that begins its own source line and is followed by an arm head reaching `->` starts the
+// next arm even when that head is an or-pattern, whose alternatives are separated by further
+// pipes; an inline pipe followed by another top-level pipe stays the bitwise-or operator.
 let parserPipeStartsArm (state: ParserState) =
-    (let recursive scan (tokens: List(Token)) parenthesisDepth bracketDepth =
+    (let recursive scan (tokens: List(Token)) parenthesisDepth bracketDepth startsLine =
         match tokens with
             | [] -> false
             | token :: tail ->
                 match token.kind with
-                    | LParen -> scan(tail)(parenthesisDepth + 1)(bracketDepth)
-                    | RParen -> scan(tail)(parenthesisDepth - 1)(bracketDepth)
-                    | LBracket -> scan(tail)(parenthesisDepth)(bracketDepth + 1)
-                    | RBracket -> scan(tail)(parenthesisDepth)(bracketDepth - 1)
+                    | LParen -> scan(tail)(parenthesisDepth + 1)(bracketDepth)(startsLine)
+                    | RParen -> scan(tail)(parenthesisDepth - 1)(bracketDepth)(startsLine)
+                    | LBracket -> scan(tail)(parenthesisDepth)(bracketDepth + 1)(startsLine)
+                    | RBracket -> scan(tail)(parenthesisDepth)(bracketDepth - 1)(startsLine)
                     | Arrow ->
                         if parenthesisDepth == 0
                         then bracketDepth == 0
@@ -598,16 +601,22 @@ let parserPipeStartsArm (state: ParserState) =
                         if parenthesisDepth == 0
                         then
                             if bracketDepth == 0
-                            then false
-                            else scan(tail)(parenthesisDepth)(bracketDepth)
-                        else scan(tail)(parenthesisDepth)(bracketDepth)
+                            then
+                                if startsLine
+                                then scan(tail)(parenthesisDepth)(bracketDepth)(startsLine)
+                                else false
+                            else scan(tail)(parenthesisDepth)(bracketDepth)(startsLine)
+                        else scan(tail)(parenthesisDepth)(bracketDepth)(startsLine)
                     | EOF -> false
-                    | _ -> scan(tail)(parenthesisDepth)(bracketDepth)
+                    | _ -> scan(tail)(parenthesisDepth)(bracketDepth)(startsLine)
     in
         match state with
-            | (pipe :: tail, _diagnostics, _source, _withSuppressed) ->
+            | (pipe :: tail, _diagnostics, source, _withSuppressed) ->
                 if pipe.kind == Pipe
-                then scan(tail)(0)(0)
+                then
+                    pipe.position
+                    |> parserStartsSourceLine(source)
+                    |> scan(tail)(0)(0)
                 else false
             | _ -> false)
 

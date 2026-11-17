@@ -1,6 +1,7 @@
 import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 export (
     value runTcoParameterHeadCellTests,

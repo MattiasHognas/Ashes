@@ -16,11 +16,13 @@ export (
     value exprMentionsName,
     value exprReadsName,
     value programMentionsVariable,
+    value exprContainsAwait,
 )
 
 let recursive exprMentionsWith (qualifiers: Bool) (name: Str) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> exprMentionsWith(qualifiers)(name)(inner)
+        | ExprNode(_node, inner) -> exprMentionsWith(qualifiers)(name)(inner)
         | ExprVar(candidate) -> candidate == name
         | ExprQualifiedVar(qualifier, _member) -> qualifiers && qualifier == name
         | ExprAdd(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
@@ -104,3 +106,68 @@ let recursive itemsMentionName (name: Str) (items: List(TopLevelItem)) =
 let programMentionsVariable (name: Str) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } -> itemsMentionName(name)(items) || exprMentionsGuard(false)(name)(body)
+
+// Whether an expression awaits anywhere inside it, nested lambdas included: stage 0's
+// `ExprContainsAwait`, which decides whether an `async` body is a suspending coroutine or a task
+// that completes without suspending.
+let recursive exprContainsAwait (expression: Expr) =
+    match expression with
+        | ExprAwait(_operand) -> true
+        | ExprAt(_span, inner) -> exprContainsAwait(inner)
+        | ExprNode(_node, inner) -> exprContainsAwait(inner)
+        | ExprAdd(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprSubtract(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprMultiply(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprDivide(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprModulo(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprBitwiseAnd(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprBitwiseOr(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprBitwiseXor(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprShiftLeft(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprShiftRight(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprBitwiseNot(operand) -> exprContainsAwait(operand)
+        | ExprLogicalNot(operand) -> exprContainsAwait(operand)
+        | ExprLogicalAnd(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprLogicalOr(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprGreaterThan(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprLessThan(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprGreaterOrEqual(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprLessOrEqual(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprEqual(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprNotEqual(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprResultPipe(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprResultMapErrorPipe(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprCons(left, right) -> exprContainsAwait(left) || exprContainsAwait(right)
+        | ExprLet(_name, value, body, _params, _annotation, _requirements) -> exprContainsAwait(value) || exprContainsAwait(body)
+        | ExprLetResult(_name, value, body) -> exprContainsAwait(value) || exprContainsAwait(body)
+        | ExprLetRecursive(_name, value, body, _params, _annotation, _requirements) -> exprContainsAwait(value) || exprContainsAwait(body)
+        | ExprIf(condition, thenBranch, elseBranch) -> exprContainsAwait(condition) || exprContainsAwait(thenBranch) || exprContainsAwait(elseBranch)
+        | ExprLambda(_parameter, body, _annotation) -> exprContainsAwait(body)
+        | ExprCall(function, argument, _isSugar, _layout) -> exprContainsAwait(function) || exprContainsAwait(argument)
+        | ExprTuple(elements) -> anyContainsAwait(elements)
+        | ExprList(elements, _isMultiline) -> anyContainsAwait(elements)
+        | ExprMatch(value, cases, _position) -> exprContainsAwait(value) || casesContainAwait(cases)
+        | ExprRecord(_ctorName, fields, _isMultiline) -> fieldsContainAwait(fields)
+        | ExprRecordUpdate(target, fields) -> exprContainsAwait(target) || fieldsContainAwait(fields)
+        | ExprPerform(operand) -> exprContainsAwait(operand)
+        | ExprHandle(operand, arms) -> exprContainsAwait(operand) || armsContainAwait(arms)
+        | _ -> false
+and anyContainsAwait (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | head :: rest -> exprContainsAwait(head) || anyContainsAwait(rest)
+and fieldsContainAwait (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> false
+        | (_fieldName, expression) :: rest -> exprContainsAwait(expression) || fieldsContainAwait(rest)
+and casesContainAwait (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | [] -> false
+        | (_pattern, body, guard) :: rest ->
+            match guard with
+                | Some(condition) -> exprContainsAwait(condition) || exprContainsAwait(body) || casesContainAwait(rest)
+                | None -> exprContainsAwait(body) || casesContainAwait(rest)
+and armsContainAwait (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
+    match arms with
+        | [] -> false
+        | (_binder, _operation, _patterns, body) :: rest -> exprContainsAwait(body) || armsContainAwait(rest)

@@ -1,0 +1,1 @@
+withDropperQueryContext(result.queryContext)(types)

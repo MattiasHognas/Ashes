@@ -753,7 +753,7 @@ let rejectsMissingWrittenBindingRequirement unit =
                 showDeclaration
             ), TopLevelLet(binding)(false)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal", _missingTypes))) } -> Unit
             | _ -> test.fail("written requires clauses should cover inferred requirements"))
 
 let rejectsUnjustifiedWrittenBindingRequirement unit =
@@ -767,7 +767,7 @@ let rejectsUnjustifiedWrittenBindingRequirement unit =
             match inferProgram(
                 ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal"))) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal", _extraTypes))) } -> Unit
                 | _ -> test.fail("written requires clauses should not introduce unjustified evidence"))
 
 let rejectsAmbiguousWrittenBindingRequirement unit =
@@ -779,7 +779,7 @@ let rejectsAmbiguousWrittenBindingRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousTraitRequirement("Equal"))) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousTraitRequirement("Equal", _ambiguousTypes))) } -> Unit
             | _ -> test.fail("written requirement variables should occur in the binding type"))
 
 let rejectsInvalidWrittenBindingRequirements unit =
@@ -820,7 +820,7 @@ let rejectsNestedMissingWrittenBindingRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(showDeclaration)], body = Some(nested))
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal", _missingTypes))) } -> Unit
             | _ -> test.fail("nested written requires clauses should be validated"))
 
 let acceptsRecursiveWrittenBindingRequirement unit =
@@ -856,7 +856,7 @@ let rejectsInvalidRequirementInRecursiveGroup unit =
                     [valid, invalid]
                 )], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal", _missingTypes))) } -> Unit
                 | _ -> test.fail("every member of a recursive group should validate its written requires clause"))
 
 let expectWrittenBindingRequirements unit =
@@ -973,7 +973,7 @@ let expectTraitImplementationCoherence unit =
                     eqDeclaration
                 ), TopLevelImplementation(exact), TopLevelImplementation(exact)], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                 | _ -> test.fail("exact duplicate implementation heads should overlap")
         in
             let concrete =
@@ -988,7 +988,7 @@ let expectTraitImplementationCoherence unit =
                             genericEqualImplementation
                         ), TopLevelImplementation(concrete)], body = None)
                     ) with
-                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                         | _ -> test.fail("generic and concrete heads should overlap")
                 in
                     let concreteFirstChecked =
@@ -999,7 +999,7 @@ let expectTraitImplementationCoherence unit =
                                 genericEqualImplementation
                             )], body = None)
                         ) with
-                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal", _firstSite, _conflictingSite)) } -> Unit
                             | _ -> test.fail("overlap detection should not depend on implementation order")
                     in
                         let pairTrait =
@@ -1228,7 +1228,7 @@ let rejectFullyForeignImplementation modelPackage unit =
     match inferProgramFromPackage("consumer")(modelPackage)(ProgramSyntax(items = [Unit
     |> ownedTypeImplementation
     |> TopLevelImplementation], body = None)) with
-        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal", _orphanHead, _orphanPackage)) } -> Unit
         | _ -> test.fail("a package should not implement a foreign trait for a foreign nominal type")
 
 let expectSameNameOwnedTypeImplementation modelPackage unit =
@@ -1250,7 +1250,7 @@ let rejectNestedLocalOrphan traitPackage unit =
             traitPackage,
             ProgramSyntax(items = [TopLevelType(cardType), TopLevelImplementation(implementation)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal", _orphanHead, _orphanPackage)) } -> Unit
             | _ -> test.fail("a local type nested under a structural head should not satisfy the orphan rule"))
 
 let expectOneOwnedHead traitPackage unit =

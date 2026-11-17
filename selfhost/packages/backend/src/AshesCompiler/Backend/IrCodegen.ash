@@ -30,7 +30,7 @@
 //   codegen does not implement panics with a clear "unsupported" message rather than silently
 //   producing wrong code.
 // - Every IR value is a full-width `i64` word (architecture.md: "every value is an i64 word"), so
-//   a temp environment is just `List((IrTemp, LLVMValueRef))` — no type-directed dispatch needed
+//   a temp environment is just a map from `IrTemp` to `LLVMValueRef` — no type-directed dispatch needed
 //   for this instruction subset. `Ashes.Number.UInt.fromInt64` (added alongside the first version
 //   of this slice) is what makes `LoadConstInt`'s dynamic `Int` payload usable with `constInt`'s
 //   `u64` parameter.
@@ -114,6 +114,7 @@ import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.RcRegion
 import AshesCompiler.Backend.IrCodegen.LeakCheck
 import AshesCompiler.Backend.IrCodegen.Filesystem
+import AshesCompiler.Backend.IrCodegen.Regex
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
 import AshesCompiler.Backend.IrCodegen.Console
@@ -124,15 +125,148 @@ import AshesCompiler.Backend.IrCodegen.BigInt
 import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
 import AshesCompiler.Backend.IrCodegen.ForeignStrings
+import AshesCompiler.Backend.IrCodegen.Tasks
+import AshesCompiler.Backend.IrCodegen.Parallel
+import AshesCompiler.Semantics.TaskStructLayout.TaskStateKind
 import Ashes.Number.UInt
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 export (
     value codegenEntryFunction,
     value codegenProgram,
     value codegenProgramWith,
+    value programUsesLibm,
+    value programUsesRegex,
+    value programUsesTls,
     value externalLibraries,
 )
 
 let externalLibraries (program: IrProgram) = collectExternalLibraries(program.externalFunctions)
+
+// The f64 intrinsics `Ashes.Number.Math` lowers to `FloatUnaryIntrinsic` (stage 0's
+// `EmitFloatUnaryIntrinsic` declares each on first use).
+let floatUnaryIntrinsicNames = ["llvm.sqrt.f64", "llvm.floor.f64", "llvm.ceil.f64", "llvm.round.f64", "llvm.trunc.f64"]
+
+let recursive declareFloatIntrinsics module_ floatUnaryType (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest -> (name, addFunction(module_)(name)(floatUnaryType)) :: declareFloatIntrinsics(module_)(floatUnaryType)(rest)
+
+let recursive lookupFloatIntrinsic (name: Str) (intrinsics: List((Str, LLVMValueRef))) =
+    match intrinsics with
+        | [] -> Ashes.IO.panic("codegen: undeclared float intrinsic " + name)
+        | (candidate, function_) :: rest ->
+            if candidate == name
+            then function_
+            else lookupFloatIntrinsic(name)(rest)
+
+// The openlibm functions `CallLibm` names in the program, each with its argument count: stage 0's
+// `EmitCallLibm` declares each f64 function on first use, and the openlibm bitcode linked into the
+// module after optimization defines it.
+let recursive libmArgumentCount (arguments: List(Int)) =
+    match arguments with
+        | [] -> 0
+        | _argument :: rest -> 1 + libmArgumentCount(rest)
+
+let recursive libmSymbolListed (symbol: Str) (found: List((Str, Int))) =
+    match found with
+        | [] -> false
+        | (candidate, _arity) :: rest -> candidate == symbol || libmSymbolListed(symbol)(rest)
+
+let recursive libmCallsIn (instructions: List(IrInstruction)) (found: List((Str, Int))) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = CallLibm(_target, symbol, arguments) } :: rest ->
+            if libmSymbolListed(symbol)(found)
+            then libmCallsIn(rest)(found)
+            else libmCallsIn(rest)((symbol, libmArgumentCount(arguments)) :: found)
+        | _instruction :: rest -> libmCallsIn(rest)(found)
+
+let recursive libmCallsInFunctions (functions: List(IrFunction)) (found: List((Str, Int))) =
+    match functions with
+        | [] -> found
+        | IrFunction { instructions = instructions } :: rest ->
+            found
+            |> libmCallsIn(instructions)
+            |> libmCallsInFunctions(rest)
+
+let recursive doubleParameters (count: Int) doubleType_ =
+    if count <= 0
+    then []
+    else doubleType_ :: doubleParameters(count - 1)(doubleType_)
+
+let libmArity (count: Int) =
+    match count with
+        | 0 -> 0u32
+        | 1 -> 1u32
+        | 2 -> 2u32
+        | _ -> 3u32
+
+let recursive declareLibmFunctions module_ context (calls: List((Str, Int))) =
+    match calls with
+        | [] -> []
+        | (symbol, arity) :: rest ->
+            let libmType =
+                functionType(doubleType(context))(context
+                |> doubleType
+                |> doubleParameters(arity))(libmArity(arity))(false)
+            in (symbol, addFunction(module_)(symbol)(libmType), libmType) :: declareLibmFunctions(module_)(context)(rest)
+
+let recursive lookupLibmFunction (symbol: Str) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) =
+    match functions with
+        | [] -> Ashes.IO.panic("codegen: undeclared libm function " + symbol)
+        | (candidate, function_, functionType_) :: rest ->
+            if candidate == symbol
+            then (function_, functionType_)
+            else lookupLibmFunction(symbol)(rest)
+
+// Whether the program calls an openlibm function, so the module needs the openlibm payload.
+let programUsesLibm (program: IrProgram) =
+    match libmCallsInFunctions(program.entryFunction :: program.functions)([]) with
+        | [] -> false
+        | _calls -> true
+
+let recursive instructionsUseRegex (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RegexCompile(_, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexCompileError(_, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexFind(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexCaptures(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexSubstitute(_, _, _, _) } :: _rest -> true
+        | _instruction :: rest -> instructionsUseRegex(rest)
+
+let recursive functionsUseRegex (functions: List(IrFunction)) =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseRegex(instructions) || functionsUseRegex(rest)
+
+// Whether the program uses `Ashes.Text.Regex`, so the module needs the PCRE2 payload.
+let programUsesRegex (program: IrProgram) = functionsUseRegex(program.entryFunction :: program.functions)
+
+let recursive instructionsUseTls (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = HttpGet(_, _) } :: _rest -> true
+        | IrInstruction { instruction = HttpPost(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateHttpGetTask(_, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateHttpPostTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsConnectTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsHandshakeTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsServerHandshakeTask(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsSendTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsReceiveTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsCloseTask(_, _) } :: _rest -> true
+        | _instruction :: rest -> instructionsUseTls(rest)
+
+let recursive functionsUseTls (functions: List(IrFunction)) =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseTls(instructions) || functionsUseTls(rest)
+
+// Whether the program reaches HTTPS or TLS, so the module needs the Mbed TLS payload (stage 0's
+// `ProgramUsesTlsRuntimeAbi`).
+let programUsesTls (program: IrProgram) = functionsUseTls(program.entryFunction :: program.functions)
 
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
@@ -149,11 +283,18 @@ type ExternalFunctions =
     | memcpyFn: LLVMValueRef
     | memcpyType: LLVMTypeRef
     | directoryExternals: DirectoryExternals
+    // The f64 LLVM intrinsics `FloatUnaryIntrinsic` names, each declared once, and their type.
+    | floatUnaryType: LLVMTypeRef
+    | floatIntrinsics: List((Str, LLVMValueRef))
+    // The openlibm functions the program calls, each declared once: name, function, type.
+    | libmFunctions: List((Str, LLVMValueRef, LLVMTypeRef))
+    // The PCRE2 entry points, declared when the program uses `Ashes.Text.Regex`.
+    | pcre2Functions: List((Str, LLVMValueRef, LLVMTypeRef))
     | rcRegion: RcRegionRuntime
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
 // `malloc` and `free` for what the region does not hold.
-let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
+let declareExternalFunctions module_ context builder types (leakCheck: Bool) (threads: Bool) =
     (let mallocType = functionType(types.ptrType)([types.i64])(1u32)(false)
     in
         let freeType =
@@ -163,21 +304,28 @@ let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
             in
                 let memcpyType = functionType(types.ptrType)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
                 in
-                    let region =
-                        defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)
+                    let floatUnaryType =
+                        functionType(doubleType(context))([doubleType(context)])(1u32)(false)
                     in
-                        ExternalFunctions(
-                            mallocFn = region.allocFn,
-                            mallocType = mallocType,
-                            freeFn = region.freeFn,
-                            freeType = freeType,
-                            rcRegion = region,
-                            memcmpFn = addFunction(module_)("memcmp")(memcmpType),
-                            memcmpType = memcmpType,
-                            memcpyFn = addFunction(module_)("memcpy")(memcpyType),
-                            memcpyType = memcpyType,
-                            directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types)
-                        ))
+                        let region =
+                            defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)(threads)
+                        in
+                            ExternalFunctions(
+                                mallocFn = region.allocFn,
+                                mallocType = mallocType,
+                                freeFn = region.freeFn,
+                                freeType = freeType,
+                                rcRegion = region,
+                                memcmpFn = addFunction(module_)("memcmp")(memcmpType),
+                                memcmpType = memcmpType,
+                                memcpyFn = addFunction(module_)("memcpy")(memcpyType),
+                                memcpyType = memcpyType,
+                                directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types),
+                                floatUnaryType = floatUnaryType,
+                                floatIntrinsics = declareFloatIntrinsics(module_)(floatUnaryType)(floatUnaryIntrinsicNames),
+                                libmFunctions = [],
+                                pcre2Functions = []
+                            ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
 // instead of an ever-growing parameter list; only `tempEnv` (in `codegenInstructionKind`'s own
@@ -188,31 +336,38 @@ type CodegenContext =
     | function_: LLVMValueRef
     | types: CoreLlvmTypes
     | externals: ExternalFunctions
-    | localSlots: List((IrLocal, LLVMValueRef))
-    | labelBlocks: List((Str, LLVMBasicBlockRef))
-    | stringLiteralGlobals: List((Str, LLVMValueRef))
-    | liftedFunctions: List((Str, LLVMValueRef))
+    | localSlots: MapTree(Int, LLVMValueRef)
+    | labelBlocks: MapTree(Str, LLVMBasicBlockRef)
+    | stringLiteralGlobals: MapTree(Str, LLVMValueRef)
+    | liftedFunctions: MapTree(Str, LLVMValueRef)
+    // Every closure with an environment normalizer, paired with it, in declaration order.
+    | closureNormalizers: List((LLVMValueRef, LLVMValueRef))
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
     | programArgsGlobal: LLVMValueRef
     | externalSymbols: List(ExternalSymbolDeclaration)
-    | capabilityHandlerGlobals: List((Int, LLVMValueRef))
-    | nullaryCellGlobals: List((Int, LLVMValueRef))
+    | capabilityHandlerGlobals: MapTree(Int, LLVMValueRef)
+    | nullaryCellGlobals: MapTree(Int, LLVMValueRef)
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
     | copyRuntime: Maybe(CopyRuntime)
     | bigIntRuntime: Maybe(BigIntRuntime)
+    | taskRuntime: Maybe(TaskRuntime)
+    | parallelRuntime: Maybe(ParallelRuntime)
     | isEntry: Bool
 
 // A temp read in a block only dead code branches to, whose definition the optimizer's
 // unreachable-code elision removed: read as zero, which is what stage 0 reads from the slot it
 // never stored. Every other temp is defined before it is read.
-let lookupTemp (cx: CodegenContext) key tempEnv =
-    match findIndexed(key)(tempEnv) with
+let lookupTemp (cx: CodegenContext) (key: Int) (tempEnv: MapTree(Int, LLVMValueRef)) =
+    match Ashes.Collection.Map.getInt(key)(tempEnv) with
         | Some(value) -> value
         | None ->
             match cx.types with
                 | CoreLlvmTypes { i64 = i64 } -> constInt(i64)(0u64)(false)
+
+// The temp environment with `target` bound to the value just built for it.
+let bindTemp (target: Int) (value: LLVMValueRef) (tempEnv: MapTree(Int, LLVMValueRef)) = Ashes.Collection.Map.setInt(target)(value)(tempEnv)
 
 // Everything shared by every function in one module — computed once by `codegenFunctions`, then
 // handed to each function body's own `CodegenContext` construction unchanged.
@@ -221,8 +376,9 @@ type ModuleCodegen =
     | moduleContext: LLVMContextRef
     | moduleTypes: CoreLlvmTypes
     | moduleExternals: ExternalFunctions
-    | moduleStringLiteralGlobals: List((Str, LLVMValueRef))
-    | moduleLiftedFunctions: List((Str, LLVMValueRef))
+    | moduleStringLiteralGlobals: MapTree(Str, LLVMValueRef)
+    | moduleLiftedFunctions: MapTree(Str, LLVMValueRef)
+    | moduleClosureNormalizers: List((LLVMValueRef, LLVMValueRef))
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
     | moduleProgramArgsGlobal: LLVMValueRef
@@ -231,13 +387,15 @@ type ModuleCodegen =
     | moduleUsesProgramArgs: Bool
     // Every `external` C symbol the program calls, declared once for the module.
     | moduleExternalSymbols: List(ExternalSymbolDeclaration)
-    | moduleCapabilityHandlerGlobals: List((Int, LLVMValueRef))
+    | moduleCapabilityHandlerGlobals: MapTree(Int, LLVMValueRef)
     // One address slot per tag a runtime-managed nullary constructor is allocated with.
-    | moduleNullaryCellGlobals: List((Int, LLVMValueRef))
+    | moduleNullaryCellGlobals: MapTree(Int, LLVMValueRef)
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
     | moduleCopyRuntime: Maybe(CopyRuntime)
     | moduleBigIntRuntime: Maybe(BigIntRuntime)
+    | moduleTaskRuntime: Maybe(TaskRuntime)
+    | moduleParallelRuntime: Maybe(ParallelRuntime)
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -407,18 +565,25 @@ let recursive addResolvedSwitchCases switchInst i64 resolved =
                 addCase(switchInst)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(true))(block)
             in addResolvedSwitchCases(switchInst)(i64)(rest)
 
+// A libm call's f64 arguments: each temp's word read back as the double it holds.
+let recursive floatArguments context builder (cx: CodegenContext) (tempEnv: MapTree(Int, LLVMValueRef)) (arguments: List(Int)) =
+    match arguments with
+        | [] -> []
+        | argument :: rest ->
+            buildBitCast(builder)(lookupTemp(cx)(argument)(tempEnv))(doubleType(context))("libm_argument") :: floatArguments(context)(builder)(cx)(tempEnv)(rest)
+
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, taskRuntime = taskRuntime, parallelRuntime = parallelRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
                                 | ExternalFunctions { mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, memcpyFn = memcpyFn, memcpyType = memcpyType, directoryExternals = directoryExternals } ->
                                     match kind with
                                         | LoadConstInt(target, value) ->
-                                            ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
+                                            (bindTemp(target)(constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true))(tempEnv), terminated)
                         // Represented the same as every other scalar in `tempEnv` — a plain `i64`
                         // (0 or 1), matching `StoreLocal`/`LoadLocal`'s uniform `i64` local slots.
                         // `CmpIntGt`/`CmpIntEq`/`CmpIntNe` below zero-extend their native `i1`
@@ -426,9 +591,9 @@ let codegenInstructionKind cx builder kind state =
                         // value must round-trip through a local slot (the `&&`/`||` desugaring in
                         // `CoreLowering.ash` stores its branch result into one) with no bits lost.
                                         | LoadConstBool(target, value) ->
-                                            ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(if value
+                                            (bindTemp(target)(constInt(i64)(Ashes.Number.UInt.fromInt64(if value
                                             then 1
-                                            else 0))(true)) :: tempEnv, terminated)
+                                            else 0))(true))(tempEnv), terminated)
                         // The global's own value IS a pointer (to its header word), so the value
                         // pointer (past the header, matching `AllocAdt`'s own convention) is just a
                         // `+16` byte GEP off it directly — no `buildIntToPtr` round-trip needed
@@ -437,49 +602,50 @@ let codegenInstructionKind cx builder kind state =
                                             let global = lookupIndexedStr(label)(stringLiteralGlobals)
                                             in
                                                 let valuePtr = gepBytes(builder)(i64)(i8)(global)(16)("str_lit_value_ptr")
-                                                in ((target, buildPtrToInt(builder)(valuePtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                in
+                                                    (bindTemp(target)(buildPtrToInt(builder)(valuePtr)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | MulInt(target, left, right) ->
-                                            ((target, buildMul(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildMul(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AddInt(target, left, right) ->
-                                            ((target, buildAdd(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildAdd(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | SubInt(target, left, right) ->
-                                            ((target, buildSub(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildSub(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | DivInt(target, left, right) ->
-                                            ((target, buildSDiv(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildSDiv(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | DivUInt(target, left, right) ->
-                                            ((target, buildUDiv(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildUDiv(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AndInt(target, left, right) ->
-                                            ((target, buildAnd(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildAnd(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | OrInt(target, left, right) ->
-                                            ((target, buildOr(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildOr(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | XorInt(target, left, right) ->
-                                            ((target, buildXor(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildXor(builder)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // Both shifts mask the amount to `0..63` first, exactly as
                         // `LlvmCodegenExpressions.cs`'s `EmitShiftInt` does: an LLVM shift by 64 or
                         // more is poison, and `>>` on `Int` is the LOGICAL right shift (`lshr`),
                         // never arithmetic — the same choice stage 0 makes.
                                         | ShlInt(target, left, right) ->
-                                            ((target, buildShl(builder)(lookupTemp(cx)(left)(tempEnv))(tempEnv
+                                            (bindTemp(target)(buildShl(builder)(lookupTemp(cx)(left)(tempEnv))(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | ShrInt(target, left, right) ->
-                                            ((target, buildLShr(builder)(lookupTemp(cx)(left)(tempEnv))(tempEnv
+                                            (bindTemp(target)(buildLShr(builder)(lookupTemp(cx)(left)(tempEnv))(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpIntGe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSge)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateSge)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpIntLt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSlt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateSlt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpIntLe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSle)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateSle)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpUIntGt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUgt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateUgt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpUIntGe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUge)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateUge)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpUIntLt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUlt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateUlt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpUIntLe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUle)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateUle)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | PrintBool(source) ->
                                             let _ =
                                                 tempEnv
@@ -487,17 +653,17 @@ let codegenInstructionKind cx builder kind state =
                                                 |> emitPrintBool(context)(function_)(i64)(i8)(builder)
                                             in (tempEnv, false)
                                         | CmpIntGt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSgt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateSgt)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpIntEq(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateEq)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateEq)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpIntNe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateNe)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildICmp(builder)(intPredicateNe)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpStrEq(target, left, right) ->
                                             let result =
                                                 tempEnv
                                                 |> lookupTemp(cx)(right)
                                                 |> emitStringEquals(context)(function_)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupTemp(cx)(left)(tempEnv))
-                                            in ((target, result) :: tempEnv, terminated)
+                                            in (bindTemp(target)(result)(tempEnv), terminated)
                         // `1 - equalResult`, not a second comparison: `emitStringEquals` always
                         // returns exactly `0` or `1`, so inverting it arithmetically is sound and
                         // needs no extra branch beyond the one `CmpStrEq` already builds.
@@ -509,11 +675,11 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let result =
                                                     buildSub(builder)(constInt(i64)(1u64)(false))(equalResult)("t" + Ashes.Text.fromInt(target))
-                                                in ((target, result) :: tempEnv, terminated)
+                                                in (bindTemp(target)(result)(tempEnv), terminated)
                         // `IrOptimizer.ash`'s `foldConcatStrChains` runs as the very last pass over
                         // the whole program and rewrites every `ConcatStr` it can safely fold into
                         // a `ConcatStrN` (declined only when an arena/stack bracket, a label, or a
-                        // branch sits between the chain's parts — `chainRangeIsSafe`), so real
+                        // branch sits between the chain's parts — `chainRangeReleases`), so real
                         // source reaching this codegen almost always presents as `ConcatStrN`, not
                         // a bare two-operand `ConcatStr` — this case exists for robustness against
                         // whatever the fold declines, sharing the exact same N-ary helper with a
@@ -523,196 +689,241 @@ let codegenInstructionKind cx builder kind state =
                         // resolves its temps via `lookupIndexedInt` — so `emitStringConcatN` and its
                         // helpers take plain `List(LLVMValueRef)` and never touch `tempEnv`.
                                         | BytesGet(target, bytes, index) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(index)
-                                            |> emitBytesGet(context)(function_)(i64)(i8)(ptrType)(builder)(lookupTemp(cx)(bytes)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesGet(context)(function_)(i64)(i8)(ptrType)(builder)(lookupTemp(cx)(bytes)(tempEnv)))(tempEnv), terminated)
                                         | BytesIndexOf(target, bytes, needle, from) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(from)
-                                            |> emitBytesIndexOf(context)(function_)(i64)(i8)(ptrType)(builder)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesIndexOf(context)(function_)(i64)(i8)(ptrType)(builder)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv)))(tempEnv), terminated)
                                         | BytesCompare(target, left, right) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> emitBytesCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupTemp(cx)(left)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
                                         | BytesSubText(target, bytes, start, count, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(count)
-                                            |> emitBytesSubText(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesSubText(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv)))(tempEnv), terminated)
                                         | BytesSubView(target, bytes, start, count) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(count)
-                                            |> emitBytesSubView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesSubView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv)))(tempEnv), terminated)
                         // A Float value travels through the uniform `i64` word as its raw `f64`
                         // bits — bitcast to `double` around each operation and back for storage,
                         // `LlvmCodegen.cs`'s `LoadTempAsFloat` shape exactly; an `fcmp` result
                         // zero-extends to the canonical 0/1 `i64` like every int comparison.
                                         | LoadConstFloat(target, value) ->
-                                            ((target, buildBitCast(builder)(constReal(doubleType(context))(value))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(constReal(doubleType(context))(value))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | IntToFloat(target, value) ->
-                                            ((target, buildBitCast(builder)(buildSIToFP(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("int_to_float"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(buildSIToFP(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("int_to_float"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | FloatUnaryIntrinsic(target, value, intrinsic) ->
+                                            let result =
+                                                buildCall(builder)(externals.floatUnaryType)(lookupFloatIntrinsic(intrinsic)(externals.floatIntrinsics))([buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_intrinsic_operand")])(1u32)("float_intrinsic")
+                                            in
+                                                (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | RegexCompile(target, pattern) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(pattern)
+                                                |> emitRegexCompile(builder)(i64)(types.i32)(ptrType)(externals.pcre2Functions)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexCompileError(target, pattern) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(pattern)
+                                                |> emitRegexCompileError(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(memcpyFn)(memcpyType)(externals.pcre2Functions)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexFind(target, code, subject, start) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(start)
+                                                |> emitRegexFind(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexCaptures(target, code, subject, start) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(start)
+                                                |> emitRegexCaptures(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexSubstitute(target, code, subject, replacement) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(replacement)
+                                                |> emitRegexSubstitute(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(memcpyFn)(memcpyType)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | CallLibm(target, symbol, arguments) ->
+                                            match lookupLibmFunction(symbol)(externals.libmFunctions) with
+                                                | (libmFunction, libmType) ->
+                                                    let result =
+                                                        buildCall(builder)(libmType)(libmFunction)(floatArguments(context)(builder)(cx)(tempEnv)(arguments))(arguments
+                                                        |> libmArgumentCount
+                                                        |> libmArity)("libm_" + symbol)
+                                                    in
+                                                        (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | FloatToInt(target, value) ->
-                                            ((target, buildFPToSI(builder)(buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_to_int_value"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildFPToSI(builder)(buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_to_int_value"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AddFloat(target, left, right) ->
-                                            ((target, buildBitCast(builder)(buildFAdd(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fadd" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(buildFAdd(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fadd" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | SubFloat(target, left, right) ->
-                                            ((target, buildBitCast(builder)(buildFSub(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fsub" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(buildFSub(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fsub" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | MulFloat(target, left, right) ->
-                                            ((target, buildBitCast(builder)(buildFMul(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fmul" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(buildFMul(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fmul" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | DivFloat(target, left, right) ->
-                                            ((target, buildBitCast(builder)(buildFDiv(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fdiv" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildBitCast(builder)(buildFDiv(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fdiv" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatEq(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOeq)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOeq)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatNe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOne)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOne)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatGt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOgt)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOgt)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatGe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOge)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOge)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatLt(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOlt)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOlt)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CmpFloatLe(target, left, right) ->
-                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOle)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildZExt(builder)(buildFCmp(builder)(realPredicateOle)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | TextUnconsText(target, text, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(true))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(true))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | RuneToText(target, rune, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(rune)
-                                            |> emitRuneToText(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitRuneToText(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | RuneFromInt(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitRuneFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitRuneFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | TextFromInt(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
                                             |> emitTextFromInt(context)(function_)(i64)(builder)(given (srcBytesAddr) ->
-                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_int"))) :: tempEnv, terminated)
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_int")))(tempEnv), terminated)
                                         | TextFromFloat(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
                                             |> emitTextFromFloat(context)(function_)(builder)(i64)(i8)(given (srcBytesAddr) ->
-                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_float"))) :: tempEnv, terminated)
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_float")))(tempEnv), terminated)
                                         | TextFormatFloat(target, value, decimals, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(decimals)
                                             |> emitTextFormatFloat(context)(function_)(builder)(i64)(i8)(given (srcBytesAddr) ->
-                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("format_float"))(lookupTemp(cx)(value)(tempEnv))) :: tempEnv, terminated)
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("format_float"))(lookupTemp(cx)(value)(tempEnv)))(tempEnv), terminated)
                                         | BigIntFromInt(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(managed)) :: tempEnv, terminated)
+                                            |> emitBigIntFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(managed))(tempEnv), terminated)
                                         | BigIntToString(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)) :: tempEnv, terminated)
+                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed))(tempEnv), terminated)
                                         | BigIntToInt(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntToInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                            |> emitBigIntToInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BigIntFromString(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BigIntBinary(target, left, right, operation, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
                                         | BigIntCompare(target, left, right) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> emitBigIntCompare(builder)(ptrType)(bigIntRuntimeOf(bigIntRuntime))(lookupTemp(cx)(left)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBigIntCompare(builder)(ptrType)(bigIntRuntimeOf(bigIntRuntime))(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
                                         | TextAsciiCase(target, source, upper, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(source)
                                             |> emitTextAsciiCase(context)(function_)(builder)(i64)(i8)(ptrType)(given (srcBytesAddr) ->
-                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("ascii_case"))(upper)) :: tempEnv, terminated)
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("ascii_case"))(upper))(tempEnv), terminated)
                                         | TextByteLength(target, text) ->
-                                            ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupTemp(cx)(text)(tempEnv))("text_byte_length")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitStringLengthValue(builder)(i64)(ptrType)(lookupTemp(cx)(text)(tempEnv))("text_byte_length"))(tempEnv), terminated)
                                         | BytesLength(target, bytes) ->
-                                            ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupTemp(cx)(bytes)(tempEnv))("bytes_length")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitStringLengthValue(builder)(i64)(ptrType)(lookupTemp(cx)(bytes)(tempEnv))("bytes_length"))(tempEnv), terminated)
                                         | TextUncons(target, text, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextUncons(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(false))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitTextUncons(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(false))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | TextParseInt(target, text, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextParseInt(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                            |> emitTextParseInt(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | TextParseFloat(target, text, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                            |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BytesSingleton(target, byte, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(byte)
-                                            |> emitBytesSingleton(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitBytesSingleton(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | BytesHash(target, bytes) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(bytes)
-                                            |> emitBytesHash(context)(function_)(i64)(i8)(ptrType)(builder)) :: tempEnv, terminated)
+                                            |> emitBytesHash(context)(function_)(i64)(i8)(ptrType)(builder))(tempEnv), terminated)
                                         | BytesAppendByte(target, bytes, byte, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(byte)
-                                            |> emitBytesAppendByte(builder)(i64)(i8)(ptrType)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(memcpyFn)(memcpyType)(lookupTemp(cx)(bytes)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesAppendByte(builder)(i64)(i8)(ptrType)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(memcpyFn)(memcpyType)(lookupTemp(cx)(bytes)(tempEnv)))(tempEnv), terminated)
                                         | BytesAllocate(target, length, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(length)
-                                            |> emitBytesAllocate(context)(function_)(i64)(i8)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                            |> emitBytesAllocate(context)(function_)(i64)(i8)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)))(tempEnv), terminated)
                                         | BytesFromList(target, list, managed, reversed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(list)
-                                            |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(reversed)) :: tempEnv, terminated)
+                                            |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(reversed))(tempEnv), terminated)
                                         | BytesEmpty(target, managed) ->
-                                            ((target, managed
+                                            (bindTemp(target)(managed
                                             |> emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)
-                                            |> emitBytesEmpty(builder)(i64)(i8)) :: tempEnv, terminated)
-                                        | BytesAppend(target, left, right, managed) -> ((target, emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)([lookupTemp(cx)(left)(tempEnv), lookupTemp(cx)(right)(tempEnv)])) :: tempEnv, terminated)
+                                            |> emitBytesEmpty(builder)(i64)(i8))(tempEnv), terminated)
+                                        | BytesAppend(target, left, right, managed) ->
+                                            (bindTemp(target)(emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)([lookupTemp(cx)(left)(tempEnv), lookupTemp(cx)(right)(tempEnv)]))(tempEnv), terminated)
                                         | BytesU16Le(target, value, managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(2)(lookupTemp(cx)(value)(tempEnv))("bytes_u16")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(2)(lookupTemp(cx)(value)(tempEnv))("bytes_u16"))(tempEnv), terminated)
                                         | BytesU32Le(target, value, managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(4)(lookupTemp(cx)(value)(tempEnv))("bytes_u32")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(4)(lookupTemp(cx)(value)(tempEnv))("bytes_u32"))(tempEnv), terminated)
                                         | BytesU64Le(target, value, managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(8)(lookupTemp(cx)(value)(tempEnv))("bytes_u64")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(8)(lookupTemp(cx)(value)(tempEnv))("bytes_u64"))(tempEnv), terminated)
                                         | BytesGetU16Le(target, bytes, offset) ->
-                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(2)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 49, 54, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu16")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(2)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 49, 54, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu16"))(tempEnv), terminated)
                                         | BytesGetU32Le(target, bytes, offset) ->
-                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(4)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 51, 50, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu32")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(4)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 51, 50, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu32"))(tempEnv), terminated)
                                         | BytesGetU64Le(target, bytes, offset) ->
-                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(8)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 54, 52, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu64")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(8)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 54, 52, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(offset)(tempEnv))("bytes_getu64"))(tempEnv), terminated)
                                         | BytesSet(target, bytes, index, item, reuse, managed) ->
-                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(1)([66, 121, 116, 101, 115, 46, 115, 101, 116, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_set")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(1)([66, 121, 116, 101, 115, 46, 115, 101, 116, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_set"))(tempEnv), terminated)
                                         | BytesSetU16Le(target, bytes, index, item, reuse, managed) ->
-                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(2)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 49, 54, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu16")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(2)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 49, 54, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu16"))(tempEnv), terminated)
                                         | BytesSetU32Le(target, bytes, index, item, reuse, managed) ->
-                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(4)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 51, 50, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu32")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(4)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 51, 50, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu32"))(tempEnv), terminated)
                                         | BytesSetU64Le(target, bytes, index, item, reuse, managed) ->
-                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(8)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 54, 52, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu64")) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(8)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 54, 52, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(index)(tempEnv))(lookupTemp(cx)(item)(tempEnv))("bytes_setu64"))(tempEnv), terminated)
                                         | BytesCopyRange(target, first, firstOffset, second, secondOffset, length, reuse, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(length)
-                                            |> emitBytesCopyRange(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(memcpyFn)(memcpyType)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(firstOffset)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(secondOffset)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesCopyRange(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(reuse)(memcpyFn)(memcpyType)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(firstOffset)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(secondOffset)(tempEnv)))(tempEnv), terminated)
                                         | BytesScanHash(target, bytes, needle, from) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(from)
-                                            |> emitBytesScanHash(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesScanHash(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv)))(tempEnv), terminated)
                                         | TextToHex(target, value, managed) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                            |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | ConcatStr(target, left, right, managed) ->
                                             let result =
                                                 emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(
                                                     [lookupTemp(cx)(left)(tempEnv), lookupTemp(cx)(right)(tempEnv)]
                                                 )
-                                            in ((target, result) :: tempEnv, terminated)
+                                            in (bindTemp(target)(result)(tempEnv), terminated)
                                         | ConcatStrN(target, parts, managed) ->
                                             let result =
                                                 emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(
                                                     Ashes.Collection.List.map(given (part) -> lookupTemp(cx)(part)(tempEnv))(parts)
                                                 )
-                                            in ((target, result) :: tempEnv, terminated)
+                                            in (bindTemp(target)(result)(tempEnv), terminated)
                         // The affine accumulator append grows its reservation in place — see
                         // `IrCodegen.Arena`'s `emitConcatStrTip`.
                                         | ConcatStrTip(target, left, right, resvStartSlot, resvEndSlot, managed) ->
@@ -720,29 +931,31 @@ let codegenInstructionKind cx builder kind state =
                                                 localSlots
                                                 |> lookupIndexedInt(resvEndSlot)
                                                 |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
-                                            in ((target, result) :: tempEnv, terminated)
+                                            in (bindTemp(target)(result)(tempEnv), terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
-                                        | Borrow(target, sourceTemp) -> ((target, lookupTemp(cx)(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                        | Borrow(target, sourceTemp) ->
+                                            (bindTemp(target)(lookupTemp(cx)(sourceTemp)(tempEnv))(tempEnv), terminated)
                         // An ordinary (arena) `RcDup` is a placement marker with no count to
                         // retain: an alias, like `Borrow`. The RC-managed form is the real retain
                         // (`IrCodegen.Rc`), identity-preserving so the target is the same word.
                                         | RcDup(target, sourceTemp, runtimeManaged, mayBeEmpty) ->
                                             if runtimeManaged
                                             then
-                                                ((target, tempEnv
+                                                (bindTemp(target)(tempEnv
                                                 |> lookupTemp(cx)(sourceTemp)
-                                                |> emitRuntimeManagedDup(context)(function_)(i64)(i8)(ptrType)(builder)(mayBeEmpty)) :: tempEnv, terminated)
-                                            else ((target, lookupTemp(cx)(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                                |> emitRuntimeManagedDup(context)(function_)(i64)(i8)(ptrType)(builder)(mayBeEmpty))(tempEnv), terminated)
+                                            else
+                                                (bindTemp(target)(lookupTemp(cx)(sourceTemp)(tempEnv))(tempEnv), terminated)
                                         | RcIsUnique(target, sourceTemp) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(sourceTemp)
-                                            |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | IsReferenceCounted(target, sourceTemp) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(sourceTemp)
-                                            |> emitIsReferenceCountedIn(builder)(i64)(externals.rcRegion)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            |> emitIsReferenceCountedIn(builder)(i64)(externals.rcRegion)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // A closure's `CleanupResource` is a no-op for a reference-counted one
                         // (its dropper runs on the last `RcDrop` instead); an arena closure may
                         // carry a dropper (closure+24) for a resource it captured-and-escaped,
@@ -794,37 +1007,54 @@ let codegenInstructionKind cx builder kind state =
                                                             |> lookupTemp(cx)(sourceTemp)
                                                             |> emitProcessDrop(context)(function_)(builder)(i64)(i8)(ptrType)
                                                         in (tempEnv, terminated)
-                                                    else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
+                                                    else
+                                                        if typeName == "Socket"
+                                                        then
+                                                            let _ =
+                                                                tempEnv
+                                                                |> lookupTemp(cx)(sourceTemp)
+                                                                |> emitLinuxClose(builder)(i64)
+                                                            in (tempEnv, terminated)
+                                                        else
+                                                            if typeName == "TlsSocket"
+                                                            then
+                                                                let _ =
+                                                                    match taskRuntime with
+                                                                        | Some(runtime) ->
+                                                                            emitRunTask(builder)(runtime)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(sourceTemp)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("tls_cleanup_task"))("tls_cleanup")
+                                                                        | None -> constInt(i64)(0u64)(false)
+                                                                in (tempEnv, terminated)
+                                                            else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
                         // `CopyOutArena`/`CopyOutList` move a value that lives above a scope's
                         // restored watermark to storage that survives the reset — an RC cell or an
                         // arena block below the watermark — before the chunks are reclaimed. Each
                         // is one call into the module-level helpers `IrCodegen.Arena` defines; the
                         // purpose operand does not change the copy.
                                         | CopyOutArena(destTemp, srcTemp, staticSizeBytes, runtimeManaged, _purpose, _semanticType) ->
-                                            ((destTemp, emitCopyOutArena(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyOutArena(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                                         | CopyOutList(destTemp, srcTemp, headCopy, runtimeManaged, _purpose) ->
-                                            ((destTemp, emitCopyOutList(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyOutList(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                         // The rest of the copy family lives in `IrCodegen.Copy`: the closure copy
                         // (whose runtime-managed form dispatches to the program's `$env_normalize`
                         // functions by code address), the TCO accumulator's single-cell copy, and
                         // the persistent to-space/blob region allocations of the in-place reuse
                         // specializations.
                                         | CopyOutClosure(destTemp, srcTemp, runtimeManaged, _purpose) ->
-                                            ((destTemp, emitCopyOutClosure(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(mallocFn)(mallocType)(closureFunctionType)(liftedFunctions)(runtimeManaged)(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyOutClosure(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(mallocFn)(mallocType)(closureFunctionType)(cx.closureNormalizers)(runtimeManaged)(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                                         | CopyOutTcoListCell(destTemp, srcTemp, headCopy, _purpose) ->
-                                            ((destTemp, emitCopyOutTcoListCell(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(headCopy)(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyOutTcoListCell(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(headCopy)(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                                         | AllocAdtToSpace(target, tag, fieldCount, tagless) ->
-                                            ((target, emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CopyOutArenaToSpace(destTemp, srcTemp, staticSizeBytes) ->
-                                            ((destTemp, emitCopyOutArenaToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(memcpyFn)(memcpyType)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyOutArenaToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(memcpyFn)(memcpyType)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                                         | CopyFixedInto(destTemp, srcTemp, sizeBytes) ->
                                             let _ =
                                                 emitCopyFixedInto(builder)(i64)(ptrType)(memcpyFn)(memcpyType)(lookupTemp(cx)(destTemp)(tempEnv))(lookupTemp(cx)(srcTemp)(tempEnv))(sizeBytes)
                                             in (tempEnv, terminated)
                                         | CopyStringIntoOrFresh(destTemp, oldBlobTemp, srcTemp) ->
-                                            ((destTemp, emitCopyStringIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(lookupTemp(cx)(oldBlobTemp)(tempEnv))(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyStringIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(lookupTemp(cx)(oldBlobTemp)(tempEnv))(lookupTemp(cx)(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                                         | CopyFixedIntoOrFresh(destTemp, oldBlobTemp, srcTemp, sizeBytes) ->
-                                            ((destTemp, emitCopyFixedIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(memcpyFn)(memcpyType)(lookupTemp(cx)(oldBlobTemp)(tempEnv))(lookupTemp(cx)(srcTemp)(tempEnv))(sizeBytes)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                            (bindTemp(destTemp)(emitCopyFixedIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(memcpyFn)(memcpyType)(lookupTemp(cx)(oldBlobTemp)(tempEnv))(lookupTemp(cx)(srcTemp)(tempEnv))(sizeBytes)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
                         // A `TcoResetPending` is the lowerer's placeholder for a back-edge block
                         // whose copy-out decision waited on inference; lowering replaces every one
                         // before the program is handed over, so reaching codegen is a lowering bug.
@@ -836,9 +1066,9 @@ let codegenInstructionKind cx builder kind state =
                                                 |> buildStore(builder)(lookupTemp(cx)(source)(tempEnv))
                                             in (tempEnv, terminated)
                                         | LoadLocal(target, slot) ->
-                                            ((target, buildLoad(builder)(i64)(lookupIndexedInt(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildLoad(builder)(i64)(lookupIndexedInt(slot)(localSlots))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | LoadCapabilityHandler(target, capabilityIndex) ->
-                                            ((target, buildLoad(builder)(i64)(lookupIndexedInt(capabilityIndex)(cx.capabilityHandlerGlobals))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildLoad(builder)(i64)(lookupIndexedInt(capabilityIndex)(cx.capabilityHandlerGlobals))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | StoreCapabilityHandler(capabilityIndex, source) ->
                                             let _ =
                                                 cx.capabilityHandlerGlobals
@@ -970,12 +1200,15 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 if isImmortalNullaryAlloc(fieldCount)(runtimeManaged)(tagless)
                                                 then
-                                                    ((target, emitImmortalNullaryAdt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(lookupIndexedInt(tag)(cx.nullaryCellGlobals))(resultName)) :: tempEnv, terminated)
+                                                    (bindTemp(target)(emitImmortalNullaryAdt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(lookupIndexedInt(tag)(cx.nullaryCellGlobals))(resultName))(tempEnv), terminated)
                                                 else
                                                     if runtimeManaged
-                                                    then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
-                                                    else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
-                                        | AllocAdtStack(target, tag, fieldCount, tagless) -> ((target, emitStackAllocAdt(builder)(i64)(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                    then
+                                                        (bindTemp(target)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName))(tempEnv), terminated)
+                                                    else
+                                                        (bindTemp(target)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName))(tempEnv), terminated)
+                                        | AllocAdtStack(target, tag, fieldCount, tagless) ->
+                                            (bindTemp(target)(emitStackAllocAdt(builder)(i64)(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // The reuse pair (`IrCodegen.Rc`): an arena `DropReuse` is statically
                         // unique, so its token is the cell itself; the RC-managed form consumes
                         // the source and yields the cell only when its count is `1`, else the null
@@ -983,12 +1216,13 @@ let codegenInstructionKind cx builder kind state =
                                         | DropReuse(target, sourceTemp, _fieldCount, runtimeManaged) ->
                                             if runtimeManaged
                                             then
-                                                ((target, tempEnv
+                                                (bindTemp(target)(tempEnv
                                                 |> lookupTemp(cx)(sourceTemp)
-                                                |> emitRuntimeDropReuse(context)(function_)(i64)(i8)(ptrType)(builder)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                                            else ((target, lookupTemp(cx)(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                                |> emitRuntimeDropReuse(context)(function_)(i64)(i8)(ptrType)(builder)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                            else
+                                                (bindTemp(target)(lookupTemp(cx)(sourceTemp)(tempEnv))(tempEnv), terminated)
                                         | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell, tagless) ->
-                                            ((target, tempEnv
+                                            (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(tokenTemp)
                                             |> emitAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(runtimeManaged)(listCell)(tagless)("t" + Ashes.Text.fromInt(target))(emitIsReferenceCountedIn(builder)(i64)(externals.rcRegion)("arena_reuse_token_rc"))(given (_) ->
                                                 // A declined token's replacement goes to the to-space: the scope around
@@ -998,7 +1232,7 @@ let codegenInstructionKind cx builder kind state =
                                                 then
                                                     emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(0)(2)(true)("arena_reuse_fresh_cell")
                                                 else
-                                                    emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("arena_reuse_fresh_cell"))) :: tempEnv, terminated)
+                                                    emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("arena_reuse_fresh_cell")))(tempEnv), terminated)
                         // Stores one field into an already-allocated ADT's payload: word `1 + fieldIndex`
                         // of a tagged cell (word `0` is the tag — see `AllocAdt`'s own layout comment
                         // above), word `fieldIndex` of a tagless one. The `ptr` operand arrives as this
@@ -1021,14 +1255,16 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let fieldPtr =
                                                     gepBytes(builder)(i64)(i8)(basePtr)(adtFieldOffsetBytes(tagless)(fieldIndex))("adt_field_ptr")
-                                                in ((target, buildLoad(builder)(i64)(fieldPtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                in
+                                                    (bindTemp(target)(buildLoad(builder)(i64)(fieldPtr)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // Reads word `0` (the tag) — the same offset `AllocAdt` writes it to. A tagless
                         // cell has no tag word; `rejectTagReadsOfTaglessCells` refuses the function
                         // before any of its instructions are emitted.
                                         | GetAdtTag(target, ptr) ->
                                             let basePtr =
                                                 buildIntToPtr(builder)(lookupTemp(cx)(ptr)(tempEnv))(ptrType)("adt_tag_base")
-                                            in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            in
+                                                (bindTemp(target)(buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // An arena `RcDrop` is a placement marker with nothing to release. The
                         // RC-managed form is `IrCodegen.Rc`'s release: a structural dropper label
                         // resolves to the lifted function that owns the whole cascade, a `Function`
@@ -1067,7 +1303,7 @@ let codegenInstructionKind cx builder kind state =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexedStr(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
                                                         packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(runtimeManaged)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
-                                                in ((target, result) :: tempEnv, terminated)
+                                                in (bindTemp(target)(result)(tempEnv), terminated)
                                         | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned) ->
                                             let closurePtr = emitStackAlloc(builder)(i64)(closureSizeBytes)("closure_stack")
                                             in
@@ -1075,9 +1311,9 @@ let codegenInstructionKind cx builder kind state =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexedStr(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
                                                         packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(false)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
-                                                in ((target, result) :: tempEnv, terminated)
+                                                in (bindTemp(target)(result)(tempEnv), terminated)
                                         | LoadFuncAddr(target, funcLabel) ->
-                                            ((target, buildPtrToInt(builder)(lookupIndexedStr(funcLabel)(liftedFunctions))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildPtrToInt(builder)(lookupIndexedStr(funcLabel)(liftedFunctions))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // The runtime-managed-argument flag temp is `-1` when the call site has
                         // none (`IrText.ash`'s own `optionalIntOperand` convention, and what
                         // `LlvmCodegen.cs`'s `LoadRuntimeManagedArgumentFlag` checks for), in which
@@ -1093,7 +1329,7 @@ let codegenInstructionKind cx builder kind state =
                                                     emitCallClosure(builder)(i64)(i8)(ptrType)(closureFunctionType)(lookupTemp(cx)(closureTemp)(tempEnv))(lookupTemp(cx)(argTemp)(tempEnv))(flagRef)(
                                                         "t" + Ashes.Text.fromInt(target)
                                                     )
-                                                in ((target, result) :: tempEnv, terminated)
+                                                in (bindTemp(target)(result)(tempEnv), terminated)
                         // A direct call of a statically-known lifted function: same `(env, arg,
                         // flag)` signature as `CallClosure`, just naming the callee outright so
                         // LLVM can see (and inline) it. Always a plain call, never a native tail
@@ -1108,10 +1344,11 @@ let codegenInstructionKind cx builder kind state =
                                                     buildCall(builder)(closureFunctionType)(lookupIndexedStr(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
                                                         "t" + Ashes.Text.fromInt(target)
                                                     )
-                                                in ((target, result) :: tempEnv, terminated)
+                                                in (bindTemp(target)(result)(tempEnv), terminated)
                                         | LoadEnv(target, index) ->
-                                            ((target, emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexedInt(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                                        | LoadArgumentOwnership(target) -> ((target, getParam(function_)(2u32)) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexedInt(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | LoadArgumentOwnership(target) ->
+                                            (bindTemp(target)(getParam(function_)(2u32))(tempEnv), terminated)
                         // See `emitRcAllocPayloadPtr` for the RC form; the ordinary form is an
                         // arena bump allocation (`IrCodegen.Arena`).
                                         | Alloc(target, sizeBytes, runtimeManaged) ->
@@ -1120,22 +1357,25 @@ let codegenInstructionKind cx builder kind state =
                                                 then
                                                     buildPtrToInt(builder)(emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(sizeBytes)("rc_alloc"))(i64)("t" + Ashes.Text.fromInt(target))
                                                 else emitArenaAlloc(context)(function_)(builder)(i64)(arena)(sizeBytes)("t" + Ashes.Text.fromInt(target))
-                                            in ((target, blockRef) :: tempEnv, terminated)
+                                            in (bindTemp(target)(blockRef)(tempEnv), terminated)
                                         | ToCString(target, value) ->
-                                            ((target, buildPtrToInt(builder)(emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(lookupTemp(cx)(value)(tempEnv))("ffi_cstring"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildPtrToInt(builder)(emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(lookupTemp(cx)(value)(tempEnv))("ffi_cstring"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CallExternal(target, symbolName, _libraryName, argTemps, parameterTypes, returnType) ->
                                             let arguments = lookupIndexedAll(argTemps)(tempEnv)
                                             in
                                                 let declaration = lookupExternalSymbol(symbolName)(externalSymbols)
-                                                in ((target, emitCallExternal(context)(builder)(types)(declaration)(arguments)(parameterTypes)(returnType)) :: tempEnv, terminated)
-                                        | AllocFfiOut(target, elementType) -> ((target, emitAllocFfiOut(context)(builder)(types)(elementType)) :: tempEnv, terminated)
+                                                in
+                                                    (bindTemp(target)(emitCallExternal(context)(builder)(types)(declaration)(arguments)(parameterTypes)(returnType))(tempEnv), terminated)
+                                        | AllocFfiOut(target, elementType) ->
+                                            (bindTemp(target)(emitAllocFfiOut(context)(builder)(types)(elementType))(tempEnv), terminated)
                                         | LoadFfiOut(target, slot, elementType) ->
-                                            ((target, emitLoadFfiOut(context)(builder)(types)(lookupTemp(cx)(slot)(tempEnv))(elementType)) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitLoadFfiOut(context)(builder)(types)(lookupTemp(cx)(slot)(tempEnv))(elementType))(tempEnv), terminated)
                                         | CopyFfiString(target, pointer, stringType) ->
-                                            ((target, emitCopyFfiString(context)(builder)(types)(arena)(memcpyFn)(memcpyType)(externalSymbols)(lookupTemp(cx)(pointer)(tempEnv))(stringType)) :: tempEnv, terminated)
-                                        | LoadProgramArgs(target) -> ((target, emitLoadProgramArgs(builder)(i64)(programArgsGlobal)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(emitCopyFfiString(context)(builder)(types)(arena)(memcpyFn)(memcpyType)(externalSymbols)(lookupTemp(cx)(pointer)(tempEnv))(stringType))(tempEnv), terminated)
+                                        | LoadProgramArgs(target) ->
+                                            (bindTemp(target)(emitLoadProgramArgs(builder)(i64)(programArgsGlobal)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AllocStack(target, sizeBytes) ->
-                                            ((target, buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | StoreMemOffset(basePtr, offsetBytes, source) ->
                                             let _ =
                                                 "store_mem"
@@ -1143,7 +1383,7 @@ let codegenInstructionKind cx builder kind state =
                                                 |> buildStore(builder)(lookupTemp(cx)(source)(tempEnv))
                                             in (tempEnv, terminated)
                                         | LoadMemOffset(target, basePtr, offsetBytes) ->
-                                            ((target, buildLoad(builder)(i64)(memOffsetPtr(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(basePtr)(tempEnv))(offsetBytes)("load_mem"))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            (bindTemp(target)(buildLoad(builder)(i64)(memOffsetPtr(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(basePtr)(tempEnv))(offsetBytes)("load_mem"))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // Only the entry function's `Return` is the process's own exit (see the
                         // header comment); a lifted function's is an ordinary `ret` of its `i64`
                         // result to whichever `CallClosure`/`CallKnown` invoked it.
@@ -1266,17 +1506,24 @@ let codegenInstructionKind cx builder kind state =
                                                                                                         let _ = buildBr(builder)(continueBlock)
                                                                                                         in
                                                                                                             let _ = positionBuilderAtEnd(builder)(continueBlock)
-                                                                                                            in ((target, buildLoad(builder)(i64)(resultSlot)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                                                                            in
+                                                                                                                (bindTemp(target)(buildLoad(builder)(i64)(resultSlot)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                         // `Ashes.IO.readLine` — one line from stdin as `Option(Str)`, `None` only
                         // at EOF with nothing left unread.
                                         | ReadLine(target) ->
                                             let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | ReadExact(target, count) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(count)
+                                                |> emitReadExact(context)(function_)(i64)(i8)(ptrType)(builder)(arena)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                         // `Ashes.IO.Console` — raw stdin mode over `TCGETS`/`TCSETS`, `ppoll` on stdin,
                         // and the monotonic clock.
                                         | ConsoleEnableRaw(target) ->
                                             let resultValue = emitConsoleEnableRaw(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(consoleGlobals)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ConsoleRestore(_token) ->
                                             let _ = emitConsoleRestore(context)(function_)(builder)(i64)(ptrType)(consoleGlobals)
                                             in (tempEnv, terminated)
@@ -1285,10 +1532,10 @@ let codegenInstructionKind cx builder kind state =
                                                 tempEnv
                                                 |> lookupTemp(cx)(timeout)
                                                 |> emitConsolePoll(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | MonotonicMillis(target) ->
                                             let resultValue = emitMonotonicMillis(builder)(i64)(i8)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                         // `Ashes.IO.File.writeText`/`Ashes.IO.File.replace`/`Ashes.IO.Directory.createAll` —
                         // raw `openat`/`write`/`close`/`rename`/`mkdir` syscalls, no libc dependency.
                                         | FileWriteText(target, path, text) ->
@@ -1296,87 +1543,87 @@ let codegenInstructionKind cx builder kind state =
                                                 tempEnv
                                                 |> lookupTemp(cx)(text)
                                                 |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(path)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileReplace(target, source, destination) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(destination)
                                                 |> emitFileReplace(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(source)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | DirectoryCreateAll(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitDirectoryCreateAll(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | DirectoryEntries(target, path) ->
                                             let resultValue =
                                                 emitDirectoryEntries(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(directoryExternals)(lookupTemp(cx)(path)(tempEnv))("dir_entries_t" + Ashes.Text.fromInt(target))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | DirectoryRemoveTree(target, path) ->
                                             let resultValue =
                                                 emitDirectoryRemoveTree(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)(lookupTemp(cx)(path)(tempEnv))("dir_remove_t" + Ashes.Text.fromInt(target))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileOpen(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitFileOpen(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileReadChunk(target, fileHandle, count) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(count)
                                                 |> emitFileReadChunk(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(fileHandle)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileReadLine(target, fileHandle) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(fileHandle)
                                                 |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileClose(target, fileHandle) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(fileHandle)
                                                 |> emitFileClose(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileReadText(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitFileReadText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileReadAllBytes(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitFileReadAllBytes(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | CopyFfiBytes(target, pointer, length) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(length)
                                                 |> emitCopyFfiBytes(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(pointer)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileMmap(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitFileMmap(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileWriteBytes(target, path, bytes) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(bytes)
                                                 |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(path)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | FileMakeExecutable(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
                                                 |> emitFileMakeExecutable(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | EnvironmentDirectory(target, directoryKind) ->
                                             let resultValue =
                                                 match directoryKind with
@@ -1384,49 +1631,178 @@ let codegenInstructionKind cx builder kind state =
                                                     | ExecutableDirectory -> emitEnvironmentExecutableDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                                     | TemporaryDirectory -> emitEnvironmentTemporaryDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                                     | CacheDirectory -> emitEnvironmentCacheDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | EnvironmentGet(target, name) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(name)
                                                 |> emitEnvironmentGet(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | SpawnProcess(target, executable, args) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(args)
                                                 |> emitSpawnProcess(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(lookupTemp(cx)(executable)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ProcessWriteStdin(target, process, text) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(text)
                                                 |> emitProcessWriteStdin(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(lookupTemp(cx)(process)(tempEnv))
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ProcessReadStdoutLine(target, process) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
                                                 |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ProcessReadStderrLine(target, process) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
                                                 |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ProcessWaitForExit(target, process) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
                                                 |> emitProcessWaitForExit(builder)(i64)(i8)(ptrType)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | ProcessKill(target, process) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
                                                 |> emitProcessKill(context)(function_)(builder)(i64)(i8)(ptrType)(arena)
-                                            in ((target, resultValue) :: tempEnv, terminated)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | CreateCompletedTask(target, result) ->
+                                            let taskRef =
+                                                emitCreateCompletedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(result)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | CreateTask(target, closure, stateStructSize, captureCount, _frameDropper, _loopResetEligible) ->
+                                            let taskRef =
+                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | RunTask(target, task) ->
+                                            let resultRef =
+                                                match taskRuntime with
+                                                    | Some(runtime) ->
+                                                        emitRunTask(builder)(runtime)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    | None ->
+                                                        emitRunCompletedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(resultRef)(tempEnv), terminated)
+                                        | SpawnTask(target, task) ->
+                                            match taskRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        emitSpawnTask(context)(function_)(builder)(i64)(i8)(ptrType)(runtime)(memcpyFn)(memcpyType)(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    in
+                                                        (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: SpawnTask without the task scheduler")
+                                        | CreateTaskScope(target, explicit) ->
+                                            (bindTemp(target)(emitCreateTaskScope(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(explicit)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateScopedTask(target, parent, scope) ->
+                                            (bindTemp(target)(emitCreateScopedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(parent)(tempEnv))(lookupTemp(cx)(scope)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | ForkScopedTask(target, owner, task) ->
+                                            match taskRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(target)(emitForkScopedTask(builder)(runtime)(lookupTemp(cx)(owner)(tempEnv))(lookupTemp(cx)(task)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ForkScopedTask without the task scheduler")
+                                        | JoinScopedTask(target, joinHandle) ->
+                                            (bindTemp(target)(emitJoinScopedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(joinHandle)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpConnectTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpSendTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpReceiveTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpCloseTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpListenTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateForkWorkersTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(ForkWorkersTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpAcceptTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpAcceptTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateHttpGetTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpGetTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateHttpPostTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpPostTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsConnectTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsHandshakeTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsServerHandshakeTask(target, first, second, third) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsServerHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(third)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsSendTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsReceiveTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsCloseTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | AsyncSleep(target, milliseconds) ->
+                                            let taskRef =
+                                                emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | AsyncAll(target, tasks) ->
+                                            let taskRef =
+                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(AllCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                        | AsyncRace(target, tasks) ->
+                                            let taskRef =
+                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(RaceCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                        // `Ashes.Task.Parallel`: fork, join and cleanup of `both`'s right thunk, and the
+                        // `withWorkers` override, over the module's parallel runtime.
+                                        | ParallelFork(descTarget, rightClosureTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(descTarget)(emitParallelFork(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(closureFunctionType)(runtime)(lookupTemp(cx)(rightClosureTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelFork without the parallel runtime")
+                                        | ParallelJoin(resultTarget, descTemp) ->
+                                            (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                        | ParallelCleanup(descTemp) ->
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
+                                            let _ =
+                                                emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
+                                            in (tempEnv, terminated)
+                                        | LoadParallelWorkerOverride(target) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(target)(emitLoadParallelWorkerOverride(builder)(i64)(runtime)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: LoadParallelWorkerOverride without the parallel runtime")
+                                        | StoreParallelWorkerOverride(source) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupTemp(cx)(source)
+                                                        |> emitStoreParallelWorkerOverride(builder)(runtime)
+                                                    in (tempEnv, terminated)
+                                                | None -> Ashes.IO.panic("codegen: StoreParallelWorkerOverride without the parallel runtime")
+                                        | ParallelQueueStart(descTarget, mapperTemp, combineTemp, listTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(descTarget)(emitParallelQueueStart(builder)(runtime)(lookupTemp(cx)(mapperTemp)(tempEnv))(lookupTemp(cx)(combineTemp)(tempEnv))(lookupTemp(cx)(listTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueStart without the parallel runtime")
+                                        | ParallelQueueAwait(resultTarget, descTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(resultTarget)(emitParallelQueueAwait(builder)(runtime)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueAwait without the parallel runtime")
+                                        | ParallelQueueCleanup(descTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupTemp(cx)(descTemp)
+                                                        |> emitParallelQueueCleanup(builder)(runtime)
+                                                    in (tempEnv, terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueCleanup without the parallel runtime")
+                        // The state-machine transform's own frame stores and loads carry a suspend and a
+                        // resume; the markers themselves emit nothing.
+                                        | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
+                                        | Resume(_stateStruct, _result, _restores) -> (tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
@@ -1594,6 +1970,8 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -1634,12 +2012,12 @@ and codegenKnownCall (cx: CodegenContext) builder allocatesStack tailJoins targe
                             if allocatesStack
                             then
                                 let _ = setTailCallKind(call)(tailCallKindTail)
-                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)(((target, call) :: tempEnv, false))
+                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)((bindTemp(target)(call)(tempEnv), false))
                             else
                                 let _ = setTailCallKind(call)(tailCallKindMustTail)
                                 in
                                     let _ = buildRet(builder)(call)
-                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(restAfterReturn)(((target, call) :: tempEnv, true))
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(restAfterReturn)((bindTemp(target)(call)(tempEnv), true))
         | IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: afterStore ->
             match afterStore
             |> skipArenaBookkeeping
@@ -1654,7 +2032,7 @@ and codegenKnownCall (cx: CodegenContext) builder allocatesStack tailJoins targe
                             let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
                             in
                                 let _ = setTailCallKind(call)(tailCallKindTail)
-                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)(((target, call) :: tempEnv, false))
+                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)((bindTemp(target)(call)(tempEnv), false))
                 | Some(TailJoinFusion { fusionContinuation = continuation }) ->
                     match state with
                         | (tempEnv, _terminated) ->
@@ -1663,7 +2041,7 @@ and codegenKnownCall (cx: CodegenContext) builder allocatesStack tailJoins targe
                                 let _ = setTailCallKind(call)(tailCallKindMustTail)
                                 in
                                     let _ = buildRet(builder)(call)
-                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(continuation)(((target, call) :: tempEnv, true))
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(continuation)((bindTemp(target)(call)(tempEnv), true))
         | _ ->
             state
             |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
@@ -1685,13 +2063,14 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                 in
                     match irFunction with
                         | IrFunction { instructions = instructions, localCount = localCount, hasEnvAndArgParams = hasEnvAndArgParams } ->
-                            let localSlots = allocateLocalSlots(builder)(types.i64)(localCount)(0)
+                            let localSlots =
+                                0
+                                |> allocateLocalSlots(builder)(types.i64)(localCount)
+                                |> indexIntEntries
                             in
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                         let _ =
                                             localSlots
                                             |> lookupIndexedInt(0)
@@ -1726,48 +2105,61 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                             else Unit
                                         in
+                                            // A program with worker threads reserves its reference-counted range here, on the
+                                            // main thread before any worker exists, by allocating and releasing one block.
                                             let _ =
-                                                if isEntry && mc.moduleUsesProgramArgs
+                                                if isEntry && arena.arenaThreadSlots
                                                 then
-                                                    mc.moduleProgramArgsGlobal |> emitProgramArgsInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(externals.mallocFn)(externals.mallocType)(externals.memcpyFn)(externals.memcpyType)(getParam(functionValue)(0u32))
+                                                    let block = buildCall(builder)(externals.mallocType)(externals.mallocFn)([constInt(types.i64)(16u64)(false)])(1u32)("rc_reserve_block")
+                                                    in
+                                                        let _ = buildCall(builder)(externals.freeType)(externals.freeFn)([block])(1u32)("")
+                                                        in Unit
                                                 else Unit
                                             in
-                                                let labelBlocks =
-                                                    instructions
-                                                    |> collectLabelNames
-                                                    |> createLabelBlocks(context)(functionValue)
+                                                let _ =
+                                                    if isEntry && mc.moduleUsesProgramArgs
+                                                    then
+                                                        mc.moduleProgramArgsGlobal |> emitProgramArgsInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(externals.mallocFn)(externals.mallocType)(externals.memcpyFn)(externals.memcpyType)(getParam(functionValue)(0u32))
+                                                    else Unit
                                                 in
-                                                    let cx =
-                                                        CodegenContext(
-                                                            context = context,
-                                                            moduleRef = mc.moduleRef,
-                                                            function_ = functionValue,
-                                                            types = types,
-                                                            externals = externals,
-                                                            localSlots = localSlots,
-                                                            labelBlocks = labelBlocks,
-                                                            stringLiteralGlobals = stringLiteralGlobals,
-                                                            liftedFunctions = liftedFunctions,
-                                                            closureFunctionType = closureFnType,
-                                                            envpGlobal = mc.moduleEnvpGlobal,
-                                                            programArgsGlobal = mc.moduleProgramArgsGlobal,
-                                                            externalSymbols = mc.moduleExternalSymbols,
-                                                            capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
-                                                            nullaryCellGlobals = mc.moduleNullaryCellGlobals,
-                                                            consoleGlobals = mc.moduleConsoleGlobals,
-                                                            arenaRuntime = arena,
-                                                            copyRuntime = mc.moduleCopyRuntime,
-                                                            bigIntRuntime = mc.moduleBigIntRuntime,
-                                                            isEntry = isEntry
-                                                        )
-                                                    in (cx, instructions)
+                                                    let labelBlocks =
+                                                        instructions
+                                                        |> collectLabelNames
+                                                        |> createLabelBlocks(context)(functionValue)
+                                                        |> indexStrEntries
+                                                    in
+                                                        let cx =
+                                                            CodegenContext(
+                                                                context = context,
+                                                                moduleRef = mc.moduleRef,
+                                                                function_ = functionValue,
+                                                                types = types,
+                                                                externals = externals,
+                                                                localSlots = localSlots,
+                                                                labelBlocks = labelBlocks,
+                                                                stringLiteralGlobals = stringLiteralGlobals,
+                                                                liftedFunctions = liftedFunctions,
+                                                                closureNormalizers = mc.moduleClosureNormalizers,
+                                                                closureFunctionType = closureFnType,
+                                                                envpGlobal = mc.moduleEnvpGlobal,
+                                                                programArgsGlobal = mc.moduleProgramArgsGlobal,
+                                                                externalSymbols = mc.moduleExternalSymbols,
+                                                                capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
+                                                                nullaryCellGlobals = mc.moduleNullaryCellGlobals,
+                                                                consoleGlobals = mc.moduleConsoleGlobals,
+                                                                arenaRuntime = arena,
+                                                                copyRuntime = mc.moduleCopyRuntime,
+                                                                bigIntRuntime = mc.moduleBigIntRuntime,
+                                                                taskRuntime = mc.moduleTaskRuntime,
+                                                                parallelRuntime = mc.moduleParallelRuntime,
+                                                                isEntry = isEntry
+                                                            )
+                                                        in (cx, instructions)
 
 // The temps holding cells this function allocates with the tagless layout.
 let recursive taglessCellTemps instructions =
@@ -1798,7 +2190,7 @@ let codegenFunctionBody mc functionValue isEntry irFunction =
             |> (given (_) ->
                 rejectTagReadsOfTaglessCells(taglessCellTemps(instructions))(instructions))
             |> (given (_) ->
-                codegenInstructions(cx)(mc.moduleBuilder)(functionAllocatesStackMemory(instructions))(computeTailJoins(instructions))(instructions)(([], false)))
+                codegenInstructions(cx)(mc.moduleBuilder)(functionAllocatesStackMemory(instructions))(computeTailJoins(instructions))(instructions)((Ashes.Collection.Map.empty, false)))
             |> (given (_) -> Unit)
 
 // Emits every lifted function's body into the `LLVMValueRef` `declareLiftedFunctions` already
@@ -1851,6 +2243,53 @@ let recursive instructionsUseBigInt instructions =
         | IrInstruction { instruction = BigIntBinary(_target, _left, _right, _operation, _managed) } :: _ -> true
         | IrInstruction { instruction = BigIntCompare(_target, _left, _right) } :: _ -> true
         | _ :: rest -> instructionsUseBigInt(rest)
+
+// Whether any instruction runs, spawns or forks a task, so the module needs the task scheduler
+// (stage 0 emits it for structured concurrency too, even when nothing runs the task).
+let recursive instructionsUseRunTask instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RunTask(_target, _task) } :: _ -> true
+        | IrInstruction { instruction = SpawnTask(_target, _task) } :: _ -> true
+        | IrInstruction { instruction = ForkScopedTask(_target, _owner, _task) } :: _ -> true
+        | _ :: rest -> instructionsUseRunTask(rest)
+
+let recursive functionsUseRunTask functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseRunTask(instructions) || functionsUseRunTask(rest)
+
+// Whether any instruction belongs to `Ashes.Task.Parallel`, so the module needs the parallel
+// runtime, and whether any forks a worker, so its allocator state moves into thread control blocks.
+let recursive instructionsUseParallel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ParallelFork(_target, _closure) } :: _ -> true
+        | IrInstruction { instruction = ParallelJoin(_target, _desc) } :: _ -> true
+        | IrInstruction { instruction = ParallelCleanup(_desc) } :: _ -> true
+        | IrInstruction { instruction = LoadParallelWorkerOverride(_target) } :: _ -> true
+        | IrInstruction { instruction = StoreParallelWorkerOverride(_source) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueStart(_target, _mapper, _combine, _list) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueAwait(_target, _queue) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueCleanup(_queue) } :: _ -> true
+        | _ :: rest -> instructionsUseParallel(rest)
+
+let recursive functionsUseParallel functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseParallel(instructions) || functionsUseParallel(rest)
+
+let recursive instructionsForkParallel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ParallelFork(_target, _closure) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueStart(_target, _mapper, _combine, _list) } :: _ -> true
+        | _ :: rest -> instructionsForkParallel(rest)
+
+let recursive functionsForkParallel functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsForkParallel(instructions) || functionsForkParallel(rest)
 
 let recursive functionsUseBigInt functions =
     match functions with
@@ -1918,6 +2357,30 @@ let recursive functionsUseProgramArgs functions =
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsUseProgramArgs(instructions) || functionsUseProgramArgs(rest)
 
+// An entry function with at least this many IR instructions is emitted without optimization.
+let largeEntryFunctionInstructions = 16384
+
+let recursive hasAtLeastInstructions (instructions: List(IrInstruction)) (count: Int) =
+    if count <= 0
+    then true
+    else
+        match instructions with
+            | [] -> false
+            | _ :: rest -> hasAtLeastInstructions(rest)(count - 1)
+
+// The entry of a large stitched program is a once-run straight line of top-level binding
+// constructions, tens of thousands of instructions long; optimizing it costs more than every
+// other function together and gains nothing at run time, so it is marked `optnone` (which LLVM
+// only accepts together with `noinline`), as `LlvmCodegen.cs`'s `EmitProgramModuleFunctions` marks it.
+let markLargeEntryUnoptimized context entryValue (entryFunction: IrFunction) =
+    match entryFunction with
+        | IrFunction { instructions = instructions } ->
+            if hasAtLeastInstructions(instructions)(largeEntryFunctionInstructions)
+            then
+                let _ = addFunctionEnumAttribute(context)(entryValue)("optnone")
+                in addFunctionEnumAttribute(context)(entryValue)("noinline")
+            else Unit
+
 // Builds `void <name>()` for `entryFunction` plus `i64 <label>(i64, i64, i64)` for every function
 // in `functions`, all in one fresh module, and returns `(module_, builder)`, matching every other
 // module builder's shape in `selfhost/tests/backend` so the same `emitModule` verification
@@ -1941,70 +2404,106 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                 |> functionType(voidType(context))([types.i64])(1u32)
                 |> addFunction(module_)(name)
             in
-                let closureFnType = closureFunctionTypeOf(types.i64)
+                let _ = markLargeEntryUnoptimized(context)(entryValue)(entryFunction)
                 in
-                    let envpGlobal = addGlobal(module_)(types.i64)("__ashes_envp")
+                    let closureFnType = closureFunctionTypeOf(types.i64)
                     in
-                        let _ =
-                            false
-                            |> constInt(types.i64)(0u64)
-                            |> setInitializer(envpGlobal)
+                        let envpGlobal = addGlobal(module_)(types.i64)("__ashes_envp")
                         in
-                            let _ = setLinkage(envpGlobal)(linkageInternal)
+                            let _ =
+                                false
+                                |> constInt(types.i64)(0u64)
+                                |> setInitializer(envpGlobal)
                             in
-                                let programArgsGlobal = defineProgramArgsGlobal(module_)(types.i64)
+                                let _ = setLinkage(envpGlobal)(linkageInternal)
                                 in
-                                    let builder = createBuilder(context)
+                                    let programArgsGlobal = defineProgramArgsGlobal(module_)(types.i64)
                                     in
-                                        let externals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
+                                        let builder = createBuilder(context)
                                         in
-                                            let usesCopy = functionsUseCopyOut(entryFunction :: functions)
+                                            let declaredExternals =
+                                                entryFunction :: functions
+                                                |> functionsForkParallel
+                                                |> declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
                                             in
-                                                let arena =
-                                                    externals.rcRegion
-                                                    |> emitIsReferenceCountedIn(builder)(types.i64)
-                                                    |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
+                                                let externals =
+                                                    declaredExternals with libmFunctions = declareLibmFunctions(module_)(context)(libmCallsInFunctions(entryFunction :: functions)([])), pcre2Functions = (if functionsUseRegex(entryFunction :: functions)
+                                                    then declarePcre2Functions(module_)(types.i64)(types.i32)(types.ptrType)
+                                                    else [])
                                                 in
-                                                    let mc =
-                                                        ModuleCodegen(
-                                                            moduleRef = module_,
-                                                            moduleContext = context,
-                                                            moduleTypes = types,
-                                                            moduleExternals = externals,
-                                                            moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
-                                                            moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
-                                                            moduleClosureFunctionType = closureFnType,
-                                                            moduleEnvpGlobal = envpGlobal,
-                                                            moduleProgramArgsGlobal = programArgsGlobal,
-                                                            moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
-                                                            moduleExternalSymbols = []
-                                                            |> collectExternalSymbols(entryFunction :: functions)
-                                                            |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
-                                                            moduleCapabilityHandlerGlobals = defineCapabilityHandlerGlobals(module_)(types.i64)(0)(capabilityHandlerGlobalCount),
-                                                            moduleNullaryCellGlobals = []
-                                                            |> collectNullaryCellTags(entryFunction :: functions)
-                                                            |> defineNullaryCellGlobals(module_)(types.i64),
-                                                            moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                                            moduleArenaRuntime = arena,
-                                                            moduleCopyRuntime = if usesCopy
-                                                            then
-                                                                arena
-                                                                |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
-                                                                |> Some
-                                                            else None,
-                                                            moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
-                                                            then
-                                                                types.ptrType
-                                                                |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
-                                                                |> Some
-                                                            else None,
-                                                            moduleBuilder = builder
-                                                        )
+                                                    let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                                     in
-                                                        let _ = codegenLiftedFunctions(mc)(functions)
+                                                        let arena =
+                                                            externals.rcRegion
+                                                            |> emitIsReferenceCountedIn(builder)(types.i64)
+                                                            |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(functionsForkParallel(entryFunction :: functions))(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
                                                         in
-                                                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                            in (module_, mc.moduleBuilder))
+                                                            let stringLiteralGlobals =
+                                                                stringLiterals
+                                                                |> buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)
+                                                                |> indexStrEntries
+                                                            in
+                                                                let declaredFunctions = declareLiftedFunctions(module_)(closureFnType)(functions)
+                                                                in
+                                                                    let liftedFunctions = indexStrEntries(declaredFunctions)
+                                                                    in
+                                                                        let mc =
+                                                                            ModuleCodegen(
+                                                                                moduleRef = module_,
+                                                                                moduleContext = context,
+                                                                                moduleTypes = types,
+                                                                                moduleExternals = externals,
+                                                                                moduleStringLiteralGlobals = stringLiteralGlobals,
+                                                                                moduleLiftedFunctions = liftedFunctions,
+                                                                                moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
+                                                                                moduleClosureFunctionType = closureFnType,
+                                                                                moduleEnvpGlobal = envpGlobal,
+                                                                                moduleProgramArgsGlobal = programArgsGlobal,
+                                                                                moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
+                                                                                moduleExternalSymbols = []
+                                                                                |> collectExternalSymbols(entryFunction :: functions)
+                                                                                |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
+                                                                                moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
+                                                                                |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
+                                                                                |> indexIntEntries,
+                                                                                moduleNullaryCellGlobals = []
+                                                                                |> collectNullaryCellTags(entryFunction :: functions)
+                                                                                |> defineNullaryCellGlobals(module_)(types.i64)
+                                                                                |> indexIntEntries,
+                                                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                                                moduleArenaRuntime = arena,
+                                                                                moduleCopyRuntime = if usesCopy
+                                                                                then
+                                                                                    arena
+                                                                                    |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
+                                                                                then
+                                                                                    types.ptrType
+                                                                                    |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
+                                                                                then
+                                                                                    closureFnType
+                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleParallelRuntime = if functionsUseParallel(entryFunction :: functions)
+                                                                                then
+                                                                                    entryFunction :: functions
+                                                                                    |> functionsForkParallel
+                                                                                    |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleBuilder = builder
+                                                                            )
+                                                                        in
+                                                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                                                            in
+                                                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                                                in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)

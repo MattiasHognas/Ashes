@@ -18,6 +18,7 @@
 //   when one is reachable through a fresh, non-cyclic path.
 
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
@@ -35,6 +36,8 @@ export (
     value isTaglessAdtConstructor,
     type TaglessConstructorIndex,
     value prepareTaglessConstructorIndex,
+    value emptyTaglessConstructorIndex,
+    value extendTaglessConstructorIndex,
     value isTaglessAdtConstructorPrepared,
 )
 
@@ -191,6 +194,21 @@ let prepareTaglessConstructorIndex (schemes: List(TypeScheme)) =
     // Prepending the reversed input preserves constructor declaration order within each group.
     indexConstructorSchemes(reverse(schemes))(TaglessConstructorIndex(byName = Ashes.Collection.Map.empty))
 
+let emptyTaglessConstructorIndex unit = TaglessConstructorIndex(byName = Ashes.Collection.Map.empty)
+
+// Adds constructor schemes declared after every scheme the index already holds. Each group keeps
+// declaration order, so the result equals `prepareTaglessConstructorIndex` over the whole list.
+let recursive extendTaglessConstructorIndex (schemes: List(TypeScheme)) (index: TaglessConstructorIndex) =
+    match schemes with
+        | [] -> index
+        | scheme :: rest ->
+            match constructorSchemeFields(scheme) with
+                | (fields, SemNamed(_id, name, arguments)) ->
+                    let shape = TaglessConstructorShape(fields = fields, resultArguments = arguments)
+                    in
+                        extendTaglessConstructorIndex(rest)((index with byName = Ashes.Collection.Map.setStr(name)(append(indexedConstructorShapes(name)(index))([shape]))(index.byName)))
+                | _ -> extendTaglessConstructorIndex(rest)(index)
+
 let recursive indexedResourceBearing (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (visiting: List(Str)) (semanticType: SemanticType) =
     match semanticType with
         | SemOpaque(name) -> isDeclaredResource(name)
@@ -221,6 +239,87 @@ and indexedConstructorResource (isDeclaredResource: Str -> Bool) (index: Tagless
                 |> applySubstitution)(shape.fields)
             in indexedAnyResource(isDeclaredResource)(index)(visiting)(fields) || indexedConstructorResource(isDeclaredResource)(index)(visiting)(arguments)(rest)
 
+// The same question as a search over (type, generic names on the path) states, each state expanded
+// at most once, so a type graph that shares its parts is walked once rather than once per path.
+// It answers exactly as the path-bounded walk above. A generic name on the path still stops the
+// walk, as there. A type without arguments is a single type whatever path reaches it, so a path that
+// returns to it can be cut short at its first visit: dropping such names from the path only admits
+// paths whose shortened form the bounded walk also follows, and the walk over states then answers
+// plain reachability, which visiting each state once decides.
+let recursive insertName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> [name]
+        | head :: rest ->
+            if name == head
+            then names
+            else
+                if name < head
+                then name :: names
+                else head :: insertName(name)(rest)
+
+let recursive stateVisited (arguments: List(SemanticType)) (generic: List(Str)) (states: List((List(SemanticType), List(Str)))) =
+    match states with
+        | [] -> false
+        | (visitedArguments, visitedGeneric) :: rest ->
+            if visitedArguments == arguments && visitedGeneric == generic
+            then true
+            else stateVisited(arguments)(generic)(rest)
+
+let statesOf (name: Str) (visited: MapTree(Str, List((List(SemanticType), List(Str))))) =
+    match Ashes.Collection.Map.getStr(name)(visited) with
+        | Some(states) -> states
+        | None -> []
+
+let recursive indexedResourceOnce (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (generic: List(Str)) (semanticType: SemanticType) (visited: MapTree(Str, List((List(SemanticType), List(Str))))) =
+    match semanticType with
+        | SemOpaque(name) -> (isDeclaredResource(name), visited)
+        | SemNamed(_id, name, arguments) ->
+            if isBuiltinResourceTypeName(name) || isDeclaredResource(name)
+            then (true, visited)
+            else
+                if containsTypeName(name)(generic)
+                then (false, visited)
+                else
+                    let states = statesOf(name)(visited)
+                    in
+                        if stateVisited(arguments)(generic)(states)
+                        then (false, visited)
+                        else
+                            let inner =
+                                match arguments with
+                                    | [] -> generic
+                                    | _ -> insertName(name)(generic)
+                            in
+                                visited
+                                |> Ashes.Collection.Map.setStr(name)((arguments, generic) :: states)
+                                |> indexedShapesOnce(isDeclaredResource)(index)(inner)(arguments)(indexedConstructorShapes(name)(index))
+        | SemTuple(elements) -> indexedTypesOnce(isDeclaredResource)(index)(generic)(elements)(visited)
+        | SemList(element) -> indexedResourceOnce(isDeclaredResource)(index)(generic)(element)(visited)
+        | _ -> (false, visited)
+and indexedTypesOnce (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (generic: List(Str)) (types: List(SemanticType)) (visited: MapTree(Str, List((List(SemanticType), List(Str))))) =
+    match types with
+        | [] -> (false, visited)
+        | head :: rest ->
+            match indexedResourceOnce(isDeclaredResource)(index)(generic)(head)(visited) with
+                | (false, next) -> indexedTypesOnce(isDeclaredResource)(index)(generic)(rest)(next)
+                | found -> found
+and indexedShapesOnce (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (generic: List(Str)) (arguments: List(SemanticType)) (shapes: List(TaglessConstructorShape)) (visited: MapTree(Str, List((List(SemanticType), List(Str))))) =
+    match shapes with
+        | [] -> (false, visited)
+        | shape :: rest ->
+            let fields =
+                map(arguments
+                |> resultParameterMapping(shape.resultArguments)
+                |> applySubstitution)(shape.fields)
+            in
+                match indexedTypesOnce(isDeclaredResource)(index)(generic)(fields)(visited) with
+                    | (false, next) -> indexedShapesOnce(isDeclaredResource)(index)(generic)(arguments)(rest)(next)
+                    | found -> found
+
+let indexedFieldsResourceBearing (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (fields: List(SemanticType)) =
+    match indexedTypesOnce(isDeclaredResource)(index)([])(fields)(Ashes.Collection.Map.empty) with
+        | (found, _visited) -> found
+
 let isTaglessAdtConstructorPrepared (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (isZeroCost: Bool) (scheme: TypeScheme) =
     match constructorSchemeFields(scheme) with
         | ([], _result) -> false
@@ -229,6 +328,6 @@ let isTaglessAdtConstructorPrepared (isDeclaredResource: Str -> Bool) (index: Ta
             then false
             else
                 match indexedConstructorShapes(typeName)(index) with
-                    | _only :: [] -> !indexedAnyResource(isDeclaredResource)(index)([])(fields)
+                    | _only :: [] -> !indexedFieldsResourceBearing(isDeclaredResource)(index)(fields)
                     | _ -> false
         | _ -> false

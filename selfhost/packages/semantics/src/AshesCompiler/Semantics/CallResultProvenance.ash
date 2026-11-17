@@ -74,6 +74,7 @@ let recursive containsBytesProvenance (provenance: BytesOwnershipProvenance) (pr
 let recursive stripSpans (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> stripSpans(inner)
+        | ExprNode(_node, inner) -> stripSpans(inner)
         | other -> other
 
 let recursive lookupAlias (name: Str) (aliases: List(ProvenanceAlias)) =
@@ -95,6 +96,7 @@ let recursive removeAliases (names: List(Str)) (aliases: List(ProvenanceAlias)) 
 let recursive isLambda (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> isLambda(inner)
+        | ExprNode(_node, inner) -> isLambda(inner)
         | ExprLambda(_parameter, _body, _annotation) -> true
         | _ -> false
 
@@ -158,6 +160,7 @@ and patternFieldBinders (fields: List((Str, Pattern))) (names: List(Str)) =
 let recursive collectArms (enclosingKey: Str) (body: Expr) (aliases: List(ProvenanceAlias)) (functions: MapTree(Str, Str)) (arms: List(ProvenanceArm)) =
     match body with
         | ExprAt(_span, inner) -> collectArms(enclosingKey)(inner)(aliases)(functions)(arms)
+        | ExprNode(_node, inner) -> collectArms(enclosingKey)(inner)(aliases)(functions)(arms)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             arms
             |> collectArms(enclosingKey)(thenBranch)(aliases)(functions)
@@ -188,6 +191,7 @@ and collectCaseArms (enclosingKey: Str) (cases: List((Pattern, Expr, Maybe(Expr)
 let recursive callHead (expression: Expr) (argumentCount: Int) =
     match expression with
         | ExprAt(_span, inner) -> callHead(inner)(argumentCount)
+        | ExprNode(_node, inner) -> callHead(inner)(argumentCount)
         | ExprCall(function, _argument, _isSugar, _layout) -> callHead(function)(argumentCount + 1)
         | ExprVar(name) -> Some((name, argumentCount))
         | _ -> None
@@ -269,6 +273,7 @@ and isFreshConstructionArgument (constructors: ProvenanceConstructors) (isFreshB
 and callArguments (expression: Expr) (arguments: List(Expr)) =
     match expression with
         | ExprAt(_span, inner) -> callArguments(inner)(arguments)
+        | ExprNode(_node, inner) -> callArguments(inner)(arguments)
         | ExprCall(function, argument, _isSugar, _layout) -> callArguments(function)(argument :: arguments)
         | _ -> arguments
 
