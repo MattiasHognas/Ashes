@@ -4,9 +4,12 @@ This focused native fixture invokes the self-hosted inference APIs. It also runs
 `CapturedEnvironmentInferenceTests` in the semantics suite.
 
 The 25 assertions cover ordinary let, let-rec, top-level binding inference, and a
-two-member recursive group. Each boundary rejects mixed Int/Str calls when the
-binding captures a monomorphic outer function, both with and without an Eq goal.
-Same-type calls remain valid. Independent identity bindings remain polymorphic at
+top-level recursive group. Let, let-rec and top-level binding inference reject
+mixed Int/Str calls when the binding captures a monomorphic outer function, both
+with and without an Eq goal. A program's top-level environment holds only
+generalized bindings, so the program-level case puts the captured function in the
+recursive group itself, where it is monomorphic, and checks that the trailing
+expression calls the generalized group at Int and Str. Same-type calls remain valid. Independent identity bindings remain polymorphic at
 Int and Str, also with and without Eq. A direct scheme case covers substitution
 chains, free outer constraint and capability-row variables, and quantified IDs
 that must be excluded before following the substitution.

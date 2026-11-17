@@ -77,22 +77,17 @@ let checkCase captures constrained mixed =
                         | TopLevelBindingInferenceResult { error = Some(error) } -> test.fail("binding unexpectedly failed: " + Ashes.Trait.Show.show(error)))
                 |> (given (_) ->
                     let program =
-                        ProgramSyntax(items = [TopLevelRecursiveGroup([declaration("apply")(body), None
+                        ProgramSyntax(items = [TopLevelRecursiveGroup([None
+                        |> ExprLambda("y")(call("f")(ExprVar("y")))
+                        |> declaration("f"), declaration("apply")(body), None
                         |> ExprLambda("x")(call("apply")(ExprVar("x")))
                         |> declaration("forward")])], body = mixed
                         |> uses("forward")
                         |> Some)
                     in
-                        match inferProgramFromPackage("standalone")(environment(Unit))(program) with
-                            | ProgramInferenceResult { error = None } ->
-                                if accepted
-                                then Unit
-                                else test.fail("recursive group accepted captured Int/Str calls")
-                            | ProgramInferenceResult { error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemInt, SemString)))) } ->
-                                if accepted
-                                then test.fail("recursive group rejected valid polymorphism")
-                                else Unit
-                            | ProgramInferenceResult { error = Some(error) } -> test.fail("recursive group unexpected error: " + Ashes.Trait.Show.show(error))))
+                        match inferProgramFromPackage("standalone")(emptyTypeEnvironment(Unit))(program) with
+                            | ProgramInferenceResult { error = None } -> Unit
+                            | ProgramInferenceResult { error = Some(error) } -> test.fail("recursive group not generalized after its members: " + Ashes.Trait.Show.show(error))))
 
 let checkScheme unit =
     (let outer = TypeScheme(quantified = [(40, "a")], body = SemFunction(SemVariable(40))(SemVariable(10))(Some(SemVariable(12))), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(11)])])
