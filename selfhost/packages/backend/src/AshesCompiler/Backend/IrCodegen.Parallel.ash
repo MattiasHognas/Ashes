@@ -6,7 +6,10 @@
 // by `withWorkers`) is reached, the thunk runs inline instead. `ParallelJoin` waits on the
 // descriptor's done word with a futex and answers the worker's result, which still lives in the
 // worker's arena; `ParallelCleanup` waits for the thread to exit and unmaps its stack, arena chunks
-// and control block. The work-conserving queue (`ParallelQueue*`) is not ported.
+// and control block. `ParallelQueueStart` runs stage 0's work-conserving reduce queue: workers claim
+// list elements from a shared counter, publish their mapped values, then merge adjacent results
+// round by round; `ParallelQueueAwait` waits for the merge root and `ParallelQueueCleanup` reclaims
+// the workers and the queue region.
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
@@ -20,6 +23,9 @@ export (
     value emitParallelCleanup,
     value emitLoadParallelWorkerOverride,
     value emitStoreParallelWorkerOverride,
+    value emitParallelQueueStart,
+    value emitParallelQueueAwait,
+    value emitParallelQueueCleanup,
 )
 
 // The fork descriptor, stage 0's layout: the done word the worker futex-wakes, the result, whether
@@ -71,13 +77,20 @@ let chunkFooterBytes = 8
 
 // The globals and functions of a program that uses `Ashes.Task.Parallel`: the `withWorkers`
 // override, and with worker threads the running-worker counter, the cached cap and its function,
-// and the function each worker thread runs.
+// the function each worker thread runs, and the work-conserving queue's start, await and cleanup
+// functions.
 type ParallelRuntime =
     | overrideGlobal: LLVMValueRef
     | activeCounter: Maybe(LLVMValueRef)
     | capFn: LLVMValueRef
     | capType: LLVMTypeRef
     | workerFn: LLVMValueRef
+    | queueStartFn: LLVMValueRef
+    | queueStartType: LLVMTypeRef
+    | queueAwaitFn: LLVMValueRef
+    | queueAwaitType: LLVMTypeRef
+    | queueCleanupFn: LLVMValueRef
+    | queueCleanupType: LLVMTypeRef
 
 let parConst i64 (value: Int) =
     constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)
@@ -218,32 +231,6 @@ let defineWorkerFunction module_ context builder i64 i8 ptrType (arena: ArenaRun
                                                     let _ = buildRetVoid(builder)
                                                     in workerFn)
 
-// The parallel runtime of a program that uses `Ashes.Task.Parallel`; `threads` when it forks.
-let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (threads: Bool) =
-    (let overrideGlobal = parZeroGlobal(module_)(i64)("__ashes_parallel_override")
-    in
-        if threads
-        then
-            let activeCounter = parZeroGlobal(module_)(i64)("__ashes_parallel_active")
-            in
-                match defineWorkerCapFunction(module_)(context)(builder)(i64)(i8)(ptrType) with
-                    | (capFn, capType) ->
-                        ParallelRuntime(
-                            overrideGlobal = overrideGlobal,
-                            activeCounter = Some(activeCounter),
-                            capFn = capFn,
-                            capType = capType,
-                            workerFn = defineWorkerFunction(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(closureFnType)(activeCounter)
-                        )
-        else
-            ParallelRuntime(
-                overrideGlobal = overrideGlobal,
-                activeCounter = None,
-                capFn = overrideGlobal,
-                capType = i64,
-                workerFn = overrideGlobal
-            ))
-
 let emitLoadParallelWorkerOverride builder i64 (runtime: ParallelRuntime) name = buildLoad(builder)(i64)(runtime.overrideGlobal)(name)
 
 let emitStoreParallelWorkerOverride builder (runtime: ParallelRuntime) value = buildStore(builder)(value)(runtime.overrideGlobal)
@@ -276,14 +263,16 @@ let emitCloneWorker context builder i64 desc stackTop workerFn =
 
 // The cap a fork compares the running workers against: the detected core count, or the
 // `withWorkers` override when it is set and lower.
-let emitEffectiveWorkerCap builder i64 (runtime: ParallelRuntime) =
-    (let compiledMax = buildCall(builder)(runtime.capType)(runtime.capFn)([])(0u32)("par_cap_max")
+let emitWorkerCap builder i64 capFn capType overrideGlobal =
+    (let compiledMax = buildCall(builder)(capType)(capFn)([])(0u32)("par_cap_max")
     in
-        let overrideValue = buildLoad(builder)(i64)(runtime.overrideGlobal)("par_cap_override")
+        let overrideValue = buildLoad(builder)(i64)(overrideGlobal)("par_cap_override")
         in
             let useOverride =
                 buildAnd(builder)(buildICmp(builder)(intPredicateNe)(overrideValue)(parConst(i64)(0))("par_cap_override_set"))(buildICmp(builder)(intPredicateSlt)(overrideValue)(compiledMax)("par_cap_override_lower"))("par_cap_use_override")
             in buildSelect(builder)(useOverride)(overrideValue)(compiledMax)("par_cap"))
+
+let emitEffectiveWorkerCap builder i64 (runtime: ParallelRuntime) = emitWorkerCap(builder)(i64)(runtime.capFn)(runtime.capType)(runtime.overrideGlobal)
 
 // Stage 0's `EmitParallelFork`: a descriptor in the caller's arena; a worker slot is claimed with
 // an atomic add and, under the cap, the worker gets a control block wired to a fresh arena chunk
@@ -480,3 +469,753 @@ let emitParallelCleanup context function_ builder i64 i8 ptrType desc name =
                                                                                 in
                                                                                     let _ = buildBr(builder)(doneBlock)
                                                                                     in positionBuilderAtEnd(builder)(doneBlock))
+
+// The work-conserving queue region, stage 0's layout: a 64-byte header (next element index,
+// element count, mapper, spawned workers, region size, combine, next merge task, merge-tree item
+// count), the snapshotted elements, an item word and a flag word per merge-tree node, and a 72-byte
+// record per worker (the queue at 0; stack, control block and exit word at the fork descriptor's
+// offsets).
+let queueNextIndex = 0
+
+let queueCount = 8
+
+let queueMapper = 16
+
+let queueWorkerCount = 24
+
+let queueRegionBytes = 32
+
+let queueCombine = 40
+
+let queueNextMergeTask = 48
+
+let queueTotalItems = 56
+
+let queueHeaderBytes = 64
+
+let queueRecordBytes = 72
+
+// The flag at `flagAddress` read with an acquire (an atomic add of 0), waited on with a futex until
+// it is set.
+let emitQueueFlagWait context function_ builder i64 flagAddress name =
+    (let checkBlock = appendBasicBlock(context)(function_)(name + "_check")
+    in
+        let waitBlock = appendBasicBlock(context)(function_)(name + "_wait")
+        in
+            let readyBlock = appendBasicBlock(context)(function_)(name + "_ready")
+            in
+                let _ = buildBr(builder)(checkBlock)
+                in
+                    let _ = positionBuilderAtEnd(builder)(checkBlock)
+                    in
+                        let flag =
+                            buildAtomicRmw(builder)(atomicRmwAdd)(buildIntToPtr(builder)(flagAddress)(pointerType(context)(0u32))(name + "_flag_ptr"))(parConst(i64)(0))(atomicOrderingSequentiallyConsistent)
+                        in
+                            let _ =
+                                buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(flag)(parConst(i64)(0))(name + "_is_ready"))(readyBlock)(waitBlock)
+                            in
+                                let _ = positionBuilderAtEnd(builder)(waitBlock)
+                                in
+                                    let _ = emitFutex(builder)(i64)(flagAddress)(futexWaitPrivate)(0)(name + "_futex")
+                                    in
+                                        let _ = buildBr(builder)(checkBlock)
+                                        in positionBuilderAtEnd(builder)(readyBlock))
+
+// Publishes an item: the value is stored, then its flag is set with an atomic add and its one
+// waiter woken.
+let emitQueuePublish context builder i64 i8 ptrType itemAddress flagAddress value name =
+    (let _ = parStore(builder)(i64)(i8)(ptrType)(itemAddress)(0)(value)(name + "_item")
+    in
+        let _ =
+            buildAtomicRmw(builder)(atomicRmwAdd)(buildIntToPtr(builder)(flagAddress)(pointerType(context)(0u32))(name + "_flag_ptr"))(parConst(i64)(1))(atomicOrderingSequentiallyConsistent)
+        in emitFutex(builder)(i64)(flagAddress)(futexWakePrivate)(1)(name + "_wake"))
+
+let atomicWordAdd context builder i64 address (delta: Int) name =
+    buildAtomicRmw(builder)(atomicRmwAdd)(buildIntToPtr(builder)(address)(pointerType(context)(0u32))(name))(parConst(i64)(delta))(atomicOrderingSequentiallyConsistent)
+
+// Stage 0's `__ashes_parallel_queue_drain(queue)`: claims element indexes and publishes
+// `f(element)` for each, then claims merge tasks round-major, waits for each task's operands and
+// publishes `combine(left)(right)`, or the left one alone when the round has no right operand.
+let defineQueueDrainFunction module_ context builder i64 i8 ptrType closureFnType =
+    (let drainType =
+        functionType(voidType(context))([i64])(1u32)(false)
+    in
+        let drainFn = addInternalFunction(module_)("__ashes_parallel_queue_drain")(drainType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(context)(drainFn)(name)
+            in
+                let _ =
+                    "entry"
+                    |> block
+                    |> positionBuilderAtEnd(builder)
+                in
+                    let desc = getParam(drainFn)(0u32)
+                    in
+                        let count = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCount)("parq_n")
+                        in
+                            let mapper = parWord(builder)(i64)(i8)(ptrType)(desc)(queueMapper)("parq_f")
+                            in
+                                let combine = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCombine)("parq_combine")
+                                in
+                                    let totalItems = parWord(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)("parq_s")
+                                    in
+                                        let elemsBase =
+                                            buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_elems")
+                                        in
+                                            let itemsBase =
+                                                buildAdd(builder)(elemsBase)(buildMul(builder)(count)(parConst(i64)(8))("parq_n_bytes"))("parq_items")
+                                            in
+                                                let flagsBase =
+                                                    buildAdd(builder)(itemsBase)(buildMul(builder)(totalItems)(parConst(i64)(8))("parq_s_bytes"))("parq_flags")
+                                                in
+                                                    let roundCountSlot = buildAlloca(builder)(i64)("parq_round_count")
+                                                    in
+                                                        let previousBaseSlot = buildAlloca(builder)(i64)("parq_previous_base")
+                                                        in
+                                                            let currentBaseSlot = buildAlloca(builder)(i64)("parq_current_base")
+                                                            in
+                                                                let remainderSlot = buildAlloca(builder)(i64)("parq_remainder")
+                                                                in
+                                                                    let resultSlot = buildAlloca(builder)(i64)("parq_result")
+                                                                    in
+                                                                        let leafLoop = block("parq_leaf_loop")
+                                                                        in
+                                                                            let leafBody = block("parq_leaf_body")
+                                                                            in
+                                                                                let mergeClaim = block("parq_merge_claim")
+                                                                                in
+                                                                                    let locateLoop = block("parq_locate")
+                                                                                    in
+                                                                                        let locateNext = block("parq_locate_next")
+                                                                                        in
+                                                                                            let located = block("parq_located")
+                                                                                            in
+                                                                                                let combineBlock = block("parq_combine")
+                                                                                                in
+                                                                                                    let promoteBlock = block("parq_promote")
+                                                                                                    in
+                                                                                                        let publishBlock = block("parq_publish")
+                                                                                                        in
+                                                                                                            let doneBlock = block("parq_done")
+                                                                                                            in
+                                                                                                                let _ = buildBr(builder)(leafLoop)
+                                                                                                                in
+                                                                                                                    let _ = positionBuilderAtEnd(builder)(leafLoop)
+                                                                                                                    in
+                                                                                                                        let index = atomicWordAdd(context)(builder)(i64)(desc)(1)("parq_claim")
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(index)(count)("parq_has_leaf"))(leafBody)(mergeClaim)
+                                                                                                                            in
+                                                                                                                                let _ = positionBuilderAtEnd(builder)(leafBody)
+                                                                                                                                in
+                                                                                                                                    let indexBytes =
+                                                                                                                                        buildMul(builder)(index)(parConst(i64)(8))("parq_index_bytes")
+                                                                                                                                    in
+                                                                                                                                        let element =
+                                                                                                                                            parWord(builder)(i64)(i8)(ptrType)(buildAdd(builder)(elemsBase)(indexBytes)("parq_element_address"))(0)("parq_element")
+                                                                                                                                        in
+                                                                                                                                            let mapped =
+                                                                                                                                                emitCallClosure(builder)(i64)(i8)(ptrType)(closureFnType)(mapper)(element)(parConst(i64)(0))("parq_mapped")
+                                                                                                                                            in
+                                                                                                                                                let _ =
+                                                                                                                                                    emitQueuePublish(context)(builder)(i64)(i8)(ptrType)(buildAdd(builder)(itemsBase)(indexBytes)("parq_leaf_item"))(buildAdd(builder)(flagsBase)(indexBytes)("parq_leaf_flag"))(mapped)("parq_leaf")
+                                                                                                                                                in
+                                                                                                                                                    let _ = buildBr(builder)(leafLoop)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(mergeClaim)
+                                                                                                                                                        in
+                                                                                                                                                            let task =
+                                                                                                                                                                atomicWordAdd(context)(builder)(i64)(buildAdd(builder)(desc)(parConst(i64)(queueNextMergeTask))("parq_merge_counter"))(1)("parq_claim_task")
+                                                                                                                                                            in
+                                                                                                                                                                let _ = buildStore(builder)(count)(roundCountSlot)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ =
+                                                                                                                                                                        buildStore(builder)(parConst(i64)(0))(previousBaseSlot)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = buildStore(builder)(count)(currentBaseSlot)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = buildStore(builder)(task)(remainderSlot)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ =
+                                                                                                                                                                                    buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(task)(buildSub(builder)(totalItems)(count)("parq_task_total"))("parq_has_task"))(locateLoop)(doneBlock)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(locateLoop)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let roundCount = buildLoad(builder)(i64)(roundCountSlot)("parq_c")
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let roundSize =
+                                                                                                                                                                                                buildLShr(builder)(buildAdd(builder)(roundCount)(parConst(i64)(1))("parq_c1"))(parConst(i64)(1))("parq_round_size")
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let remainder = buildLoad(builder)(i64)(remainderSlot)("parq_rem")
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                        buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(remainder)(roundSize)("parq_in_round"))(located)(locateNext)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(locateNext)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                buildStore(builder)(buildSub(builder)(remainder)(roundSize)("parq_rem_next"))(remainderSlot)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let currentBase = buildLoad(builder)(i64)(currentBaseSlot)("parq_current_base_value")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = buildStore(builder)(currentBase)(previousBaseSlot)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            buildStore(builder)(buildAdd(builder)(currentBase)(roundSize)("parq_next_base"))(currentBaseSlot)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ = buildStore(builder)(roundSize)(roundCountSlot)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ = buildBr(builder)(locateLoop)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(located)
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let previousCount = buildLoad(builder)(i64)(roundCountSlot)("parq_previous_count")
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let slot = buildLoad(builder)(i64)(remainderSlot)("parq_j")
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let leftOffset =
+                                                                                                                                                                                                                                                    buildMul(builder)(slot)(parConst(i64)(2))("parq_left_offset")
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let leftBytes =
+                                                                                                                                                                                                                                                        buildMul(builder)(buildAdd(builder)(buildLoad(builder)(i64)(previousBaseSlot)("parq_previous_base_value"))(leftOffset)("parq_left_item"))(parConst(i64)(8))("parq_left_bytes")
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let outBytes =
+                                                                                                                                                                                                                                                            buildMul(builder)(buildAdd(builder)(buildLoad(builder)(i64)(currentBaseSlot)("parq_out_base"))(slot)("parq_out_item"))(parConst(i64)(8))("parq_out_bytes")
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                emitQueueFlagWait(context)(drainFn)(builder)(i64)(buildAdd(builder)(flagsBase)(leftBytes)("parq_left_flag"))("parq_left")
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let left =
+                                                                                                                                                                                                                                                                    parWord(builder)(i64)(i8)(ptrType)(buildAdd(builder)(itemsBase)(leftBytes)("parq_left_address"))(0)("parq_left_value")
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let hasRight =
+                                                                                                                                                                                                                                                                        buildICmp(builder)(intPredicateSlt)(buildAdd(builder)(leftOffset)(parConst(i64)(1))("parq_right_offset"))(previousCount)("parq_has_right")
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ = buildCondBr(builder)(hasRight)(combineBlock)(promoteBlock)
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(combineBlock)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let rightBytes =
+                                                                                                                                                                                                                                                                                    buildAdd(builder)(leftBytes)(parConst(i64)(8))("parq_right_bytes")
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                        emitQueueFlagWait(context)(drainFn)(builder)(i64)(buildAdd(builder)(flagsBase)(rightBytes)("parq_right_flag"))("parq_right")
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let right =
+                                                                                                                                                                                                                                                                                            parWord(builder)(i64)(i8)(ptrType)(buildAdd(builder)(itemsBase)(rightBytes)("parq_right_address"))(0)("parq_right_value")
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let partial =
+                                                                                                                                                                                                                                                                                                emitCallClosure(builder)(i64)(i8)(ptrType)(closureFnType)(combine)(left)(parConst(i64)(0))("parq_partial")
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let merged =
+                                                                                                                                                                                                                                                                                                    emitCallClosure(builder)(i64)(i8)(ptrType)(closureFnType)(partial)(right)(parConst(i64)(0))("parq_merged")
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ = buildStore(builder)(merged)(resultSlot)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ = buildBr(builder)(publishBlock)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(promoteBlock)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = buildStore(builder)(left)(resultSlot)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ = buildBr(builder)(publishBlock)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(publishBlock)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                emitQueuePublish(context)(builder)(i64)(i8)(ptrType)(buildAdd(builder)(itemsBase)(outBytes)("parq_out_item_address"))(buildAdd(builder)(flagsBase)(outBytes)("parq_out_flag"))(buildLoad(builder)(i64)(resultSlot)("parq_result_value"))("parq_merge")
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let _ = buildBr(builder)(mergeClaim)
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let _ = buildRetVoid(builder)
+                                                                                                                                                                                                                                                                                                                                        in (drainFn, drainType))
+
+// Stage 0's `__ashes_parallel_queue_worker(record)`: makes the record's control block this thread's
+// GS base, drains the queue and gives its worker slot back.
+let defineQueueWorkerFunction module_ context builder i64 i8 ptrType drainFn drainType activeCounter =
+    (let workerType =
+        functionType(voidType(context))([i64])(1u32)(false)
+    in
+        let workerFn = addInternalFunction(module_)("__ashes_parallel_queue_worker")(workerType)
+        in
+            let _ =
+                "entry"
+                |> appendBasicBlock(context)(workerFn)
+                |> positionBuilderAtEnd(builder)
+            in
+                let record = getParam(workerFn)(0u32)
+                in
+                    let _ =
+                        emitLinuxSyscallCall(builder)(i64)(parConst(i64)(syscallArchPrctl))(parConst(i64)(archSetGs))(parWord(builder)(i64)(i8)(ptrType)(record)(descWorkerBlock)("parq_worker_block"))(parConst(i64)(0))("parq_worker_set_gs")
+                    in
+                        let _ = buildCall(builder)(drainType)(drainFn)([parWord(builder)(i64)(i8)(ptrType)(record)(0)("parq_worker_queue")])(1u32)("")
+                        in
+                            let _ =
+                                buildAtomicRmw(builder)(atomicRmwAdd)(activeCounter)(parConst(i64)(-1))(atomicOrderingSequentiallyConsistent)
+                            in
+                                let _ = buildRetVoid(builder)
+                                in workerFn)
+
+// A worker's control block wired to a fresh arena chunk, and its mapped stack, recorded in the
+// worker record (or fork descriptor) at `record`; answers the stack's top.
+let emitPrepareWorker context function_ builder i64 i8 ptrType (arena: ArenaRuntime) record name =
+    (let block =
+        emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(parConst(i64)(threadControlBlockBytes))(name + "_block")
+    in
+        let _ = parStore(builder)(i64)(i8)(ptrType)(block)(0)(block)(name + "_block_self")
+        in
+            let chunk =
+                emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(parConst(i64)(4194304))(name + "_chunk")
+            in
+                let _ =
+                    emitRegionChunkSetup(builder)(i64)(i8)(ptrType)(memOffsetPtr(builder)(i64)(i8)(ptrType)(block)(8)(name + "_cursor_slot"))(memOffsetPtr(builder)(i64)(i8)(ptrType)(block)(16)(name + "_end_slot"))(chunk)(parConst(i64)(4194304))(parConst(i64)(0))(name + "_chunk")
+                in
+                    let _ = parStore(builder)(i64)(i8)(ptrType)(record)(descWorkerBlock)(block)(name + "_store_block")
+                    in
+                        let stack =
+                            emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(parConst(i64)(workerStackBytes))(name + "_stack")
+                        in
+                            let _ = parStore(builder)(i64)(i8)(ptrType)(record)(descWorkerStack)(stack)(name + "_store_stack")
+                            in
+                                let _ =
+                                    parStore(builder)(i64)(i8)(ptrType)(record)(descExited)(parConst(i64)(1))(name + "_running")
+                                in
+                                    buildAdd(builder)(stack)(parConst(i64)(workerStackBytes))(name + "_stack_top"))
+
+// Waits until the kernel has cleared the exit word of the worker whose record is at `record`, then
+// unmaps its stack, its arena chunks and its control block.
+let emitReleaseWorker context function_ builder i64 i8 ptrType record name =
+    (let exitCheckBlock = appendBasicBlock(context)(function_)(name + "_exit_check")
+    in
+        let exitWaitBlock = appendBasicBlock(context)(function_)(name + "_exit_wait")
+        in
+            let exitedBlock = appendBasicBlock(context)(function_)(name + "_exited")
+            in
+                let _ = buildBr(builder)(exitCheckBlock)
+                in
+                    let _ = positionBuilderAtEnd(builder)(exitCheckBlock)
+                    in
+                        let exited = parWord(builder)(i64)(i8)(ptrType)(record)(descExited)(name + "_exit_word")
+                        in
+                            let _ =
+                                buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(exited)(parConst(i64)(0))(name + "_running"))(exitWaitBlock)(exitedBlock)
+                            in
+                                let _ = positionBuilderAtEnd(builder)(exitWaitBlock)
+                                in
+                                    let _ =
+                                        emitFutex(builder)(i64)(buildAdd(builder)(record)(parConst(i64)(descExited))(name + "_exit_address"))(futexWait)(1)(name + "_exit_futex")
+                                    in
+                                        let _ = buildBr(builder)(exitCheckBlock)
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(exitedBlock)
+                                            in
+                                                let _ =
+                                                    workerStackBytes
+                                                    |> parConst(i64)
+                                                    |> emitLinuxMunmap(builder)(i64)(parWord(builder)(i64)(i8)(ptrType)(record)(descWorkerStack)(name + "_stack"))
+                                                in
+                                                    let block = parWord(builder)(i64)(i8)(ptrType)(record)(descWorkerBlock)(name + "_block")
+                                                    in
+                                                        let _ =
+                                                            emitFreeWorkerChunks(context)(function_)(builder)(i64)(i8)(ptrType)(parWord(builder)(i64)(i8)(ptrType)(block)(16)(name + "_arena_end"))(name + "_chunks")
+                                                        in
+                                                            threadControlBlockBytes
+                                                            |> parConst(i64)
+                                                            |> emitLinuxMunmap(builder)(i64)(block))
+
+// Stage 0's `__ashes_parallel_queue_start(f, combine, list)`: counts the list, sizes the merge tree
+// (`n + ceil(n/2) + ... + 1` items), maps the zeroed region and snapshots the elements into it,
+// then claims worker slots up to the cap and the element count and starts a worker per slot. With
+// no worker at all the caller drains the whole queue itself. Answers the queue.
+let defineQueueStartFunction module_ context builder i64 i8 ptrType (arena: ArenaRuntime) drainFn drainType workerFn activeCounter capFn capType overrideGlobal =
+    (let startType = functionType(i64)([i64, i64, i64])(3u32)(false)
+    in
+        let startFn = addInternalFunction(module_)("__ashes_parallel_queue_start")(startType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(context)(startFn)(name)
+            in
+                let _ =
+                    "entry"
+                    |> block
+                    |> positionBuilderAtEnd(builder)
+                in
+                    let mapper = getParam(startFn)(0u32)
+                    in
+                        let combine = getParam(startFn)(1u32)
+                        in
+                            let list = getParam(startFn)(2u32)
+                            in
+                                let cursorSlot = buildAlloca(builder)(i64)("parq_cursor")
+                                in
+                                    let countSlot = buildAlloca(builder)(i64)("parq_count")
+                                    in
+                                        let roundSlot = buildAlloca(builder)(i64)("parq_round")
+                                        in
+                                            let totalSlot = buildAlloca(builder)(i64)("parq_total")
+                                            in
+                                                let indexSlot = buildAlloca(builder)(i64)("parq_index")
+                                                in
+                                                    let spawnedSlot = buildAlloca(builder)(i64)("parq_spawned")
+                                                    in
+                                                        let countLoop = block("parq_count_loop")
+                                                        in
+                                                            let countBody = block("parq_count_body")
+                                                            in
+                                                                let sizeLoop = block("parq_size_loop")
+                                                                in
+                                                                    let sizeBody = block("parq_size_body")
+                                                                    in
+                                                                        let regionBlock = block("parq_region")
+                                                                        in
+                                                                            let fillLoop = block("parq_fill_loop")
+                                                                            in
+                                                                                let fillBody = block("parq_fill_body")
+                                                                                in
+                                                                                    let spawnLoop = block("parq_spawn_loop")
+                                                                                    in
+                                                                                        let spawnTry = block("parq_spawn_try")
+                                                                                        in
+                                                                                            let spawnBody = block("parq_spawn_body")
+                                                                                            in
+                                                                                                let spawnAbort = block("parq_spawn_abort")
+                                                                                                in
+                                                                                                    let spawnDone = block("parq_spawn_done")
+                                                                                                    in
+                                                                                                        let drainInline = block("parq_drain_inline")
+                                                                                                        in
+                                                                                                            let returnBlock = block("parq_return")
+                                                                                                            in
+                                                                                                                let _ = buildStore(builder)(list)(cursorSlot)
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        buildStore(builder)(parConst(i64)(0))(countSlot)
+                                                                                                                    in
+                                                                                                                        let _ = buildBr(builder)(countLoop)
+                                                                                                                        in
+                                                                                                                            let _ = positionBuilderAtEnd(builder)(countLoop)
+                                                                                                                            in
+                                                                                                                                let countCursor = buildLoad(builder)(i64)(cursorSlot)("parq_count_cursor")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(countCursor)(parConst(i64)(0))("parq_count_end"))(sizeLoop)(countBody)
+                                                                                                                                    in
+                                                                                                                                        let _ = positionBuilderAtEnd(builder)(countBody)
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(countSlot)("parq_count_value"))(parConst(i64)(1))("parq_count_next"))(countSlot)
+                                                                                                                                            in
+                                                                                                                                                let _ =
+                                                                                                                                                    buildStore(builder)(parWord(builder)(i64)(i8)(ptrType)(countCursor)(8)("parq_count_tail"))(cursorSlot)
+                                                                                                                                                in
+                                                                                                                                                    let _ = buildBr(builder)(countLoop)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(sizeLoop)
+                                                                                                                                                        in
+                                                                                                                                                            let count = buildLoad(builder)(i64)(countSlot)("parq_n")
+                                                                                                                                                            in
+                                                                                                                                                                let _ = buildStore(builder)(count)(roundSlot)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = buildStore(builder)(count)(totalSlot)
+                                                                                                                                                                    in
+                                                                                                                                                                        let sizeCheck = block("parq_size_check")
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = buildBr(builder)(sizeCheck)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(sizeCheck)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let currentRound = buildLoad(builder)(i64)(roundSlot)("parq_round_value")
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            buildCondBr(builder)(buildICmp(builder)(intPredicateSgt)(currentRound)(parConst(i64)(1))("parq_more_rounds"))(sizeBody)(regionBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(sizeBody)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let nextRound =
+                                                                                                                                                                                                    buildLShr(builder)(buildAdd(builder)(currentRound)(parConst(i64)(1))("parq_round_plus"))(parConst(i64)(1))("parq_next_round")
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = buildStore(builder)(nextRound)(roundSlot)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(totalSlot)("parq_total_value"))(nextRound)("parq_total_next"))(totalSlot)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = buildBr(builder)(sizeCheck)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(regionBlock)
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let totalItems = buildLoad(builder)(i64)(totalSlot)("parq_s")
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let cap = emitWorkerCap(builder)(i64)(capFn)(capType)(overrideGlobal)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let maxWorkers =
+                                                                                                                                                                                                                                buildSelect(builder)(buildICmp(builder)(intPredicateSlt)(cap)(count)("parq_cap_below_n"))(cap)(count)("parq_max_workers")
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let payloadBytes =
+                                                                                                                                                                                                                                    buildAdd(builder)(buildMul(builder)(count)(parConst(i64)(8))("parq_element_bytes"))(buildMul(builder)(totalItems)(parConst(i64)(16))("parq_tree_bytes"))("parq_payload_bytes")
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let regionBytes =
+                                                                                                                                                                                                                                        buildAdd(builder)(buildAdd(builder)(parConst(i64)(queueHeaderBytes))(payloadBytes)("parq_header_payload"))(buildMul(builder)(maxWorkers)(parConst(i64)(queueRecordBytes))("parq_record_bytes"))("parq_region_bytes")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let desc = emitArenaOsAllocate(context)(startFn)(builder)(i64)(arena)(regionBytes)("parq_region")
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueCount)(count)("parq_store_n")
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueMapper)(mapper)("parq_store_f")
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueCombine)(combine)("parq_store_combine")
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)(totalItems)("parq_store_s")
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueRegionBytes)(regionBytes)("parq_store_size")
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let elemsBase =
+                                                                                                                                                                                                                                                                    buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_elems_base")
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ = buildStore(builder)(list)(cursorSlot)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                            buildStore(builder)(parConst(i64)(0))(indexSlot)
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ = buildBr(builder)(fillLoop)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(fillLoop)
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let fillCursor = buildLoad(builder)(i64)(cursorSlot)("parq_fill_cursor")
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                            buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(fillCursor)(parConst(i64)(0))("parq_fill_end"))(spawnLoop)(fillBody)
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(fillBody)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let fillIndex = buildLoad(builder)(i64)(indexSlot)("parq_fill_index")
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                        parStore(builder)(i64)(i8)(ptrType)(buildAdd(builder)(elemsBase)(buildMul(builder)(fillIndex)(parConst(i64)(8))("parq_fill_offset"))("parq_fill_address"))(0)(parWord(builder)(i64)(i8)(ptrType)(fillCursor)(0)("parq_fill_head"))("parq_fill_element")
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                            buildStore(builder)(parWord(builder)(i64)(i8)(ptrType)(fillCursor)(8)("parq_fill_tail"))(cursorSlot)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                buildStore(builder)(buildAdd(builder)(fillIndex)(parConst(i64)(1))("parq_fill_next"))(indexSlot)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = buildBr(builder)(fillLoop)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(spawnLoop)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                            buildStore(builder)(parConst(i64)(0))(spawnedSlot)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let spawnCheck = block("parq_spawn_check")
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let _ = buildBr(builder)(spawnCheck)
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(spawnCheck)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let spawned = buildLoad(builder)(i64)(spawnedSlot)("parq_spawned_value")
+                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(spawned)(maxWorkers)("parq_want_more"))(spawnTry)(spawnDone)
+                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(spawnTry)
+                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                    let previous =
+                                                                                                                                                                                                                                                                                                                                                        buildAtomicRmw(builder)(atomicRmwAdd)(activeCounter)(parConst(i64)(1))(atomicOrderingSequentiallyConsistent)
+                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                                                            buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(previous)(cap)("parq_can_spawn"))(spawnBody)(spawnAbort)
+                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(spawnAbort)
+                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                                    buildAtomicRmw(builder)(atomicRmwAdd)(activeCounter)(parConst(i64)(-1))(atomicOrderingSequentiallyConsistent)
+                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                    let _ = buildBr(builder)(spawnDone)
+                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(spawnBody)
+                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                            let record =
+                                                                                                                                                                                                                                                                                                                                                                                buildAdd(builder)(buildAdd(builder)(elemsBase)(payloadBytes)("parq_records"))(buildMul(builder)(spawned)(parConst(i64)(queueRecordBytes))("parq_record_offset"))("parq_record")
+                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                let _ = parStore(builder)(i64)(i8)(ptrType)(record)(0)(desc)("parq_record_queue")
+                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                    let stackTop = emitPrepareWorker(context)(startFn)(builder)(i64)(i8)(ptrType)(arena)(record)("parq_worker")
+                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                        let _ = emitCloneWorker(context)(builder)(i64)(record)(stackTop)(workerFn)
+                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(buildAdd(builder)(spawned)(parConst(i64)(1))("parq_spawned_next"))(spawnedSlot)
+                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                let _ = buildBr(builder)(spawnCheck)
+                                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(spawnDone)
+                                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                                        let spawnedTotal = buildLoad(builder)(i64)(spawnedSlot)("parq_spawned_total")
+                                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                                            let _ = parStore(builder)(i64)(i8)(ptrType)(desc)(queueWorkerCount)(spawnedTotal)("parq_store_workers")
+                                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                                    buildCondBr(builder)(buildICmp(builder)(intPredicateSgt)(spawnedTotal)(parConst(i64)(0))("parq_any_spawned"))(returnBlock)(drainInline)
+                                                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(drainInline)
+                                                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                                                        let _ = buildCall(builder)(drainType)(drainFn)([desc])(1u32)("")
+                                                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                                                            let _ = buildBr(builder)(returnBlock)
+                                                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(returnBlock)
+                                                                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                                                                    let _ = buildRet(builder)(desc)
+                                                                                                                                                                                                                                                                                                                                                                                                                                    in (startFn, startType))
+
+// Stage 0's `__ashes_parallel_queue_await(queue)`: waits until the merge root (the last item) is
+// published and answers it, still in the workers' arenas. Only called for a non-empty list.
+let defineQueueAwaitFunction module_ context builder i64 i8 ptrType =
+    (let awaitType = functionType(i64)([i64])(1u32)(false)
+    in
+        let awaitFn = addInternalFunction(module_)("__ashes_parallel_queue_await")(awaitType)
+        in
+            let _ =
+                "entry"
+                |> appendBasicBlock(context)(awaitFn)
+                |> positionBuilderAtEnd(builder)
+            in
+                let desc = getParam(awaitFn)(0u32)
+                in
+                    let count = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCount)("parq_await_n")
+                    in
+                        let itemBytes =
+                            buildMul(builder)(parWord(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)("parq_await_s"))(parConst(i64)(8))("parq_await_item_bytes")
+                        in
+                            let itemsBase =
+                                buildAdd(builder)(buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_await_elems"))(buildMul(builder)(count)(parConst(i64)(8))("parq_await_n_bytes"))("parq_await_items")
+                            in
+                                let rootBytes =
+                                    buildSub(builder)(itemBytes)(parConst(i64)(8))("parq_await_root_bytes")
+                                in
+                                    let _ =
+                                        emitQueueFlagWait(context)(awaitFn)(builder)(i64)(buildAdd(builder)(buildAdd(builder)(itemsBase)(itemBytes)("parq_await_flags"))(rootBytes)("parq_await_root_flag"))("parq_await")
+                                    in
+                                        let _ =
+                                            "parq_await_result"
+                                            |> parWord(builder)(i64)(i8)(ptrType)(buildAdd(builder)(itemsBase)(rootBytes)("parq_await_root"))(0)
+                                            |> buildRet(builder)
+                                        in (awaitFn, awaitType))
+
+// Stage 0's `__ashes_parallel_queue_cleanup(queue)`: releases every worker the queue started, then
+// unmaps the queue region.
+let defineQueueCleanupFunction module_ context builder i64 i8 ptrType =
+    (let cleanupType =
+        functionType(voidType(context))([i64])(1u32)(false)
+    in
+        let cleanupFn = addInternalFunction(module_)("__ashes_parallel_queue_cleanup")(cleanupType)
+        in
+            let loopBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_loop")
+            in
+                let bodyBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_body")
+                in
+                    let regionBlock = appendBasicBlock(context)(cleanupFn)("parq_cleanup_region")
+                    in
+                        let _ =
+                            "entry"
+                            |> appendBasicBlock(context)(cleanupFn)
+                            |> positionBuilderAtEnd(builder)
+                        in
+                            let desc = getParam(cleanupFn)(0u32)
+                            in
+                                let count = parWord(builder)(i64)(i8)(ptrType)(desc)(queueCount)("parq_cleanup_n")
+                                in
+                                    let totalItems = parWord(builder)(i64)(i8)(ptrType)(desc)(queueTotalItems)("parq_cleanup_s")
+                                    in
+                                        let workers = parWord(builder)(i64)(i8)(ptrType)(desc)(queueWorkerCount)("parq_cleanup_workers")
+                                        in
+                                            let regionBytes = parWord(builder)(i64)(i8)(ptrType)(desc)(queueRegionBytes)("parq_cleanup_size")
+                                            in
+                                                let payloadBytes =
+                                                    buildAdd(builder)(buildMul(builder)(count)(parConst(i64)(8))("parq_cleanup_element_bytes"))(buildMul(builder)(totalItems)(parConst(i64)(16))("parq_cleanup_tree_bytes"))("parq_cleanup_payload")
+                                                in
+                                                    let recordsBase =
+                                                        buildAdd(builder)(buildAdd(builder)(desc)(parConst(i64)(queueHeaderBytes))("parq_cleanup_elems"))(payloadBytes)("parq_cleanup_records")
+                                                    in
+                                                        let workerSlot = buildAlloca(builder)(i64)("parq_cleanup_worker")
+                                                        in
+                                                            let _ =
+                                                                buildStore(builder)(parConst(i64)(0))(workerSlot)
+                                                            in
+                                                                let _ = buildBr(builder)(loopBlock)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(loopBlock)
+                                                                    in
+                                                                        let worker = buildLoad(builder)(i64)(workerSlot)("parq_cleanup_index")
+                                                                        in
+                                                                            let _ =
+                                                                                buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(worker)(workers)("parq_cleanup_more"))(bodyBlock)(regionBlock)
+                                                                            in
+                                                                                let _ = positionBuilderAtEnd(builder)(bodyBlock)
+                                                                                in
+                                                                                    let _ =
+                                                                                        emitReleaseWorker(context)(cleanupFn)(builder)(i64)(i8)(ptrType)(buildAdd(builder)(recordsBase)(buildMul(builder)(worker)(parConst(i64)(queueRecordBytes))("parq_cleanup_offset"))("parq_cleanup_record"))("parq_cleanup_worker")
+                                                                                    in
+                                                                                        let _ =
+                                                                                            buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(workerSlot)("parq_cleanup_reload"))(parConst(i64)(1))("parq_cleanup_next"))(workerSlot)
+                                                                                        in
+                                                                                            let _ = buildBr(builder)(loopBlock)
+                                                                                            in
+                                                                                                let _ = positionBuilderAtEnd(builder)(regionBlock)
+                                                                                                in
+                                                                                                    let _ = emitLinuxMunmap(builder)(i64)(desc)(regionBytes)
+                                                                                                    in
+                                                                                                        let _ = buildRetVoid(builder)
+                                                                                                        in (cleanupFn, cleanupType))
+
+// The parallel runtime of a program that uses `Ashes.Task.Parallel`; `threads` when it forks or
+// starts a queue.
+let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (threads: Bool) =
+    (let overrideGlobal = parZeroGlobal(module_)(i64)("__ashes_parallel_override")
+    in
+        if threads
+        then
+            let activeCounter = parZeroGlobal(module_)(i64)("__ashes_parallel_active")
+            in
+                match (defineWorkerCapFunction(module_)(context)(builder)(i64)(i8)(ptrType), defineQueueDrainFunction(module_)(context)(builder)(i64)(i8)(ptrType)(closureFnType)) with
+                    | ((capFn, capType), (drainFn, drainType)) ->
+                        let queueWorkerFn = defineQueueWorkerFunction(module_)(context)(builder)(i64)(i8)(ptrType)(drainFn)(drainType)(activeCounter)
+                        in
+                            match (defineQueueStartFunction(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(drainFn)(drainType)(queueWorkerFn)(activeCounter)(capFn)(capType)(overrideGlobal), defineQueueAwaitFunction(module_)(context)(builder)(i64)(i8)(ptrType), defineQueueCleanupFunction(module_)(context)(builder)(i64)(i8)(ptrType)) with
+                                | ((startFn, startType), (awaitFn, awaitType), (cleanupFn, cleanupType)) ->
+                                    ParallelRuntime(
+                                        overrideGlobal = overrideGlobal,
+                                        activeCounter = Some(activeCounter),
+                                        capFn = capFn,
+                                        capType = capType,
+                                        workerFn = defineWorkerFunction(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(closureFnType)(activeCounter),
+                                        queueStartFn = startFn,
+                                        queueStartType = startType,
+                                        queueAwaitFn = awaitFn,
+                                        queueAwaitType = awaitType,
+                                        queueCleanupFn = cleanupFn,
+                                        queueCleanupType = cleanupType
+                                    )
+        else
+            ParallelRuntime(
+                overrideGlobal = overrideGlobal,
+                activeCounter = None,
+                capFn = overrideGlobal,
+                capType = i64,
+                workerFn = overrideGlobal,
+                queueStartFn = overrideGlobal,
+                queueStartType = i64,
+                queueAwaitFn = overrideGlobal,
+                queueAwaitType = i64,
+                queueCleanupFn = overrideGlobal,
+                queueCleanupType = i64
+            ))
+
+let emitParallelQueueStart builder (runtime: ParallelRuntime) mapper combine list name = buildCall(builder)(runtime.queueStartType)(runtime.queueStartFn)([mapper, combine, list])(3u32)(name)
+
+let emitParallelQueueAwait builder (runtime: ParallelRuntime) desc name = buildCall(builder)(runtime.queueAwaitType)(runtime.queueAwaitFn)([desc])(1u32)(name)
+
+let emitParallelQueueCleanup builder (runtime: ParallelRuntime) desc = buildCall(builder)(runtime.queueCleanupType)(runtime.queueCleanupFn)([desc])(1u32)("")

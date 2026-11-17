@@ -1780,6 +1780,25 @@ let codegenInstructionKind cx builder kind state =
                                                         |> emitStoreParallelWorkerOverride(builder)(runtime)
                                                     in (tempEnv, terminated)
                                                 | None -> Ashes.IO.panic("codegen: StoreParallelWorkerOverride without the parallel runtime")
+                                        | ParallelQueueStart(descTarget, mapperTemp, combineTemp, listTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(descTarget)(emitParallelQueueStart(builder)(runtime)(lookupTemp(cx)(mapperTemp)(tempEnv))(lookupTemp(cx)(combineTemp)(tempEnv))(lookupTemp(cx)(listTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueStart without the parallel runtime")
+                                        | ParallelQueueAwait(resultTarget, descTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(resultTarget)(emitParallelQueueAwait(builder)(runtime)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueAwait without the parallel runtime")
+                                        | ParallelQueueCleanup(descTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupTemp(cx)(descTemp)
+                                                        |> emitParallelQueueCleanup(builder)(runtime)
+                                                    in (tempEnv, terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelQueueCleanup without the parallel runtime")
                         // The state-machine transform's own frame stores and loads carry a suspend and a
                         // resume; the markers themselves emit nothing.
                                         | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
@@ -1951,6 +1970,8 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -2047,8 +2068,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 |> allocateLocalSlots(builder)(types.i64)(localCount)
                                 |> indexIntEntries
                             in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
@@ -2239,6 +2258,9 @@ let recursive instructionsUseParallel instructions =
         | IrInstruction { instruction = ParallelCleanup(_desc) } :: _ -> true
         | IrInstruction { instruction = LoadParallelWorkerOverride(_target) } :: _ -> true
         | IrInstruction { instruction = StoreParallelWorkerOverride(_source) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueStart(_target, _mapper, _combine, _list) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueAwait(_target, _queue) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueCleanup(_queue) } :: _ -> true
         | _ :: rest -> instructionsUseParallel(rest)
 
 let recursive functionsUseParallel functions =
@@ -2250,6 +2272,7 @@ let recursive instructionsForkParallel instructions =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = ParallelFork(_target, _closure) } :: _ -> true
+        | IrInstruction { instruction = ParallelQueueStart(_target, _mapper, _combine, _list) } :: _ -> true
         | _ :: rest -> instructionsForkParallel(rest)
 
 let recursive functionsForkParallel functions =

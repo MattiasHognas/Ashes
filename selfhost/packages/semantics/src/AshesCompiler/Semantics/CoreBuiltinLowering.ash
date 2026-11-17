@@ -170,6 +170,12 @@ type CoreBuiltinKind =
     | CoreParallelCleanup
     | CoreParallelOverride
     | CoreParallelSetOverride
+    // `Ashes.Task.Parallel.reduce` at a result type a worker can hand back: the work-conserving queue
+    // started, its element count read, its merge root awaited and the queue released.
+    | CoreParallelQueueStart
+    | CoreParallelQueueCount
+    | CoreParallelQueueAwait
+    | CoreParallelQueueCleanup
 
 type CoreBuiltinLayout =
     | moduleName: Str
@@ -318,6 +324,10 @@ let internalBuiltinKind memberName =
         | "parallelCleanup" -> Some(CoreParallelCleanup)
         | "parallelOverride" -> Some(CoreParallelOverride)
         | "setParallelOverride" -> Some(CoreParallelSetOverride)
+        | "parallelQueueStart" -> Some(CoreParallelQueueStart)
+        | "parallelQueueCount" -> Some(CoreParallelQueueCount)
+        | "parallelQueueAwait" -> Some(CoreParallelQueueAwait)
+        | "parallelQueueCleanup" -> Some(CoreParallelQueueCleanup)
         | _ -> None
 
 let regexBuiltinKind memberName =
@@ -872,6 +882,18 @@ let standardBuiltinLayouts =
             TypeScheme(quantified = [], body = SemFunction(unitType)(SemInt)(None), constraints = [])
         ),
         standardBuiltinLayout("Ashes.Internal")("setParallelOverride")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueStart")(
+            TypeScheme(quantified = [(4, "e"), (5, "c")], body = SemFunction(SemFunction(SemVariable(4))(SemVariable(5))(None))(SemFunction(SemFunction(SemVariable(5))(SemFunction(SemVariable(5))(SemVariable(5))(None))(None))(SemFunction(SemList(SemVariable(4)))(SemInt)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueCount")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueAwait")(
+            TypeScheme(quantified = [(5, "c")], body = SemFunction(SemInt)(SemFunction(SemVariable(5))(SemVariable(5))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("parallelQueueCleanup")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(unitType)(None), constraints = [])
         ),
         standardBuiltinLayout("Ashes.Internal")("deepCopy")(
@@ -1451,6 +1473,10 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreParallelCleanup, desc :: _closure :: [], _types) -> emitted([ParallelCleanup(desc)])(start)(CoreBuiltinUnit)
         | (CoreParallelOverride, _unit :: [], _types) -> emitted([LoadParallelWorkerOverride(start)])(start + 1)(CoreBuiltinTemp(start))
         | (CoreParallelSetOverride, count :: [], _types) -> emitted([StoreParallelWorkerOverride(count)])(start)(CoreBuiltinUnit)
+        | (CoreParallelQueueStart, mapper :: combine :: list :: [], _types) -> emitted([ParallelQueueStart(start)(mapper)(combine)(list)])(start + 1)(CoreBuiltinTemp(start))
+        | (CoreParallelQueueCount, queue :: [], _types) -> emitted([LoadMemOffset(start)(queue)(8)])(start + 1)(CoreBuiltinTemp(start))
+        | (CoreParallelQueueAwait, queue :: _identity :: [], _types) -> target1(start)(queue)(ParallelQueueAwait)
+        | (CoreParallelQueueCleanup, queue :: [], _types) -> emitted([ParallelQueueCleanup(queue)])(start)(CoreBuiltinUnit)
         | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
         | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
         | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)

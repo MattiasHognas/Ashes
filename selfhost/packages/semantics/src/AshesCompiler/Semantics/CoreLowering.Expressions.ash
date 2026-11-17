@@ -2177,6 +2177,15 @@ let thunkResultType (name: Str) (state: CoreLoweringState) =
                 | _ -> None
         | None -> None
 
+// The type of a value a local binding holds, once it is known.
+let thunkResultTypeOfValue (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = bindingType } }) ->
+            bindingType
+            |> resolveType(state)
+            |> Some
+        | None -> None
+
 // Stage 0's `LowerParallelBoth` once both thunks are bound: at a result type a worker can hand
 // back, the right thunk is forked onto a worker while the left one runs here, then joined, its
 // result deep-copied into this arena and the worker released, the pair built from the two
@@ -2198,6 +2207,51 @@ let parallelBothBound (state: CoreLoweringState) =
                     else ExprTuple([unitArgument(left), unitArgument(right)])
                 | None -> ExprTuple([unitArgument(left), unitArgument(right)]))
 
+// Stage 0's `LowerParallelReduceQueued` once the four arguments are bound: at a result type a worker
+// can hand back the work-conserving queue maps and merges the list, the merge root deep-copied into
+// this arena (the identity for an empty list) before the queue is released; at any other type the
+// polymorphic `reduce` runs here.
+let parallelReduceBound (state: CoreLoweringState) =
+    (let combine = ExprVar("__parallel_combine")
+    in
+        let identity = ExprVar("__parallel_identity")
+        in
+            let mapper = ExprVar("__parallel_mapper")
+            in
+                let list = ExprVar("__parallel_list")
+                in
+                    let sequential = callWith(ExprVar("Ashes_Task_Parallel_reduce"))([combine, identity, mapper, list])
+                    in
+                        match thunkResultTypeOfValue("__parallel_identity")(state) with
+                            | Some(resultType) ->
+                                if canRunRightOnWorker(resultType)(state)
+                                then
+                                    let queue = ExprVar("__parallel_queue")
+                                    in
+                                        ExprVar("__parallel_reduced")
+                                        |> plainLet("_")(internalCall("parallelQueueCleanup")([queue]))
+                                        |> plainLet("__parallel_reduced")(ExprIf(ExprGreaterThan(internalCall("parallelQueueCount")([queue]))(ExprInt(0)))(internalCall("deepCopy")([internalCall("parallelQueueAwait")([queue, identity])]))(identity))
+                                        |> plainLet("__parallel_queue")(internalCall("parallelQueueStart")([mapper, combine, list]))
+                                else sequential
+                            | None -> sequential)
+
+// A saturated `Ashes.Task.Parallel.reduce` call that is not already the bound form above.
+let parallelReduceCall expression =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = root, arguments = combine :: identity :: mapper :: list :: [] } ->
+            match (unspanArgument(root), unspanArgument(combine)) with
+                | (ExprVar("Ashes_Task_Parallel_reduce"), ExprVar("__parallel_combine")) -> None
+                | (ExprVar("Ashes_Task_Parallel_reduce"), _) ->
+                    [ExprVar("__parallel_identity"), ExprVar("__parallel_list")]
+                    |> callWith(ExprQualifiedVar("Ashes.Task.Parallel")("__reduceBound"))
+                    |> plainLet("__parallel_list")(list)
+                    |> plainLet("__parallel_mapper")(mapper)
+                    |> plainLet("__parallel_identity")(identity)
+                    |> plainLet("__parallel_combine")(combine)
+                    |> Some
+                | _ -> None
+        | _ -> None
+
 // `Ashes.Task.Parallel.both(left)(right)` binds its two thunks in order and continues with the
 // bound form above; `withWorkers(count)(action)` checks the count, installs it as the worker
 // override for the action and restores the enclosing override after it, stage 0's
@@ -2215,11 +2269,17 @@ let parallelCallRewrite expression (state: CoreLoweringState) =
                     |> plainLet(parallelLeftName)(first)
                     |> Some
                 else
-                    if memberName == "__bothBound"
+                    if memberName == "__bothBound" || memberName == "__reduceBound"
                     then
-                        state
-                        |> parallelBothBound
-                        |> Some
+                        if memberName == "__bothBound"
+                        then
+                            state
+                            |> parallelBothBound
+                            |> Some
+                        else
+                            state
+                            |> parallelReduceBound
+                            |> Some
                     else
                         if memberName == "withWorkers"
                         then
@@ -2239,7 +2299,7 @@ let parallelCallRewrite expression (state: CoreLoweringState) =
                                     |> Some
                         else None
             else None
-        | _ -> None
+        | _ -> parallelReduceCall(expression)
 
 // `Ashes.Task.fork` outside an `async` body has no owning task scope.
 let forksOutsideAsync expression (state: CoreLoweringState) =
@@ -2304,7 +2364,11 @@ let lowerCallExpression expression function argument lower state =
                         then
                             lowerAsParallelWorker(lowerJoinOrCall(expression)(function)(argument)(lower))(state)
                         else lowerJoinOrCall(expression)(function)(argument)(lower)(state)
-                | Some(rewritten) -> lower(rewritten)(state)
+                | Some(rewritten) ->
+                    if isParallelWorkerCall(expression)
+                    then
+                        lowerAsParallelWorker(lower(rewritten))(state)
+                    else lower(rewritten)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =
