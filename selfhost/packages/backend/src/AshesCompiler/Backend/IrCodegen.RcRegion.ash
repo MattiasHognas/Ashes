@@ -30,6 +30,8 @@ type RcRegionRuntime =
     | allocFn: LLVMValueRef
     | freeFn: LLVMValueRef
     | liveCellsGlobal: Maybe(LLVMValueRef)
+    // Whether each thread bumps its own stretch of the range (a program with worker threads).
+    | perThread: Bool
 
 let regionConst i64 value =
     constInt(i64)(Ashes.Number.UInt.fromInt64(value))(false)
@@ -172,6 +174,102 @@ let emitBump context builder i64 ptrType (runtime: RcRegionRuntime) libcBlock st
                 |> wordPointer(builder)(ptrType)(i64)(start)(blockPrefixBytes)
                 |> buildRet(builder)))
 
+// A forking program's reference-counted heap (stage 0's per-thread RC arena): each thread bumps
+// its blocks out of its own stretch of the range, whose cursor and end are its control block's
+// slots at 64 and 72, and keeps its own free lists at 512; a stretch, and a large block, is claimed
+// from the shared range cursor with an atomic add, so threads never write the same word.
+let threadStretchBytes = 1048576
+
+let threadSlot context i64 (offset: Int) =
+    256u32
+    |> pointerType(context)
+    |> constIntToPtr(regionConst(i64)(offset))
+
+let claimFromRange context builder i64 (runtime: RcRegionRuntime) bytes name = buildAtomicRmw(builder)(atomicRmwAdd)(runtime.regionCursorGlobal)(bytes)(atomicOrderingSequentiallyConsistent)
+
+// A small block off this thread's stretch, a fresh stretch claimed first when it has no room left;
+// a range with no stretch left sends the block to libc.
+let emitThreadBump context builder i64 ptrType (runtime: RcRegionRuntime) libcBlock blockBytes =
+    (let checkBlock = appendBasicBlock(context)(runtime.allocFn)("rc_thread_check")
+    in
+        let takeBlock = appendBasicBlock(context)(runtime.allocFn)("rc_thread_take")
+        in
+            let refillBlock = appendBasicBlock(context)(runtime.allocFn)("rc_thread_refill")
+            in
+                let claimedBlock = appendBasicBlock(context)(runtime.allocFn)("rc_thread_claimed")
+                in
+                    let cursorSlot = threadSlot(context)(i64)(64)
+                    in
+                        let endSlot = threadSlot(context)(i64)(72)
+                        in
+                            let _ = buildBr(builder)(checkBlock)
+                            in
+                                let _ = positionBuilderAtEnd(builder)(checkBlock)
+                                in
+                                    let cursor = buildLoad(builder)(i64)(cursorSlot)("rc_thread_cursor")
+                                    in
+                                        let advanced = buildAdd(builder)(cursor)(blockBytes)("rc_thread_advanced")
+                                        in
+                                            let fits =
+                                                buildAnd(builder)(buildICmp(builder)(intPredicateNe)(cursor)(regionConst(i64)(0))("rc_thread_has_stretch"))(buildICmp(builder)(intPredicateUle)(advanced)(buildLoad(builder)(i64)(endSlot)("rc_thread_end"))("rc_thread_room"))("rc_thread_fits")
+                                            in
+                                                let _ = buildCondBr(builder)(fits)(takeBlock)(refillBlock)
+                                                in
+                                                    let _ = positionBuilderAtEnd(builder)(takeBlock)
+                                                    in
+                                                        let _ = buildStore(builder)(advanced)(cursorSlot)
+                                                        in
+                                                            let _ =
+                                                                "rc_thread_prefix"
+                                                                |> buildIntToPtr(builder)(cursor)(ptrType)
+                                                                |> buildStore(builder)(blockBytes)
+                                                            in
+                                                                let _ =
+                                                                    "rc_thread_payload"
+                                                                    |> wordPointer(builder)(ptrType)(i64)(cursor)(blockPrefixBytes)
+                                                                    |> buildRet(builder)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(refillBlock)
+                                                                    in
+                                                                        let start =
+                                                                            claimFromRange(context)(builder)(i64)(runtime)(regionConst(i64)(threadStretchBytes))("rc_thread_claim")
+                                                                        in
+                                                                            let stretchEnd =
+                                                                                buildAdd(builder)(start)(regionConst(i64)(threadStretchBytes))("rc_thread_stretch_end")
+                                                                            in
+                                                                                let _ =
+                                                                                    buildCondBr(builder)(buildICmp(builder)(intPredicateUle)(stretchEnd)(buildLoad(builder)(i64)(runtime.regionEndGlobal)("rc_thread_range_end"))("rc_thread_in_range"))(claimedBlock)(libcBlock)
+                                                                                in
+                                                                                    let _ = positionBuilderAtEnd(builder)(claimedBlock)
+                                                                                    in
+                                                                                        let _ = buildStore(builder)(start)(cursorSlot)
+                                                                                        in
+                                                                                            let _ = buildStore(builder)(stretchEnd)(endSlot)
+                                                                                            in buildBr(builder)(checkBlock))
+
+// A large block claimed straight from the range, whole pages from a page boundary (the shared
+// cursor only ever moves by whole pages).
+let emitThreadPagedAllocation context builder i64 ptrType (runtime: RcRegionRuntime) libcBlock blockBytes =
+    (let takeBlock = appendBasicBlock(context)(runtime.allocFn)("rc_thread_large_take")
+    in
+        let pages = roundUp(builder)(i64)(blockBytes)(pageBytes)("rc_thread_pages")
+        in
+            let start = claimFromRange(context)(builder)(i64)(runtime)(pages)("rc_thread_large_claim")
+            in
+                let _ =
+                    buildCondBr(builder)(buildICmp(builder)(intPredicateUle)(buildAdd(builder)(start)(pages)("rc_thread_large_end"))(buildLoad(builder)(i64)(runtime.regionEndGlobal)("rc_thread_large_range_end"))("rc_thread_large_fits"))(takeBlock)(libcBlock)
+                in
+                    let _ = positionBuilderAtEnd(builder)(takeBlock)
+                    in
+                        let _ =
+                            "rc_thread_large_prefix"
+                            |> buildIntToPtr(builder)(start)(ptrType)
+                            |> buildStore(builder)(pages)
+                        in
+                            "rc_thread_large_payload"
+                            |> wordPointer(builder)(ptrType)(i64)(start)(blockPrefixBytes)
+                            |> buildRet(builder))
+
 // A small block: the head of its free list when there is one, else the next block of the range.
 let emitListedAllocation context builder i64 ptrType (runtime: RcRegionRuntime) libcBlock blockBytes =
     (let popBlock = appendBasicBlock(context)(runtime.allocFn)("rc_alloc_pop")
@@ -196,9 +294,12 @@ let emitListedAllocation context builder i64 ptrType (runtime: RcRegionRuntime) 
                         |> buildRet(builder))
                     |> (given (_) -> positionBuilderAtEnd(builder)(bumpBlock))
                     |> (given (_) ->
-                        "rc_alloc_cursor"
-                        |> buildLoad(builder)(i64)(runtime.regionCursorGlobal)
-                        |> (given (cursor) -> emitBump(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(cursor)(blockBytes)("rc_alloc_small"))))
+                        if runtime.perThread
+                        then emitThreadBump(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes)
+                        else
+                            "rc_alloc_cursor"
+                            |> buildLoad(builder)(i64)(runtime.regionCursorGlobal)
+                            |> (given (cursor) -> emitBump(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(cursor)(blockBytes)("rc_alloc_small"))))
 
 // A large block starts on a page and spans whole pages, so its release can return them.
 let emitPagedAllocation context builder i64 ptrType (runtime: RcRegionRuntime) libcBlock blockBytes =
@@ -248,7 +349,10 @@ let emitAllocBody context builder i64 ptrType (runtime: RcRegionRuntime) libcMal
                                                     |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
                                                     |> (given (_) -> emitListedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
                                                     |> (given (_) -> positionBuilderAtEnd(builder)(pagedBlock))
-                                                    |> (given (_) -> emitPagedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
+                                                    |> (given (_) ->
+                                                        if runtime.perThread
+                                                        then emitThreadPagedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes)
+                                                        else emitPagedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
                                                     |> (given (_) -> positionBuilderAtEnd(builder)(libcBlock))
                                                     |> (given (_) ->
                                                         "rc_alloc_libc_block"
@@ -315,94 +419,31 @@ let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree
 let emitIsReferenceCountedIn builder i64 (runtime: RcRegionRuntime) name valueRef =
     buildZExt(builder)(emitInRegion(builder)(i64)(runtime)(valueRef)(name))(i64)(name)
 
-// Takes the allocator lock: an atomic exchange that retries until it finds the lock free.
-let emitTakeAllocatorLock context builder i64 function_ lock =
-    (let spinBlock = appendBasicBlock(context)(function_)("rc_lock_spin")
-    in
-        let takenBlock = appendBasicBlock(context)(function_)("rc_lock_taken")
-        in
-            let _ = buildBr(builder)(spinBlock)
-            in
-                let _ = positionBuilderAtEnd(builder)(spinBlock)
-                in
-                    let previous =
-                        buildAtomicRmw(builder)(atomicRmwXchg)(lock)(regionConst(i64)(1))(atomicOrderingSequentiallyConsistent)
-                    in
-                        let _ =
-                            buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(previous)(regionConst(i64)(0))("rc_lock_was_free"))(takenBlock)(spinBlock)
-                        in positionBuilderAtEnd(builder)(takenBlock))
-
-let emitReleaseAllocatorLock builder i64 lock =
-    (let _ =
-        buildAtomicRmw(builder)(atomicRmwXchg)(lock)(regionConst(i64)(0))(atomicOrderingSequentiallyConsistent)
-    in Unit)
-
-// The allocator functions of a program whose worker threads allocate concurrently: each takes the
-// process-wide allocator lock around the unlocked function of the same name, so the region's
-// cursor, free lists and counter are only ever updated by one thread at a time.
-let defineLockedAllocatorFunctions module_ context builder i64 ptrType mallocType freeType (inner: RcRegionRuntime) =
-    (let lock = zeroWordGlobal(module_)(i64)("__ashes_rc_lock")
-    in
-        let allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType)
-        in
-            let freeFn = internalFunction(module_)("__ashes_rc_free")(freeType)
-            in
-                let _ =
-                    "entry"
-                    |> appendBasicBlock(context)(allocFn)
-                    |> positionBuilderAtEnd(builder)
-                in
-                    let _ = emitTakeAllocatorLock(context)(builder)(i64)(allocFn)(lock)
-                    in
-                        let block = buildCall(builder)(mallocType)(inner.allocFn)([getParam(allocFn)(0u32)])(1u32)("rc_locked_block")
-                        in
-                            let _ = emitReleaseAllocatorLock(builder)(i64)(lock)
-                            in
-                                let _ = buildRet(builder)(block)
-                                in
-                                    let _ =
-                                        "entry"
-                                        |> appendBasicBlock(context)(freeFn)
-                                        |> positionBuilderAtEnd(builder)
-                                    in
-                                        let _ = emitTakeAllocatorLock(context)(builder)(i64)(freeFn)(lock)
-                                        in
-                                            let _ = buildCall(builder)(freeType)(inner.freeFn)([getParam(freeFn)(0u32)])(1u32)("")
-                                            in
-                                                let _ = emitReleaseAllocatorLock(builder)(i64)(lock)
-                                                in
-                                                    let _ = buildRetVoid(builder)
-                                                    in inner with allocFn = allocFn, freeFn = freeFn)
-
-// The two functions, and with `leakCheck` the live-cell counter they keep. With `locked` (a
-// program with worker threads) the region's own functions become `__ashes_rc_alloc_unlocked` and
-// `__ashes_rc_free_unlocked`, called under the allocator lock.
-let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType (leakCheck: Bool) (locked: Bool) =
+// The two functions, and with `leakCheck` the live-cell counter they keep. With `perThread` (a
+// program with worker threads) the free lists live in each thread's control block and each thread
+// bumps its own stretch of the range.
+let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType (leakCheck: Bool) (perThread: Bool) =
     (let runtime =
         RcRegionRuntime(
             regionBaseGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_base"),
             regionEndGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_end"),
             regionCursorGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_cursor"),
             regionInitializedGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_initialized"),
-            freeLists = freeListsGlobal(module_)(i64),
-            allocFn = internalFunction(module_)(if locked
-            then "__ashes_rc_alloc_unlocked"
-            else "__ashes_rc_alloc")(mallocType),
-            freeFn = internalFunction(module_)(if locked
-            then "__ashes_rc_free_unlocked"
-            else "__ashes_rc_free")(freeType),
+            freeLists = if perThread
+            then threadSlot(context)(i64)(512)
+            else freeListsGlobal(module_)(i64),
+            allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType),
+            freeFn = internalFunction(module_)("__ashes_rc_free")(freeType),
             liveCellsGlobal = if leakCheck
             then
                 "__ashes_rc_live"
                 |> zeroWordGlobal(module_)(i64)
                 |> Some
-            else None
+            else None,
+            perThread = perThread
         )
     in
         mallocType
         |> emitAllocBody(context)(builder)(i64)(ptrType)(runtime)(libcMalloc)
         |> (given (_) -> emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType))
-        |> (given (_) ->
-            if locked
-            then defineLockedAllocatorFunctions(module_)(context)(builder)(i64)(ptrType)(mallocType)(freeType)(runtime)
-            else runtime))
+        |> (given (_) -> runtime))

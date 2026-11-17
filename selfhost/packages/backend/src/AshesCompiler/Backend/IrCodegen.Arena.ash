@@ -294,10 +294,10 @@ let emitArenaReclaimBody context builder i64 i8 ptrType (arena: ArenaRuntime) =
                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                 |> (given (_) -> buildRetVoid(builder)))
 
-// The entry prologue's first chunk: one standard chunk with no predecessor.
 // A thread's control block, stage 0's per-thread TCB: one page whose first word points at itself,
-// then the arena cursor and end (8, 16) and the to-space and blob region cursors and ends (24 to
-// 48). The thread's GS base points at it, so a slot is reached as `%gs:offset`.
+// then the arena cursor and end (8, 16), the to-space and blob region cursors and ends (24 to 48),
+// the reference-counted stretch cursor and end (64, 72) and the reference-counted free lists (from
+// 512). The thread's GS base points at it, so a slot is reached as `%gs:offset`.
 let threadControlBlockBytes = 4096
 
 let threadSlotPointer context i64 (offset: Int) =

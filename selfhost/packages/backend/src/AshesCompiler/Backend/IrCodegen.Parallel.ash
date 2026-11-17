@@ -1,15 +1,15 @@
 // Structured parallelism for `Ashes.Task.Parallel`, stage 0's `LlvmCodegenParallel.cs` for
 // linux-x64. `ParallelFork` runs the right thunk of `both` on a worker thread while the caller runs
 // the left one: the worker is a raw `clone` thread on its own mapped stack whose GS base is its own
-// control block, so it bumps its own arena (`IrCodegen.Arena`'s thread slots); the reference-counted
-// region is shared under the allocator lock. When the worker cap (the detected core count, narrowed
-// by `withWorkers`) is reached, the thunk runs inline instead. `ParallelJoin` waits on the
-// descriptor's done word with a futex and answers the worker's result, which still lives in the
-// worker's arena; `ParallelCleanup` waits for the thread to exit and unmaps its stack, arena chunks
-// and control block. `ParallelQueueStart` runs stage 0's work-conserving reduce queue: workers claim
-// list elements from a shared counter, publish their mapped values, then merge adjacent results
-// round by round; `ParallelQueueAwait` waits for the merge root and `ParallelQueueCleanup` reclaims
-// the workers and the queue region.
+// control block, so it bumps its own arena (`IrCodegen.Arena`'s thread slots) and its own stretch
+// of the reference-counted range (`IrCodegen.RcRegion`). When the worker cap (the detected core
+// count, narrowed by `withWorkers`) is reached, the thunk runs inline instead. `ParallelJoin` waits
+// on the descriptor's done word with a futex and answers the worker's result, which still lives in
+// the worker's arena; `ParallelCleanup` waits for the thread to exit and unmaps its stack, arena
+// chunks and control block. `ParallelQueueStart` runs stage 0's work-conserving reduce queue:
+// workers claim list elements from a shared counter, publish their mapped values, then merge
+// adjacent results round by round; `ParallelQueueAwait` waits for the merge root and
+// `ParallelQueueCleanup` reclaims the workers and the queue region.
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
