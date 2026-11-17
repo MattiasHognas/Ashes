@@ -1099,7 +1099,9 @@ let deferTraitGoal (key: Str) (operandType: SemanticType) (resultType: SemanticT
 // and call it. A concrete operand resolves an instance directly; inside a generic body the operand's
 // type is the type argument of an active requirement and resolves to that parameter's evidence.
 let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: SemanticType) lower (operandTemp: Int) (operandType: SemanticType) (state: CoreLoweringState) =
-    match pinProvenTraitGoal(traitName)(methodName)(operandType)(state) with
+    match if hasActiveTraitEvidence(traitName)(operandType)(state)
+    then (state, operandType)
+    else pinProvenTraitGoal(traitName)(methodName)(operandType)(state) with
         | (pinnedState, pinnedType) ->
             match pinnedState
             |> stateTraitEnvironment

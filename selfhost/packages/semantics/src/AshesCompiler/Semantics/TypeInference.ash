@@ -3236,6 +3236,21 @@ let checkTrailingRequirements expression (environment: TypeEnvironment) (result:
             |> locateInferenceError(span)
         | _ -> checkSettledTrailingRequirements(environment)(result)
 
+// A trait's method named through the trait (`Eq.equal`, `Hash.hash`) where no value binding answers
+// to it, as in a constrained binding's inference environment: the method's own scheme, its
+// requirement on the trait included, instantiated as a variable's would be.
+let inferTraitMethodReference (methodScheme: TypeScheme) (environment: TypeEnvironment) substitution supply =
+    match instantiate(methodScheme)(supply) with
+        | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } ->
+            addConstraints(
+                instantiatedConstraints,
+                inferenceSuccess(
+                    applySubstitution(substitution)(instantiatedType),
+                    substitution,
+                    noteInstantiation(environment)(methodScheme)(supply)(instantiatedConstraints)(nextSupply)
+                )
+            )
+
 let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
         | [] -> inferenceSuccess(SemTuple(reversedTypes))(substitution)(supply)
@@ -4614,7 +4629,10 @@ and inferQualifiedValue moduleName name environment substitution supply ambientR
             | Some(_scheme) -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
             | None ->
                 match resolveTypeBinding(moduleName)(environment) with
-                    | None -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
+                    | None ->
+                        match resolveTraitMethod(canonicalTraitName(moduleName))(name)(environment) with
+                            | Some(TraitMethodInferenceDefinition { scheme = methodScheme }) -> inferTraitMethodReference(methodScheme)(environment)(substitution)(supply)
+                            | None -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
                     | Some(_receiver) ->
                         match inferWith(ExprVar(moduleName))(environment)(substitution)(supply)(ambientRow) with
                             | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } -> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)(receiverConstraints)

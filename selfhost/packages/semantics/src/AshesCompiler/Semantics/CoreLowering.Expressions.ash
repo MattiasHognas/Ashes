@@ -71,6 +71,8 @@ export (
     value registerConcreteSource,
     value recordCoverageOperatorConstrainedNames,
     value constrainedBindingPlan,
+    value constrainedBindingPlanWith,
+    value writtenRequirements,
     value lowerConstrainedBindingValue,
     value openPossiblyConstrainedRecursive,
     value constrainedAliasBinding,
@@ -2226,6 +2228,20 @@ let recursive constrainedOperatorsSupported constraints =
         | [] -> true
         | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not") && constrainedOperatorsSupported(rest)
 
+// A written `requires` may also name `Show` or `Hash`: their methods dispatch through the active
+// requirement's evidence (`emitCoreTraitUnaryDispatch`) as the mapped operators' do. An inferred
+// requirement still needs one of the operators above, so a binding that only shows its argument and
+// says nothing keeps its monomorphic lowering.
+let recursive writtenConstraintsSupported constraints =
+    match constraints with
+        | [] -> true
+        | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not" || name == "Show" || name == "Hash") && writtenConstraintsSupported(rest)
+
+let constrainedPlanSupported (written: Bool) constraints =
+    if written
+    then writtenConstraintsSupported(constraints)
+    else constrainedOperatorsSupported(constraints)
+
 let recursive hasOperatorConstraint (constraints: List(TraitConstraint)) =
     match constraints with
         | [] -> false
@@ -2301,20 +2317,30 @@ let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraint
             mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false
         | _ -> false
 
-let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
+let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
+    match requirements with
+        | [] -> false
+        | _ -> true
+
+// `written` says the binding declares a `requires`: its plan is then inferred whatever its value
+// mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
+let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation requirements (state: CoreLoweringState) =
     match lambdaParts(value) with
         | None -> None
         | Some(_parts) ->
-            if constrainedPlanCannotApply(value)(requirements)(state)
+            if written == false && constrainedPlanCannotApply(value)(requirements)(state)
             then None
             else
                 match inferCoreConstrainedBinding(name)(isRecursive)(value)(annotation)(requirements)(constrainedInferenceEnvironment(state))(state.typeSupply) with
                     | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                     | CoreConstrainedInference { error = Some(_error) } -> None
                     | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                        if constrainedOperatorsSupported(constraints)
+                        if constrainedPlanSupported(written)(constraints)
                         then Some(plan)
                         else None
+
+let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
+    constrainedBindingPlanWith(writtenRequirements(requirements))(name)(isRecursive)(value)(annotation)(requirements)(state)
 
 let recursive constrainedPlanAvailable plan state =
     match plan with
