@@ -656,6 +656,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 backEdgeArgumentSlot = None,
                 lateCopiedCellHeads = [],
                 arenaSuccessorLetLoop = None,
+                arenaKeptSuccessorLetLoop = None,
                 arenaSuccessorJoin = None,
                 affineAppendContext = None,
                 affineAppendReservation = None,

@@ -300,7 +300,7 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
                     |> duplicatePatternOwnerChild(argument)
                     |> keepLoopResultCellOwnerDuplicateOwned(runtimeManaged == false && tailPosition)(argument)(value)
                 else value)
-            |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
+            |> retainSuccessorTransferredChild(argument)(runtimeManaged == false && transfers)
             |> keepLoopResultFieldCellHeadDuplicateOwned(request)(runtimeManaged)(argument)
 
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
@@ -747,7 +747,7 @@ let retainOwnedChildArgument (argument: Expr) (temp: Int) (semanticType: Semanti
                 | Some(slot) ->
                     match if retainTakenForCell(temp)(state)
                     then success(temp)(semanticType)(state)
-                    else emitTransferRetain(temp)(semanticType)(state) with
+                    else keptSuccessorTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } ->
                             (withStateOwnerReleasePlans(retained
                             |> stateOwnerReleasePlans

@@ -260,7 +260,7 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
         | ExprVar(name) ->
             match (liveRuntimeOwnerSlot(name)(state), patternOwnerBinding(name)(state)) with
                 | (Some(_slot), None) ->
-                    match emitTransferRetain(temp)(semanticType)(state) with
+                    match keptSuccessorTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
                 | _ -> (retainAndKeepAliasBorrowedOwners(name)(temp)(state), temp)
         | ExprQualifiedVar(owner, _field) ->
@@ -269,7 +269,7 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
             else
                 match (liveRuntimeOwnerSlot(owner)(state), patternOwnerBinding(owner)(state)) with
                     | (Some(_slot), None) ->
-                        match emitTransferRetain(temp)(semanticType)(state) with
+                        match keptSuccessorTransferRetain(temp)(semanticType)(state) with
                             | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
                     | _ -> (state, temp)
         | _ -> (state, temp)

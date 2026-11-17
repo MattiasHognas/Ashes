@@ -301,6 +301,11 @@ public sealed partial class Lowering
             return argumentTemp;
         }
 
+        if (StoresArenaCopyForKeptSuccessor(argumentType))
+        {
+            return EmitArenaCopyOfReferenceCounted(argumentTemp, Prune(argumentType), releasesSource: false);
+        }
+
         if (MayUseEmptyListRepresentation(Prune(argumentType)))
         {
             return EmitRuntimeManagedNullableDup(argumentTemp);

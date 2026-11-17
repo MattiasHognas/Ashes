@@ -95,6 +95,9 @@ export (
     value emitTcoDeepCopy,
     value emitLocatedDeepCopy,
     value emitArenaCopyOfReferenceCounted,
+    value storesArenaCopyForKeptSuccessor,
+    value keptSuccessorTransferRetain,
+    value retainSuccessorTransferredChild,
     value isTransferRetainIn,
     value emitResolvedTcoReset,
 )
@@ -2804,6 +2807,60 @@ let emitArenaCopyOfReferenceCounted (sourceTemp: Int) (semanticType: SemanticTyp
                                     |> freshTemp with
                                         | FreshTemp { state = loaded, temp = resultTemp } ->
                                             (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
+
+let isFunctionSemanticType (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, _result, _row) -> true
+        | _ -> false
+
+// Stage 0's `StoresArenaCopyForKeptSuccessor`: an owned binding's value an aggregate built for a
+// kept arena successor stores. The arena keeps the successor until the loop ends while the binding
+// is released at the back edge, so the aggregate takes an arena copy, which lives as long as the
+// successor, instead of a retain nothing would release.
+let storesArenaCopyForKeptSuccessor (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (stateArenaKeptSuccessorLetLoop(state), stateTcoLoop(state)) with
+        | (Some(name), Some(loop)) ->
+            if name == loop.selfName && generalRcEnabled(state)
+            then
+                match resolveType(state)(semanticType) with
+                    | resolved -> resultSurvivesReset(resolved)(state) == false && isFunctionSemanticType(resolved) == false && containsUnresolvedLayout(resolved)(state) == false && isGeneralRcAdmissible(resolved)([])(state)
+            else false
+        | _ -> false
+
+// The reference a transferred child of an owned binding takes: a retain, or an arena copy for a
+// kept arena successor.
+let keptSuccessorTransferRetain (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if storesArenaCopyForKeptSuccessor(semanticType)(state)
+    then
+        match emitArenaCopyOfReferenceCounted(temp)(semanticType)(false)(state) with
+            | (copied, copyTemp) -> success(copyTemp)(semanticType)(copied)
+    else emitTransferRetain(temp)(semanticType)(state)
+
+// Whether a transferred child is the read of a binding that still owns its reference, whole or by
+// a heap-typed field, the reads `retainTransferredChild` retains.
+let readsTransferredOwner (child: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(child) with
+        | ExprVar(name) ->
+            match (liveRuntimeOwnerSlot(name)(state), patternOwnerBinding(name)(state)) with
+                | (Some(_slot), None) -> true
+                | _ -> false
+        | ExprQualifiedVar(owner, _field) ->
+            if resultSurvivesReset(semanticType)(state)
+            then false
+            else
+                match (liveRuntimeOwnerSlot(owner)(state), patternOwnerBinding(owner)(state)) with
+                    | (Some(_slot), None) -> true
+                    | _ -> false
+        | _ -> false
+
+// `retainTransferredChild` with the arena copy a kept arena successor's aggregate takes.
+let retainSuccessorTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if transfers && readsTransferredOwner(child)(semanticType)(state) && storesArenaCopyForKeptSuccessor(semanticType)(state)
+            then keptSuccessorTransferRetain(temp)(semanticType)(state)
+            else retainTransferredChild(child)(transfers)(lowered)
+        | _ -> lowered
 
 // Stage 0's `CopyTransferRetainedSuccessorsIntoArena` for one parameter: a back edge that keeps
 // the iteration's arena hands an arena parameter a successor it retained out of an owner the

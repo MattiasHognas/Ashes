@@ -1585,10 +1585,113 @@ let leaveArenaSuccessorJoin (saved: Maybe(TextSpan)) (lowered: LoweredCoreValue)
 // of this iteration, so an aggregate it builds retains the owned children it stores, whose owners
 // are still released at the back edge. A parameter on the reference-counted heap needs none of it:
 // its back edge copies the successor with references of its own before those owners are released.
+// Stage 0's `ValueKeepsName`: whether the value of the expression may hold the named binding's
+// value itself, as the result of a join arm or stored in a cell, tuple, list or constructor built
+// there.
+let recursive valueKeepsName (expression: Expr) (name: Str) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> valueKeepsName(inner)(name)(state)
+        | ExprNode(_node, inner) -> valueKeepsName(inner)(name)(state)
+        | ExprVar(variable) -> variable == name
+        | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->
+            if bound == name
+            then false
+            else valueKeepsName(body)(name)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            if valueKeepsName(thenBranch)(name)(state)
+            then true
+            else valueKeepsName(elseBranch)(name)(state)
+        | ExprMatch(_value, cases, _position) -> caseBodiesKeepName(cases)(name)(state)
+        | ExprCons(head, tail) ->
+            if valueKeepsName(head)(name)(state)
+            then true
+            else valueKeepsName(tail)(name)(state)
+        | ExprTuple(elements) -> anyValueKeepsName(elements)(name)(state)
+        | ExprList(elements, _isMultiline) -> anyValueKeepsName(elements)(name)(state)
+        | ExprRecordUpdate(target, updates) ->
+            if valueKeepsName(target)(name)(state)
+            then true
+            else fieldValuesKeepName(updates)(name)(state)
+        | other ->
+            match constructorApplicationOf(other)([])(state) with
+                | Some((_layout, arguments)) -> anyValueKeepsName(arguments)(name)(state)
+                | None -> false
+and anyValueKeepsName (expressions: List(Expr)) (name: Str) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> false
+        | expression :: rest ->
+            if valueKeepsName(expression)(name)(state)
+            then true
+            else anyValueKeepsName(rest)(name)(state)
+and fieldValuesKeepName (fields: List((Str, Expr))) (name: Str) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (_field, value) :: rest ->
+            if valueKeepsName(value)(name)(state)
+            then true
+            else fieldValuesKeepName(rest)(name)(state)
+and caseBodiesKeepName (cases: List((Pattern, Expr, Maybe(Expr)))) (name: Str) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (_pattern, body, _guard) :: rest ->
+            if valueKeepsName(body)(name)(state)
+            then true
+            else caseBodiesKeepName(rest)(name)(state)
+
+// How many bindings a value may pass through on its way into a loop's successor, stage 0's
+// `KeptSuccessorLetHops`.
+let keptSuccessorLetHops = 6
+
+// Stage 0's `KeepingLetOrdinalPassing`: the position at which a self-call passes on a later binding
+// whose value keeps the name (as a join's arm, a cell's head or tail, a constructor's or tuple's
+// field), directly or through further such bindings. Only the bindings on the body's path to its
+// result are followed.
+let recursive keepingLetOrdinalPassing (expression: Expr) (name: Str) (self: Str) (hops: Int) (state: CoreLoweringState) =
+    if hops <= 0
+    then None
+    else
+        match expression with
+            | ExprAt(_span, inner) -> keepingLetOrdinalPassing(inner)(name)(self)(hops)(state)
+            | ExprNode(_node, inner) -> keepingLetOrdinalPassing(inner)(name)(self)(hops)(state)
+            | ExprLet(bound, value, body, _parameters, _annotation, _requirements) ->
+                if bound == name
+                then None
+                else
+                    match keptLetOrdinal(bound)(value)(body)(name)(self)(hops)(state) with
+                        | Some(found) -> Some(found)
+                        | None -> keepingLetOrdinalPassing(body)(name)(self)(hops)(state)
+            | ExprIf(_condition, thenBranch, elseBranch) ->
+                match keepingLetOrdinalPassing(thenBranch)(name)(self)(hops)(state) with
+                    | Some(found) -> Some(found)
+                    | None -> keepingLetOrdinalPassing(elseBranch)(name)(self)(hops)(state)
+            | ExprMatch(_value, cases, _position) -> keepingLetOrdinalPassingCases(cases)(name)(self)(hops)(state)
+            | _ -> None
+and keptLetOrdinal (bound: Str) (value: Expr) (body: Expr) (name: Str) (self: Str) (hops: Int) (state: CoreLoweringState) =
+    if valueKeepsName(value)(name)(state)
+    then
+        match selfCallOrdinalPassing(body)(bound)(self) with
+            | Some(found) -> Some(found)
+            | None -> keepingLetOrdinalPassing(body)(bound)(self)(hops - 1)(state)
+    else None
+and keepingLetOrdinalPassingCases (cases: List((Pattern, Expr, Maybe(Expr)))) (name: Str) (self: Str) (hops: Int) (state: CoreLoweringState) =
+    match cases with
+        | [] -> None
+        | (_pattern, body, _guard) :: rest ->
+            match keepingLetOrdinalPassing(body)(name)(self)(hops)(state) with
+                | Some(found) -> Some(found)
+                | None -> keepingLetOrdinalPassingCases(rest)(name)(self)(hops)(state)
+
+// The position at which the loop's self-call passes the binding on, itself or kept by a later
+// binding it passes.
+let successorLetOrdinal (body: Expr) (name: Str) (self: Str) (state: CoreLoweringState) =
+    match selfCallOrdinalPassing(body)(name)(self) with
+        | Some(ordinal) -> Some(ordinal)
+        | None -> keepingLetOrdinalPassing(body)(name)(self)(keptSuccessorLetHops)(state)
+
 let isArenaLoopSuccessorLet (name: Str) (body: Expr) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(frame), Some(loop)) ->
-            match selfCallOrdinalPassing(body)(name)(loop.selfName) with
+            match successorLetOrdinal(body)(name)(loop.selfName)(state) with
                 | None -> false
                 | Some(ordinal) ->
                     match parameterSlotAtOrdinal(ordinal)(frame.parameterSlots) with
@@ -1602,15 +1705,27 @@ let loopSuccessorLetRequest (name: Str) (body: Expr) (request: ConsumerRequest) 
     else request
 
 // A `let` value the loop's self call passes on as an arena successor is lowered inside the loop's
-// mark; the mark is restored once the value is lowered.
+// mark; the mark is restored once the value is lowered. The kept-successor mark (stage 0's
+// `_arenaKeptSuccessorLetLoop`) is set for a binding a later binding keeps, and cleared for one the
+// self-call passes itself.
 let enterArenaSuccessorLet (name: Str) (body: Expr) (state: CoreLoweringState) =
     match (isArenaLoopSuccessorLet(name)(body)(state), stateTcoLoop(state)) with
-        | (true, Some(loop)) -> withStateArenaSuccessorLetLoop(Some(loop.selfName))(state)
+        | (true, Some(loop)) ->
+            match selfCallOrdinalPassing(body)(name)(loop.selfName) with
+                | Some(_ordinal) ->
+                    state
+                    |> withStateArenaSuccessorLetLoop(Some(loop.selfName))
+                    |> withStateArenaKeptSuccessorLetLoop(None)
+                | None ->
+                    state
+                    |> withStateArenaSuccessorLetLoop(Some(loop.selfName))
+                    |> withStateArenaKeptSuccessorLetLoop(Some(loop.selfName))
         | _ -> state
 
-let leaveArenaSuccessorLet (saved: Maybe(Str)) (lowered: LoweredCoreValue) =
+let leaveArenaSuccessorLet (saved: Maybe(Str)) (savedKept: Maybe(Str)) (lowered: LoweredCoreValue) =
     match lowered with
-        | LoweredCoreValue { state = loweredState } -> lowered with state = withStateArenaSuccessorLetLoop(saved)(loweredState)
+        | LoweredCoreValue { state = loweredState } ->
+            lowered with state = withStateArenaKeptSuccessorLetLoop(savedKept)(withStateArenaSuccessorLetLoop(saved)(loweredState))
 
 let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
     loopSuccessorLetRequest(name)(body)(representationLetValueRequest(name)(value)(body)(state))(state)
@@ -1792,7 +1907,7 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                     |> enterArenaSuccessorLet(name)(body)
                     |> enterArenaSuccessorLetJoin(name)(value)(body)
                     |> lower(value)
-                    |> leaveArenaSuccessorLet(stateArenaSuccessorLetLoop(state))
+                    |> leaveArenaSuccessorLet(stateArenaSuccessorLetLoop(state))(stateArenaKeptSuccessorLetLoop(state))
                     |> leaveArenaSuccessorJoin(stateArenaSuccessorJoin(state)) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->

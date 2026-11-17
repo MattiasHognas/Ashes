@@ -1864,6 +1864,12 @@ let noteTakenOverArgument (context: CoreCallContext) (index: Int) (lowered: Lowe
                 | _ -> lowered
         | _ -> lowered
 
+// A call's argument escapes into the callee's result, not into a loop's arena successor: it is
+// lowered without the kept-successor mark, which is restored after it.
+let restoreKeptSuccessorLetLoop (saved: Maybe(Str)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } -> lowered with state = withStateArenaKeptSuccessorLetLoop(saved)(loweredState)
+
 let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Bool) consumed lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } ->
@@ -1881,7 +1887,9 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     |> argumentIndexOf(context.facts)
                     |> calleeResultReachesArgument(context.facts))
                     |> withEscapingArgumentCell(argument)(transfers == false && mayHoldListCell(resultType)(deferredState))
+                    |> withStateArenaKeptSuccessorLetLoop(None)
                     |> lower(argument)
+                    |> restoreKeptSuccessorLetLoop(stateArenaKeptSuccessorLetLoop(deferredState))
                     |> noteTakenOverArgument(context)(context.argumentCount - arity)
                     |> noteTakenOverArgumentType(context)(context.argumentCount - arity)(argument)
                     |> stopCollectingCallArgumentRetains

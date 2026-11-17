@@ -4661,9 +4661,13 @@ public sealed partial class Lowering
 
         request = LoopSuccessorLetRequest(let, request);
         TcoContext? outerSuccessorLetLoop = _arenaSuccessorLetLoop;
+        TcoContext? outerKeptSuccessorLetLoop = _arenaKeptSuccessorLetLoop;
         if (IsArenaLoopSuccessorLet(let))
         {
             _arenaSuccessorLetLoop = _tcoCtx;
+            _arenaKeptSuccessorLetLoop = _tcoCtx is { } loop && SelfCallOrdinalPassing(let.Body, let.Name, loop.SelfName) is null
+                ? loop
+                : null;
         }
 
         Expr? outerSuccessorJoin = EnterArenaSuccessorLetJoin(let);
@@ -4677,8 +4681,30 @@ public sealed partial class Lowering
         finally
         {
             _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+            _arenaKeptSuccessorLetLoop = outerKeptSuccessorLetLoop;
             _arenaSuccessorJoin = outerSuccessorJoin;
         }
+    }
+
+    // The loop whose arena successor keeps the value of the `let` being lowered through a later
+    // binding (a join's arm, a cell's head or tail) rather than as the binding the self-call passes.
+    private TcoContext? _arenaKeptSuccessorLetLoop;
+
+    // A binding's owned value an aggregate built for such a successor stores: the arena keeps the
+    // successor until the loop ends while the binding is released at the back edge, and no back edge
+    // copy reads the aggregate. The aggregate takes an arena copy, which lives as long as the
+    // successor, instead of a retain nothing would release.
+    private bool StoresArenaCopyForKeptSuccessor(TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        return _arenaKeptSuccessorLetLoop is { } loop
+            && ReferenceEquals(loop, _tcoCtx)
+            && GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_KEPTSUCCESSORARENACOPY") is null
+            && !CanArenaReset(pruned)
+            && pruned is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(pruned, [])
+            && IsGeneralRcAdmissible(pruned);
     }
 
     // A binding the loop's self-call passes on becomes the next iteration's parameter exactly like
@@ -4692,9 +4718,86 @@ public sealed partial class Lowering
     private bool IsArenaLoopSuccessorLet(Expr.Let let)
         => _tcoCtx is { } tco
             && Environment.GetEnvironmentVariable("GRC_NO_LETSUCCESSOR") is null
-            && SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName) is { } ordinal
+            && (SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName)
+                ?? KeepingLetOrdinalPassing(let.Body, let.Name, tco.SelfName, KeptSuccessorLetHops)) is { } ordinal
             && ordinal < tco.ParamSlots.Count
             && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]);
+
+    // How many bindings a value may pass through on its way into a loop's successor (`let w =
+    // Rec(...) in let acc2 = w :: acc in let next = if c then acc2 else acc2 in go(next)`).
+    private const int KeptSuccessorLetHops = 6;
+
+    // The position at which a self-call passes on a later binding whose value keeps the name (as a
+    // join's arm, a cell's head or tail, a constructor's or tuple's field), directly or through
+    // further such bindings: the name's value becomes part of the successor exactly like a binding
+    // the self-call passes itself. Only the bindings on the body's path to its result are followed.
+    private int? KeepingLetOrdinalPassing(Expr expression, string name, string selfName, int hops)
+    {
+        if (hops <= 0 || Environment.GetEnvironmentVariable("GRC_NO_KEPTLETSUCCESSOR") is not null)
+        {
+            return null;
+        }
+
+        switch (expression)
+        {
+            case Expr.Let let:
+                if (!string.Equals(let.Name, name, StringComparison.Ordinal)
+                    && ValueKeepsName(let.Value, name)
+                    && (SelfCallOrdinalPassing(let.Body, let.Name, selfName)
+                        ?? KeepingLetOrdinalPassing(let.Body, let.Name, selfName, hops - 1)) is int found)
+                {
+                    return found;
+                }
+
+                return string.Equals(let.Name, name, StringComparison.Ordinal)
+                    ? null
+                    : KeepingLetOrdinalPassing(let.Body, name, selfName, hops);
+            case Expr.If iff:
+                return KeepingLetOrdinalPassing(iff.Then, name, selfName, hops)
+                    ?? KeepingLetOrdinalPassing(iff.Else, name, selfName, hops);
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    if (KeepingLetOrdinalPassing(matchCase.Body, name, selfName, hops) is int inArm)
+                    {
+                        return inArm;
+                    }
+                }
+
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    // Whether the value of the expression may hold the named binding's value itself: it is the
+    // result of a join arm, or stored in a cell, tuple, list or constructor built there.
+    private bool ValueKeepsName(Expr expression, string name)
+    {
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return string.Equals(variable.Name, name, StringComparison.Ordinal);
+            case Expr.Let let:
+                return !string.Equals(let.Name, name, StringComparison.Ordinal) && ValueKeepsName(let.Body, name);
+            case Expr.If iff:
+                return ValueKeepsName(iff.Then, name) || ValueKeepsName(iff.Else, name);
+            case Expr.Match match:
+                return match.Cases.Any(matchCase => ValueKeepsName(matchCase.Body, name));
+            case Expr.Cons cons:
+                return ValueKeepsName(cons.Head, name) || ValueKeepsName(cons.Tail, name);
+            case Expr.TupleLit tuple:
+                return tuple.Elements.Any(element => ValueKeepsName(element, name));
+            case Expr.ListLit list:
+                return list.Elements.Any(element => ValueKeepsName(element, name));
+            case Expr.RecordUpdate update:
+                return ValueKeepsName(update.Target, name) || update.Updates.Any(field => ValueKeepsName(field.Value, name));
+            default:
+                return TryDescribeConstructorExpression(expression, out _, out List<Expr>? arguments, out _)
+                    && arguments is not null
+                    && arguments.Exists(argument => ValueKeepsName(argument, name));
+        }
+    }
 
     // The loop whose arena successor a `let` value being lowered becomes: its back edge balances the
     // retains the cells it builds hold.
@@ -14885,6 +14988,9 @@ public sealed partial class Lowering
         }
 
         bool previousRetainCollection = BeginCallArgumentRetains(argumentRequest.TransfersRuntimeManagedChildren);
+        // A call's argument escapes into the callee's result, not into the loop's arena successor.
+        TcoContext? outerKeptSuccessorLetLoop = _arenaKeptSuccessorLetLoop;
+        _arenaKeptSuccessorLetLoop = null;
         Expr.Cons? outerArgumentCell = _callArgumentCell;
         _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren
             || (Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLANYCALL") is null && MayHoldListCell(funType.Ret))
@@ -14894,6 +15000,7 @@ public sealed partial class Lowering
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();
         _callArgumentCell = outerArgumentCell;
+        _arenaKeptSuccessorLetLoop = outerKeptSuccessorLetLoop;
         EndCallArgumentRetains(previousRetainCollection);
         if (argumentRequest.TransfersRuntimeManagedChildren)
         {

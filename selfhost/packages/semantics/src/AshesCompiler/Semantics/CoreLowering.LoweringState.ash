@@ -365,6 +365,8 @@ export (
     value withStateLateCopiedCellHeads,
     value stateArenaSuccessorLetLoop,
     value withStateArenaSuccessorLetLoop,
+    value stateArenaKeptSuccessorLetLoop,
+    value withStateArenaKeptSuccessorLetLoop,
     value stateArenaSuccessorJoin,
     value withStateArenaSuccessorJoin,
     value isArenaSuccessorJoin,
@@ -1168,6 +1170,10 @@ type CoreTcoState =
     // The loop whose arena successor a `let` value being lowered becomes (stage 0's
     // `_arenaSuccessorLetLoop`): its back edge balances the retains the cells it builds hold.
     | arenaSuccessorLetLoop: Maybe(Str)
+    // The loop whose arena successor keeps the `let` value being lowered through a later binding
+    // (stage 0's `_arenaKeptSuccessorLetLoop`): an aggregate built there stores an arena copy of an
+    // owned binding instead of a retain.
+    | arenaKeptSuccessorLetLoop: Maybe(Str)
     // The span of the `if` or `match` whose value becomes a loop parameter left in the arena (stage 0's
     // `_arenaSuccessorJoin`): a mixed join there copies its reference-counted arms into the arena.
     | arenaSuccessorJoin: Maybe(TextSpan)
@@ -2848,6 +2854,14 @@ let stateArenaSuccessorLetLoop (state: CoreLoweringState) =
 let withStateArenaSuccessorLetLoop value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with arenaSuccessorLetLoop = value))
+
+let stateArenaKeptSuccessorLetLoop (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.arenaKeptSuccessorLetLoop)
+
+let withStateArenaKeptSuccessorLetLoop value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with arenaKeptSuccessorLetLoop = value))
 
 let stateArenaSuccessorJoin (state: CoreLoweringState) =
     (let group = state.tcoState
