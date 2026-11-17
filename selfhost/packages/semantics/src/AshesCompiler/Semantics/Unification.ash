@@ -236,6 +236,22 @@ and unifyWith (flat: Bool) substitution left right =
                             leftElement,
                             rightElement
                         )
+                    // The empty tuple a standard trait's method type writes (`Default.default`) and
+                    // external typing gives `void` is the language's `Unit`.
+                    | (SemTuple([]), SemNamed(_unitId, unitName, [])) ->
+                        if unitName == "Unit"
+                        then unificationSuccess(substitution)
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
+                    | (SemNamed(_unitId, unitName, []), SemTuple([])) ->
+                        if unitName == "Unit"
+                        then unificationSuccess(substitution)
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
                     | (SemTuple(leftElements), SemTuple(rightElements)) ->
                         if typeListLength(leftElements) == typeListLength(rightElements)
                         then
