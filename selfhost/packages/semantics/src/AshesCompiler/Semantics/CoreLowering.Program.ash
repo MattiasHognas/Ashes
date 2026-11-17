@@ -1417,6 +1417,22 @@ let capabilityHandlerGlobalCount (state: CoreLoweringState) =
     then 0
     else stateCapabilityGlobalCount(state) + 2
 
+// The compiler name of the binding a top-level item declares, if any; the trailing expression,
+// which follows the last item, goes by the empty name.
+let recursive programItemBindingName (items: List(TopLevelItem)) =
+    match items with
+        | TopLevelAt(_span, inner) :: _rest -> programItemBindingName([inner])
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) :: _rest -> Some(name)
+        | TopLevelRecursiveGroup(LetBindingSyntax { name = name } :: _bindings) :: _rest -> Some(name)
+        | [] -> Some("")
+        | _ -> None
+
+// The source region the next item's spans resolve in: the region its binding was declared in.
+let withItemSourceRegion (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match programItemBindingName(items) with
+        | Some(name) -> withStateSourceRegionOf(name)(state)
+        | None -> state
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -1434,70 +1450,72 @@ let capabilityHandlerGlobalCount (state: CoreLoweringState) =
 // Walks the flat top-level sequence iteratively: each declaration is opened (its value lowered and
 // stored, its names in scope) and the close it still owes pushed on `pending`, the trailing body is
 // lowered last, and closePendingTopLevelItems then closes the chain innermost first.
-let recursive lowerCoreProgramItems items trailingBody seen environment (analysis: TopLevelLoweringAnalysis) (pending: List(PendingTopLevelClose)) state =
-    match items with
-        | [] ->
-            state
-            |> observeTopLevelScope
-            |> lowerCore(trailingBody)
-            |> closePendingTopLevelItems(pending)
-        // currentSpan carries the declaration as the innermost enclosing span, so an instruction the
-        // binding emits outside its value expression — the StoreLocal of the bound value — is tagged
-        // with the declaration rather than left unpositioned. A flat top-level declaration otherwise has
-        // no position at all, and a debugger stepping over it reports whatever line came before.
-        | TopLevelAt(span, inner) :: rest ->
-            (state with currentSpan = Some(span))
-            |> withStateRecursiveDeclarationSpan(Some(span))
-            |> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)
-        | TopLevelType(_declaration) :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, false) :: rest ->
-            match checkTopLevelNames([name])(seen) with
-                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
-                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
-                    match state with
-                        | CoreLoweringState { bindings = outerBindings } ->
-                            let nextAnalysis = peelAnalysis(1)(analysis)
-                            in
-                                match directSingleArgRcConstructorLayout(value)(state) with
-                                    | Some(layout) ->
-                                        if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
-                                        then
-                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+let recursive lowerCoreProgramItems items trailingBody seen environment (analysis: TopLevelLoweringAnalysis) (pending: List(PendingTopLevelClose)) itemState =
+    (let state = withItemSourceRegion(items)(itemState)
+    in
+        match items with
+            | [] ->
+                state
+                |> observeTopLevelScope
+                |> lowerCore(trailingBody)
+                |> closePendingTopLevelItems(pending)
+            // currentSpan carries the declaration as the innermost enclosing span, so an instruction the
+            // binding emits outside its value expression — the StoreLocal of the bound value — is tagged
+            // with the declaration rather than left unpositioned. A flat top-level declaration otherwise has
+            // no position at all, and a debugger stepping over it reports whatever line came before.
+            | TopLevelAt(span, inner) :: rest ->
+                (state with currentSpan = Some(span))
+                |> withStateRecursiveDeclarationSpan(Some(span))
+                |> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)
+            | TopLevelType(_declaration) :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
+            | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, false) :: rest ->
+                match checkTopLevelNames([name])(seen) with
+                    | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                    | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                        match state with
+                            | CoreLoweringState { bindings = outerBindings } ->
+                                let nextAnalysis = peelAnalysis(1)(analysis)
+                                in
+                                    match directSingleArgRcConstructorLayout(value)(state) with
+                                        | Some(layout) ->
+                                            if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+                                            then
+                                                match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                                    | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
+                                                    | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
+                                            else
+                                                match lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(state) with
+                                                    | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                                    | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
+                                        | None ->
+                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
                                                 | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                 | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
-                                        else
-                                            match lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(state) with
-                                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                                                | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
-                                    | None ->
-                                        match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
-                                            | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
-                                            | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, true) :: rest ->
-            match checkTopLevelNames([name])(seen) with
-                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
-                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
-                    match state with
-                        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
-                            match openPossiblyConstrainedRecursive(name)(value)(annotation)(requirements)(lowerCore)(state) with
-                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                                | LoweredCoreValue { state = opened, error = None } ->
-                                    lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(1)(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
-        | TopLevelRecursiveGroup(bindings) :: rest ->
-            match checkTopLevelNames(letBindingSyntaxNames(bindings))(seen) with
-                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
-                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
-                    match state with
-                        | CoreLoweringState { bindings = outerBindings } ->
-                            let pairs = letBindingSyntaxPairs(bindings)(state)
-                            in
-                                match []
-                                |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
-                                |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
+            | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, true) :: rest ->
+                match checkTopLevelNames([name])(seen) with
+                    | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                    | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                        match state with
+                            | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
+                                match openPossiblyConstrainedRecursive(name)(value)(annotation)(requirements)(lowerCore)(state) with
                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                     | LoweredCoreValue { state = opened, error = None } ->
-                                        lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
-        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
+                                        lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(1)(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
+            | TopLevelRecursiveGroup(bindings) :: rest ->
+                match checkTopLevelNames(letBindingSyntaxNames(bindings))(seen) with
+                    | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                    | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                        match state with
+                            | CoreLoweringState { bindings = outerBindings } ->
+                                let pairs = letBindingSyntaxPairs(bindings)(state)
+                                in
+                                    match []
+                                    |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
+                                    |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
+                                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                        | LoweredCoreValue { state = opened, error = None } ->
+                                            lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
+            | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state))
 
 // Stage 0 registers every type declaration before it lowers a value (`RegisterTypeDeclarations`
 // ahead of the item walk), so a constructor is known to every analysis that runs ahead of the

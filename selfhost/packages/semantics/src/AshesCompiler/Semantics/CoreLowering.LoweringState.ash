@@ -107,6 +107,8 @@ export (
     value withStateHandledCapabilities,
     value stateSourceContext,
     value withStateSourceContext,
+    value withStateSourceRegions,
+    value withStateSourceRegionOf,
     value stateTopLevelNames,
     value withStateTopLevelNames,
     value stateTraitEnvironment,
@@ -853,6 +855,9 @@ type CoreProgramState =
     // resolves through handler evidence, never through a static provider.
     | handledCapabilities: List(Str)
     | sourceContext: Maybe(SourceContext)
+    // For a stitched program, the source region (an item region of `sourceContext`) each top-level
+    // binding was declared in, by compiler name, so its spans resolve against its own file.
+    | sourceRegionOfName: MapTree(Str, Int)
     | topLevelNames: MapTree(Str, Bool)
     | letLambdas: List((Str, List(Str), Expr))
     | letLambdasByName: MapTree(Str, (List(Str), Expr))
@@ -1643,6 +1648,10 @@ let withStateSourceContext value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with sourceContext = value))
 
+let withStateSourceRegions (regionOfName: MapTree(Str, Int)) (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with sourceRegionOfName = regionOfName))
+
 let stateTopLevelNames (state: CoreLoweringState) =
     (let group = state.programState
     in group.topLevelNames)
@@ -2003,6 +2012,15 @@ let stateCurrentItem (state: CoreLoweringState) =
 let withStateCurrentItem value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with currentItem = value))
+
+// Spans lowered from here on resolve in the source region the top-level binding `name` was
+// declared in; a name no region records keeps the current region.
+let withStateSourceRegionOf (name: Str) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match Ashes.Collection.Map.getStr(name)(group.sourceRegionOfName) with
+            | Some(region) -> withStateCurrentItem(region)(state)
+            | None -> state)
 
 let statePendingStackClosure (state: CoreLoweringState) =
     (let group = state.functionState

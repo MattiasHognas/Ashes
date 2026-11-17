@@ -532,6 +532,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 capabilityOperationSchemes = [],
                 handledCapabilities = [],
                 sourceContext = None,
+                sourceRegionOfName = Ashes.Collection.Map.empty,
                 topLevelNames = Ashes.Collection.Map.empty,
                 letLambdas = [],
                 letLambdasByName = Ashes.Collection.Map.empty,

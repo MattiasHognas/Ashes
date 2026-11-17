@@ -14,6 +14,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -21,6 +22,8 @@ export (
     type SourceTextIndex(..),
     type ModuleRegion(..),
     type StitchedItemRegion(..),
+    type SourceRegions(..),
+    value singleSourceRegions,
     type SourceContext(..),
     value buildSourceTextIndex,
     value resolvePositionInIndex,
@@ -311,6 +314,15 @@ let resolveItemSpanLocation (context: SourceContext) (itemIndex: Int) (span: Tex
                                             column = col
                                         )
                                     )
+
+// Where a program's spans resolve: one source context, and for a stitched program the item
+// region each top-level binding's spans resolve in, by compiler name (the empty name stands for
+// the trailing expression). A single text has no regions; its spans resolve against it by offset.
+type SourceRegions =
+    | context: SourceContext
+    | regionOfName: MapTree(Str, Int)
+
+let singleSourceRegions (filePath: Str) (source: Str) = SourceRegions(context = createSourceContext(filePath)(source), regionOfName = Ashes.Collection.Map.empty)
 
 let isRuntimeMachinery (instruction: IrInstructionKind) =
     match instruction with

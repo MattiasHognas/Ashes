@@ -21,10 +21,11 @@
 //   stderr, and the exit codes are 0/1/2 for success, compilation or input failure, and usage
 //   error. `ashes run` compiles to the host temporary directory, forwards everything after `--`
 //   to the program, and propagates the program's own exit code.
-// - Source locations in a project build are computed against the entry module's text: the
-//   stitched program keeps every module's original spans, but the lowering's source context takes
-//   one text, so a diagnostic or debug line in a non-entry module is not yet mapped to that
-//   module's own lines.
+// - Source locations resolve in the file each span belongs to: the stitched program keeps every
+//   module's original spans, and lowering resolves a top-level binding's spans against the text of
+//   the module that declared it (an inline module's lifted text keeps its file's lines). Code
+//   lowering emits for one binding while lowering another (a specialized copy, an implementation
+//   method) is located in the file of the binding being lowered.
 // - `--explain <kind>[:<selector>]` is accepted by both commands, repeats, and prints the requested
 //   compiler reports to stderr between optimization and code generation
 //   (docs/md/reference/cli.md#compiler-reports). Reporting reads the decision snapshot and the
@@ -76,6 +77,7 @@ import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
 import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
 import AshesCompiler.Semantics.ProjectInference.inferStitchedProjectFrom
 import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
 import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectDiscovery
@@ -371,9 +373,9 @@ let loweredStitchedResult (lowering: CoreLoweringResult) =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-let lowerStitchedProgram reuseEnabled inputPath source program =
-    program
-    |> lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)
+let lowerStitchedProgram reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
+    stitched.program
+    |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
     |> loweredStitchedResult
 
 // With `ASHES_TYPED_LOWERING=1` the standalone type inference runs on the stitched program first
@@ -393,7 +395,7 @@ let typedLoweringInferenceError (result: ProgramInferenceResult) (error: Program
 // The numbered units of a stitched project as the one program lowering walks.
 let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
 
-let lowerStitchedTyped reuseEnabled inputPath source stitched =
+let lowerStitchedTyped reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     (let identified = identifyStitchedProject(stitched)
     in
         match inferIdentifiedStitchedProjectFrom(
@@ -409,7 +411,7 @@ let lowerStitchedTyped reuseEnabled inputPath source stitched =
                 |> Error
             | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
                 nodeTypes
-                |> lowerCoreNumberedProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(numberedStitchedProgram(identified))
+                |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
                 |> loweredStitchedResult)
 
 // With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
@@ -447,7 +449,7 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         if inferenceErrorWantsCallSiteWording(error)
         then
             match stitched.program
-            |> lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)
+            |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
             |> wordedLoweringError with
                 | Some(text) -> text
                 | None -> inferenceText
@@ -470,14 +472,14 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                     if typedLoweringRequested(Unit)
                     then
                         nodeTypes
-                        |> lowerCoreNumberedProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(numberedStitchedProgram(identified))
+                        |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
                         |> loweredStitchedResult
-                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched.program))
+                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched))
 
 let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     if typedLoweringRequested(Unit)
     then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
-    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched.program)
+    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
 
 // The stitched project type-checked, lowered and optimized, with the placement facts the reports
 // read.

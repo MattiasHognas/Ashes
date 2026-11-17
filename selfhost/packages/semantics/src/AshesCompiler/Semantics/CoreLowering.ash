@@ -9,6 +9,7 @@
 // - Lifted functions retain generation order, with nested functions preceding their enclosing function.
 
 import Ashes.Collection.List.map
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
 import AshesCompiler.Frontend.Token.TextSpan
@@ -97,11 +98,14 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
 
-// As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
-// `reuseEnabled` false (`--debug-disable-reuse`) no match arm publishes a reuse token and no
-// binding is admitted to the reference-counted heap on the strength of a reuse-safe rebuild, so
-// every cell is allocated fresh and released by its owner as before reuse.
-let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+// The empty name stands for the trailing expression; spans start out in its region.
+let withSourceRegions (regions: SourceRegions) (state: CoreLoweringState) =
+    state
+    |> withStateSourceContext(Some(regions.context))
+    |> withStateSourceRegions(regions.regionOfName)
+    |> withStateSourceRegionOf("")
+
+let lowerProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -113,15 +117,20 @@ let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source:
                 |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
                 |> (given (state: CoreLoweringState) ->
                     state
-                    |> withStateSourceContext(source
-                    |> createSourceContext(filePath)
-                    |> Some)
+                    |> withSourceRegions(regions)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
                     |> withStateReuseEnabled(reuseEnabled))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
+
+// As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
+// `reuseEnabled` false (`--debug-disable-reuse`) no match arm publishes a reuse token and no
+// binding is admitted to the reference-counted heap on the strength of a reuse-safe rebuild, so
+// every cell is allocated fresh and released by its owner as before reuse.
+let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    lowerProgramWithRegionsAndReuse(reuseEnabled)(singleSourceRegions(filePath)(source))(program)
 
 // A program with a mutually recursive group that merges into one dispatch loop is lowered in its
 // merged form. The merge does not know the members' types, so a merged program that fails to
@@ -134,10 +143,20 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 | CoreLoweringResult { error = None } as lowered -> lowered
                 | _failed -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
 
+// As lowerCoreProgramWithSourceAndReuse for a stitched program whose spans resolve in their own
+// files' texts.
+let lowerCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
+    match mergeMutualRecursionGroups(program) with
+        | None -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
+        | Some(merged) ->
+            match lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(merged) with
+                | CoreLoweringResult { error = None } as lowered -> lowered
+                | _failed -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
+
 // As lowerProgramWithSourceAndReuse, for a program the standalone inference ran on first: its
 // items are the numbered units with `deriving` already expanded, every expression node is wrapped
 // in its identity, and `nodeTypes` holds what the inference recorded against those identities.
-let lowerNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (nodeTypes: NodeTypeTable) (program: ProgramSyntax) =
+let lowerNumberedProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (nodeTypes: NodeTypeTable) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -149,9 +168,7 @@ let lowerNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) 
                 |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
                 |> (given (state: CoreLoweringState) ->
                     state
-                    |> withStateSourceContext(source
-                    |> createSourceContext(filePath)
-                    |> Some)
+                    |> withSourceRegions(regions)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
                     |> withStateReuseEnabled(reuseEnabled)
@@ -159,6 +176,19 @@ let lowerNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) 
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
+
+let lowerNumberedProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (nodeTypes: NodeTypeTable) (program: ProgramSyntax) =
+    lowerNumberedProgramWithRegionsAndReuse(reuseEnabled)(singleSourceRegions(filePath)(source))(nodeTypes)(program)
+
+// As lowerCoreNumberedProgramWithSourceAndReuse for a stitched program whose spans resolve in their
+// own files' texts.
+let lowerCoreNumberedProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) (nodeTypes: NodeTypeTable) =
+    match mergeMutualRecursionGroups(program) with
+        | None -> lowerNumberedProgramWithRegionsAndReuse(reuseEnabled)(regions)(nodeTypes)(program)
+        | Some(merged) ->
+            match lowerNumberedProgramWithRegionsAndReuse(reuseEnabled)(regions)(nodeTypes)(merged) with
+                | CoreLoweringResult { error = None } as lowered -> lowered
+                | _failed -> lowerNumberedProgramWithRegionsAndReuse(reuseEnabled)(regions)(nodeTypes)(program)
 
 // As lowerCoreProgramWithSourceAndReuse, merging mutually recursive groups the same way, for a
 // numbered program and the types inference recorded against it.
