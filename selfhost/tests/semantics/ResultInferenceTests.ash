@@ -86,7 +86,7 @@ let rejectNonResultBody unit =
         match Unit
         |> resultEnvironment
         |> inferExpression(expression) with
-            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(ExpectedResultType(SemString)) } -> Unit
+            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(LetResultBodyRequiresResult(SemString)) } -> Unit
             | _ -> test.fail("let? bodies should produce Result"))
 
 let reportResultInferenceSuccess unit = Ashes.IO.print("all self-hosted Result inference tests passed")

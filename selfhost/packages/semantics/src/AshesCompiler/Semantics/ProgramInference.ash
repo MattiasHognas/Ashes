@@ -84,7 +84,8 @@ type ProgramInferenceError =
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
     | MissingTraitImplementationMethod(Str, Str)
-    | OrphanTraitImplementation(Str)
+    // The trait, the implementation head, and the package that declares the implementation.
+    | OrphanTraitImplementation(Str, List(SemanticType), Str)
     | OverlappingTraitImplementations(Str)
     | ProgramDerivingExpansionError(DerivingExpansionError)
     | ProgramExternalTypingError(ExternalTypingError)
@@ -416,9 +417,11 @@ let inferRecursiveGroup bindings state =
                     ) with
                         | RecursiveInference { resolved = resolved, substitution = resolvedSubstitution, supply = resolvedSupply, error = None } ->
                             match recursiveGroupAmbiguity(resolved)(resolvedSubstitution)(outerEnvironment) with
-                                | Some(traitName) ->
+                                | Some((traitName, typeArguments)) ->
                                     ProgramInferenceState(environment = outerEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
-                                        ProgramExpressionError(AmbiguousTraitRequirement(traitName))
+                                        typeArguments
+                                        |> AmbiguousTraitRequirement(traitName)
+                                        |> ProgramExpressionError
                                     ))
                                 | None ->
                                     let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
@@ -2257,7 +2260,9 @@ let registerTraitImplementation declaration state =
                                                                                                         ))
                                                                 else
                                                                     ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(
-                                                                        OrphanTraitImplementation(traitName)
+                                                                        environment
+                                                                        |> inferencePackageId
+                                                                        |> OrphanTraitImplementation(traitName)(resolvedTypeArguments)
                                                                     ))
                                                     | TraitConstraintRegistration { constraints = _resolvedRequirements, error = Some(error) } ->
                                                         ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(

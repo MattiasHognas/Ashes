@@ -136,7 +136,7 @@ let expectCrossPackageOrphanRejection unit =
             |> requireStitched
             |> expectOrphanProjectShape
             |> inferStitchedProject with
-                | ProgramInferenceResult { error = Some(OrphanTraitImplementation("Domain_Comparable")) } -> Unit
+                | ProgramInferenceResult { error = Some(OrphanTraitImplementation("Domain_Comparable", _orphanHead, _orphanPackage)) } -> Unit
                 | ProgramInferenceResult { error = Some(error) } ->
                     test.fail(
                         "unexpected cross-package orphan result: " + Ashes.Trait.Show.show(error)

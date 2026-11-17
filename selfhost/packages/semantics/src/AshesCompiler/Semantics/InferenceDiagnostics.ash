@@ -4,9 +4,12 @@
 // read as the source spells them. An error stage 0 has no wording for prints its structural form.
 
 import Ashes.Collection.List.reverse
+import AshesCompiler.Frontend.InlineModules
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.DerivingExpansion.DerivingExpansionError
 import AshesCompiler.Semantics.DiagnosticTypeText
+import AshesCompiler.Semantics.ExternalAbi.ExternalAbiError
+import AshesCompiler.Semantics.ExternalTyping.ExternalTypingError
 import AshesCompiler.Semantics.ModuleSemanticStitching.StitchedDefinition
 import AshesCompiler.Semantics.ModuleSemanticStitching.StitchedNameKind
 import AshesCompiler.Semantics.ProgramInference.InferenceErrorLocation
@@ -17,6 +20,7 @@ import AshesCompiler.Semantics.ProjectSyntaxStitching.StitchedDefinitionPlacemen
 import AshesCompiler.Semantics.ProjectSyntaxStitching.StitchedSyntaxProject
 import AshesCompiler.Semantics.SourceContext.buildSourceTextIndex
 import AshesCompiler.Semantics.SourceContext.resolvePositionInIndex
+import AshesCompiler.Semantics.TypeInference.ConstructorInferenceDefinition
 import AshesCompiler.Semantics.TypeInference.TypeEnvironment
 import AshesCompiler.Semantics.TypeInference.TypeInferenceError
 import AshesCompiler.Semantics.TypeInference.resolveWrittenTypeBinding
@@ -253,6 +257,126 @@ let inFileModule (location: Maybe(InferenceErrorLocation)) =
         | Some(InferenceErrorLocation { sourcePath = Some(path) }) -> Ashes.Text.indexOf(path)("#") < 0
         | _ -> true
 
+let recursive textCharacters (text: Str) (index: Int) (reversed: List(Str)) =
+    if index >= Ashes.Text.length(text)
+    then reverse(reversed)
+    else textCharacters(text)(index + 1)(Ashes.Text.substring(text)(index)(1) :: reversed)
+
+let smallest (first: Int) (second: Int) (third: Int) =
+    if first <= second && first <= third
+    then first
+    else
+        if second <= third
+        then second
+        else third
+
+// One row of the edit-distance table: `previous` is the row above, `left` the cell just computed.
+let recursive distanceRow (character: Str) (target: List(Str)) (previous: List(Int)) (left: Int) (reversed: List(Int)) =
+    match (target, previous) with
+        | (candidate :: targetRest, diagonal :: above :: previousRest) ->
+            let cost =
+                if character == candidate
+                then 0
+                else 1
+            in
+                let value = smallest(above + 1)(left + 1)(diagonal + cost)
+                in distanceRow(character)(targetRest)(above :: previousRest)(value)(value :: reversed)
+        | _ -> reverse(reversed)
+
+let recursive lastNumber (numbers: List(Int)) (fallback: Int) =
+    match numbers with
+        | [] -> fallback
+        | head :: rest -> lastNumber(rest)(head)
+
+let recursive numbersUpTo (count: Int) (reversed: List(Int)) =
+    if count < 0
+    then reversed
+    else numbersUpTo(count - 1)(count :: reversed)
+
+let recursive editRows (source: List(Str)) (target: List(Str)) (previous: List(Int)) (row: Int) =
+    match source with
+        | [] -> lastNumber(previous)(0)
+        | character :: rest ->
+            editRows(rest)(target)(distanceRow(character)(target)(previous)(row)([row]))(row + 1)
+
+// The Levenshtein distance between two names.
+let editDistance (left: Str) (right: Str) =
+    (let target = textCharacters(right)(0)([])
+    in
+        editRows(textCharacters(left)(0)([]))(target)(numbersUpTo(Ashes.Text.length(right))([]))(1))
+
+let recursive builtinConstructorNames (definitions: List(ConstructorInferenceDefinition)) (names: List(Str)) =
+    match definitions with
+        | [] -> names
+        | definition :: rest -> builtinConstructorNames(rest)(definition.name :: names)
+
+let recursive stitchedConstructorNames (placements: List(StitchedDefinitionPlacement)) =
+    match placements with
+        | [] -> []
+        | StitchedDefinitionPlacement { definition = definition } :: rest ->
+            if definition.kind == StitchedConstructor
+            then definition.sourceName :: stitchedConstructorNames(rest)
+            else stitchedConstructorNames(rest)
+
+let recursive appendTexts (left: List(Str)) (right: List(Str)) =
+    match left with
+        | [] -> right
+        | head :: rest -> head :: appendTexts(rest)(right)
+
+let recursive closeNames (name: Str) (threshold: Int) (candidates: List(Str)) (seen: List(Str)) =
+    match candidates with
+        | [] -> []
+        | candidate :: rest ->
+            if containsName(seen)(candidate)
+            then closeNames(name)(threshold)(rest)(seen)
+            else
+                let distance = editDistance(name)(candidate)
+                in
+                    if distance <= threshold
+                    then (distance, candidate) :: closeNames(name)(threshold)(rest)(candidate :: seen)
+                    else closeNames(name)(threshold)(rest)(candidate :: seen)
+and containsName (names: List(Str)) (wanted: Str) =
+    match names with
+        | [] -> false
+        | head :: rest ->
+            if head == wanted
+            then true
+            else containsName(rest)(wanted)
+
+let recursive firstNames (pairs: List((Int, Str))) (count: Int) =
+    match pairs with
+        | [] -> []
+        | (_distance, name) :: rest ->
+            if count <= 0
+            then []
+            else name :: firstNames(rest)(count - 1)
+
+// Stage 0's suggestion for an unknown constructor: up to three constructors in scope within an
+// edit distance of half the name's length (at least 3), nearest first, the builtin constructors
+// ahead of the program's own when equally near.
+let constructorHint (placements: List(StitchedDefinitionPlacement)) (builtins: TypeEnvironment) (name: Str) =
+    (let threshold =
+        if Ashes.Text.length(name) / 2 > 3
+        then Ashes.Text.length(name) / 2
+        else 3
+    in
+        let candidates =
+            placements
+            |> stitchedConstructorNames
+            |> appendTexts(builtinConstructorNames(builtins.constructors)([]))
+        in
+            let ranked =
+                []
+                |> closeNames(name)(threshold)(candidates)
+                |> Ashes.Collection.List.sortBy(given (left) ->
+                    given (right) ->
+                        match (left, right) with
+                            | ((leftDistance, _leftName), (rightDistance, _rightName)) -> leftDistance <= rightDistance)
+            in
+                match firstNames(ranked)(3) with
+                    | [] -> ""
+                    | names -> " Did you mean: " + Ashes.Text.join(", ")(names) + "?")
+
 // A name no binding answers to, as stage 0 words it: a top-level binding of the same module that
 // is declared further down, an unknown member of a standard-library module, an unknown
 // constructor, or an undefined variable with the intrinsic member it may have meant.
@@ -263,7 +387,7 @@ let unknownValueDiagnostic (placements: List(StitchedDefinitionPlacement)) (buil
             then coded(forwardReferenceCode)("Binding '" + name + "' is not yet declared at this point.")
             else
                 if startsUppercase(name)
-                then uncoded("Unknown constructor '" + name + "'.")
+                then uncoded("Unknown constructor '" + name + "'." + constructorHint(placements)(builtins)(name))
                 else coded(unknownIdentifierCode)("Undefined variable '" + name + "'." + suggestionIn(builtins)(name)(suggestionModules))
         | (moduleName, member) -> uncoded("Unknown member '" + member + "' in module " + moduleName + ".")
 
@@ -384,8 +508,11 @@ let handlerDiagnostic (placements: List(StitchedDefinitionPlacement)) (text: Str
                     | (capabilityName, operation) -> coded(invalidHandlerCode)("Duplicate handler arm for '" + capabilityName + "." + operation + "'.")
             else
                 if text == "duplicate return arm"
-                then coded(invalidHandlerCode)("Duplicate return arm in handler.")
-                else None
+                then coded(invalidHandlerCode)("Duplicate 'return' arm in handler.")
+                else
+                    if text == "the return arm takes exactly one parameter"
+                    then coded(invalidHandlerCode)("The 'return' arm takes exactly one parameter.")
+                    else None
 
 let recursive quotedNames (names: List(Str)) (reversed: List(Str)) =
     match names with
@@ -401,7 +528,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (builti
         | InferenceUnificationError(unification) -> unificationDiagnostic(placements)(unification)
         | InferenceTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicatePatternBinding(name) -> uncoded("Duplicate binding '" + name + "' in pattern.")
-        | UnknownPatternConstructor(name) -> uncoded("Unknown constructor '" + name + "' in pattern.")
+        | UnknownPatternConstructor(name) -> uncoded("Unknown constructor '" + name + "' in pattern." + constructorHint(placements)(builtins)(name))
         | ConstructorPatternArityMismatch(name, expected, actual) -> uncoded("Constructor '" + name + "' expects " + Ashes.Text.fromInt(expected) + " argument(s) but pattern has " + Ashes.Text.fromInt(actual) + ".")
         | UnknownRecordPatternField(typeName, field) -> uncoded("Record type '" + sourceNameOf(placements)(typeName) + "' has no field '" + field + "'.")
         | UnknownRecordType(typeName) -> uncoded("Unknown record type '" + sourceNameOf(placements)(typeName) + "'.")
@@ -417,20 +544,55 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (builti
         | InconsistentOrPatternBindings -> uncoded("Every alternative of an or-pattern must bind exactly the same names.")
         | UnknownWrittenTraitRequirement(traitName) -> coded(invalidTraitDeclarationCode)("Unknown trait '" + traitName + "' in requires clause.")
         | WrittenTraitRequirementArityMismatch(traitName, expected, actual) -> coded(invalidTraitDeclarationCode)("Trait '" + traitName + "' expects " + Ashes.Text.fromInt(expected) + " type argument(s), but got " + Ashes.Text.fromInt(actual) + ".")
-        | MissingWrittenTraitRequirement(traitName) -> coded(invalidTraitDeclarationCode)("Written requires clause does not include inferred requirement '" + qualifiedTraitName(placements)(traitName) + "'.")
-        | UnjustifiedWrittenTraitRequirement(traitName) -> coded(invalidTraitDeclarationCode)("Written requires clause includes unjustified requirement '" + qualifiedTraitName(placements)(traitName) + "'.")
-        | AmbiguousTraitRequirement(traitName) -> coded(invalidTraitDeclarationCode)("Trait requirement '" + qualifiedTraitName(placements)(traitName) + "' is ambiguous: its type cannot be determined from context, so no evidence can be supplied for it.")
+        | MissingWrittenTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Written requires clause does not include inferred requirement '" + requirementText(placements)(traitName)(types) + "'.")
+        | UnjustifiedWrittenTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Written requires clause includes unjustified requirement '" + requirementText(placements)(traitName)(types) + "'.")
+        | AmbiguousTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Trait requirement '" + requirementText(placements)(traitName)(types) + "' is ambiguous: its type cannot be determined from context, so no evidence can be supplied for it.")
         | NoTraitImplementation(traitName, types) -> missingImplementationDiagnostic(placements)(traitName)(types)
         | NonExhaustiveMatch(message) -> uncoded(message)
         | UnreachableMatchArm(message) -> uncoded(message)
         | ConstructorPatternsFromDifferentAdts(names) -> uncoded("Constructor patterns from different ADTs (" + quotedNames(names)([]) + ") cannot appear in the same match expression.")
+        | TuplePatternArityMismatch(expected, actual) -> uncoded("Tuple pattern arity mismatch: expected " + Ashes.Text.fromInt(expected) + " element(s) but got " + Ashes.Text.fromInt(actual) + ".")
+        | BuiltinIntArgumentMismatch(name, argumentType) -> uncoded(name + "() expects Int but got " + typeText(placements)(argumentType) + ".")
+        | LetResultRequiresResult(valueType) -> uncoded("let? requires a Result(E, A) expression. Got " + typeText(placements)(valueType) + ".")
+        | LetResultBodyRequiresResult(bodyType) -> uncoded("let? body must produce a Result(E, A) expression. Got " + typeText(placements)(bodyType) + ".")
+        | ExpectedResultType(leftType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(leftType) + " vs Result<a, b>.")
+        | ExpectedTaskType(awaitedType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(awaitedType) + " vs Task<a, b>.")
+        | _ -> None
+
+let ffiBufferCode = "ASH044"
+
+let ffiOutParameterCode = "ASH045"
+
+let ffiStringCode = "ASH046"
+
+let externalResourceDestructorCode = "ASH041"
+
+// The external-declaration errors stage 0 words with the same facts; one whose stage-0 message
+// names the function or the parameter number the error does not carry keeps its structural form.
+let externalTypingDiagnostic (error: ExternalTypingError) =
+    match error with
+        | InvalidExternalTypePosition("FfiBuffer") -> coded(ffiBufferCode)("FfiBuffer(T) is supported only as a direct external parameter.")
+        | InvalidExternalTypePosition("out") -> coded(ffiOutParameterCode)("out T is supported only as a direct external parameter.")
+        | InvalidExternalTypePosition("FfiStr") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
+        | InvalidExternalTypePosition("FfiStr parameter") -> coded(ffiStringCode)("FfiStr(...) is supported only as an external return or out-parameter element.")
+        | InvalidExternalTypePosition("nullable out FfiStr") -> coded(ffiStringCode)("out FfiStr(...) is already nullable and cannot also specify 'nullable'.")
+        | InvalidExternalBufferElement(_element) -> coded(ffiBufferCode)("FfiBuffer(T) requires a copyable opaque external type T.")
+        | InvalidExternalOutElement(_element) -> coded(ffiOutParameterCode)("out T requires an opaque external type or pointer type T.")
+        | _ -> None
+
+let externalAbiDiagnostic (error: ExternalAbiError) =
+    match error with
+        | ExternalAbiSourceTypingError(typing) -> externalTypingDiagnostic(typing)
+        | InvalidExternalResourceDestructor(resource, destructor) -> coded(externalResourceDestructorCode)("External resource '" + resource + "' requires destructor '" + destructor + "' with signature (consume " + resource + ") -> void.")
+        | SharedExternalResourceDestructor(destructor) -> coded(externalResourceDestructorCode)("External resource destructor '" + destructor + "' is assigned to more than one resource type.")
+        | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
         | _ -> None
 
 let derivingDiagnostic (error: DerivingExpansionError) =
     match error with
         | UnsupportedDerivedTrait(_typeName, traitName) -> coded(invalidTraitImplementationCode)("Trait '" + traitName + "' cannot be derived; supported traits are Eq, Ord, Show, and Hash.")
         | DuplicateDerivedTrait(typeName, traitName) -> coded(invalidTraitImplementationCode)("Trait '" + traitName + "' appears more than once in the deriving clause for '" + typeName + "'.")
-        | UnsupportedDerivedField(_typeName, _traitName) -> None
+        | UnsupportedDerivedField(typeName, traitName) -> coded(invalidTraitImplementationCode)("Cannot derive '" + traitName + "' for '" + typeName + "'.")
 
 // The diagnostic stage 0 reports for an inference error, as its code and message, when stage 0
 // words that error.
@@ -462,9 +624,11 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | UnknownTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Unknown method '" + method + "' in implementation of '" + traitName + "'.")
         | DuplicateTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Method '" + method + "' is implemented more than once in implementation of '" + traitName + "'.")
         | MissingTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Implementation of '" + traitName + "' is missing required method '" + method + "'.")
-        | OrphanTraitImplementation(text) -> coded(traitCoherenceCode)("Orphan implementation '" + text + "' is illegal.")
+        | OrphanTraitImplementation(traitName, head, packageId) -> coded(traitCoherenceCode)("Orphan implementation '" + requirementText(placements)(traitName)(head) + "' is illegal: package '" + packageId + "' owns neither the trait nor an outer nominal head type.")
         | OverlappingTraitImplementations(traitName) -> coded(traitCoherenceCode)("Overlapping implementations for trait '" + traitName + "'.")
         | ProgramDerivingExpansionError(expansion) -> derivingDiagnostic(expansion)
+        | ProgramExternalTypingError(typing) -> externalTypingDiagnostic(typing)
+        | ProgramExternalAbiError(abi) -> externalAbiDiagnostic(abi)
         | RecursiveTypeAlias(cycle) -> coded(recursiveTypeAliasCode)("Recursive type alias cycle: " + cycle + ".")
         | ReservedTypeDeclaration(_name) -> uncoded("'Ashes' and built-in runtime types are reserved")
         | _ -> None
@@ -472,13 +636,15 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
 // A unification error carries the two types but not the call, argument, constructor or operator
 // it was raised at, which stage 0 words its message after (an argument count, a non-function
 // callee, an operand pair). Lowering knows that site, so its own diagnostic, when it words one, is
-// the closer rendering. A mismatch between two capability rows is the closed-row check, which the
-// inference words itself.
+// the closer rendering. A mismatch between two capability rows is the closed-row check, and one
+// between two tuples of different lengths is a pattern's shape against its value's; the inference
+// words both itself.
 let recursive inferenceErrorWantsCallSiteWording (error: ProgramInferenceError) =
     match error with
         | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(inner)
         | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(ProgramExpressionError(inner))
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail)))) -> false
+        | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
         | ProgramExpressionError(InferenceUnificationError(_unification)) -> true
         | _ -> false
 
@@ -487,13 +653,22 @@ let maybeText (value: Maybe(Str)) =
         | Some(text) -> text
         | None -> ""
 
-// An inline module's region is named `<file>#<module>`; its spans are offsets into the file itself.
+// An inline module's region is named `<file>#<module>`. Its spans are offsets into the module's
+// own text, which keeps the file's lines and columns (blank lines stand before it), so that text,
+// lifted from the file again, gives the position in the file.
 let locationFilePath (path: Str) =
     (let index = Ashes.Text.indexOf(path)("#")
     in
         if index < 0
         then path
         else Ashes.Text.take(path)(index))
+
+let inlineModuleName (path: Str) =
+    (let index = Ashes.Text.indexOf(path)("#")
+    in
+        if index < 0
+        then ""
+        else Ashes.Text.drop(path)(index + 1))
 
 let locationOffset (location: InferenceErrorLocation) =
     match (location.span, location.declarationSpan) with
@@ -509,6 +684,33 @@ let fileText (entryPath: Str) (entrySource: Str) (path: Str) =
             | Ok(text) -> Some(text)
             | Error(_) -> None
 
+let textEndsWith (text: Str) (suffix: Str) =
+    if Ashes.Text.length(suffix) > Ashes.Text.length(text)
+    then false
+    else Ashes.Text.drop(text)(Ashes.Text.length(text) - Ashes.Text.length(suffix)) == suffix
+
+let recursive inlineModuleText (modules: List(InlineModuleInfo)) (name: Str) =
+    match modules with
+        | [] -> None
+        | InlineModuleInfo { name = candidate, source = source } :: rest ->
+            if candidate == name || textEndsWith(candidate)("." + name) || textEndsWith(name)("." + candidate)
+            then Some(source)
+            else inlineModuleText(rest)(name)
+
+// The text a region's spans are offsets into: the file's, or an inline module's lifted text.
+let regionText (entryPath: Str) (entrySource: Str) (sourcePath: Str) =
+    match sourcePath
+    |> locationFilePath
+    |> fileText(entryPath)(entrySource) with
+        | None -> None
+        | Some(text) ->
+            match inlineModuleName(sourcePath) with
+                | "" -> Some(text)
+                | name ->
+                    match expandInlineModules("")(text) with
+                        | Ok(InlineModuleExpansion { modules = modules }) -> inlineModuleText(modules)(name)
+                        | Error(_) -> None
+
 // `path:line:column ` for a located error, from the text of the file the error was raised in.
 let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(InferenceErrorLocation)) =
     match location with
@@ -518,7 +720,7 @@ let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(Inferenc
                 | (Some(sourcePath), Some(offset)) ->
                     let path = locationFilePath(sourcePath)
                     in
-                        match fileText(entryPath)(entrySource)(path) with
+                        match regionText(entryPath)(entrySource)(sourcePath) with
                             | None -> ""
                             | Some(text) ->
                                 match resolvePositionInIndex(buildSourceTextIndex(text))(offset) with

@@ -195,6 +195,11 @@ type TypeInferenceError =
     | DuplicatePatternBinding(Str)
     | UnknownPatternConstructor(Str)
     | ConstructorPatternArityMismatch(Str, Int, Int)
+    // A match arm's tuple pattern against a scrutinee tuple of another length: (expected, actual).
+    | TuplePatternArityMismatch(Int, Int)
+    // An argument of another type than `Int` passed to a builtin that converts from `Int`, named by
+    // its qualified name, with the argument's type.
+    | BuiltinIntArgumentMismatch(Str, SemanticType)
     | UnknownRecordPatternField(Str, Str)
     | DuplicateRecordPatternField(Str)
     | UnknownRecordType(Str)
@@ -202,7 +207,12 @@ type TypeInferenceError =
     | MissingRecordField(Str, Str)
     | UnknownRecordField(Str, Str)
     | DuplicateRecordField(Str)
+    // The left operand of a Result-aware pipe is not a Result.
     | ExpectedResultType(SemanticType)
+    // The value of a `let?` is not a Result.
+    | LetResultRequiresResult(SemanticType)
+    // The body of a `let?` is not a Result.
+    | LetResultBodyRequiresResult(SemanticType)
     | ExpectedTaskType(SemanticType)
     | PerformRequiresCapabilityOperation
     | UnknownCapabilityOperation(Str, Str)
@@ -214,9 +224,9 @@ type TypeInferenceError =
     | InconsistentOrPatternBindings
     | UnknownWrittenTraitRequirement(Str)
     | WrittenTraitRequirementArityMismatch(Str, Int, Int)
-    | MissingWrittenTraitRequirement(Str)
-    | UnjustifiedWrittenTraitRequirement(Str)
-    | AmbiguousTraitRequirement(Str)
+    | MissingWrittenTraitRequirement(Str, List(SemanticType))
+    | UnjustifiedWrittenTraitRequirement(Str, List(SemanticType))
+    | AmbiguousTraitRequirement(Str, List(SemanticType))
     | NoTraitImplementation(Str, List(SemanticType))
     | ExternalFunctionRequiresDirectCall(Str)
     | NonExhaustiveMatch(Str)
@@ -1361,7 +1371,7 @@ let recursive firstConstraintMissingFrom candidates available =
             in
                 if constraintWithKeyExists(traitConstraintStableKey(candidate))(available)
                 then firstConstraintMissingFrom(tail)(available)
-                else Some(traitName)
+                else Some((traitName, typeArguments))
 
 let recursive appendSubstitution left right =
     match left with
@@ -1498,6 +1508,54 @@ let recursive coverageLength items (acc: Int) =
     match items with
         | [] -> acc
         | _ :: rest -> coverageLength(rest)(acc + 1)
+
+// A match arm whose whole pattern is a tuple of another length than the scrutinee's tuple type.
+let tuplePatternArityError (scrutineeType: SemanticType) pattern =
+    match (scrutineeType, coverageUnwrap(pattern)) with
+        | (SemTuple(elements), PatternTuple(patterns)) ->
+            let expected = coverageLength(elements)(0)
+            in
+                let actual = coverageLength(patterns)(0)
+                in
+                    if expected == actual
+                    then None
+                    else
+                        actual
+                        |> TuplePatternArityMismatch(expected)
+                        |> Some
+        | _ -> None
+
+// The builtins that convert from `Int` and that stage 0 checks at the call, naming the builtin when
+// the argument has another type.
+let intArgumentBuiltins = ["Ashes.Rune.fromInt", "Ashes.Number.BigInt.fromInt", "Ashes.Number.UInt.fromInt", "Ashes.Number.UInt.fromInt64"]
+
+let recursive calledVariableName expression =
+    match expression with
+        | ExprAt(_span, inner) -> calledVariableName(inner)
+        | ExprNode(_id, inner) -> calledVariableName(inner)
+        | ExprVar(name) -> Some(name)
+        | ExprQualifiedVar(moduleName, member) -> Some(moduleName + "." + member)
+        | _ -> None
+
+let recursive textListContains (items: List(Str)) (wanted: Str) =
+    match items with
+        | [] -> false
+        | head :: rest ->
+            if head == wanted
+            then true
+            else textListContains(rest)(wanted)
+
+// A failed call of an `Int`-converting builtin reads as that builtin's argument error.
+let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeInferenceResult) =
+    match calledVariableName(function) with
+        | Some(name) ->
+            if textListContains(intArgumentBuiltins)(name)
+            then
+                failure with error = Some(argumentType
+                |> applySubstitution(failure.substitution)
+                |> BuiltinIntArgumentMismatch(name))
+            else failure
+        | None -> failure
 
 let recursive coverageWildcards (count: Int) acc =
     if count <= 0
@@ -2759,7 +2817,7 @@ let recursive firstAmbiguousTraitRequirement constraints bindingType environment
                         |> freeEnvironmentVariables
                     in
                         if firstAmbiguousRequirementVariable(variables)(bodyVariables)(environmentVariables)
-                        then Some(traitName)
+                        then Some((traitName, typeArguments))
                         else firstAmbiguousTraitRequirement(tail)(bindingType)(environment)
 
 let recursive resolvedVariablesOf substitution variables =
@@ -2777,7 +2835,7 @@ let recursive firstAmbiguousResolvedRequirement constraints bodyVariables enviro
         | [] -> None
         | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail ->
             if firstAmbiguousRequirementVariable(freeTypeVariables(SemTuple(typeArguments)))(bodyVariables)(environmentVariables)
-            then Some(traitName)
+            then Some((traitName, typeArguments))
             else firstAmbiguousResolvedRequirement(tail)(bodyVariables)(environmentVariables)
 
 // The ambiguity check with the environment's free variables resolved first, as generalization
@@ -2966,7 +3024,7 @@ let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(Tr
 let failedRequirementError (traitName: Str) (typeArguments: List(SemanticType)) =
     match freeTypeVariables(SemTuple(typeArguments)) with
         | [] -> NoTraitImplementation(traitName)(typeArguments)
-        | _ -> AmbiguousTraitRequirement(traitName)
+        | _ -> AmbiguousTraitRequirement(traitName)(typeArguments)
 
 // The trailing expression is generalized by nothing, so a requirement that has failed there has
 // failed for good.
@@ -2996,21 +3054,21 @@ let bindingSignatureSuccess semanticType substitution supply constraints = TypeI
 
 let validateWrittenBindingRequirements inferred written semanticType substitution supply =
     match firstConstraintMissingFrom(inferred)(written) with
-        | Some(traitName) ->
+        | Some((traitName, typeArguments)) ->
             inferenceFailure(
                 semanticType,
                 substitution,
                 supply,
-                MissingWrittenTraitRequirement(traitName)
+                MissingWrittenTraitRequirement(traitName)(typeArguments)
             )
         | None ->
             match firstConstraintMissingFrom(written)(inferred) with
-                | Some(traitName) ->
+                | Some((traitName, typeArguments)) ->
                     inferenceFailure(
                         semanticType,
                         substitution,
                         supply,
-                        UnjustifiedWrittenTraitRequirement(traitName)
+                        UnjustifiedWrittenTraitRequirement(traitName)(typeArguments)
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
 
@@ -3059,12 +3117,12 @@ let defaultBuiltinArguments (environment: TypeEnvironment) (constraints: List(Tr
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
-        | Some(traitName) ->
+        | Some((traitName, typeArguments)) ->
             inferenceFailure(
                 semanticType,
                 substitution,
                 supply,
-                AmbiguousTraitRequirement(traitName)
+                AmbiguousTraitRequirement(traitName)(typeArguments)
             )
         | None ->
             match requirements with
@@ -3612,7 +3670,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                             SemNever,
                             valueSubstitution,
                             valueSupply,
-                            ExpectedResultType(resolvedValue)
+                            LetResultRequiresResult(resolvedValue)
                         )
                     | Some(ResultTypeShape { symbolId = _symbolId, errorType = errorType, successType = successType }) ->
                         let binding = TypeScheme(quantified = [], body = successType, constraints = [])
@@ -3633,7 +3691,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                                     SemNever,
                                                     bodySubstitution,
                                                     bodySupply,
-                                                    ExpectedResultType(resolvedBody)
+                                                    LetResultBodyRequiresResult(resolvedBody)
                                                 )
                                             | Some(ResultTypeShape { symbolId = bodySymbolId, errorType = bodyErrorType, successType = bodySuccessType }) ->
                                                 let resultType =
@@ -4182,33 +4240,43 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                 inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply)
             )
         | (pattern, body, guard) :: tail ->
-            match inferPattern(pattern)(environment)(substitution)(supply)([]) with
-                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
-                    match mergePatternUnification(
-                        patternSubstitution,
-                        unifyIn(environment)(
-                            applySubstitution(patternSubstitution)(scrutineeType),
-                            applySubstitution(patternSubstitution)(patternType)
-                        ),
-                        patternSupply,
-                        scrutineeType,
-                        patternEnvironment,
-                        []
-                    ) with
-                        | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } ->
-                            inferMatchGuard(
-                                guard,
-                                body,
-                                tail,
+            match tuplePatternArityError(applySubstitution(substitution)(scrutineeType))(pattern) with
+                | Some(arityError) -> inferenceFailure(SemNever)(substitution)(supply)(arityError)
+                | None ->
+                    match inferPattern(pattern)(environment)(substitution)(supply)([]) with
+                        | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
+                            match mergePatternUnification(
+                                patternSubstitution,
+                                unifyIn(environment)(
+                                    applySubstitution(patternSubstitution)(scrutineeType),
+                                    applySubstitution(patternSubstitution)(patternType)
+                                ),
+                                patternSupply,
                                 scrutineeType,
-                                resultType,
-                                environment,
-                                matchedEnvironment,
-                                matchedSubstitution,
-                                noteBindingsIn(environment)(identifiedNode(body))(patternNames)(matchedEnvironment)(matchedSupply),
-                                ambientRow,
-                                accumulatedConstraints
-                            )
+                                patternEnvironment,
+                                []
+                            ) with
+                                | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } ->
+                                    inferMatchGuard(
+                                        guard,
+                                        body,
+                                        tail,
+                                        scrutineeType,
+                                        resultType,
+                                        environment,
+                                        matchedEnvironment,
+                                        matchedSubstitution,
+                                        noteBindingsIn(environment)(identifiedNode(body))(patternNames)(matchedEnvironment)(matchedSupply),
+                                        ambientRow,
+                                        accumulatedConstraints
+                                    )
+                                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
+                                    inferenceFailure(
+                                        failedType,
+                                        failedSubstitution,
+                                        failedSupply,
+                                        error
+                                    )
                         | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
                             inferenceFailure(
                                 failedType,
@@ -4216,13 +4284,6 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                                 failedSupply,
                                 error
                             )
-                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
-                    inferenceFailure(
-                        failedType,
-                        failedSubstitution,
-                        failedSupply,
-                        error
-                    )
 and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match guard with
         | None ->
@@ -4828,7 +4889,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                                         callResult
                                                                     )
                                                                 )
-                                                        | failure -> failure
+                                                        | failure -> builtinArgumentFailure(function)(argumentType)(failure)
                         | failure -> failure
                 | failure -> failure
         // The ambient capability row belongs to the surrounding environment; only the successful
