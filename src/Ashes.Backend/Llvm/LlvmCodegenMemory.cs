@@ -2668,18 +2668,68 @@ internal static partial class LlvmCodegen
         bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle sourceBytes = LlvmApi.BuildIntToPtr(builder, source, state.I8Ptr, "copy_closure_env_src");
-        LlvmValueHandle destinationBytes = LlvmApi.BuildIntToPtr(builder, destination, state.I8Ptr, "copy_closure_env_dest");
         if (!runtimeManaged)
         {
+            LlvmValueHandle sourceBytes = LlvmApi.BuildIntToPtr(builder, source, state.I8Ptr, "copy_closure_env_src");
+            LlvmValueHandle destinationBytes = LlvmApi.BuildIntToPtr(builder, destination, state.I8Ptr, "copy_closure_env_dest");
             EmitMoveBytes(state, destinationBytes, sourceBytes, size, "copy_closure_env");
             return;
         }
 
-        LlvmBasicBlockHandle rawCopyBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "copy_closure_raw_env");
-        LlvmBasicBlockHandle copiedBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "copy_closure_env_copied");
+        // One shared helper dispatches on the closure's code to its environment normalizer: a
+        // normalizer copies the closures its environment captured, so an inline dispatch chain in
+        // every normalizer would grow with the square of the number of normalizers.
+        LlvmTypeHandle helperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64, state.I64, state.I64]);
+        LlvmValueHandle dropper = LlvmApi.BuildLoad2(builder, state.I64, dropperSlot, "copy_closure_incoming_dropper");
+        LlvmValueHandle newDropper = LlvmApi.BuildCall2(builder, helperType,
+            GetOrEmitClosureEnvironmentNormalizeHelper(state, helperType),
+            [code, source, destination, size, dropper], "copy_closure_normalized_dropper");
+        LlvmApi.BuildStore(builder, newDropper, dropperSlot);
+    }
+
+    private const string ClosureEnvironmentNormalizeHelperName = "__ashes_closure_env_normalize";
+
+    private static LlvmValueHandle GetOrEmitClosureEnvironmentNormalizeHelper(LlvmCodegenState state, LlvmTypeHandle helperType)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, ClosureEnvironmentNormalizeHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, ClosureEnvironmentNormalizeHelperName, helperType);
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmCodegenState helperState = state with
+        {
+            Function = fn,
+            TempSlots = [],
+            LocalSlots = [],
+            LabelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+            FallthroughBlocks = [],
+            IsEntry = false,
+        };
+        LlvmApi.PositionBuilderAtEnd(builder, LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry"));
+        EmitClosureEnvironmentNormalizeBody(helperState,
+            LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), LlvmApi.GetParam(fn, 2), LlvmApi.GetParam(fn, 3), LlvmApi.GetParam(fn, 4));
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
+    }
+
+    // Calls the environment normalizer of the closure whose code is `code` and returns the dropper
+    // it answers; a closure without one has its environment copied word for word and keeps `dropper`.
+    private static void EmitClosureEnvironmentNormalizeBody(
+        LlvmCodegenState state,
+        LlvmValueHandle code,
+        LlvmValueHandle source,
+        LlvmValueHandle destination,
+        LlvmValueHandle size,
+        LlvmValueHandle dropper)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         const string normalizerSuffix = "$env_normalize";
         LlvmTypeHandle normalizerType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         foreach ((string label, LlvmValueHandle normalizerFunction) in state.LiftedFunctions
@@ -2701,20 +2751,17 @@ internal static partial class LlvmCodegen
                 code, closureCode, "copy_closure_has_normalizer");
             LlvmApi.BuildCondBr(builder, matches, normalizeBlock, nextBlock);
             LlvmApi.PositionBuilderAtEnd(builder, normalizeBlock);
-            LlvmValueHandle normalizedDropper = LlvmApi.BuildCall2(builder, normalizerType,
+            LlvmApi.BuildRet(builder, LlvmApi.BuildCall2(builder, normalizerType,
                 normalizerFunction,
                 [source, destination, LlvmApi.ConstInt(state.I64, 0, 0)],
-                "copy_closure_normalizer_call");
-            LlvmApi.BuildStore(builder, normalizedDropper, dropperSlot);
-            LlvmApi.BuildBr(builder, copiedBlock);
+                "copy_closure_normalizer_call"));
             LlvmApi.PositionBuilderAtEnd(builder, nextBlock);
         }
 
-        LlvmApi.BuildBr(builder, rawCopyBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, rawCopyBlock);
+        LlvmValueHandle sourceBytes = LlvmApi.BuildIntToPtr(builder, source, state.I8Ptr, "copy_closure_env_src");
+        LlvmValueHandle destinationBytes = LlvmApi.BuildIntToPtr(builder, destination, state.I8Ptr, "copy_closure_env_dest");
         EmitMoveBytes(state, destinationBytes, sourceBytes, size, "copy_closure_env");
-        LlvmApi.BuildBr(builder, copiedBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, copiedBlock);
+        LlvmApi.BuildRet(builder, dropper);
     }
 
     /// <summary>
