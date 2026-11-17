@@ -16,10 +16,12 @@ import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Process.emitProcessPanicMessage
+import AshesCompiler.Backend.IrCodegen.Filesystem.emitValidateUtf8
 import AshesCompiler.Semantics.TaskStructLayout
 import Ashes.Number.UInt
 // `Ashes.Task.all(tasks)` and `Ashes.Task.race(tasks)`: a composite over the task list, scheduled
 // when it is awaited.
+// A leaf completes with `Error(message)`.
 export (
     value emitCreateCompletedTask,
     value emitRunCompletedTask,
@@ -281,6 +283,7 @@ type SchedulerGlobals =
     | readyQueueTail: LLVMValueRef
     | parkedLeafHead: LLVMValueRef
     | schedulerRunDepth: LLVMValueRef
+    | epollDescriptor: LLVMValueRef
 
 // The run queue's `ashes_ready_enqueue`: the task appended at the tail, its link cleared.
 let defineReadyEnqueue module_ context builder i64 i8 ptrType (globals: SchedulerGlobals) =
@@ -414,6 +417,10 @@ let parkedHeadGlobal (sc: SchedulerContext) =
 let depthGlobal (sc: SchedulerContext) =
     match sc.schedGlobals with
         | SchedulerGlobals { schedulerRunDepth = global } -> global
+
+let epollGlobal (sc: SchedulerContext) =
+    match sc.schedGlobals with
+        | SchedulerGlobals { epollDescriptor = global } -> global
 
 let schedWord (sc: SchedulerContext) taskRef offsetBytes name = loadTaskWord(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(taskRef)(offsetBytes)(name)
 
@@ -1840,6 +1847,408 @@ let defineStepHttp module_ (sc: SchedulerContext) connectFn connectType =
                                                                                                                                                                         |> buildRet(sc.schedBuilder)
                                                                                                                                                                     in (stepFn, stepType))
 
+// Stage 0's networking failure messages.
+let tcpSendFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 115, 101, 110, 100, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+let tcpReceiveFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 114, 101, 99, 101, 105, 118, 101, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+let tcpCloseFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 99, 108, 111, 115, 101, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+let tcpInvalidMaxBytesCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 114, 101, 99, 101, 105, 118, 101, 40, 41, 32, 109, 97, 120, 66, 121, 116, 101, 115, 32, 109, 117, 115, 116, 32, 98, 101, 32, 112, 111, 115, 105, 116, 105, 118, 101]
+
+let tcpInvalidUtf8Codes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 114, 101, 99, 101, 105, 118, 101, 40, 41, 32, 101, 110, 99, 111, 117, 110, 116, 101, 114, 101, 100, 32, 105, 110, 118, 97, 108, 105, 100, 32, 85, 84, 70, 45, 56]
+
+let tcpListenFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 83, 101, 114, 118, 101, 114, 46, 108, 105, 115, 116, 101, 110, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+let tcpAcceptFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 83, 101, 114, 118, 101, 114, 46, 97, 99, 99, 101, 112, 116, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+// A leaf completes with `result` and leaves its wait; the step answers 1.
+let schedCompleteLeaf (sc: SchedulerContext) task result =
+    (let _ = schedStore(sc)(task)(offsetResultSlot)(result)
+    in
+        let _ =
+            0
+            |> schedConst(sc)
+            |> schedStore(sc)(task)(offsetWaitKind)
+        in
+            let _ =
+                CompletedTaskState
+                |> stateConst(sc.schedI64)
+                |> schedStore(sc)(task)(offsetStateIndex)
+            in
+                1
+                |> schedConst(sc)
+                |> buildRet(sc.schedBuilder))
+
+let schedFailLeaf (sc: SchedulerContext) function_ task (codes: List(Int)) name =
+    name
+    |> schedError(sc)(function_)(schedStringLiteral(sc)(function_)(codes)(name + "_message"))
+    |> schedCompleteLeaf(sc)(task)
+
+// A leaf parks until `socket` is ready in the given way; the step answers 0.
+let schedPendLeaf (sc: SchedulerContext) task (wait: TaskWaitKind) socket =
+    (let _ =
+        wait
+        |> taskWaitCode
+        |> wordConst(sc.schedI64)
+        |> schedStore(sc)(task)(offsetWaitKind)
+    in
+        let _ = schedStore(sc)(task)(offsetWaitHandle)(socket)
+        in
+            0
+            |> schedConst(sc)
+            |> buildRet(sc.schedBuilder))
+
+// An internal `(task) -> status` step function whose body `emitBody(stepFn)(task)` builds from its entry block.
+let defineLeafStep module_ (sc: SchedulerContext) name emitBody =
+    (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
+    in
+        let stepFn = addInternalFunction(module_)(name)(stepType)
+        in
+            let _ =
+                "entry"
+                |> appendBasicBlock(sc.schedContext)(stepFn)
+                |> schedAt(sc)
+            in
+                let _ =
+                    0u32
+                    |> getParam(stepFn)
+                    |> emitBody(stepFn)
+                in (stepFn, stepType))
+
+// Stage 0's `ashes_step_tcp_send_task`: writes what remains of the text (`WaitData0` counts what
+// was sent), completing with `Ok(length)` once all of it went, parking while the socket is full.
+let emitStepTcpSend (sc: SchedulerContext) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let socket = schedWord(sc)(task)(offsetIoArgument0)("tcp_send_socket")
+        in
+            let sent = schedWord(sc)(task)(offsetWaitData0)("tcp_send_sent")
+            in
+                match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(schedWord(sc)(task)(offsetIoArgument1)("tcp_send_text"))("tcp_send_text") with
+                    | (total, bytes) ->
+                        let doneBlock = block("tcp_send_done")
+                        in
+                            let writeBlock = block("tcp_send_write")
+                            in
+                                let wroteBlock = block("tcp_send_wrote")
+                                in
+                                    let moreBlock = block("tcp_send_more")
+                                    in
+                                        let errorBlock = block("tcp_send_error")
+                                        in
+                                            let pendingBlock = block("tcp_send_pending")
+                                            in
+                                                let failBlock = block("tcp_send_fail")
+                                                in
+                                                    let remaining = buildSub(sc.schedBuilder)(total)(sent)("tcp_send_remaining")
+                                                    in
+                                                        let _ =
+                                                            schedIf(sc)(schedEq(sc)(remaining)(schedConst(sc)(0))("tcp_send_nothing_left"))(doneBlock)(writeBlock)
+                                                        in
+                                                            let _ = schedAt(sc)(doneBlock)
+                                                            in
+                                                                let _ =
+                                                                    "tcp_send_ok"
+                                                                    |> schedOk(sc)(stepFn)(total)
+                                                                    |> schedCompleteLeaf(sc)(task)
+                                                                in
+                                                                    let _ = schedAt(sc)(writeBlock)
+                                                                    in
+                                                                        let written =
+                                                                            emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(1))(socket)(buildAdd(sc.schedBuilder)(bytes)(sent)("tcp_send_cursor"))(remaining)("tcp_send_call")
+                                                                        in
+                                                                            let _ =
+                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(written)(schedConst(sc)(0))("tcp_send_progress"))(wroteBlock)(errorBlock)
+                                                                            in
+                                                                                let _ = schedAt(sc)(wroteBlock)
+                                                                                in
+                                                                                    let nextSent = buildAdd(sc.schedBuilder)(sent)(written)("tcp_send_next_sent")
+                                                                                    in
+                                                                                        let _ = schedStore(sc)(task)(offsetWaitData0)(nextSent)
+                                                                                        in
+                                                                                            let _ =
+                                                                                                schedIf(sc)(schedEq(sc)(nextSent)(total)("tcp_send_all_sent"))(doneBlock)(moreBlock)
+                                                                                            in
+                                                                                                let _ = schedAt(sc)(moreBlock)
+                                                                                                in
+                                                                                                    let _ = schedPendLeaf(sc)(task)(SocketWriteTaskWait)(socket)
+                                                                                                    in
+                                                                                                        let _ = schedAt(sc)(errorBlock)
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                schedIf(sc)(schedEq(sc)(written)(schedConst(sc)(-11))("tcp_send_would_block"))(pendingBlock)(failBlock)
+                                                                                                            in
+                                                                                                                let _ = schedAt(sc)(pendingBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedPendLeaf(sc)(task)(SocketWriteTaskWait)(socket)
+                                                                                                                    in
+                                                                                                                        let _ = schedAt(sc)(failBlock)
+                                                                                                                        in schedFailLeaf(sc)(stepFn)(task)(tcpSendFailedCodes)("tcp_send_failure"))
+
+// Stage 0's `ashes_step_tcp_receive_task`: reads up to `maxBytes` into a buffer string kept in
+// `WaitData0`, completing with `Ok(text)` (empty at end of stream) when the bytes are UTF-8, and
+// parking while nothing is available.
+let emitStepTcpReceive (sc: SchedulerContext) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let socket = schedWord(sc)(task)(offsetIoArgument0)("tcp_receive_socket")
+        in
+            let maxBytes = schedWord(sc)(task)(offsetIoArgument1)("tcp_receive_max")
+            in
+                let badMaxBlock = block("tcp_receive_bad_max")
+                in
+                    let bufferBlock = block("tcp_receive_buffer")
+                    in
+                        let createBlock = block("tcp_receive_create_buffer")
+                        in
+                            let readBlock = block("tcp_receive_read")
+                            in
+                                let readOkBlock = block("tcp_receive_read_ok")
+                                in
+                                    let validateBlock = block("tcp_receive_validate")
+                                    in
+                                        let successBlock = block("tcp_receive_success")
+                                        in
+                                            let invalidBlock = block("tcp_receive_invalid_utf8")
+                                            in
+                                                let errorBlock = block("tcp_receive_error")
+                                                in
+                                                    let pendingBlock = block("tcp_receive_pending")
+                                                    in
+                                                        let failBlock = block("tcp_receive_fail")
+                                                        in
+                                                            let _ =
+                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(maxBytes)(schedConst(sc)(0))("tcp_receive_max_positive"))(bufferBlock)(badMaxBlock)
+                                                            in
+                                                                let _ = schedAt(sc)(badMaxBlock)
+                                                                in
+                                                                    let _ = schedFailLeaf(sc)(stepFn)(task)(tcpInvalidMaxBytesCodes)("tcp_receive_bad_max_failure")
+                                                                    in
+                                                                        let _ = schedAt(sc)(bufferBlock)
+                                                                        in
+                                                                            let _ =
+                                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData0)("tcp_receive_existing"))(schedConst(sc)(0))("tcp_receive_needs_buffer"))(createBlock)(readBlock)
+                                                                            in
+                                                                                let _ = schedAt(sc)(createBlock)
+                                                                                in
+                                                                                    let buffer =
+                                                                                        emitArenaAllocDynamic(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(buildAnd(sc.schedBuilder)(buildAdd(sc.schedBuilder)(maxBytes)(schedConst(sc)(15))("tcp_receive_size_plus"))(schedConst(sc)(-8))("tcp_receive_size"))("tcp_receive_new_buffer")
+                                                                                    in
+                                                                                        let _ =
+                                                                                            0
+                                                                                            |> schedConst(sc)
+                                                                                            |> schedStore(sc)(buffer)(0)
+                                                                                        in
+                                                                                            let _ = schedStore(sc)(task)(offsetWaitData0)(buffer)
+                                                                                            in
+                                                                                                let _ = schedBr(sc)(readBlock)
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(readBlock)
+                                                                                                    in
+                                                                                                        let activeBuffer = schedWord(sc)(task)(offsetWaitData0)("tcp_receive_active_buffer")
+                                                                                                        in
+                                                                                                            let bufferBytes =
+                                                                                                                buildAdd(sc.schedBuilder)(activeBuffer)(schedConst(sc)(8))("tcp_receive_bytes")
+                                                                                                            in
+                                                                                                                let count =
+                                                                                                                    emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(0))(socket)(bufferBytes)(maxBytes)("tcp_receive_call")
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(count)(schedConst(sc)(0))("tcp_receive_ok"))(readOkBlock)(errorBlock)
+                                                                                                                    in
+                                                                                                                        let _ = schedAt(sc)(readOkBlock)
+                                                                                                                        in
+                                                                                                                            let _ = schedStore(sc)(activeBuffer)(0)(count)
+                                                                                                                            in
+                                                                                                                                let _ =
+                                                                                                                                    schedIf(sc)(schedEq(sc)(count)(schedConst(sc)(0))("tcp_receive_end"))(successBlock)(validateBlock)
+                                                                                                                                in
+                                                                                                                                    let _ = schedAt(sc)(validateBlock)
+                                                                                                                                    in
+                                                                                                                                        let valid =
+                                                                                                                                            emitValidateUtf8(sc.schedContext)(stepFn)(sc.schedI64)(sc.schedI8)(sc.schedBuilder)(buildIntToPtr(sc.schedBuilder)(bufferBytes)(sc.schedPtr)("tcp_receive_bytes_ptr"))(count)("tcp_receive_utf8")
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateNe)(valid)(schedConst(sc)(0))("tcp_receive_valid"))(successBlock)(invalidBlock)
+                                                                                                                                            in
+                                                                                                                                                let _ = schedAt(sc)(successBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        "tcp_receive_result"
+                                                                                                                                                        |> schedOk(sc)(stepFn)(activeBuffer)
+                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedAt(sc)(invalidBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedFailLeaf(sc)(stepFn)(task)(tcpInvalidUtf8Codes)("tcp_receive_invalid_failure")
+                                                                                                                                                            in
+                                                                                                                                                                let _ = schedAt(sc)(errorBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ =
+                                                                                                                                                                        schedIf(sc)(schedEq(sc)(count)(schedConst(sc)(-11))("tcp_receive_would_block"))(pendingBlock)(failBlock)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedAt(sc)(pendingBlock)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = schedPendLeaf(sc)(task)(SocketReadTaskWait)(socket)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = schedAt(sc)(failBlock)
+                                                                                                                                                                                in schedFailLeaf(sc)(stepFn)(task)(tcpReceiveFailedCodes)("tcp_receive_failure"))
+
+// Stage 0's `ashes_step_tcp_close_task`: closes the socket, `Ok(Unit)` or the close failure.
+let emitStepTcpClose (sc: SchedulerContext) stepFn task =
+    (let okBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_close_ok")
+    in
+        let failBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_close_fail")
+        in
+            let closed =
+                "tcp_close_socket"
+                |> schedWord(sc)(task)(offsetIoArgument0)
+                |> emitLinuxClose(sc.schedBuilder)(sc.schedI64)
+            in
+                let _ =
+                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(closed)(schedConst(sc)(0))("tcp_close_succeeded"))(okBlock)(failBlock)
+                in
+                    let _ = schedAt(sc)(okBlock)
+                    in
+                        let unitValue = emitArenaAllocAdt(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(0)(0)(false)("tcp_close_unit")
+                        in
+                            let _ =
+                                "tcp_close_result"
+                                |> schedOk(sc)(stepFn)(unitValue)
+                                |> schedCompleteLeaf(sc)(task)
+                            in
+                                let _ = schedAt(sc)(failBlock)
+                                in schedFailLeaf(sc)(stepFn)(task)(tcpCloseFailedCodes)("tcp_close_failure"))
+
+// Stage 0's `ashes_step_tcp_listen_task` for Linux: a socket with `SO_REUSEADDR` and
+// `SO_REUSEPORT`, bound to `INADDR_ANY:port`, listening with a backlog of 128 and non-blocking,
+// completing with `Ok(socket)`; it never parks.
+let emitStepTcpListen (sc: SchedulerContext) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let optionWord = buildAlloca(sc.schedBuilder)(sc.schedI64)("tcp_listen_option")
+        in
+            let sockaddr =
+                buildAlloca(sc.schedBuilder)(arrayType(sc.schedI64)(2u64))("tcp_listen_sockaddr")
+            in
+                let socketBlock = block("tcp_listen_socket")
+                in
+                    let bindBlock = block("tcp_listen_bound")
+                    in
+                        let successBlock = block("tcp_listen_success")
+                        in
+                            let failBlock = block("tcp_listen_fail")
+                            in
+                                let port = schedWord(sc)(task)(offsetIoArgument0)("tcp_listen_port")
+                                in
+                                    let socket =
+                                        emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(41))(schedConst(sc)(2))(schedConst(sc)(1))(schedConst(sc)(0))("tcp_listen_socket_call")
+                                    in
+                                        let _ =
+                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(socket)(schedConst(sc)(0))("tcp_listen_socket_ok"))(socketBlock)(failBlock)
+                                        in
+                                            let _ = schedAt(sc)(socketBlock)
+                                            in
+                                                let optionAddress = buildPtrToInt(sc.schedBuilder)(optionWord)(sc.schedI64)("tcp_listen_option_address")
+                                                in
+                                                    let _ =
+                                                        1
+                                                        |> schedConst(sc)
+                                                        |> schedStore(sc)(optionAddress)(0)
+                                                    in
+                                                        let _ =
+                                                            emitLinuxSyscallCall6(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(54))(socket)(schedConst(sc)(1))(schedConst(sc)(2))(optionAddress)(schedConst(sc)(4))(schedConst(sc)(0))("tcp_listen_reuse_address")
+                                                        in
+                                                            let _ =
+                                                                emitLinuxSyscallCall6(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(54))(socket)(schedConst(sc)(1))(schedConst(sc)(15))(optionAddress)(schedConst(sc)(4))(schedConst(sc)(0))("tcp_listen_reuse_port")
+                                                            in
+                                                                let portNetwork =
+                                                                    buildOr(sc.schedBuilder)(buildMul(sc.schedBuilder)(buildAnd(sc.schedBuilder)(port)(schedConst(sc)(255))("tcp_listen_port_low"))(schedConst(sc)(256))("tcp_listen_port_low_shifted"))(buildAnd(sc.schedBuilder)(buildSDiv(sc.schedBuilder)(port)(schedConst(sc)(256))("tcp_listen_port_high"))(schedConst(sc)(255))("tcp_listen_port_high_masked"))("tcp_listen_port_network")
+                                                                in
+                                                                    let sockaddrAddress = buildPtrToInt(sc.schedBuilder)(sockaddr)(sc.schedI64)("tcp_listen_sockaddr_address")
+                                                                    in
+                                                                        let _ =
+                                                                            "tcp_listen_sockaddr_word"
+                                                                            |> buildOr(sc.schedBuilder)(schedConst(sc)(2))(buildShl(sc.schedBuilder)(portNetwork)(schedConst(sc)(16))("tcp_listen_port_field"))
+                                                                            |> schedStore(sc)(sockaddrAddress)(0)
+                                                                        in
+                                                                            let _ =
+                                                                                0
+                                                                                |> schedConst(sc)
+                                                                                |> schedStore(sc)(sockaddrAddress)(8)
+                                                                            in
+                                                                                let bound =
+                                                                                    emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(49))(socket)(sockaddrAddress)(schedConst(sc)(16))("tcp_listen_bind")
+                                                                                in
+                                                                                    let _ =
+                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(bound)(schedConst(sc)(0))("tcp_listen_bind_ok"))(bindBlock)(failBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(bindBlock)
+                                                                                        in
+                                                                                            let listening =
+                                                                                                emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(50))(socket)(schedConst(sc)(128))(schedConst(sc)(0))("tcp_listen_listen")
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(listening)(schedConst(sc)(0))("tcp_listen_listen_ok"))(successBlock)(failBlock)
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(successBlock)
+                                                                                                    in
+                                                                                                        let flags =
+                                                                                                            emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(72))(socket)(schedConst(sc)(3))(schedConst(sc)(0))("tcp_listen_get_flags")
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(72))(socket)(schedConst(sc)(4))(buildOr(sc.schedBuilder)(flags)(schedConst(sc)(2048))("tcp_listen_nonblocking_flags"))("tcp_listen_set_flags")
+                                                                                                            in
+                                                                                                                let _ =
+                                                                                                                    "tcp_listen_result"
+                                                                                                                    |> schedOk(sc)(stepFn)(socket)
+                                                                                                                    |> schedCompleteLeaf(sc)(task)
+                                                                                                                in
+                                                                                                                    let _ = schedAt(sc)(failBlock)
+                                                                                                                    in schedFailLeaf(sc)(stepFn)(task)(tcpListenFailedCodes)("tcp_listen_failure"))
+
+// Stage 0's `ashes_step_tcp_accept_task` without the graceful-shutdown drain: a non-blocking
+// `accept4` completing with `Ok(client)`, parking on the listener while no connection waits.
+let emitStepTcpAccept (sc: SchedulerContext) stepFn task =
+    (let acceptedBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_accept_accepted")
+    in
+        let errorBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_accept_error")
+        in
+            let pendingBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_accept_pending")
+            in
+                let failBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_accept_fail")
+                in
+                    let listener = schedWord(sc)(task)(offsetIoArgument0)("tcp_accept_listener")
+                    in
+                        let client =
+                            emitLinuxSyscallCall4(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(288))(listener)(schedConst(sc)(0))(schedConst(sc)(0))(schedConst(sc)(2048))("tcp_accept_call")
+                        in
+                            let _ =
+                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(client)(schedConst(sc)(0))("tcp_accept_ok"))(acceptedBlock)(errorBlock)
+                            in
+                                let _ = schedAt(sc)(acceptedBlock)
+                                in
+                                    let _ =
+                                        "tcp_accept_result"
+                                        |> schedOk(sc)(stepFn)(client)
+                                        |> schedCompleteLeaf(sc)(task)
+                                    in
+                                        let _ = schedAt(sc)(errorBlock)
+                                        in
+                                            let _ =
+                                                schedIf(sc)(schedEq(sc)(client)(schedConst(sc)(-11))("tcp_accept_would_block"))(pendingBlock)(failBlock)
+                                            in
+                                                let _ = schedAt(sc)(pendingBlock)
+                                                in
+                                                    let _ = schedPendLeaf(sc)(task)(SocketReadTaskWait)(listener)
+                                                    in
+                                                        let _ = schedAt(sc)(failBlock)
+                                                        in schedFailLeaf(sc)(stepFn)(task)(tcpAcceptFailedCodes)("tcp_accept_failure"))
+
 // Stage 0's `EmitStepComposite` for `all` and `race`. The first step schedules every child with the
 // composite as its waiter and counts them (`all` waits for that many completions, `race` for one);
 // an empty list completes at once, `all` with `Ok([])`. The step after the children finish
@@ -2044,9 +2453,20 @@ let defineStepComposite module_ (sc: SchedulerContext) scopeFn scopeType =
                                                                                                                                                                                                                                                                                                                     let _ = schedAt(sc)(buildLoop)
                                                                                                                                                                                                                                                                                                                     in emitCompositeCollect(sc)(stepFn)(task)(children)(cursorSlot)(listSlot)(buildLoop)(buildBody)(reverseLoop)(reverseBody)(succeededBlock)(completeBlock)(stepType))
 
-// Stage 0's aggregate wait with no socket leaf parked: sleep until the earliest timer among the
-// parked leaves (no time when none is a timer), count every parked timer down by that much, and
-// put every parked leaf back on the run queue.
+// Milliseconds on the monotonic clock.
+let emitMonotonicMillis (sc: SchedulerContext) timespec name =
+    (let address = buildPtrToInt(sc.schedBuilder)(timespec)(sc.schedI64)(name + "_timespec")
+    in
+        let _ =
+            emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(228))(schedConst(sc)(1))(address)(schedConst(sc)(0))(name + "_clock")
+        in
+            buildAdd(sc.schedBuilder)(buildMul(sc.schedBuilder)(schedWord(sc)(address)(0)(name + "_seconds"))(schedConst(sc)(1000))(name + "_seconds_ms"))(buildSDiv(sc.schedBuilder)(schedWord(sc)(address)(8)(name + "_nanoseconds"))(schedConst(sc)(1000000))(name + "_nanoseconds_ms"))(name))
+
+// Stage 0's aggregate wait for Linux: the earliest timer among the parked leaves bounds the wait;
+// with a socket leaf parked, its socket is registered in the scheduler's persistent epoll set
+// (readable for a read wait, writable for a write wait) and the wait is one `epoll_wait`,
+// otherwise a sleep. Every parked timer is counted down by the time waited, and every parked leaf
+// goes back on the run queue.
 let defineWaitParked module_ (sc: SchedulerContext) =
     (let waitType = functionType(sc.schedI64)([])(0u32)(false)
     in
@@ -2063,146 +2483,268 @@ let defineWaitParked module_ (sc: SchedulerContext) =
                         in
                             let scanTimer = block("wait_scan_timer")
                             in
-                                let sleepBlock = block("wait_sleep")
+                                let scanOther = block("wait_scan_other")
                                 in
-                                    let requeueCheck = block("wait_requeue_check")
+                                    let scanSocket = block("wait_scan_socket")
                                     in
-                                        let requeueBody = block("wait_requeue_body")
+                                        let createEpollBlock = block("wait_create_epoll")
                                         in
-                                            let requeueTimer = block("wait_requeue_timer")
+                                            let registerBlock = block("wait_register")
                                             in
-                                                let requeueEnqueue = block("wait_requeue_enqueue")
+                                                let modifyBlock = block("wait_modify")
                                                 in
-                                                    let doneBlock = block("wait_done")
+                                                    let decideBlock = block("wait_decide")
                                                     in
-                                                        let maxWord = constInt(sc.schedI64)(9223372036854775807u64)(false)
+                                                        let epollBlock = block("wait_epoll")
                                                         in
-                                                            let timerCode =
-                                                                TimerTaskWait
-                                                                |> taskWaitCode
-                                                                |> wordConst(sc.schedI64)
+                                                            let sleepBlock = block("wait_sleep")
                                                             in
-                                                                let _ = schedAt(sc)(entryBlock)
+                                                                let requeueStart = block("wait_requeue_start")
                                                                 in
-                                                                    let minSlot = schedSlot(sc)("wait_min")
+                                                                    let requeueCheck = block("wait_requeue_check")
                                                                     in
-                                                                        let cursorSlot = schedSlot(sc)("wait_cursor")
+                                                                        let requeueBody = block("wait_requeue_body")
                                                                         in
-                                                                            let timespec =
-                                                                                buildAlloca(sc.schedBuilder)(arrayType(sc.schedI64)(2u64))("wait_timespec")
+                                                                            let requeueTimer = block("wait_requeue_timer")
                                                                             in
-                                                                                let _ = schedSet(sc)(minSlot)(maxWord)
+                                                                                let requeueEnqueue = block("wait_requeue_enqueue")
                                                                                 in
-                                                                                    let _ =
-                                                                                        "wait_parked"
-                                                                                        |> schedLoad(sc)(parkedHeadGlobal(sc))
-                                                                                        |> schedSet(sc)(cursorSlot)
+                                                                                    let doneBlock = block("wait_done")
                                                                                     in
-                                                                                        let _ = schedBr(sc)(scanCheck)
+                                                                                        let maxWord = constInt(sc.schedI64)(9223372036854775807u64)(false)
                                                                                         in
-                                                                                            let _ = schedAt(sc)(scanCheck)
+                                                                                            let timerCode =
+                                                                                                TimerTaskWait
+                                                                                                |> taskWaitCode
+                                                                                                |> wordConst(sc.schedI64)
                                                                                             in
-                                                                                                let scanCursor = schedLoad(sc)(cursorSlot)("wait_scan_cursor")
+                                                                                                let _ = schedAt(sc)(entryBlock)
                                                                                                 in
-                                                                                                    let _ =
-                                                                                                        schedIf(sc)(schedEq(sc)(scanCursor)(schedConst(sc)(0))("wait_scan_end"))(sleepBlock)(scanBody)
+                                                                                                    let minSlot = schedSlot(sc)("wait_min")
                                                                                                     in
-                                                                                                        let _ = schedAt(sc)(scanBody)
+                                                                                                        let cursorSlot = schedSlot(sc)("wait_cursor")
                                                                                                         in
-                                                                                                            let _ =
-                                                                                                                "wait_scan_next"
-                                                                                                                |> schedWord(sc)(scanCursor)(offsetReadyNext)
-                                                                                                                |> schedSet(sc)(cursorSlot)
+                                                                                                            let socketSlot = schedSlot(sc)("wait_has_socket")
                                                                                                             in
-                                                                                                                let isTimer =
-                                                                                                                    schedEq(sc)(schedWord(sc)(scanCursor)(offsetWaitKind)("wait_scan_kind"))(timerCode)("wait_scan_is_timer")
+                                                                                                                let elapsedSlot = schedSlot(sc)("wait_elapsed")
                                                                                                                 in
-                                                                                                                    let _ = schedIf(sc)(isTimer)(scanTimer)(scanCheck)
+                                                                                                                    let timespec =
+                                                                                                                        buildAlloca(sc.schedBuilder)(arrayType(sc.schedI64)(2u64))("wait_timespec")
                                                                                                                     in
-                                                                                                                        let _ = schedAt(sc)(scanTimer)
+                                                                                                                        let eventStorage =
+                                                                                                                            buildAlloca(sc.schedBuilder)(arrayType(sc.schedI64)(2u64))("wait_event")
                                                                                                                         in
-                                                                                                                            let remaining = schedWord(sc)(scanCursor)(offsetSleepDurationMilliseconds)("wait_remaining")
+                                                                                                                            let eventAddress = buildPtrToInt(sc.schedBuilder)(eventStorage)(sc.schedI64)("wait_event_address")
                                                                                                                             in
-                                                                                                                                let currentMin = schedLoad(sc)(minSlot)("wait_current_min")
+                                                                                                                                let _ = schedSet(sc)(minSlot)(maxWord)
                                                                                                                                 in
                                                                                                                                     let _ =
-                                                                                                                                        "wait_new_min"
-                                                                                                                                        |> buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSlt)(remaining)(currentMin)("wait_is_less"))(remaining)(currentMin)
-                                                                                                                                        |> schedSet(sc)(minSlot)
+                                                                                                                                        0
+                                                                                                                                        |> schedConst(sc)
+                                                                                                                                        |> schedSet(sc)(socketSlot)
                                                                                                                                     in
-                                                                                                                                        let _ = schedBr(sc)(scanCheck)
+                                                                                                                                        let _ =
+                                                                                                                                            "wait_parked"
+                                                                                                                                            |> schedLoad(sc)(parkedHeadGlobal(sc))
+                                                                                                                                            |> schedSet(sc)(cursorSlot)
                                                                                                                                         in
-                                                                                                                                            let _ = schedAt(sc)(sleepBlock)
+                                                                                                                                            let _ = schedBr(sc)(scanCheck)
                                                                                                                                             in
-                                                                                                                                                let minimum = schedLoad(sc)(minSlot)("wait_minimum")
+                                                                                                                                                let _ = schedAt(sc)(scanCheck)
                                                                                                                                                 in
-                                                                                                                                                    let sleepMs =
-                                                                                                                                                        buildSelect(sc.schedBuilder)(schedEq(sc)(minimum)(maxWord)("wait_no_timer"))(schedConst(sc)(0))(minimum)("wait_sleep_ms")
+                                                                                                                                                    let scanCursor = schedLoad(sc)(cursorSlot)("wait_scan_cursor")
                                                                                                                                                     in
                                                                                                                                                         let _ =
-                                                                                                                                                            "wait_seconds"
-                                                                                                                                                            |> buildSDiv(sc.schedBuilder)(sleepMs)(schedConst(sc)(1000))
-                                                                                                                                                            |> schedStore(sc)(buildPtrToInt(sc.schedBuilder)(timespec)(sc.schedI64)("wait_timespec_address"))(0)
+                                                                                                                                                            schedIf(sc)(schedEq(sc)(scanCursor)(schedConst(sc)(0))("wait_scan_end"))(decideBlock)(scanBody)
                                                                                                                                                         in
-                                                                                                                                                            let _ =
-                                                                                                                                                                "wait_nanoseconds"
-                                                                                                                                                                |> buildMul(sc.schedBuilder)(buildSRem(sc.schedBuilder)(sleepMs)(schedConst(sc)(1000))("wait_ms_rem"))(schedConst(sc)(1000000))
-                                                                                                                                                                |> schedStore(sc)(buildPtrToInt(sc.schedBuilder)(timespec)(sc.schedI64)("wait_timespec_address2"))(8)
+                                                                                                                                                            let _ = schedAt(sc)(scanBody)
                                                                                                                                                             in
                                                                                                                                                                 let _ =
-                                                                                                                                                                    emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(35))(buildPtrToInt(sc.schedBuilder)(timespec)(sc.schedI64)("wait_timespec_arg"))(schedConst(sc)(0))(schedConst(sc)(0))("wait_nanosleep")
+                                                                                                                                                                    "wait_scan_next"
+                                                                                                                                                                    |> schedWord(sc)(scanCursor)(offsetReadyNext)
+                                                                                                                                                                    |> schedSet(sc)(cursorSlot)
                                                                                                                                                                 in
-                                                                                                                                                                    let _ =
-                                                                                                                                                                        "wait_parked_again"
-                                                                                                                                                                        |> schedLoad(sc)(parkedHeadGlobal(sc))
-                                                                                                                                                                        |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                    let kind = schedWord(sc)(scanCursor)(offsetWaitKind)("wait_scan_kind")
                                                                                                                                                                     in
-                                                                                                                                                                        let _ = schedBr(sc)(requeueCheck)
+                                                                                                                                                                        let _ =
+                                                                                                                                                                            schedIf(sc)(schedEq(sc)(kind)(timerCode)("wait_scan_is_timer"))(scanTimer)(scanOther)
                                                                                                                                                                         in
-                                                                                                                                                                            let _ = schedAt(sc)(requeueCheck)
+                                                                                                                                                                            let _ = schedAt(sc)(scanTimer)
                                                                                                                                                                             in
-                                                                                                                                                                                let requeueCursor = schedLoad(sc)(cursorSlot)("wait_requeue_cursor")
+                                                                                                                                                                                let remaining = schedWord(sc)(scanCursor)(offsetSleepDurationMilliseconds)("wait_remaining")
                                                                                                                                                                                 in
-                                                                                                                                                                                    let _ =
-                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(requeueCursor)(schedConst(sc)(0))("wait_requeue_end"))(doneBlock)(requeueBody)
+                                                                                                                                                                                    let currentMin = schedLoad(sc)(minSlot)("wait_current_min")
                                                                                                                                                                                     in
-                                                                                                                                                                                        let _ = schedAt(sc)(requeueBody)
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            "wait_new_min"
+                                                                                                                                                                                            |> buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSlt)(remaining)(currentMin)("wait_is_less"))(remaining)(currentMin)
+                                                                                                                                                                                            |> schedSet(sc)(minSlot)
                                                                                                                                                                                         in
-                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                "wait_requeue_next"
-                                                                                                                                                                                                |> schedWord(sc)(requeueCursor)(offsetReadyNext)
-                                                                                                                                                                                                |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                            let _ = schedBr(sc)(scanCheck)
                                                                                                                                                                                             in
-                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(requeueCursor)(offsetWaitKind)("wait_requeue_kind"))(timerCode)("wait_requeue_is_timer"))(requeueTimer)(requeueEnqueue)
+                                                                                                                                                                                                let _ = schedAt(sc)(scanOther)
                                                                                                                                                                                                 in
-                                                                                                                                                                                                    let _ = schedAt(sc)(requeueTimer)
+                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(kind)(schedConst(sc)(0))("wait_scan_no_wait"))(scanCheck)(scanSocket)
                                                                                                                                                                                                     in
-                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                            "wait_requeue_left"
-                                                                                                                                                                                                            |> buildSub(sc.schedBuilder)(schedWord(sc)(requeueCursor)(offsetSleepDurationMilliseconds)("wait_requeue_remaining"))(sleepMs)
-                                                                                                                                                                                                            |> schedStore(sc)(requeueCursor)(offsetSleepDurationMilliseconds)
+                                                                                                                                                                                                        let _ = schedAt(sc)(scanSocket)
                                                                                                                                                                                                         in
-                                                                                                                                                                                                            let _ = schedBr(sc)(requeueEnqueue)
+                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                1
+                                                                                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                                                                                |> schedSet(sc)(socketSlot)
                                                                                                                                                                                                             in
-                                                                                                                                                                                                                let _ = schedAt(sc)(requeueEnqueue)
+                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(schedLoad(sc)(epollGlobal(sc))("wait_epoll_existing"))(schedConst(sc)(0))("wait_epoll_missing"))(createEpollBlock)(registerBlock)
                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                    let _ = schedEnqueue(sc)(requeueCursor)
+                                                                                                                                                                                                                    let _ = schedAt(sc)(createEpollBlock)
                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                        let _ = schedBr(sc)(requeueCheck)
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            "wait_epoll_create"
+                                                                                                                                                                                                                            |> emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(291))(schedConst(sc)(0))(schedConst(sc)(0))(schedConst(sc)(0))
+                                                                                                                                                                                                                            |> schedSet(sc)(epollGlobal(sc))
                                                                                                                                                                                                                         in
-                                                                                                                                                                                                                            let _ = schedAt(sc)(doneBlock)
+                                                                                                                                                                                                                            let _ = schedBr(sc)(registerBlock)
                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                                    0
-                                                                                                                                                                                                                                    |> schedConst(sc)
-                                                                                                                                                                                                                                    |> schedSet(sc)(parkedHeadGlobal(sc))
+                                                                                                                                                                                                                                let _ = schedAt(sc)(registerBlock)
                                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                                        0
-                                                                                                                                                                                                                                        |> schedConst(sc)
-                                                                                                                                                                                                                                        |> buildRet(sc.schedBuilder)
-                                                                                                                                                                                                                                    in (waitFn, waitType))
+                                                                                                                                                                                                                                    let readish =
+                                                                                                                                                                                                                                        buildOr(sc.schedBuilder)(schedEq(sc)(kind)(SocketReadTaskWait
+                                                                                                                                                                                                                                        |> taskWaitCode
+                                                                                                                                                                                                                                        |> wordConst(sc.schedI64))("wait_is_read"))(schedEq(sc)(kind)(TlsReadTaskWait
+                                                                                                                                                                                                                                        |> taskWaitCode
+                                                                                                                                                                                                                                        |> wordConst(sc.schedI64))("wait_is_tls_read"))("wait_readish")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let mask =
+                                                                                                                                                                                                                                            buildSelect(sc.schedBuilder)(readish)(schedConst(sc)(1))(schedConst(sc)(4))("wait_mask")
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let socket = schedWord(sc)(scanCursor)(offsetWaitHandle)("wait_socket")
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let _ = schedStore(sc)(eventAddress)(0)(mask)
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let _ = schedStore(sc)(eventAddress)(4)(socket)
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let epollFd =
+                                                                                                                                                                                                                                                            schedLoad(sc)(epollGlobal(sc))("wait_epoll_fd")
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let added =
+                                                                                                                                                                                                                                                                emitLinuxSyscallCall4(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(233))(epollFd)(schedConst(sc)(1))(socket)(eventAddress)("wait_epoll_add")
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(added)(schedConst(sc)(-17))("wait_epoll_exists"))(modifyBlock)(scanCheck)
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(modifyBlock)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                            emitLinuxSyscallCall4(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(233))(epollFd)(schedConst(sc)(3))(socket)(eventAddress)("wait_epoll_modify")
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ = schedBr(sc)(scanCheck)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(decideBlock)
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let minimum = schedLoad(sc)(minSlot)("wait_minimum")
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let noTimer = schedEq(sc)(minimum)(maxWord)("wait_no_timer")
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(schedLoad(sc)(socketSlot)("wait_socket_flag"))(schedConst(sc)(0))("wait_no_socket"))(sleepBlock)(epollBlock)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(epollBlock)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let started = emitMonotonicMillis(sc)(timespec)("wait_started")
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let timeout =
+                                                                                                                                                                                                                                                                                                            buildSelect(sc.schedBuilder)(noTimer)(schedConst(sc)(-1))(minimum)("wait_epoll_timeout")
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                emitLinuxSyscallCall4(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(232))(schedLoad(sc)(epollGlobal(sc))("wait_epoll_wait_fd"))(eventAddress)(schedConst(sc)(1))(timeout)("wait_epoll_wait")
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                    "wait_epoll_elapsed"
+                                                                                                                                                                                                                                                                                                                    |> buildSub(sc.schedBuilder)(emitMonotonicMillis(sc)(timespec)("wait_finished"))(started)
+                                                                                                                                                                                                                                                                                                                    |> schedSet(sc)(elapsedSlot)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(requeueStart)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(sleepBlock)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let sleepMs =
+                                                                                                                                                                                                                                                                                                                                buildSelect(sc.schedBuilder)(noTimer)(schedConst(sc)(0))(minimum)("wait_sleep_ms")
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let timespecAddress = buildPtrToInt(sc.schedBuilder)(timespec)(sc.schedI64)("wait_sleep_timespec")
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                                        "wait_seconds"
+                                                                                                                                                                                                                                                                                                                                        |> buildSDiv(sc.schedBuilder)(sleepMs)(schedConst(sc)(1000))
+                                                                                                                                                                                                                                                                                                                                        |> schedStore(sc)(timespecAddress)(0)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                                            "wait_nanoseconds"
+                                                                                                                                                                                                                                                                                                                                            |> buildMul(sc.schedBuilder)(buildSRem(sc.schedBuilder)(sleepMs)(schedConst(sc)(1000))("wait_ms_rem"))(schedConst(sc)(1000000))
+                                                                                                                                                                                                                                                                                                                                            |> schedStore(sc)(timespecAddress)(8)
+                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(35))(timespecAddress)(schedConst(sc)(0))(schedConst(sc)(0))("wait_nanosleep")
+                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                let _ = schedSet(sc)(elapsedSlot)(sleepMs)
+                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(requeueStart)
+                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(requeueStart)
+                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                            let elapsed = schedLoad(sc)(elapsedSlot)("wait_elapsed_value")
+                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                                    "wait_parked_again"
+                                                                                                                                                                                                                                                                                                                                                                    |> schedLoad(sc)(parkedHeadGlobal(sc))
+                                                                                                                                                                                                                                                                                                                                                                    |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(requeueCheck)
+                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(requeueCheck)
+                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                            let requeueCursor = schedLoad(sc)(cursorSlot)("wait_requeue_cursor")
+                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(requeueCursor)(schedConst(sc)(0))("wait_requeue_end"))(doneBlock)(requeueBody)
+                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(requeueBody)
+                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                                                                                            "wait_requeue_next"
+                                                                                                                                                                                                                                                                                                                                                                                            |> schedWord(sc)(requeueCursor)(offsetReadyNext)
+                                                                                                                                                                                                                                                                                                                                                                                            |> schedSet(sc)(cursorSlot)
+                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(requeueCursor)(offsetWaitKind)("wait_requeue_kind"))(timerCode)("wait_requeue_is_timer"))(requeueTimer)(requeueEnqueue)
+                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(requeueTimer)
+                                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                        "wait_requeue_left"
+                                                                                                                                                                                                                                                                                                                                                                                                        |> buildSub(sc.schedBuilder)(schedWord(sc)(requeueCursor)(offsetSleepDurationMilliseconds)("wait_requeue_remaining"))(elapsed)
+                                                                                                                                                                                                                                                                                                                                                                                                        |> schedStore(sc)(requeueCursor)(offsetSleepDurationMilliseconds)
+                                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                                        let _ = schedBr(sc)(requeueEnqueue)
+                                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(requeueEnqueue)
+                                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                                let _ = schedEnqueue(sc)(requeueCursor)
+                                                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(requeueCheck)
+                                                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                                                0
+                                                                                                                                                                                                                                                                                                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                                                                                                                                                |> schedSet(sc)(parkedHeadGlobal(sc))
+                                                                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                                                                                                    0
+                                                                                                                                                                                                                                                                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                                                                                                                                                    |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                                                                                                                                                                                                                                                in (waitFn, waitType))
 
 type SchedulerFunctions =
     | stepCompositeFn: LLVMValueRef
@@ -2215,10 +2757,8 @@ type SchedulerFunctions =
     | dequeueType: LLVMTypeRef
     | forkScopedFn: LLVMValueRef
     | forkScopedType: LLVMTypeRef
-    | stepTcpConnectFn: LLVMValueRef
-    | stepTcpConnectType: LLVMTypeRef
-    | stepHttpFn: LLVMValueRef
-    | stepHttpType: LLVMTypeRef
+    // The socket and HTTP leaves stepped here, by state code.
+    | socketLeafSteps: List((Int, LLVMValueRef, LLVMTypeRef))
 
 // Cancels every child of a resolved race but its winner.
 let emitCancelRaceLosers (sc: SchedulerContext) (fns: SchedulerFunctions) runFn cursorSlot race winner =
@@ -2372,65 +2912,59 @@ let emitSchedulerDispatch (sc: SchedulerContext) (fns: SchedulerFunctions) (bloc
                                                                                     in task)
 
 // "Ashes: socket and TLS tasks are not supported by the self-hosted compiler yet\n": a leaf task
-// other than a sleep or a TCP connect stops the program, since only those two are stepped here.
+// other than a sleep or a socket or HTTP leaf (a TLS leaf) stops the program; TLS is not stepped here.
 let unportedLeafMessageCodes = [65, 115, 104, 101, 115, 58, 32, 115, 111, 99, 107, 101, 116, 32, 97, 110, 100, 32, 84, 76, 83, 32, 116, 97, 115, 107, 115, 32, 97, 114, 101, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 115, 101, 108, 102, 45, 104, 111, 115, 116, 101, 100, 32, 99, 111, 109, 112, 105, 108, 101, 114, 32, 121, 101, 116, 10]
 
-// A leaf other than a sleep: a TCP connect, or the connect stage of an HTTP request, is stepped,
-// completing or parking on its socket (the aggregate wait has no socket readiness yet, so a parked
-// socket leaf is stepped again once the queue drains); any other leaf stops the program.
-let emitOtherLeaf (sc: SchedulerContext) (fns: SchedulerFunctions) (blocks: SchedulerBlocks) runFn task =
-    (let connectBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_tcp_connect_leaf")
-    in
-        let httpCheckBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_http_check")
-        in
-            let httpBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_http_leaf")
+// Steps a socket leaf through the step function its state code selects: a step that completes
+// goes on to the completion, one that answers 0 parks the task.
+let recursive emitSocketLeafDispatch (sc: SchedulerContext) (blocks: SchedulerBlocks) runFn task stateWord parkBlock unportedBlock (steps: List((Int, LLVMValueRef, LLVMTypeRef))) =
+    match steps with
+        | [] -> schedBr(sc)(unportedBlock)
+        | (code, stepFn, stepType) :: rest ->
+            let stepBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_socket_leaf_step")
             in
-                let parkBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_socket_park")
+                let nextBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_socket_leaf_next")
                 in
-                    let unportedBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_unported_kind")
+                    let _ =
+                        schedIf(sc)(schedEq(sc)(stateWord)(wordConst(sc.schedI64)(code))("sched_socket_leaf_kind"))(stepBlock)(nextBlock)
                     in
-                        let stateWord = schedWord(sc)(task)(offsetStateIndex)("sched_other_leaf_state")
+                        let _ = schedAt(sc)(stepBlock)
                         in
-                            let _ =
-                                schedIf(sc)(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(TcpConnectTaskState))("sched_is_tcp_connect"))(connectBlock)(httpCheckBlock)
+                            let status =
+                                schedWithTaskArena(sc)(runFn)(task)("sched_socket_leaf")(given (_unit) -> buildCall(sc.schedBuilder)(stepType)(stepFn)([task])(1u32)("sched_socket_leaf_status"))
                             in
-                                let _ = schedAt(sc)(httpCheckBlock)
+                                let _ =
+                                    schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))("sched_socket_leaf_pending"))(parkBlock)(blocks.schedCompleteBlock)
                                 in
-                                    let isHttp =
-                                        buildOr(sc.schedBuilder)(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(HttpGetTaskState))("sched_is_http_get"))(schedEq(sc)(stateWord)(stateConst(sc.schedI64)(HttpPostTaskState))("sched_is_http_post"))("sched_is_http")
-                                    in
-                                        let _ = schedIf(sc)(isHttp)(httpBlock)(unportedBlock)
-                                        in
-                                            let _ = schedAt(sc)(unportedBlock)
-                                            in
-                                                let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedLeafMessageCodes)("sched_unported")
-                                                in
-                                                    let _ = schedAt(sc)(connectBlock)
-                                                    in
-                                                        let connectStatus =
-                                                            schedWithTaskArena(sc)(runFn)(task)("sched_tcp_connect")(given (_unit) -> buildCall(sc.schedBuilder)(fns.stepTcpConnectType)(fns.stepTcpConnectFn)([task])(1u32)("sched_tcp_connect_status"))
-                                                        in
-                                                            let _ =
-                                                                schedIf(sc)(schedEq(sc)(connectStatus)(schedConst(sc)(0))("sched_tcp_connect_pending"))(parkBlock)(blocks.schedCompleteBlock)
-                                                            in
-                                                                let _ = schedAt(sc)(httpBlock)
-                                                                in
-                                                                    let httpStatus =
-                                                                        schedWithTaskArena(sc)(runFn)(task)("sched_http")(given (_unit) -> buildCall(sc.schedBuilder)(fns.stepHttpType)(fns.stepHttpFn)([task])(1u32)("sched_http_status"))
-                                                                    in
-                                                                        let _ =
-                                                                            schedIf(sc)(schedEq(sc)(httpStatus)(schedConst(sc)(0))("sched_http_pending"))(parkBlock)(blocks.schedCompleteBlock)
-                                                                        in
-                                                                            let _ = schedAt(sc)(parkBlock)
-                                                                            in
-                                                                                let _ =
-                                                                                    "sched_socket_parked_head"
-                                                                                    |> schedLoad(sc)(parkedHeadGlobal(sc))
-                                                                                    |> schedStore(sc)(task)(offsetReadyNext)
-                                                                                in
-                                                                                    let _ =
-                                                                                        schedSet(sc)(parkedHeadGlobal(sc))(task)
-                                                                                    in schedBr(sc)(blocks.schedLoopBlock))
+                                    let _ = schedAt(sc)(nextBlock)
+                                    in emitSocketLeafDispatch(sc)(blocks)(runFn)(task)(stateWord)(parkBlock)(unportedBlock)(rest)
+
+// A leaf other than a sleep: a socket or HTTP leaf is stepped, completing or parking on its socket
+// (the aggregate wait has no socket readiness yet, so a parked socket leaf is stepped again once the
+// queue drains); any other leaf (TLS) stops the program.
+let emitOtherLeaf (sc: SchedulerContext) (fns: SchedulerFunctions) (blocks: SchedulerBlocks) runFn task =
+    (let parkBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_socket_park")
+    in
+        let unportedBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_unported_kind")
+        in
+            let stateWord = schedWord(sc)(task)(offsetStateIndex)("sched_other_leaf_state")
+            in
+                let _ = emitSocketLeafDispatch(sc)(blocks)(runFn)(task)(stateWord)(parkBlock)(unportedBlock)(fns.socketLeafSteps)
+                in
+                    let _ = schedAt(sc)(unportedBlock)
+                    in
+                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedLeafMessageCodes)("sched_unported")
+                        in
+                            let _ = schedAt(sc)(parkBlock)
+                            in
+                                let _ =
+                                    "sched_socket_parked_head"
+                                    |> schedLoad(sc)(parkedHeadGlobal(sc))
+                                    |> schedStore(sc)(task)(offsetReadyNext)
+                                in
+                                    let _ =
+                                        schedSet(sc)(parkedHeadGlobal(sc))(task)
+                                    in schedBr(sc)(blocks.schedLoopBlock))
 
 // A sleeping leaf completes with `Ok(0)` once its remaining time is spent and parks on its timer
 // until then; a coroutine is stepped with its frame and, when it suspends, the task it awaits is
@@ -2685,7 +3219,8 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
             readyQueueHead = addZeroWordGlobal(module_)(i64)("__ashes_ready_head"),
             readyQueueTail = addZeroWordGlobal(module_)(i64)("__ashes_ready_tail"),
             parkedLeafHead = addZeroWordGlobal(module_)(i64)("__ashes_parked_head"),
-            schedulerRunDepth = addZeroWordGlobal(module_)(i64)("__ashes_scheduler_depth")
+            schedulerRunDepth = addZeroWordGlobal(module_)(i64)("__ashes_scheduler_depth"),
+            epollDescriptor = addZeroWordGlobal(module_)(i64)("__ashes_epoll_fd")
         )
     in
         match defineReadyEnqueue(module_)(context)(builder)(i64)(i8)(ptrType)(globals) with
@@ -2711,22 +3246,52 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                                         | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (forkScopedFn, forkScopedType), (stepTcpConnectFn, stepTcpConnectType)) ->
                                             match defineStepHttp(module_)(sc)(stepTcpConnectFn)(stepTcpConnectType) with
                                                 | (stepHttpFn, stepHttpType) ->
-                                                    closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
-                                                        stepCompositeFn = stepCompositeFn,
-                                                        stepCompositeType = stepCompositeType,
-                                                        waitParkedFn = waitParkedFn,
-                                                        waitParkedType = waitParkedType,
-                                                        cancelFn = cancelFn,
-                                                        cancelType = cancelType,
-                                                        dequeueFn = dequeueFn,
-                                                        dequeueType = dequeueType,
-                                                        forkScopedFn = forkScopedFn,
-                                                        forkScopedType = forkScopedType,
-                                                        stepTcpConnectFn = stepTcpConnectFn,
-                                                        stepTcpConnectType = stepTcpConnectType,
-                                                        stepHttpFn = stepHttpFn,
-                                                        stepHttpType = stepHttpType
-                                                    )))
+                                                    let leafStep =
+                                                        given (kind: TaskStateKind) ->
+                                                            given (step: (LLVMValueRef, LLVMTypeRef)) ->
+                                                                match step with
+                                                                    | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
+                                                    in
+                                                        let socketLeafSteps =
+                                                            [
+                                                                leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
+                                                                leafStep(HttpGetTaskState)((stepHttpFn, stepHttpType)),
+                                                                leafStep(HttpPostTaskState)((stepHttpFn, stepHttpType)),
+                                                                sc
+                                                                |> emitStepTcpSend
+                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_send")
+                                                                |> leafStep(TcpSendTaskState),
+                                                                sc
+                                                                |> emitStepTcpReceive
+                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_receive")
+                                                                |> leafStep(TcpReceiveTaskState),
+                                                                sc
+                                                                |> emitStepTcpClose
+                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_close")
+                                                                |> leafStep(TcpCloseTaskState),
+                                                                sc
+                                                                |> emitStepTcpListen
+                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
+                                                                |> leafStep(TcpListenTaskState),
+                                                                sc
+                                                                |> emitStepTcpAccept
+                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
+                                                                |> leafStep(TcpAcceptTaskState)
+                                                            ]
+                                                        in
+                                                            closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
+                                                                stepCompositeFn = stepCompositeFn,
+                                                                stepCompositeType = stepCompositeType,
+                                                                waitParkedFn = waitParkedFn,
+                                                                waitParkedType = waitParkedType,
+                                                                cancelFn = cancelFn,
+                                                                cancelType = cancelType,
+                                                                dequeueFn = dequeueFn,
+                                                                dequeueType = dequeueType,
+                                                                forkScopedFn = forkScopedFn,
+                                                                forkScopedType = forkScopedType,
+                                                                socketLeafSteps = socketLeafSteps
+                                                            )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
 // to the start of a fresh 4 MiB chunk that becomes its private arena, the copy is its own arena
