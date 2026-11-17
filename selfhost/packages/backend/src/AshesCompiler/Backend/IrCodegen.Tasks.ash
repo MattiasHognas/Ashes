@@ -23,6 +23,7 @@ import Ashes.Number.UInt
 // when it is awaited.
 // A leaf completes with `Error(message)`.
 // A string followed by a literal, as one fresh arena string.
+// A string followed by a literal, as one fresh arena string.
 export (
     value emitCreateCompletedTask,
     value emitRunCompletedTask,
@@ -1929,16 +1930,33 @@ type HttpStepSlots =
     | portSlot: LLVMValueRef
     | tlsSlot: LLVMValueRef
 
-// The step functions an HTTP leaf runs its child leaves with.
+// The child leaves an HTTP leaf sends, receives and closes through: TCP for `http`, TLS over the
+// session for `https`, with the transport's bit in the stage word.
+type HttpTransport =
+    | transportBits: Int
+    | transportSendKind: TaskStateKind
+    | transportSendFn: LLVMValueRef
+    | transportSendType: LLVMTypeRef
+    | transportReceiveKind: TaskStateKind
+    | transportReceiveFn: LLVMValueRef
+    | transportReceiveType: LLVMTypeRef
+    | transportCloseKind: TaskStateKind
+    | transportCloseFn: LLVMValueRef
+    | transportCloseType: LLVMTypeRef
+
+// The TLS half of an HTTP leaf: the client handshake step and the TLS transport.
+type HttpTlsSteps =
+    | httpHandshakeFn: LLVMValueRef
+    | httpHandshakeType: LLVMTypeRef
+    | httpTlsTransport: HttpTransport
+
+// The step functions an HTTP leaf runs its child leaves with; without the TLS runtime an `https`
+// request stops the program once connected.
 type HttpChildSteps =
     | connectStepFn: LLVMValueRef
     | connectStepType: LLVMTypeRef
-    | sendStepFn: LLVMValueRef
-    | sendStepType: LLVMTypeRef
-    | receiveStepFn: LLVMValueRef
-    | receiveStepType: LLVMTypeRef
-    | closeStepFn: LLVMValueRef
-    | closeStepType: LLVMTypeRef
+    | plainTransport: HttpTransport
+    | tlsSteps: Maybe(HttpTlsSteps)
 
 // The byte at `bytes + index`, widened to a word.
 let schedByteAt (sc: SchedulerContext) bytes index name =
@@ -2774,19 +2792,21 @@ let emitHttpConnectStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (c
                                                                                                         |> schedStore(sc)(task)(offsetWaitData1)
                                                                                                     in schedBr(sc)(dispatchBlock)
 
-// The send stage: the request built from the URL again is written by a TCP send child; the leaf
-// then receives, or, when the send fails, closes and completes with the failure.
-let emitHttpSendStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task (hasBody: Bool) tlsBits stageBlock dispatchBlock =
-    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_send") with
+// The TLS handshake stage of an `https` request: a client handshake child over the connected
+// socket for the URL's host; the session it answers replaces the socket in `WaitData0` and the
+// leaf moves on to sending. A failed handshake (which closed the socket) completes the leaf with
+// its failure.
+let emitHttpHandshakeStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (tls: HttpTlsSteps) task stageBlock dispatchBlock =
+    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_handshake") with
         | (createBlock, stepBlock) ->
-            let parsedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_parsed")
+            let parsedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_handshake_parsed")
             in
-                let malformedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_malformed")
+                let malformedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_handshake_malformed")
                 in
                     let _ = schedAt(sc)(createBlock)
                     in
                         let parsed =
-                            "http_send_url"
+                            "http_handshake_url"
                             |> schedWord(sc)(task)(offsetIoArgument0)
                             |> emitParseHttpUrl(sc)(stepFn)(slots)
                         in
@@ -2795,104 +2815,164 @@ let emitHttpSendStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (chil
                                 let _ = schedAt(sc)(malformedBlock)
                                 in
                                     let _ =
-                                        "http_send_malformed_error"
-                                        |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpMalformedUrlCodes)("http_send_malformed_message"))
-                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                        "http_handshake_malformed_error"
+                                        |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpMalformedUrlCodes)("http_handshake_malformed_message"))
+                                        |> schedCompleteLeaf(sc)(task)
                                     in
-                                        let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_malformed_stage")
+                                        let _ = schedAt(sc)(parsedBlock)
                                         in
-                                            let _ = schedAt(sc)(parsedBlock)
+                                            let child =
+                                                emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TlsHandshakeTaskState)(schedWord(sc)(task)(offsetWaitData0)("http_handshake_socket"))(schedLoad(sc)(slots.hostSlot)("http_handshake_host"))(schedConst(sc)(0))("http_handshake_task")
                                             in
-                                                let request = emitHttpRequestText(sc)(stepFn)(slots)(task)(hasBody)
+                                                let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
                                                 in
-                                                    let child =
-                                                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpSendTaskState)(schedWord(sc)(task)(offsetWaitData0)("http_send_socket"))(request)(schedConst(sc)(0))("http_send_task")
+                                                    let _ = schedBr(sc)(stepBlock)
                                                     in
-                                                        let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                                                        let _ = schedAt(sc)(stepBlock)
                                                         in
-                                                            let _ = schedBr(sc)(stepBlock)
-                                                            in
-                                                                let _ = schedAt(sc)(stepBlock)
-                                                                in
-                                                                    match emitHttpChildStep(sc)(stepFn)(task)(children.sendStepFn)(children.sendStepType)("http_send_child") with
-                                                                        | (result, failedBlock, succeededBlock) ->
-                                                                            let _ = schedAt(sc)(failedBlock)
-                                                                            in
-                                                                                let _ = schedStore(sc)(task)(offsetResultSlot)(result)
-                                                                                in
-                                                                                    let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_failed_stage")
-                                                                                    in
-                                                                                        let _ = schedAt(sc)(succeededBlock)
-                                                                                        in emitHttpAdvance(sc)(task)(tlsBits)(3)(dispatchBlock)("http_send_receive_stage")
-
-// The receive stage: a TCP receive child reads up to 64 KiB at a time, each chunk appended to the
-// response kept in `ResultSlot`, until an empty chunk ends the stream and the leaf closes.
-let emitHttpReceiveStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task tlsBits stageBlock dispatchBlock =
-    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_receive") with
-        | (createBlock, stepBlock) ->
-            let _ = schedAt(sc)(createBlock)
-            in
-                let child =
-                    emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpReceiveTaskState)(schedWord(sc)(task)(offsetWaitData0)("http_receive_socket"))(schedConst(sc)(65536))(schedConst(sc)(0))("http_receive_task")
-                in
-                    let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
-                    in
-                        let _ = schedBr(sc)(stepBlock)
-                        in
-                            let _ = schedAt(sc)(stepBlock)
-                            in
-                                match emitHttpChildStep(sc)(stepFn)(task)(children.receiveStepFn)(children.receiveStepType)("http_receive_child") with
-                                    | (result, failedBlock, succeededBlock) ->
-                                        let endBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_end")
-                                        in
-                                            let appendBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_append")
-                                            in
-                                                let firstBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_first")
-                                                in
-                                                    let moreBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_more")
-                                                    in
-                                                        let _ = schedAt(sc)(failedBlock)
-                                                        in
-                                                            let _ = schedStore(sc)(task)(offsetResultSlot)(result)
-                                                            in
-                                                                let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_receive_failed_stage")
-                                                                in
-                                                                    let _ = schedAt(sc)(succeededBlock)
+                                                            match emitHttpChildStep(sc)(stepFn)(task)(tls.httpHandshakeFn)(tls.httpHandshakeType)("http_handshake_child") with
+                                                                | (result, failedBlock, succeededBlock) ->
+                                                                    let _ = schedAt(sc)(failedBlock)
                                                                     in
-                                                                        let chunk = schedWord(sc)(result)(8)("http_receive_chunk")
+                                                                        let _ = schedCompleteLeaf(sc)(task)(result)
                                                                         in
-                                                                            let _ =
-                                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(chunk)(0)("http_receive_chunk_length"))(schedConst(sc)(0))("http_receive_chunk_empty"))(endBlock)(appendBlock)
+                                                                            let _ = schedAt(sc)(succeededBlock)
                                                                             in
-                                                                                let _ = schedAt(sc)(endBlock)
+                                                                                let _ =
+                                                                                    "http_handshake_session"
+                                                                                    |> schedWord(sc)(result)(8)
+                                                                                    |> schedStore(sc)(task)(offsetWaitData0)
                                                                                 in
-                                                                                    let _ = emitHttpAdvance(sc)(task)(tlsBits)(4)(dispatchBlock)("http_receive_close_stage")
-                                                                                    in
-                                                                                        let _ = schedAt(sc)(appendBlock)
-                                                                                        in
-                                                                                            let response = schedWord(sc)(task)(offsetResultSlot)("http_receive_response")
-                                                                                            in
-                                                                                                let _ =
-                                                                                                    schedIf(sc)(schedEq(sc)(response)(schedConst(sc)(0))("http_receive_first_chunk"))(firstBlock)(moreBlock)
-                                                                                                in
-                                                                                                    let _ = schedAt(sc)(firstBlock)
-                                                                                                    in
-                                                                                                        let _ = schedStore(sc)(task)(offsetResultSlot)(chunk)
-                                                                                                        in
-                                                                                                            let _ = schedBr(sc)(dispatchBlock)
-                                                                                                            in
-                                                                                                                let _ = schedAt(sc)(moreBlock)
-                                                                                                                in
-                                                                                                                    let _ =
-                                                                                                                        "http_receive_joined"
-                                                                                                                        |> emitArenaConcat(sc)(stepFn)(slots.scanSlot)(response)(chunk)
-                                                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
-                                                                                                                    in schedBr(sc)(dispatchBlock)
+                                                                                    let _ =
+                                                                                        10
+                                                                                        |> schedConst(sc)
+                                                                                        |> schedStore(sc)(task)(offsetWaitData1)
+                                                                                    in schedBr(sc)(dispatchBlock)
 
-// The close stages: a TCP close child closes the socket. After a received response the leaf
-// completes with the parsed response, after a failure with that failure; a failed close completes
-// with the close's failure after a response and with the earlier failure otherwise.
-let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task (afterFailure: Bool) stageBlock =
+// The send stage: the request built from the URL again is written by the transport's send child;
+// the leaf then receives, or, when the send fails, closes and completes with the failure.
+let emitHttpSendStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (transport: HttpTransport) task (hasBody: Bool) stageBlock dispatchBlock =
+    (let tlsBits = schedConst(sc)(transport.transportBits)
+    in
+        match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_send") with
+            | (createBlock, stepBlock) ->
+                let parsedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_parsed")
+                in
+                    let malformedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_malformed")
+                    in
+                        let _ = schedAt(sc)(createBlock)
+                        in
+                            let parsed =
+                                "http_send_url"
+                                |> schedWord(sc)(task)(offsetIoArgument0)
+                                |> emitParseHttpUrl(sc)(stepFn)(slots)
+                            in
+                                let _ = schedIf(sc)(parsed)(parsedBlock)(malformedBlock)
+                                in
+                                    let _ = schedAt(sc)(malformedBlock)
+                                    in
+                                        let _ =
+                                            "http_send_malformed_error"
+                                            |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpMalformedUrlCodes)("http_send_malformed_message"))
+                                            |> schedStore(sc)(task)(offsetResultSlot)
+                                        in
+                                            let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_malformed_stage")
+                                            in
+                                                let _ = schedAt(sc)(parsedBlock)
+                                                in
+                                                    let request = emitHttpRequestText(sc)(stepFn)(slots)(task)(hasBody)
+                                                    in
+                                                        let child =
+                                                            emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(transport.transportSendKind)(schedWord(sc)(task)(offsetWaitData0)("http_send_socket"))(request)(schedConst(sc)(0))("http_send_task")
+                                                        in
+                                                            let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                                                            in
+                                                                let _ = schedBr(sc)(stepBlock)
+                                                                in
+                                                                    let _ = schedAt(sc)(stepBlock)
+                                                                    in
+                                                                        match emitHttpChildStep(sc)(stepFn)(task)(transport.transportSendFn)(transport.transportSendType)("http_send_child") with
+                                                                            | (result, failedBlock, succeededBlock) ->
+                                                                                let _ = schedAt(sc)(failedBlock)
+                                                                                in
+                                                                                    let _ = schedStore(sc)(task)(offsetResultSlot)(result)
+                                                                                    in
+                                                                                        let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_failed_stage")
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(succeededBlock)
+                                                                                            in emitHttpAdvance(sc)(task)(tlsBits)(3)(dispatchBlock)("http_send_receive_stage"))
+
+// The receive stage: the transport's receive child reads up to 64 KiB at a time, each chunk
+// appended to the response kept in `ResultSlot`, until an empty chunk ends the stream and the leaf
+// closes.
+let emitHttpReceiveStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (transport: HttpTransport) task stageBlock dispatchBlock =
+    (let tlsBits = schedConst(sc)(transport.transportBits)
+    in
+        match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_receive") with
+            | (createBlock, stepBlock) ->
+                let _ = schedAt(sc)(createBlock)
+                in
+                    let child =
+                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(transport.transportReceiveKind)(schedWord(sc)(task)(offsetWaitData0)("http_receive_socket"))(schedConst(sc)(65536))(schedConst(sc)(0))("http_receive_task")
+                    in
+                        let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                        in
+                            let _ = schedBr(sc)(stepBlock)
+                            in
+                                let _ = schedAt(sc)(stepBlock)
+                                in
+                                    match emitHttpChildStep(sc)(stepFn)(task)(transport.transportReceiveFn)(transport.transportReceiveType)("http_receive_child") with
+                                        | (result, failedBlock, succeededBlock) ->
+                                            let endBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_end")
+                                            in
+                                                let appendBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_append")
+                                                in
+                                                    let firstBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_first")
+                                                    in
+                                                        let moreBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_more")
+                                                        in
+                                                            let _ = schedAt(sc)(failedBlock)
+                                                            in
+                                                                let _ = schedStore(sc)(task)(offsetResultSlot)(result)
+                                                                in
+                                                                    let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_receive_failed_stage")
+                                                                    in
+                                                                        let _ = schedAt(sc)(succeededBlock)
+                                                                        in
+                                                                            let chunk = schedWord(sc)(result)(8)("http_receive_chunk")
+                                                                            in
+                                                                                let _ =
+                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(chunk)(0)("http_receive_chunk_length"))(schedConst(sc)(0))("http_receive_chunk_empty"))(endBlock)(appendBlock)
+                                                                                in
+                                                                                    let _ = schedAt(sc)(endBlock)
+                                                                                    in
+                                                                                        let _ = emitHttpAdvance(sc)(task)(tlsBits)(4)(dispatchBlock)("http_receive_close_stage")
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(appendBlock)
+                                                                                            in
+                                                                                                let response = schedWord(sc)(task)(offsetResultSlot)("http_receive_response")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        schedIf(sc)(schedEq(sc)(response)(schedConst(sc)(0))("http_receive_first_chunk"))(firstBlock)(moreBlock)
+                                                                                                    in
+                                                                                                        let _ = schedAt(sc)(firstBlock)
+                                                                                                        in
+                                                                                                            let _ = schedStore(sc)(task)(offsetResultSlot)(chunk)
+                                                                                                            in
+                                                                                                                let _ = schedBr(sc)(dispatchBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedAt(sc)(moreBlock)
+                                                                                                                    in
+                                                                                                                        let _ =
+                                                                                                                            "http_receive_joined"
+                                                                                                                            |> emitArenaConcat(sc)(stepFn)(slots.scanSlot)(response)(chunk)
+                                                                                                                            |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                        in schedBr(sc)(dispatchBlock))
+
+// The close stages: the transport's close child closes the connection. After a received response
+// the leaf completes with the parsed response, after a failure with that failure; a failed close
+// completes with the close's failure after a response and with the earlier failure otherwise.
+let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (transport: HttpTransport) task (afterFailure: Bool) stageBlock =
     (let name =
         if afterFailure
         then "http_close_failure"
@@ -2903,7 +2983,7 @@ let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (chi
                 let _ = schedAt(sc)(createBlock)
                 in
                     let child =
-                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpCloseTaskState)(schedWord(sc)(task)(offsetWaitData0)(name + "_socket"))(schedConst(sc)(0))(schedConst(sc)(0))(name + "_task")
+                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(transport.transportCloseKind)(schedWord(sc)(task)(offsetWaitData0)(name + "_socket"))(schedConst(sc)(0))(schedConst(sc)(0))(name + "_task")
                     in
                         let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
                         in
@@ -2911,7 +2991,7 @@ let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (chi
                             in
                                 let _ = schedAt(sc)(stepBlock)
                                 in
-                                    match emitHttpChildStep(sc)(stepFn)(task)(children.closeStepFn)(children.closeStepType)(name + "_child") with
+                                    match emitHttpChildStep(sc)(stepFn)(task)(transport.transportCloseFn)(transport.transportCloseType)(name + "_child") with
                                         | (result, failedBlock, succeededBlock) ->
                                             let _ = schedAt(sc)(failedBlock)
                                             in
@@ -2934,12 +3014,46 @@ let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (chi
                                                                 |> emitParseHttpResponse(sc)(stepFn)(slots)
                                                                 |> schedCompleteLeaf(sc)(task))
 
+// The send, receive and close stages of one transport, at its stage codes.
+let emitHttpTransportStages (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (transport: HttpTransport) task (hasBody: Bool) stageSwitch dispatchBlock =
+    (let block =
+        given (label) -> appendBasicBlock(sc.schedContext)(stepFn)(label)
+    in
+        let sendBlock = block("http_send_stage")
+        in
+            let receiveBlock = block("http_receive_stage")
+            in
+                let closeSuccessBlock = block("http_close_success_stage")
+                in
+                    let closeFailureBlock = block("http_close_failure_stage")
+                    in
+                        let bits = transport.transportBits
+                        in
+                            let _ =
+                                addCase(stageSwitch)(schedConst(sc)(bits + 2))(sendBlock)
+                            in
+                                let _ =
+                                    addCase(stageSwitch)(schedConst(sc)(bits + 3))(receiveBlock)
+                                in
+                                    let _ =
+                                        addCase(stageSwitch)(schedConst(sc)(bits + 4))(closeSuccessBlock)
+                                    in
+                                        let _ =
+                                            addCase(stageSwitch)(schedConst(sc)(bits + 5))(closeFailureBlock)
+                                        in
+                                            let _ = emitHttpSendStage(sc)(stepFn)(slots)(transport)(task)(hasBody)(sendBlock)(dispatchBlock)
+                                            in
+                                                let _ = emitHttpReceiveStage(sc)(stepFn)(slots)(transport)(task)(receiveBlock)(dispatchBlock)
+                                                in
+                                                    let _ = emitHttpCloseStage(sc)(stepFn)(slots)(transport)(task)(false)(closeSuccessBlock)
+                                                    in emitHttpCloseStage(sc)(stepFn)(slots)(transport)(task)(true)(closeFailureBlock))
+
 // Stage 0's `ashes_step_http_get_task` and `ashes_step_http_post_task` (`EmitStepHttpTask`): the
 // leaf runs as stages kept in `WaitData1` (0 connect, 2 send, 3 receive, 4 close after the
-// response, 5 close after a failure, bit 8 for TLS), each stage stepping one TCP child leaf and
-// moving to the next in the same step until a child waits, which parks the leaf on the child's
-// socket (the step answers 0), or the leaf completes (the step answers 1). The TLS stages are not
-// ported: an `https` request that connects stops the program.
+// response, 5 close after a failure; bit 8 for TLS, with 9 the handshake), each stage stepping one
+// child leaf and moving to the next in the same step until a child waits, which parks the leaf on
+// the child's socket (the step answers 0), or the leaf completes (the step answers 1). Without the
+// TLS runtime an `https` request that connects stops the program.
 let defineStepHttp module_ (sc: SchedulerContext) (children: HttpChildSteps) name (hasBody: Bool) =
     (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
     in
@@ -2952,101 +3066,1258 @@ let defineStepHttp module_ (sc: SchedulerContext) (children: HttpChildSteps) nam
                 in
                     let dispatchBlock = block("http_dispatch")
                     in
-                        let plainBlock = block("http_plain_stage")
+                        let connectBlock = block("http_connect_stage")
                         in
-                            let httpsBlock = block("http_tls_unported")
+                            let tlsStageBlock = block("http_tls_stage")
                             in
-                                let connectBlock = block("http_connect_stage")
+                                let invalidBlock = block("http_invalid_stage")
                                 in
-                                    let sendBlock = block("http_send_stage")
+                                    let task = getParam(stepFn)(0u32)
                                     in
-                                        let receiveBlock = block("http_receive_stage")
+                                        let _ = schedAt(sc)(entryBlock)
                                         in
-                                            let closeSuccessBlock = block("http_close_success_stage")
+                                            let slots =
+                                                HttpStepSlots(
+                                                    scanSlot = schedSlot(sc)("http_scan"),
+                                                    countSlot = schedSlot(sc)("http_count"),
+                                                    valueSlot = schedSlot(sc)("http_value"),
+                                                    answerSlot = schedSlot(sc)("http_answer"),
+                                                    parsedSlot = schedSlot(sc)("http_parsed"),
+                                                    hostStartSlot = schedSlot(sc)("http_host_start"),
+                                                    hostSlot = schedSlot(sc)("http_host"),
+                                                    pathSlot = schedSlot(sc)("http_path"),
+                                                    portSlot = schedSlot(sc)("http_port"),
+                                                    tlsSlot = schedSlot(sc)("http_tls")
+                                                )
                                             in
-                                                let closeFailureBlock = block("http_close_failure_stage")
+                                                let _ = schedBr(sc)(dispatchBlock)
                                                 in
-                                                    let invalidBlock = block("http_invalid_stage")
+                                                    let _ = schedAt(sc)(dispatchBlock)
                                                     in
-                                                        let task = getParam(stepFn)(0u32)
+                                                        let stage = schedWord(sc)(task)(offsetWaitData1)("http_stage")
                                                         in
-                                                            let _ = schedAt(sc)(entryBlock)
+                                                            let stageSwitch = buildSwitch(sc.schedBuilder)(stage)(invalidBlock)(16u32)
                                                             in
-                                                                let slots =
-                                                                    HttpStepSlots(
-                                                                        scanSlot = schedSlot(sc)("http_scan"),
-                                                                        countSlot = schedSlot(sc)("http_count"),
-                                                                        valueSlot = schedSlot(sc)("http_value"),
-                                                                        answerSlot = schedSlot(sc)("http_answer"),
-                                                                        parsedSlot = schedSlot(sc)("http_parsed"),
-                                                                        hostStartSlot = schedSlot(sc)("http_host_start"),
-                                                                        hostSlot = schedSlot(sc)("http_host"),
-                                                                        pathSlot = schedSlot(sc)("http_path"),
-                                                                        portSlot = schedSlot(sc)("http_port"),
-                                                                        tlsSlot = schedSlot(sc)("http_tls")
-                                                                    )
+                                                                let _ =
+                                                                    addCase(stageSwitch)(schedConst(sc)(0))(connectBlock)
                                                                 in
-                                                                    let _ = schedBr(sc)(dispatchBlock)
+                                                                    let _ =
+                                                                        addCase(stageSwitch)(schedConst(sc)(8))(connectBlock)
                                                                     in
-                                                                        let _ = schedAt(sc)(dispatchBlock)
+                                                                        let _ =
+                                                                            addCase(stageSwitch)(schedConst(sc)(9))(tlsStageBlock)
                                                                         in
-                                                                            let stage = schedWord(sc)(task)(offsetWaitData1)("http_stage")
+                                                                            let _ = emitHttpConnectStage(sc)(stepFn)(slots)(children)(task)(connectBlock)(dispatchBlock)
                                                                             in
-                                                                                let kind =
-                                                                                    buildAnd(sc.schedBuilder)(stage)(schedConst(sc)(7))("http_stage_kind")
+                                                                                let _ = emitHttpTransportStages(sc)(stepFn)(slots)(children.plainTransport)(task)(hasBody)(stageSwitch)(dispatchBlock)
                                                                                 in
-                                                                                    let tlsBits =
-                                                                                        buildAnd(sc.schedBuilder)(stage)(schedConst(sc)(8))("http_stage_tls")
+                                                                                    let _ =
+                                                                                        match children.tlsSteps with
+                                                                                            | Some(tls) ->
+                                                                                                let _ = emitHttpHandshakeStage(sc)(stepFn)(slots)(tls)(task)(tlsStageBlock)(dispatchBlock)
+                                                                                                in emitHttpTransportStages(sc)(stepFn)(slots)(tls.httpTlsTransport)(task)(hasBody)(stageSwitch)(dispatchBlock)
+                                                                                            | None ->
+                                                                                                let _ = schedAt(sc)(tlsStageBlock)
+                                                                                                in emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedHttpsMessageCodes)("http_tls_unported")
                                                                                     in
-                                                                                        let pastConnect =
-                                                                                            buildICmp(sc.schedBuilder)(intPredicateNe)(kind)(schedConst(sc)(0))("http_past_connect")
+                                                                                        let _ = schedAt(sc)(invalidBlock)
                                                                                         in
-                                                                                            let overTls =
-                                                                                                buildICmp(sc.schedBuilder)(intPredicateNe)(tlsBits)(schedConst(sc)(0))("http_over_tls")
+                                                                                            let _ =
+                                                                                                "http_invalid_error"
+                                                                                                |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpUnknownStageCodes)("http_invalid_message"))
+                                                                                                |> schedCompleteLeaf(sc)(task)
+                                                                                            in (stepFn, stepType))
+
+// Stage 0's TLS messages.
+let tlsInitFailedCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 114, 117, 110, 116, 105, 109, 101, 32, 105, 110, 105, 116, 105, 97, 108, 105, 122, 97, 116, 105, 111, 110, 32, 102, 97, 105, 108, 101, 100]
+
+let tlsHandshakeFailedCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 104, 97, 110, 100, 115, 104, 97, 107, 101, 32, 102, 97, 105, 108, 101, 100]
+
+let tlsHandshakeFailedPrefixCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 104, 97, 110, 100, 115, 104, 97, 107, 101, 32, 102, 97, 105, 108, 101, 100, 58, 32]
+
+let tlsSendFailedCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 115, 101, 110, 100, 32, 102, 97, 105, 108, 101, 100]
+
+let tlsReceiveFailedCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 114, 101, 99, 101, 105, 118, 101, 32, 102, 97, 105, 108, 101, 100]
+
+let tlsReceiveFailedPrefixCodes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 114, 101, 99, 101, 105, 118, 101, 32, 102, 97, 105, 108, 101, 100, 58, 32]
+
+let tlsInvalidUtf8Codes = [65, 115, 104, 101, 115, 32, 84, 76, 83, 32, 114, 101, 99, 101, 105, 118, 101, 40, 41, 32, 101, 110, 99, 111, 117, 110, 116, 101, 114, 101, 100, 32, 105, 110, 118, 97, 108, 105, 100, 32, 85, 84, 70, 45, 56]
+
+let tlsNotValidForNameCodes = [105, 110, 118, 97, 108, 105, 100, 32, 112, 101, 101, 114, 32, 99, 101, 114, 116, 105, 102, 105, 99, 97, 116, 101, 58, 32, 78, 111, 116, 86, 97, 108, 105, 100, 70, 111, 114, 78, 97, 109, 101]
+
+let tlsUnknownIssuerCodes = [105, 110, 118, 97, 108, 105, 100, 32, 112, 101, 101, 114, 32, 99, 101, 114, 116, 105, 102, 105, 99, 97, 116, 101, 58, 32, 85, 110, 107, 110, 111, 119, 110, 73, 115, 115, 117, 101, 114]
+
+// The DRBG personalization string `ashes` and the `SSL_CERT_FILE` variable name, NUL-terminated.
+let tlsSeedCodes = [97, 115, 104, 101, 115, 0]
+
+let tlsCertFileNameCodes = [83, 83, 76, 95, 67, 69, 82, 84, 95, 70, 73, 76, 69, 0]
+
+// Stage 0's Mbed TLS layouts: a connection is the `mbedtls_ssl_context` (768 bytes) followed by
+// the want-read, want-write and handshake-done flags, the socket and the verify flags; the runtime
+// singleton holds the entropy, DRBG, root certificate and client configuration contexts; a session
+// is `[socket][connection]`.
+let tlsConnectionWantRead = 768
+
+let tlsConnectionWantWrite = 776
+
+let tlsConnectionHandshakeDone = 784
+
+let tlsConnectionSocket = 792
+
+let tlsConnectionVerifyFlags = 800
+
+let tlsConnectionBytes = 808
+
+let tlsRuntimeCtrDrbg = 1024
+
+let tlsRuntimeRoots = 1536
+
+let tlsRuntimeClientConfig = 2560
+
+let tlsRuntimeWords = 384
+
+// `MBEDTLS_ERR_SSL_WANT_READ`, `MBEDTLS_ERR_SSL_WANT_WRITE`, `MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY`,
+// and `MBEDTLS_ERR_NET_RECV_FAILED`/`MBEDTLS_ERR_NET_SEND_FAILED` for a socket error other than
+// `EAGAIN`.
+let mbedTlsWantRead = -26880
+
+let mbedTlsWantWrite = -26752
+
+let mbedTlsPeerCloseNotify = -30848
+
+let mbedTlsNetReceiveFailed = -76
+
+let mbedTlsNetSendFailed = -78
+
+// The Mbed TLS entry points the TLS leaves call, the `getenv` and `strlen` the module already
+// declares, the runtime initializer and the socket callbacks.
+type TlsRuntime =
+    | tlsFunctions: List((Str, LLVMValueRef, LLVMTypeRef))
+    | tlsI32: LLVMTypeRef
+    | tlsInitFn: LLVMValueRef
+    | tlsInitType: LLVMTypeRef
+    | tlsReadCallback: LLVMValueRef
+    | tlsWriteCallback: LLVMValueRef
+    | tlsClientConfig: LLVMValueRef
+
+let declareMbedTlsFunctions module_ (sc: SchedulerContext) =
+    (let i32 = int32Type(sc.schedContext)
+    in
+        let voidT = voidType(sc.schedContext)
+        in
+            let ptr = sc.schedPtr
+            in
+                let i64 = sc.schedI64
+                in
+                    let declare =
+                        given (name: Str) ->
+                            given (functionType_: LLVMTypeRef) -> (name, addFunction(module_)(name)(functionType_), functionType_)
+                    in
+                        let existing =
+                            given (name: Str) ->
+                                given (functionType_: LLVMTypeRef) -> (name, getNamedFunction(module_)(name), functionType_)
+                        in
+                            [
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_entropy_init"),
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_ctr_drbg_init"),
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_x509_crt_init"),
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_config_init"),
+                                false
+                                |> functionType(i32)([ptr, ptr, i64])(3u32)
+                                |> declare("mbedtls_entropy_func"),
+                                false
+                                |> functionType(i32)([ptr, ptr, i64])(3u32)
+                                |> declare("mbedtls_ctr_drbg_random"),
+                                false
+                                |> functionType(i32)([ptr, ptr, ptr, ptr, i64])(5u32)
+                                |> declare("mbedtls_ctr_drbg_seed"),
+                                false
+                                |> functionType(i32)([ptr, i32, i32, i32])(4u32)
+                                |> declare("mbedtls_ssl_config_defaults"),
+                                false
+                                |> functionType(i32)([ptr, ptr])(2u32)
+                                |> declare("mbedtls_x509_crt_parse_file"),
+                                false
+                                |> functionType(voidT)([ptr, i32])(2u32)
+                                |> declare("mbedtls_ssl_conf_authmode"),
+                                false
+                                |> functionType(voidT)([ptr, ptr, ptr])(3u32)
+                                |> declare("mbedtls_ssl_conf_ca_chain"),
+                                false
+                                |> functionType(voidT)([ptr, ptr, ptr])(3u32)
+                                |> declare("mbedtls_ssl_conf_rng"),
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_init"),
+                                false
+                                |> functionType(i32)([ptr, ptr])(2u32)
+                                |> declare("mbedtls_ssl_setup"),
+                                false
+                                |> functionType(i32)([ptr, ptr])(2u32)
+                                |> declare("mbedtls_ssl_set_hostname"),
+                                false
+                                |> functionType(voidT)([ptr, ptr, ptr, ptr, ptr])(5u32)
+                                |> declare("mbedtls_ssl_set_bio"),
+                                false
+                                |> functionType(i32)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_handshake"),
+                                false
+                                |> functionType(i32)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_get_verify_result"),
+                                false
+                                |> functionType(i32)([ptr, ptr, i64])(3u32)
+                                |> declare("mbedtls_ssl_write"),
+                                false
+                                |> functionType(i32)([ptr, ptr, i64])(3u32)
+                                |> declare("mbedtls_ssl_read"),
+                                false
+                                |> functionType(i32)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_close_notify"),
+                                false
+                                |> functionType(voidT)([ptr])(1u32)
+                                |> declare("mbedtls_ssl_free"),
+                                false
+                                |> functionType(voidT)([i32, ptr, i64])(3u32)
+                                |> declare("mbedtls_strerror"),
+                                false
+                                |> functionType(ptr)([ptr])(1u32)
+                                |> existing("getenv"),
+                                false
+                                |> functionType(i64)([ptr])(1u32)
+                                |> existing("strlen")
+                            ])
+
+let recursive tlsFunction (name: Str) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) =
+    match functions with
+        | [] -> Ashes.IO.panic("codegen: undeclared TLS function " + name)
+        | (candidate, function_, functionType_) :: rest ->
+            if candidate == name
+            then (function_, functionType_)
+            else tlsFunction(name)(rest)
+
+// A call into Mbed TLS or libc; a `void` call takes no result name.
+let tlsCall (sc: SchedulerContext) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) (name: Str) (arguments: List(LLVMValueRef)) (count: u32) (resultName: Str) =
+    match tlsFunction(name)(functions) with
+        | (function_, functionType_) -> buildCall(sc.schedBuilder)(functionType_)(function_)(arguments)(count)(resultName)
+
+// An `int` status call, sign-extended to a word.
+let tlsStatusCall (sc: SchedulerContext) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) (name: Str) (arguments: List(LLVMValueRef)) (count: u32) (resultName: Str) =
+    buildSExt(sc.schedBuilder)(tlsCall(sc)(functions)(name)(arguments)(count)(resultName + "_i32"))(sc.schedI64)(resultName)
+
+let tlsPointer (sc: SchedulerContext) address name = buildIntToPtr(sc.schedBuilder)(address)(sc.schedPtr)(name)
+
+let tlsI32Const (rt: TlsRuntime) (value: Int) =
+    constInt(rt.tlsI32)(Ashes.Number.UInt.fromInt64(value))(true)
+
+// A fixed byte sequence (NUL-terminated by its codes) in the arena, answered as a C pointer.
+let tlsCString (sc: SchedulerContext) function_ (codes: List(Int)) name =
+    (let text = schedStringLiteral(sc)(function_)(codes)(name)
+    in
+        tlsPointer(sc)(buildAdd(sc.schedBuilder)(text)(schedConst(sc)(8))(name + "_bytes"))(name + "_cstr"))
+
+// A runtime string copied to the arena with a trailing NUL, answered as a C pointer.
+let tlsStringToCString (sc: SchedulerContext) function_ indexSlot textRef name =
+    match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(textRef)(name) with
+        | (length, bytes) ->
+            let copy =
+                emitArenaStringOfLength(sc)(function_)(buildAdd(sc.schedBuilder)(length)(schedConst(sc)(1))(name + "_length_nul"))(name + "_copy")
+            in
+                let copyBytes =
+                    buildAdd(sc.schedBuilder)(copy)(schedConst(sc)(8))(name + "_copy_bytes")
+                in
+                    let _ = emitCopyBytes(sc)(function_)(indexSlot)(copyBytes)(bytes)(length)(name + "_fill")
+                    in
+                        let _ =
+                            name + "_nul_ptr"
+                            |> buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(copyBytes)(length)(name + "_nul_at"))(sc.schedPtr)
+                            |> buildStore(sc.schedBuilder)(constInt(sc.schedI8)(0u64)(false))
+                        in tlsPointer(sc)(copyBytes)(name + "_cstr")
+
+// The socket callbacks Mbed TLS reads and writes records through, stage 0's
+// `__ashes_tls_mbedtls_socket_read_callback`/`_write_callback`: a `read`/`write` on the
+// connection's socket answering the byte count, `WANT_READ`/`WANT_WRITE` when the socket would
+// block, and Mbed TLS's network failure otherwise.
+let defineTlsSocketCallback module_ (sc: SchedulerContext) i32 name (syscall: Int) (wouldBlock: Int) (failure: Int) =
+    (let callbackType = functionType(i32)([sc.schedPtr, sc.schedPtr, sc.schedI64])(3u32)(false)
+    in
+        let callback = addInternalFunction(module_)(name)(callbackType)
+        in
+            let entryBlock = appendBasicBlock(sc.schedContext)(callback)("entry")
+            in
+                let okBlock = appendBasicBlock(sc.schedContext)(callback)("tls_io_ok")
+                in
+                    let failBlock = appendBasicBlock(sc.schedContext)(callback)("tls_io_fail")
+                    in
+                        let _ = schedAt(sc)(entryBlock)
+                        in
+                            let connection =
+                                buildPtrToInt(sc.schedBuilder)(getParam(callback)(0u32))(sc.schedI64)("tls_io_connection")
+                            in
+                                let socket = schedWord(sc)(connection)(tlsConnectionSocket)("tls_io_socket")
+                                in
+                                    let buffer =
+                                        buildPtrToInt(sc.schedBuilder)(getParam(callback)(1u32))(sc.schedI64)("tls_io_buffer")
+                                    in
+                                        let count =
+                                            emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(syscall))(socket)(buffer)(getParam(callback)(2u32))("tls_io_call")
+                                        in
+                                            let _ =
+                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(count)(schedConst(sc)(0))("tls_io_succeeded"))(okBlock)(failBlock)
+                                            in
+                                                let _ = schedAt(sc)(okBlock)
+                                                in
+                                                    let _ =
+                                                        "tls_io_count"
+                                                        |> buildTrunc(sc.schedBuilder)(count)(i32)
+                                                        |> buildRet(sc.schedBuilder)
+                                                    in
+                                                        let _ = schedAt(sc)(failBlock)
+                                                        in
+                                                            let status =
+                                                                buildSelect(sc.schedBuilder)(schedEq(sc)(count)(schedConst(sc)(-11))("tls_io_would_block"))(schedConst(sc)(wouldBlock))(schedConst(sc)(failure))("tls_io_status")
+                                                            in
+                                                                let _ =
+                                                                    "tls_io_status_i32"
+                                                                    |> buildTrunc(sc.schedBuilder)(status)(i32)
+                                                                    |> buildRet(sc.schedBuilder)
+                                                                in callback)
+
+// Stage 0's `ashes_tls_runtime_init` (`EmitEnsureTlsRuntimeInitialized`): once per process, the
+// entropy source, a CTR-DRBG seeded with `ashes`, the root certificates from `SSL_CERT_FILE` when
+// it is set, and a client configuration that requires a verified peer. Answers 1 when ready and
+// -1 when any step failed, remembering the answer.
+let defineTlsRuntimeInit module_ (sc: SchedulerContext) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) i32 statusGlobal storage clientConfigGlobal =
+    (let initType = functionType(sc.schedI64)([])(0u32)(false)
+    in
+        let initFn = addInternalFunction(module_)("__ashes_tls_runtime_init")(initType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(sc.schedContext)(initFn)(name)
+            in
+                let entryBlock = block("entry")
+                in
+                    let doneBlock = block("tls_init_done")
+                    in
+                        let initBlock = block("tls_init_run")
+                        in
+                            let parseBlock = block("tls_init_parse_roots")
+                            in
+                                let configureBlock = block("tls_init_configure")
+                                in
+                                    let call = tlsCall(sc)(functions)
+                                    in
+                                        let statusCall = tlsStatusCall(sc)(functions)
+                                        in
+                                            let i32Const =
+                                                given (value: Int) ->
+                                                    constInt(i32)(Ashes.Number.UInt.fromInt64(value))(true)
+                                            in
+                                                let _ = schedAt(sc)(entryBlock)
+                                                in
+                                                    let parsedSlot = schedSlot(sc)("tls_init_parsed")
+                                                    in
+                                                        let current = schedLoad(sc)(statusGlobal)("tls_init_current")
+                                                        in
+                                                            let _ =
+                                                                schedIf(sc)(schedEq(sc)(current)(schedConst(sc)(0))("tls_init_needed"))(initBlock)(doneBlock)
+                                                            in
+                                                                let _ = schedAt(sc)(doneBlock)
+                                                                in
+                                                                    let _ =
+                                                                        "tls_init_answer"
+                                                                        |> schedLoad(sc)(statusGlobal)
+                                                                        |> buildRet(sc.schedBuilder)
+                                                                    in
+                                                                        let _ = schedAt(sc)(initBlock)
+                                                                        in
+                                                                            let runtime = buildPtrToInt(sc.schedBuilder)(storage)(sc.schedI64)("tls_runtime")
+                                                                            in
+                                                                                let at =
+                                                                                    given (offset: Int) ->
+                                                                                        given (name: Str) ->
+                                                                                            tlsPointer(sc)(buildAdd(sc.schedBuilder)(runtime)(schedConst(sc)(offset))(name + "_addr"))(name)
+                                                                                in
+                                                                                    let entropy = at(0)("tls_entropy")
+                                                                                    in
+                                                                                        let ctrDrbg = at(tlsRuntimeCtrDrbg)("tls_ctr_drbg")
+                                                                                        in
+                                                                                            let roots = at(tlsRuntimeRoots)("tls_roots")
                                                                                             in
-                                                                                                let _ =
-                                                                                                    schedIf(sc)(buildAnd(sc.schedBuilder)(pastConnect)(overTls)("http_tls_stage"))(httpsBlock)(plainBlock)
+                                                                                                let config = at(tlsRuntimeClientConfig)("tls_client_config")
                                                                                                 in
-                                                                                                    let _ = schedAt(sc)(httpsBlock)
+                                                                                                    let _ = call("mbedtls_entropy_init")([entropy])(1u32)("")
                                                                                                     in
-                                                                                                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedHttpsMessageCodes)("http_tls_unported")
+                                                                                                        let _ = call("mbedtls_ctr_drbg_init")([ctrDrbg])(1u32)("")
                                                                                                         in
-                                                                                                            let _ = schedAt(sc)(plainBlock)
+                                                                                                            let _ = call("mbedtls_x509_crt_init")([roots])(1u32)("")
                                                                                                             in
-                                                                                                                let stageSwitch = buildSwitch(sc.schedBuilder)(kind)(invalidBlock)(5u32)
+                                                                                                                let _ = call("mbedtls_ssl_config_init")([config])(1u32)("")
                                                                                                                 in
-                                                                                                                    let _ =
-                                                                                                                        addCase(stageSwitch)(schedConst(sc)(0))(connectBlock)
-                                                                                                                    in
-                                                                                                                        let _ =
-                                                                                                                            addCase(stageSwitch)(schedConst(sc)(2))(sendBlock)
-                                                                                                                        in
-                                                                                                                            let _ =
-                                                                                                                                addCase(stageSwitch)(schedConst(sc)(3))(receiveBlock)
+                                                                                                                    match (tlsFunction("mbedtls_entropy_func")(functions), tlsFunction("mbedtls_ctr_drbg_random")(functions)) with
+                                                                                                                        | ((entropyFn, _entropyType), (randomFn, _randomType)) ->
+                                                                                                                            let seed = statusCall("mbedtls_ctr_drbg_seed")([ctrDrbg, entropyFn, entropy, tlsCString(sc)(initFn)(tlsSeedCodes)("tls_seed_text"), schedConst(sc)(5)])(5u32)("tls_seed")
                                                                                                                             in
-                                                                                                                                let _ =
-                                                                                                                                    addCase(stageSwitch)(schedConst(sc)(4))(closeSuccessBlock)
+                                                                                                                                let defaults = statusCall("mbedtls_ssl_config_defaults")([config, i32Const(0), i32Const(0), i32Const(0)])(4u32)("tls_defaults")
                                                                                                                                 in
                                                                                                                                     let _ =
-                                                                                                                                        addCase(stageSwitch)(schedConst(sc)(5))(closeFailureBlock)
+                                                                                                                                        0
+                                                                                                                                        |> schedConst(sc)
+                                                                                                                                        |> schedSet(sc)(parsedSlot)
                                                                                                                                     in
-                                                                                                                                        let _ = emitHttpConnectStage(sc)(stepFn)(slots)(children)(task)(connectBlock)(dispatchBlock)
+                                                                                                                                        let certFile = call("getenv")([tlsCString(sc)(initFn)(tlsCertFileNameCodes)("tls_cert_file_name")])(1u32)("tls_cert_file")
                                                                                                                                         in
-                                                                                                                                            let _ = emitHttpSendStage(sc)(stepFn)(slots)(children)(task)(hasBody)(tlsBits)(sendBlock)(dispatchBlock)
+                                                                                                                                            let _ =
+                                                                                                                                                schedIf(sc)(schedEq(sc)(buildPtrToInt(sc.schedBuilder)(certFile)(sc.schedI64)("tls_cert_file_addr"))(schedConst(sc)(0))("tls_no_cert_file"))(configureBlock)(parseBlock)
                                                                                                                                             in
-                                                                                                                                                let _ = emitHttpReceiveStage(sc)(stepFn)(slots)(children)(task)(tlsBits)(receiveBlock)(dispatchBlock)
+                                                                                                                                                let _ = schedAt(sc)(parseBlock)
                                                                                                                                                 in
-                                                                                                                                                    let _ = emitHttpCloseStage(sc)(stepFn)(slots)(children)(task)(false)(closeSuccessBlock)
+                                                                                                                                                    let _ =
+                                                                                                                                                        "tls_parse_roots"
+                                                                                                                                                        |> statusCall("mbedtls_x509_crt_parse_file")([roots, certFile])(2u32)
+                                                                                                                                                        |> schedSet(sc)(parsedSlot)
                                                                                                                                                     in
-                                                                                                                                                        let _ = emitHttpCloseStage(sc)(stepFn)(slots)(children)(task)(true)(closeFailureBlock)
+                                                                                                                                                        let _ = schedBr(sc)(configureBlock)
                                                                                                                                                         in
-                                                                                                                                                            let _ = schedAt(sc)(invalidBlock)
+                                                                                                                                                            let _ = schedAt(sc)(configureBlock)
                                                                                                                                                             in
-                                                                                                                                                                let _ =
-                                                                                                                                                                    "http_invalid_error"
-                                                                                                                                                                    |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpUnknownStageCodes)("http_invalid_message"))
-                                                                                                                                                                    |> schedCompleteLeaf(sc)(task)
-                                                                                                                                                                in (stepFn, stepType))
+                                                                                                                                                                let _ = call("mbedtls_ssl_conf_authmode")([config, i32Const(2)])(2u32)("")
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = call("mbedtls_ssl_conf_ca_chain")([config, roots, constNull(sc.schedPtr)])(3u32)("")
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = call("mbedtls_ssl_conf_rng")([config, randomFn, ctrDrbg])(3u32)("")
+                                                                                                                                                                        in
+                                                                                                                                                                            let zero = schedConst(sc)(0)
+                                                                                                                                                                            in
+                                                                                                                                                                                let ready =
+                                                                                                                                                                                    buildAnd(sc.schedBuilder)(buildAnd(sc.schedBuilder)(schedEq(sc)(seed)(zero)("tls_seed_ok"))(schedEq(sc)(defaults)(zero)("tls_defaults_ok"))("tls_seed_defaults_ok"))(schedEq(sc)(schedLoad(sc)(parsedSlot)("tls_parsed_status"))(zero)("tls_roots_ok"))("tls_ready")
+                                                                                                                                                                                in
+                                                                                                                                                                                    let status =
+                                                                                                                                                                                        buildSelect(sc.schedBuilder)(ready)(schedConst(sc)(1))(schedConst(sc)(-1))("tls_init_status")
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            "tls_client_config_handle"
+                                                                                                                                                                                            |> buildPtrToInt(sc.schedBuilder)(config)(sc.schedI64)
+                                                                                                                                                                                            |> schedSet(sc)(clientConfigGlobal)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = schedSet(sc)(statusGlobal)(status)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ = buildRet(sc.schedBuilder)(status)
+                                                                                                                                                                                                in (initFn, initType))
+
+// The TLS runtime of a program that reaches TLS or HTTPS: the Mbed TLS declarations, the
+// zero-initialized runtime singleton, the initializer and the socket callbacks.
+let defineTlsRuntime module_ (sc: SchedulerContext) =
+    (let i32 = int32Type(sc.schedContext)
+    in
+        let functions = declareMbedTlsFunctions(module_)(sc)
+        in
+            let storageType =
+                tlsRuntimeWords
+                |> Ashes.Number.UInt.fromInt64
+                |> arrayType(sc.schedI64)
+            in
+                let storage = addGlobal(module_)(storageType)("__ashes_mbedtls_runtime")
+                in
+                    let _ =
+                        storageType
+                        |> constNull
+                        |> setInitializer(storage)
+                    in
+                        let _ = setLinkage(storage)(linkageInternal)
+                        in
+                            let statusGlobal = addZeroWordGlobal(module_)(sc.schedI64)("__ashes_tls_init_status")
+                            in
+                                let clientConfigGlobal = addZeroWordGlobal(module_)(sc.schedI64)("__ashes_tls_client_config")
+                                in
+                                    match defineTlsRuntimeInit(module_)(sc)(functions)(i32)(statusGlobal)(storage)(clientConfigGlobal) with
+                                        | (initFn, initType) ->
+                                            TlsRuntime(
+                                                tlsFunctions = functions,
+                                                tlsI32 = i32,
+                                                tlsInitFn = initFn,
+                                                tlsInitType = initType,
+                                                tlsReadCallback = defineTlsSocketCallback(module_)(sc)(i32)("__ashes_tls_mbedtls_socket_read_callback")(0)(mbedTlsWantRead)(mbedTlsNetReceiveFailed),
+                                                tlsWriteCallback = defineTlsSocketCallback(module_)(sc)(i32)("__ashes_tls_mbedtls_socket_write_callback")(1)(mbedTlsWantWrite)(mbedTlsNetSendFailed),
+                                                tlsClientConfig = clientConfigGlobal
+                                            ))
+
+// Stage 0's `EmitMbedTlsSetWantFlags`: whether the status asks for the socket to be readable or
+// writable, kept on the connection.
+let emitTlsSetWantFlags (sc: SchedulerContext) connection status name =
+    (let _ =
+        name + "_want_read"
+        |> buildZExt(sc.schedBuilder)(schedEq(sc)(status)(schedConst(sc)(mbedTlsWantRead))(name + "_is_want_read"))(sc.schedI64)
+        |> schedStore(sc)(connection)(tlsConnectionWantRead)
+    in
+        name + "_want_write"
+        |> buildZExt(sc.schedBuilder)(schedEq(sc)(status)(schedConst(sc)(mbedTlsWantWrite))(name + "_is_want_write"))(sc.schedI64)
+        |> schedStore(sc)(connection)(tlsConnectionWantWrite))
+
+let emitTlsFlagSet (sc: SchedulerContext) connection (offset: Int) name =
+    buildICmp(sc.schedBuilder)(intPredicateNe)(schedWord(sc)(connection)(offset)(name + "_word"))(schedConst(sc)(0))(name)
+
+let emitTlsIsWant (sc: SchedulerContext) status name =
+    buildOr(sc.schedBuilder)(schedEq(sc)(status)(schedConst(sc)(mbedTlsWantRead))(name + "_read"))(schedEq(sc)(status)(schedConst(sc)(mbedTlsWantWrite))(name + "_write"))(name)
+
+// `mbedtls_strerror` text for a status, through a stack buffer.
+let emitTlsErrorText (sc: SchedulerContext) (rt: TlsRuntime) function_ indexSlot status name =
+    (let buffer =
+        buildEntryAlloca(sc.schedBuilder)(arrayType(sc.schedI8)(256u64))(name + "_buffer")
+    in
+        let _ = tlsCall(sc)(rt.tlsFunctions)("mbedtls_strerror")([buildTrunc(sc.schedBuilder)(status)(rt.tlsI32)(name + "_code"), buffer, schedConst(sc)(256)])(3u32)("")
+        in
+            let length = tlsCall(sc)(rt.tlsFunctions)("strlen")([buffer])(1u32)(name + "_length")
+            in
+                emitArenaStringFromBytes(sc)(function_)(indexSlot)(buildPtrToInt(sc.schedBuilder)(buffer)(sc.schedI64)(name + "_bytes"))(length)(name))
+
+// Stage 0's `EmitMbedTlsHandshakeErrorString`: a peer certificate not valid for the host or from
+// an unknown issuer by name (when the verify flags are known), the `mbedtls_strerror` text
+// otherwise.
+let emitTlsHandshakeErrorText (sc: SchedulerContext) (rt: TlsRuntime) function_ indexSlot answerSlot connection status =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(function_)(name)
+    in
+        let nameBlock = block("tls_error_not_valid_for_name")
+        in
+            let issuerCheckBlock = block("tls_error_issuer_check")
+            in
+                let issuerBlock = block("tls_error_unknown_issuer")
+                in
+                    let textBlock = block("tls_error_text")
+                    in
+                        let doneBlock = block("tls_error_done")
+                        in
+                            let flags = schedWord(sc)(connection)(tlsConnectionVerifyFlags)("tls_error_verify_flags")
+                            in
+                                let known =
+                                    buildICmp(sc.schedBuilder)(intPredicateNe)(flags)(schedConst(sc)(4294967295))("tls_error_flags_known")
+                                in
+                                    let flagSet =
+                                        given (bit: Int) ->
+                                            given (name: Str) ->
+                                                buildAnd(sc.schedBuilder)(known)(buildICmp(sc.schedBuilder)(intPredicateNe)(buildAnd(sc.schedBuilder)(flags)(schedConst(sc)(bit))(name + "_bits"))(schedConst(sc)(0))(name + "_set"))(name)
+                                    in
+                                        let _ =
+                                            schedIf(sc)(flagSet(4)("tls_error_name_flag"))(nameBlock)(issuerCheckBlock)
+                                        in
+                                            let _ = schedAt(sc)(nameBlock)
+                                            in
+                                                let _ =
+                                                    "tls_error_name_message"
+                                                    |> schedStringLiteral(sc)(function_)(tlsNotValidForNameCodes)
+                                                    |> schedSet(sc)(answerSlot)
+                                                in
+                                                    let _ = schedBr(sc)(doneBlock)
+                                                    in
+                                                        let _ = schedAt(sc)(issuerCheckBlock)
+                                                        in
+                                                            let _ =
+                                                                schedIf(sc)(flagSet(8)("tls_error_issuer_flag"))(issuerBlock)(textBlock)
+                                                            in
+                                                                let _ = schedAt(sc)(issuerBlock)
+                                                                in
+                                                                    let _ =
+                                                                        "tls_error_issuer_message"
+                                                                        |> schedStringLiteral(sc)(function_)(tlsUnknownIssuerCodes)
+                                                                        |> schedSet(sc)(answerSlot)
+                                                                    in
+                                                                        let _ = schedBr(sc)(doneBlock)
+                                                                        in
+                                                                            let _ = schedAt(sc)(textBlock)
+                                                                            in
+                                                                                let _ =
+                                                                                    "tls_error_strerror"
+                                                                                    |> emitTlsErrorText(sc)(rt)(function_)(indexSlot)(status)
+                                                                                    |> schedSet(sc)(answerSlot)
+                                                                                in
+                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                        in schedLoad(sc)(answerSlot)("tls_error_message"))
+
+// Stage 0's `EmitCleanupTlsSession`: frees the connection's Mbed TLS state and closes its socket.
+let emitTlsCleanupSession (sc: SchedulerContext) (rt: TlsRuntime) session name =
+    (let connection = schedWord(sc)(session)(8)(name + "_connection")
+    in
+        let _ = tlsCall(sc)(rt.tlsFunctions)("mbedtls_ssl_free")([tlsPointer(sc)(connection)(name + "_ssl")])(1u32)("")
+        in
+            name + "_socket"
+            |> schedWord(sc)(session)(0)
+            |> emitLinuxClose(sc.schedBuilder)(sc.schedI64))
+
+// Stage 0's `ashes_step_tls_handshake_task` for the client: the first step creates the Mbed TLS
+// connection for the socket (`IoArg0`) and server name (`IoArg1`) and keeps the session in
+// `WaitData0`; every step drives `mbedtls_ssl_handshake`, parking while it wants the socket and
+// completing with `Ok(session)` once done. A failure frees the session, closes the socket and
+// completes with the handshake error.
+let emitStepTlsHandshake (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let initFailBlock = block("tls_handshake_init_fail")
+        in
+            let readyBlock = block("tls_handshake_ready")
+            in
+                let createBlock = block("tls_handshake_create")
+                in
+                    let storeBlock = block("tls_handshake_store_session")
+                    in
+                        let createFailBlock = block("tls_handshake_create_fail")
+                        in
+                            let resumeBlock = block("tls_handshake_resume")
+                            in
+                                let processBlock = block("tls_handshake_process")
+                                in
+                                    let evaluateBlock = block("tls_handshake_evaluate")
+                                    in
+                                        let doneCheckBlock = block("tls_handshake_done_check")
+                                        in
+                                            let incompleteBlock = block("tls_handshake_incomplete")
+                                            in
+                                                let readCheckBlock = block("tls_handshake_read_check")
+                                                in
+                                                    let pendingReadBlock = block("tls_handshake_pending_read")
+                                                    in
+                                                        let pendingWriteBlock = block("tls_handshake_pending_write")
+                                                        in
+                                                            let successBlock = block("tls_handshake_success")
+                                                            in
+                                                                let failBlock = block("tls_handshake_fail")
+                                                                in
+                                                                    let genericFailBlock = block("tls_handshake_generic_fail")
+                                                                    in
+                                                                        let scanSlot = schedSlot(sc)("tls_handshake_scan")
+                                                                        in
+                                                                            let answerSlot = schedSlot(sc)("tls_handshake_answer")
+                                                                            in
+                                                                                let statusSlot = schedSlot(sc)("tls_handshake_status")
+                                                                                in
+                                                                                    let init = buildCall(sc.schedBuilder)(rt.tlsInitType)(rt.tlsInitFn)([])(0u32)("tls_handshake_init")
+                                                                                    in
+                                                                                        let _ =
+                                                                                            schedIf(sc)(schedEq(sc)(init)(schedConst(sc)(1))("tls_handshake_init_ok"))(readyBlock)(initFailBlock)
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(initFailBlock)
+                                                                                            in
+                                                                                                let _ = schedFailLeaf(sc)(stepFn)(task)(tlsInitFailedCodes)("tls_handshake_init_failure")
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(readyBlock)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData0)("tls_handshake_existing"))(schedConst(sc)(0))("tls_handshake_no_session"))(createBlock)(resumeBlock)
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(createBlock)
+                                                                                                            in
+                                                                                                                let socket = schedWord(sc)(task)(offsetIoArgument0)("tls_handshake_socket")
+                                                                                                                in
+                                                                                                                    let connection = emitArenaAlloc(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(tlsConnectionBytes)("tls_handshake_connection")
+                                                                                                                    in
+                                                                                                                        let _ = storeZeroTaskWords(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(connection)([tlsConnectionWantRead, tlsConnectionWantWrite, tlsConnectionHandshakeDone, tlsConnectionSocket, tlsConnectionVerifyFlags])
+                                                                                                                        in
+                                                                                                                            let ssl = tlsPointer(sc)(connection)("tls_handshake_ssl")
+                                                                                                                            in
+                                                                                                                                let _ = tlsCall(sc)(rt.tlsFunctions)("mbedtls_ssl_init")([ssl])(1u32)("")
+                                                                                                                                in
+                                                                                                                                    let setup =
+                                                                                                                                        tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_setup")([ssl, tlsPointer(sc)(schedLoad(sc)(rt.tlsClientConfig)("tls_handshake_config"))("tls_handshake_config_ptr")])(2u32)("tls_handshake_setup")
+                                                                                                                                    in
+                                                                                                                                        let hostName =
+                                                                                                                                            tlsStringToCString(sc)(stepFn)(scanSlot)(schedWord(sc)(task)(offsetIoArgument1)("tls_handshake_host"))("tls_handshake_host")
+                                                                                                                                        in
+                                                                                                                                            let hostStatus = tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_set_hostname")([ssl, hostName])(2u32)("tls_handshake_set_hostname")
+                                                                                                                                            in
+                                                                                                                                                let createStatus =
+                                                                                                                                                    buildSelect(sc.schedBuilder)(schedEq(sc)(setup)(schedConst(sc)(0))("tls_handshake_setup_ok"))(hostStatus)(setup)("tls_handshake_create_status")
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        schedIf(sc)(schedEq(sc)(createStatus)(schedConst(sc)(0))("tls_handshake_created"))(storeBlock)(createFailBlock)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedAt(sc)(storeBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedStore(sc)(connection)(tlsConnectionSocket)(socket)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = tlsCall(sc)(rt.tlsFunctions)("mbedtls_ssl_set_bio")([ssl, ssl, rt.tlsWriteCallback, rt.tlsReadCallback, constNull(sc.schedPtr)])(5u32)("")
+                                                                                                                                                                in
+                                                                                                                                                                    let session = emitArenaAlloc(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(16)("tls_handshake_session")
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedStore(sc)(session)(0)(socket)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = schedStore(sc)(session)(8)(connection)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = schedStore(sc)(task)(offsetWaitData0)(session)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ = schedBr(sc)(processBlock)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ = schedAt(sc)(createFailBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = emitLinuxClose(sc.schedBuilder)(sc.schedI64)(socket)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let createMessage =
+                                                                                                                                                                                                    emitArenaPrefixed(sc)(stepFn)(scanSlot)(tlsHandshakeFailedPrefixCodes)(emitTlsErrorText(sc)(rt)(stepFn)(scanSlot)(createStatus)("tls_handshake_create_error"))("tls_handshake_create_message")
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                        "tls_handshake_create_failure"
+                                                                                                                                                                                                        |> schedError(sc)(stepFn)(createMessage)
+                                                                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = schedAt(sc)(resumeBlock)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let resumeConnection =
+                                                                                                                                                                                                                schedWord(sc)(schedWord(sc)(task)(offsetWaitData0)("tls_handshake_resume_session"))(8)("tls_handshake_resume_connection")
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let wantsSocket =
+                                                                                                                                                                                                                    buildOr(sc.schedBuilder)(emitTlsFlagSet(sc)(resumeConnection)(tlsConnectionWantWrite)("tls_handshake_resume_write"))(emitTlsFlagSet(sc)(resumeConnection)(tlsConnectionWantRead)("tls_handshake_resume_read"))("tls_handshake_resume_wants")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = schedIf(sc)(wantsSocket)(processBlock)(evaluateBlock)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ = schedAt(sc)(processBlock)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let processConnection =
+                                                                                                                                                                                                                                schedWord(sc)(schedWord(sc)(task)(offsetWaitData0)("tls_handshake_process_session"))(8)("tls_handshake_process_connection")
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let processSsl = tlsPointer(sc)(processConnection)("tls_handshake_process_ssl")
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let status = tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_handshake")([processSsl])(1u32)("tls_handshake_step")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let _ = emitTlsSetWantFlags(sc)(processConnection)(status)("tls_handshake_flags")
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let verify = tlsCall(sc)(rt.tlsFunctions)("mbedtls_ssl_get_verify_result")([processSsl])(1u32)("tls_handshake_verify")
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                    "tls_handshake_verify_word"
+                                                                                                                                                                                                                                                    |> buildZExt(sc.schedBuilder)(verify)(sc.schedI64)
+                                                                                                                                                                                                                                                    |> schedStore(sc)(processConnection)(tlsConnectionVerifyFlags)
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let finished =
+                                                                                                                                                                                                                                                        schedEq(sc)(status)(schedConst(sc)(0))("tls_handshake_finished")
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                            "tls_handshake_done_word"
+                                                                                                                                                                                                                                                            |> buildZExt(sc.schedBuilder)(buildOr(sc.schedBuilder)(finished)(emitTlsFlagSet(sc)(processConnection)(tlsConnectionHandshakeDone)("tls_handshake_was_done"))("tls_handshake_now_done"))(sc.schedI64)
+                                                                                                                                                                                                                                                            |> schedStore(sc)(processConnection)(tlsConnectionHandshakeDone)
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let _ = schedSet(sc)(statusSlot)(status)
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                    schedIf(sc)(buildOr(sc.schedBuilder)(finished)(emitTlsIsWant(sc)(status)("tls_handshake_want"))("tls_handshake_progressing"))(evaluateBlock)(failBlock)
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(evaluateBlock)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let evaluateSession = schedWord(sc)(task)(offsetWaitData0)("tls_handshake_evaluate_session")
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let evaluateConnection = schedWord(sc)(evaluateSession)(8)("tls_handshake_evaluate_connection")
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let wantsWrite = emitTlsFlagSet(sc)(evaluateConnection)(tlsConnectionWantWrite)("tls_handshake_wants_write")
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                        schedIf(sc)(emitTlsFlagSet(sc)(evaluateConnection)(tlsConnectionHandshakeDone)("tls_handshake_is_done"))(doneCheckBlock)(incompleteBlock)
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(doneCheckBlock)
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(successBlock)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(incompleteBlock)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(readCheckBlock)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(readCheckBlock)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                schedIf(sc)(emitTlsFlagSet(sc)(evaluateConnection)(tlsConnectionWantRead)("tls_handshake_wants_read"))(pendingReadBlock)(genericFailBlock)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(pendingReadBlock)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                        "tls_handshake_read_socket"
+                                                                                                                                                                                                                                                                                                                        |> schedWord(sc)(evaluateSession)(0)
+                                                                                                                                                                                                                                                                                                                        |> schedPendLeaf(sc)(task)(TlsReadTaskWait)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(pendingWriteBlock)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                "tls_handshake_write_socket"
+                                                                                                                                                                                                                                                                                                                                |> schedWord(sc)(evaluateSession)(0)
+                                                                                                                                                                                                                                                                                                                                |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(successBlock)
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                                        "tls_handshake_ok"
+                                                                                                                                                                                                                                                                                                                                        |> schedOk(sc)(stepFn)(evaluateSession)
+                                                                                                                                                                                                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(failBlock)
+                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                            let failSession = schedWord(sc)(task)(offsetWaitData0)("tls_handshake_fail_session")
+                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                let failConnection = schedWord(sc)(failSession)(8)("tls_handshake_fail_connection")
+                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                    let detail =
+                                                                                                                                                                                                                                                                                                                                                        "tls_handshake_fail_status"
+                                                                                                                                                                                                                                                                                                                                                        |> schedLoad(sc)(statusSlot)
+                                                                                                                                                                                                                                                                                                                                                        |> emitTlsHandshakeErrorText(sc)(rt)(stepFn)(scanSlot)(answerSlot)(failConnection)
+                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                        let _ = emitTlsCleanupSession(sc)(rt)(failSession)("tls_handshake_fail_cleanup")
+                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                                "tls_handshake_failure"
+                                                                                                                                                                                                                                                                                                                                                                |> schedError(sc)(stepFn)(emitArenaPrefixed(sc)(stepFn)(scanSlot)(tlsHandshakeFailedPrefixCodes)(detail)("tls_handshake_fail_message"))
+                                                                                                                                                                                                                                                                                                                                                                |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(genericFailBlock)
+                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                    let _ = emitTlsCleanupSession(sc)(rt)(evaluateSession)("tls_handshake_generic_cleanup")
+                                                                                                                                                                                                                                                                                                                                                                    in schedFailLeaf(sc)(stepFn)(task)(tlsHandshakeFailedCodes)("tls_handshake_generic_failure"))
+
+// Stage 0's `ashes_step_tls_send_task`: writes what remains of the text (`WaitData0` counts what
+// was accepted) with `mbedtls_ssl_write`, completing with `Ok(length)` once all of it went and
+// nothing is left to flush, and parking while the connection wants its socket.
+let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let writeBlock = block("tls_send_write")
+        in
+            let finalizeBlock = block("tls_send_finalize")
+            in
+                let allSentBlock = block("tls_send_all_sent")
+                in
+                    let partialBlock = block("tls_send_partial")
+                    in
+                        let readCheckBlock = block("tls_send_read_check")
+                        in
+                            let pendingReadBlock = block("tls_send_pending_read")
+                            in
+                                let pendingWriteBlock = block("tls_send_pending_write")
+                                in
+                                    let completeBlock = block("tls_send_complete")
+                                    in
+                                        let failBlock = block("tls_send_fail")
+                                        in
+                                            let session = schedWord(sc)(task)(offsetIoArgument0)("tls_send_session")
+                                            in
+                                                let connection = schedWord(sc)(session)(8)("tls_send_connection")
+                                                in
+                                                    match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(schedWord(sc)(task)(offsetIoArgument1)("tls_send_text"))("tls_send_text") with
+                                                        | (total, bytes) ->
+                                                            let sent = schedWord(sc)(task)(offsetWaitData0)("tls_send_sent")
+                                                            in
+                                                                let _ =
+                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(sent)(total)("tls_send_already_done"))(finalizeBlock)(writeBlock)
+                                                                in
+                                                                    let _ = schedAt(sc)(writeBlock)
+                                                                    in
+                                                                        let status =
+                                                                            tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_write")([tlsPointer(sc)(connection)("tls_send_ssl"), tlsPointer(sc)(buildAdd(sc.schedBuilder)(bytes)(sent)("tls_send_cursor"))("tls_send_cursor_ptr"), buildSub(sc.schedBuilder)(total)(sent)("tls_send_remaining")])(3u32)("tls_send_status")
+                                                                        in
+                                                                            let _ = emitTlsSetWantFlags(sc)(connection)(status)("tls_send_flags")
+                                                                            in
+                                                                                let accepted =
+                                                                                    buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSgt)(status)(schedConst(sc)(0))("tls_send_wrote"))(status)(schedConst(sc)(0))("tls_send_accepted")
+                                                                                in
+                                                                                    let _ =
+                                                                                        "tls_send_next_sent"
+                                                                                        |> buildAdd(sc.schedBuilder)(sent)(accepted)
+                                                                                        |> schedStore(sc)(task)(offsetWaitData0)
+                                                                                    in
+                                                                                        let _ =
+                                                                                            schedIf(sc)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))("tls_send_ok"))(emitTlsIsWant(sc)(status)("tls_send_want"))("tls_send_progressing"))(finalizeBlock)(failBlock)
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(finalizeBlock)
+                                                                                            in
+                                                                                                let wantsWrite = emitTlsFlagSet(sc)(connection)(tlsConnectionWantWrite)("tls_send_wants_write")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(schedWord(sc)(task)(offsetWaitData0)("tls_send_sent_now"))(total)("tls_send_all_accepted"))(allSentBlock)(partialBlock)
+                                                                                                    in
+                                                                                                        let _ = schedAt(sc)(allSentBlock)
+                                                                                                        in
+                                                                                                            let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(completeBlock)
+                                                                                                            in
+                                                                                                                let _ = schedAt(sc)(partialBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(readCheckBlock)
+                                                                                                                    in
+                                                                                                                        let _ = schedAt(sc)(readCheckBlock)
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantRead)("tls_send_wants_read"))(pendingReadBlock)(failBlock)
+                                                                                                                            in
+                                                                                                                                let _ = schedAt(sc)(pendingReadBlock)
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        "tls_send_read_socket"
+                                                                                                                                        |> schedWord(sc)(session)(0)
+                                                                                                                                        |> schedPendLeaf(sc)(task)(TlsReadTaskWait)
+                                                                                                                                    in
+                                                                                                                                        let _ = schedAt(sc)(pendingWriteBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                "tls_send_write_socket"
+                                                                                                                                                |> schedWord(sc)(session)(0)
+                                                                                                                                                |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                                                                                                                            in
+                                                                                                                                                let _ = schedAt(sc)(completeBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        "tls_send_result"
+                                                                                                                                                        |> schedOk(sc)(stepFn)(total)
+                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedAt(sc)(failBlock)
+                                                                                                                                                        in schedFailLeaf(sc)(stepFn)(task)(tlsSendFailedCodes)("tls_send_failure"))
+
+// One `mbedtls_ssl_read` of up to `maxBytes` into the receive buffer: the byte count it read (0
+// when nothing is ready or the peer closed), and whether the read failed.
+let emitTlsReadPlaintext (sc: SchedulerContext) (rt: TlsRuntime) connection buffer maxBytes name =
+    (let status =
+        tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_read")([tlsPointer(sc)(connection)(name + "_ssl"), tlsPointer(sc)(buildAdd(sc.schedBuilder)(buffer)(schedConst(sc)(8))(name + "_bytes"))(name + "_bytes_ptr"), maxBytes])(3u32)(name)
+    in
+        let _ = emitTlsSetWantFlags(sc)(connection)(status)(name + "_flags")
+        in
+            let count =
+                buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSgt)(status)(schedConst(sc)(0))(name + "_positive"))(status)(schedConst(sc)(0))(name + "_count")
+            in
+                let quiet =
+                    buildOr(sc.schedBuilder)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))(name + "_ok"))(emitTlsIsWant(sc)(status)(name + "_want"))(name + "_ok_or_want"))(schedEq(sc)(status)(schedConst(sc)(mbedTlsPeerCloseNotify))(name + "_peer_closed"))(name + "_quiet")
+                in (status, count, quiet))
+
+// Stage 0's `ashes_step_tls_receive_task`: reads up to `maxBytes` of plaintext into a buffer kept in
+// `WaitData0`; when nothing came and the connection wants its socket it processes pending records
+// and reads again, then parks. Completes with `Ok(text)` when the bytes are UTF-8 (empty at the end
+// of the stream) and with the read's error otherwise.
+let emitStepTlsReceive (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+    in
+        let bufferBlock = block("tls_receive_buffer")
+        in
+            let createBlock = block("tls_receive_create_buffer")
+            in
+                let readBlock = block("tls_receive_read")
+                in
+                    let emptyBlock = block("tls_receive_nothing")
+                    in
+                        let processBlock = block("tls_receive_process")
+                        in
+                            let rereadBlock = block("tls_receive_reread")
+                            in
+                                let handleBlock = block("tls_receive_handle")
+                                in
+                                    let validateBlock = block("tls_receive_validate")
+                                    in
+                                        let finalizeBlock = block("tls_receive_finalize_empty")
+                                        in
+                                            let finalizeReadBlock = block("tls_receive_finalize_read")
+                                            in
+                                                let pendingReadBlock = block("tls_receive_pending_read")
+                                                in
+                                                    let pendingWriteBlock = block("tls_receive_pending_write")
+                                                    in
+                                                        let successBlock = block("tls_receive_success")
+                                                        in
+                                                            let invalidBlock = block("tls_receive_invalid_utf8")
+                                                            in
+                                                                let failBlock = block("tls_receive_fail")
+                                                                in
+                                                                    let detailBlock = block("tls_receive_fail_detail")
+                                                                    in
+                                                                        let genericBlock = block("tls_receive_fail_generic")
+                                                                        in
+                                                                            let scanSlot = schedSlot(sc)("tls_receive_scan")
+                                                                            in
+                                                                                let statusSlot = schedSlot(sc)("tls_receive_status")
+                                                                                in
+                                                                                    let countSlot = schedSlot(sc)("tls_receive_count")
+                                                                                    in
+                                                                                        let session = schedWord(sc)(task)(offsetIoArgument0)("tls_receive_session")
+                                                                                        in
+                                                                                            let connection = schedWord(sc)(session)(8)("tls_receive_connection")
+                                                                                            in
+                                                                                                let maxBytes = schedWord(sc)(task)(offsetIoArgument1)("tls_receive_max")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        0
+                                                                                                        |> schedConst(sc)
+                                                                                                        |> schedSet(sc)(statusSlot)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(maxBytes)(schedConst(sc)(0))("tls_receive_max_positive"))(bufferBlock)(failBlock)
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(bufferBlock)
+                                                                                                            in
+                                                                                                                let _ =
+                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData0)("tls_receive_existing"))(schedConst(sc)(0))("tls_receive_needs_buffer"))(createBlock)(readBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedAt(sc)(createBlock)
+                                                                                                                    in
+                                                                                                                        let buffer =
+                                                                                                                            emitArenaAllocDynamic(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(buildAnd(sc.schedBuilder)(buildAdd(sc.schedBuilder)(maxBytes)(schedConst(sc)(15))("tls_receive_size_plus"))(schedConst(sc)(-8))("tls_receive_size"))("tls_receive_new_buffer")
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                0
+                                                                                                                                |> schedConst(sc)
+                                                                                                                                |> schedStore(sc)(buffer)(0)
+                                                                                                                            in
+                                                                                                                                let _ = schedStore(sc)(task)(offsetWaitData0)(buffer)
+                                                                                                                                in
+                                                                                                                                    let _ = schedBr(sc)(readBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ = schedAt(sc)(readBlock)
+                                                                                                                                        in
+                                                                                                                                            let activeBuffer = schedWord(sc)(task)(offsetWaitData0)("tls_receive_active_buffer")
+                                                                                                                                            in
+                                                                                                                                                match emitTlsReadPlaintext(sc)(rt)(connection)(activeBuffer)(maxBytes)("tls_receive_first") with
+                                                                                                                                                    | (firstStatus, firstCount, firstQuiet) ->
+                                                                                                                                                        let firstOkBlock = block("tls_receive_first_ok")
+                                                                                                                                                        in
+                                                                                                                                                            let firstFailBlock = block("tls_receive_first_fail")
+                                                                                                                                                            in
+                                                                                                                                                                let _ = schedIf(sc)(firstQuiet)(firstOkBlock)(firstFailBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = schedAt(sc)(firstFailBlock)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedSet(sc)(statusSlot)(firstStatus)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = schedBr(sc)(failBlock)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = schedAt(sc)(firstOkBlock)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ = schedSet(sc)(countSlot)(firstCount)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(firstCount)(schedConst(sc)(0))("tls_receive_first_read"))(handleBlock)(emptyBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = schedAt(sc)(emptyBlock)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                    schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantRead)("tls_receive_wants_read"))(processBlock)(finalizeBlock)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = schedAt(sc)(processBlock)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let processed = tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_handshake")([tlsPointer(sc)(connection)("tls_receive_process_ssl")])(1u32)("tls_receive_process_status")
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = emitTlsSetWantFlags(sc)(connection)(processed)("tls_receive_process_flags")
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let processFailBlock = block("tls_receive_process_fail")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                        schedIf(sc)(buildOr(sc.schedBuilder)(schedEq(sc)(processed)(schedConst(sc)(0))("tls_receive_processed"))(emitTlsIsWant(sc)(processed)("tls_receive_process_want"))("tls_receive_process_ok"))(rereadBlock)(processFailBlock)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ = schedAt(sc)(processFailBlock)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ = schedSet(sc)(statusSlot)(processed)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ = schedBr(sc)(failBlock)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let _ = schedAt(sc)(rereadBlock)
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        match emitTlsReadPlaintext(sc)(rt)(connection)(activeBuffer)(maxBytes)("tls_receive_again") with
+                                                                                                                                                                                                                                            | (againStatus, againCount, againQuiet) ->
+                                                                                                                                                                                                                                                let againOkBlock = block("tls_receive_again_ok")
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let againFailBlock = block("tls_receive_again_fail")
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let _ = schedIf(sc)(againQuiet)(againOkBlock)(againFailBlock)
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let _ = schedAt(sc)(againFailBlock)
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let _ = schedSet(sc)(statusSlot)(againStatus)
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(failBlock)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(againOkBlock)
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ = schedSet(sc)(countSlot)(againCount)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(againCount)(schedConst(sc)(0))("tls_receive_again_read"))(handleBlock)(finalizeBlock)
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(handleBlock)
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let count = schedLoad(sc)(countSlot)("tls_receive_read_count")
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ = schedStore(sc)(activeBuffer)(0)(count)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedBr(sc)(validateBlock)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(validateBlock)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let valid =
+                                                                                                                                                                                                                                                                                                            emitValidateUtf8(sc.schedContext)(stepFn)(sc.schedI64)(sc.schedI8)(sc.schedBuilder)(tlsPointer(sc)(buildAdd(sc.schedBuilder)(activeBuffer)(schedConst(sc)(8))("tls_receive_bytes"))("tls_receive_bytes_ptr"))(count)("tls_receive_utf8")
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateNe)(valid)(schedConst(sc)(0))("tls_receive_valid"))(successBlock)(invalidBlock)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(finalizeBlock)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                        0
+                                                                                                                                                                                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                                        |> schedStore(sc)(activeBuffer)(0)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                            schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantWrite)("tls_receive_finalize_wants_write"))(pendingWriteBlock)(finalizeReadBlock)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(finalizeReadBlock)
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                    schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantRead)("tls_receive_finalize_wants_read"))(pendingReadBlock)(successBlock)
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(pendingReadBlock)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                                            "tls_receive_read_socket"
+                                                                                                                                                                                                                                                                                                                                            |> schedWord(sc)(session)(0)
+                                                                                                                                                                                                                                                                                                                                            |> schedPendLeaf(sc)(task)(TlsReadTaskWait)
+                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(pendingWriteBlock)
+                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                    "tls_receive_write_socket"
+                                                                                                                                                                                                                                                                                                                                                    |> schedWord(sc)(session)(0)
+                                                                                                                                                                                                                                                                                                                                                    |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(successBlock)
+                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                                                            "tls_receive_result"
+                                                                                                                                                                                                                                                                                                                                                            |> schedOk(sc)(stepFn)(schedWord(sc)(task)(offsetWaitData0)("tls_receive_result_buffer"))
+                                                                                                                                                                                                                                                                                                                                                            |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(invalidBlock)
+                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                let _ = schedFailLeaf(sc)(stepFn)(task)(tlsInvalidUtf8Codes)("tls_receive_invalid_failure")
+                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(failBlock)
+                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                        let failStatus = schedLoad(sc)(statusSlot)("tls_receive_fail_status")
+                                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(failStatus)(schedConst(sc)(0))("tls_receive_no_detail"))(genericBlock)(detailBlock)
+                                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(detailBlock)
+                                                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                                                                                        "tls_receive_detail_failure"
+                                                                                                                                                                                                                                                                                                                                                                                        |> schedError(sc)(stepFn)(emitArenaPrefixed(sc)(stepFn)(scanSlot)(tlsReceiveFailedPrefixCodes)(emitTlsErrorText(sc)(rt)(stepFn)(scanSlot)(failStatus)("tls_receive_error"))("tls_receive_detail_message"))
+                                                                                                                                                                                                                                                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(genericBlock)
+                                                                                                                                                                                                                                                                                                                                                                                        in schedFailLeaf(sc)(stepFn)(task)(tlsReceiveFailedCodes)("tls_receive_generic_failure"))
+
+// Stage 0's `ashes_step_tls_close_task`: sends the close notification (again while it wants the
+// socket writable, parking then), then frees the session and closes the socket, completing with
+// `Ok(Unit)`.
+let emitStepTlsClose (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
+    (let pendingBlock = appendBasicBlock(sc.schedContext)(stepFn)("tls_close_pending_write")
+    in
+        let cleanupBlock = appendBasicBlock(sc.schedContext)(stepFn)("tls_close_cleanup")
+        in
+            let session = schedWord(sc)(task)(offsetIoArgument0)("tls_close_session")
+            in
+                let connection = schedWord(sc)(session)(8)("tls_close_connection")
+                in
+                    let status = tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_close_notify")([tlsPointer(sc)(connection)("tls_close_ssl")])(1u32)("tls_close_notify")
+                    in
+                        let _ = emitTlsSetWantFlags(sc)(connection)(status)("tls_close_flags")
+                        in
+                            let _ =
+                                schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantWrite)("tls_close_wants_write"))(pendingBlock)(cleanupBlock)
+                            in
+                                let _ = schedAt(sc)(pendingBlock)
+                                in
+                                    let _ =
+                                        "tls_close_socket"
+                                        |> schedWord(sc)(session)(0)
+                                        |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                    in
+                                        let _ = schedAt(sc)(cleanupBlock)
+                                        in
+                                            let _ = emitTlsCleanupSession(sc)(rt)(session)("tls_close_cleanup")
+                                            in
+                                                let unitValue = emitArenaAllocAdt(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(0)(0)(false)("tls_close_unit")
+                                                in
+                                                    "tls_close_result"
+                                                    |> schedOk(sc)(stepFn)(unitValue)
+                                                    |> schedCompleteLeaf(sc)(task))
+
+// Stage 0's `ashes_step_tls_connect_task`: a TCP connect child for the host (`IoArg0`) and port
+// (`IoArg1`), then, with the socket in `WaitData0` and the stage in `WaitData1`, a client handshake
+// child for the same host, completing with the handshake's result. A failed connect completes
+// with the connect's failure.
+let emitStepTlsConnect (sc: SchedulerContext) (connectStep: (LLVMValueRef, LLVMTypeRef)) (handshakeStep: (LLVMValueRef, LLVMTypeRef)) stepFn task =
+    (let connectBlock = appendBasicBlock(sc.schedContext)(stepFn)("tls_connect_tcp_stage")
+    in
+        let handshakeBlock = appendBasicBlock(sc.schedContext)(stepFn)("tls_connect_handshake_stage")
+        in
+            let _ =
+                schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData1)("tls_connect_stage"))(schedConst(sc)(1))("tls_connect_handshaking"))(handshakeBlock)(connectBlock)
+            in
+                match (connectStep, handshakeStep) with
+                    | ((connectFn, connectType), (handshakeFn, handshakeType)) ->
+                        match emitHttpStageEntry(sc)(stepFn)(task)(connectBlock)("tls_connect_tcp") with
+                            | (createBlock, stepBlock) ->
+                                let _ = schedAt(sc)(createBlock)
+                                in
+                                    let child =
+                                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpConnectTaskState)(schedWord(sc)(task)(offsetIoArgument0)("tls_connect_host"))(schedWord(sc)(task)(offsetIoArgument1)("tls_connect_port"))(schedConst(sc)(0))("tls_connect_tcp_task")
+                                    in
+                                        let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                                        in
+                                            let _ = schedBr(sc)(stepBlock)
+                                            in
+                                                let _ = schedAt(sc)(stepBlock)
+                                                in
+                                                    match emitHttpChildStep(sc)(stepFn)(task)(connectFn)(connectType)("tls_connect_tcp_child") with
+                                                        | (result, failedBlock, succeededBlock) ->
+                                                            let _ = schedAt(sc)(failedBlock)
+                                                            in
+                                                                let _ = schedCompleteLeaf(sc)(task)(result)
+                                                                in
+                                                                    let _ = schedAt(sc)(succeededBlock)
+                                                                    in
+                                                                        let _ =
+                                                                            "tls_connect_socket"
+                                                                            |> schedWord(sc)(result)(8)
+                                                                            |> schedStore(sc)(task)(offsetWaitData0)
+                                                                        in
+                                                                            let _ =
+                                                                                1
+                                                                                |> schedConst(sc)
+                                                                                |> schedStore(sc)(task)(offsetWaitData1)
+                                                                            in
+                                                                                let _ = schedBr(sc)(handshakeBlock)
+                                                                                in
+                                                                                    match emitHttpStageEntry(sc)(stepFn)(task)(handshakeBlock)("tls_connect_handshake") with
+                                                                                        | (handshakeCreateBlock, handshakeStepBlock) ->
+                                                                                            let _ = schedAt(sc)(handshakeCreateBlock)
+                                                                                            in
+                                                                                                let handshake =
+                                                                                                    emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TlsHandshakeTaskState)(schedWord(sc)(task)(offsetWaitData0)("tls_connect_handshake_socket"))(schedWord(sc)(task)(offsetIoArgument0)("tls_connect_handshake_host"))(schedConst(sc)(0))("tls_connect_handshake_task")
+                                                                                                in
+                                                                                                    let _ = schedStore(sc)(task)(offsetAwaitedTask)(handshake)
+                                                                                                    in
+                                                                                                        let _ = schedBr(sc)(handshakeStepBlock)
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(handshakeStepBlock)
+                                                                                                            in
+                                                                                                                match emitHttpChildStep(sc)(stepFn)(task)(handshakeFn)(handshakeType)("tls_connect_handshake_child") with
+                                                                                                                    | (handshakeResult, handshakeFailedBlock, handshakeSucceededBlock) ->
+                                                                                                                        let _ = schedAt(sc)(handshakeFailedBlock)
+                                                                                                                        in
+                                                                                                                            let _ = schedCompleteLeaf(sc)(task)(handshakeResult)
+                                                                                                                            in
+                                                                                                                                let _ = schedAt(sc)(handshakeSucceededBlock)
+                                                                                                                                in schedCompleteLeaf(sc)(task)(handshakeResult))
 
 // Stage 0's `EmitStepComposite` for `all` and `race`. The first step schedules every child with the
 // composite as its waiter and counts them (`all` waits for that many completions, `race` for one);
@@ -4018,7 +5289,50 @@ let defineSchedulerRun module_ (sc: SchedulerContext) (fns: SchedulerFunctions) 
                                                                                                             in TaskRuntime(runTaskFn = runFn, runTaskType = runType, spawnEnqueueFn = sc.enqueueFn, spawnEnqueueType = sc.enqueueType, forkScopedFn = fns.forkScopedFn, forkScopedType = fns.forkScopedType))
 
 // The scheduler and its helpers, defined once per module that has a coroutine.
-let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType =
+// The TLS leaf steps of a program that reaches TLS or HTTPS, by state code, and the TLS half of
+// its HTTP leaves. The server handshake is not ported, so a TLS server stops the program.
+let defineTlsLeafSteps module_ (sc: SchedulerContext) connectStep =
+    (let rt = defineTlsRuntime(module_)(sc)
+    in
+        match (rt
+        |> emitStepTlsHandshake(sc)
+        |> defineLeafStep(module_)(sc)("__ashes_step_tls_handshake"), rt
+        |> emitStepTlsSend(sc)
+        |> defineLeafStep(module_)(sc)("__ashes_step_tls_send"), rt
+        |> emitStepTlsReceive(sc)
+        |> defineLeafStep(module_)(sc)("__ashes_step_tls_receive"), rt
+        |> emitStepTlsClose(sc)
+        |> defineLeafStep(module_)(sc)("__ashes_step_tls_close")) with
+            | ((handshakeFn, handshakeType), (sendFn, sendType), (receiveFn, receiveType), (closeFn, closeType)) ->
+                match (handshakeFn, handshakeType)
+                |> emitStepTlsConnect(sc)(connectStep)
+                |> defineLeafStep(module_)(sc)("__ashes_step_tls_connect") with
+                    | (connectFn, connectType) ->
+                        let steps =
+                            [
+                                (taskStateCode(TlsConnectTaskState), connectFn, connectType),
+                                (taskStateCode(TlsHandshakeTaskState), handshakeFn, handshakeType),
+                                (taskStateCode(TlsSendTaskState), sendFn, sendType),
+                                (taskStateCode(TlsReceiveTaskState), receiveFn, receiveType),
+                                (taskStateCode(TlsCloseTaskState), closeFn, closeType)
+                            ]
+                        in
+                            let transport =
+                                HttpTransport(
+                                    transportBits = 8,
+                                    transportSendKind = TlsSendTaskState,
+                                    transportSendFn = sendFn,
+                                    transportSendType = sendType,
+                                    transportReceiveKind = TlsReceiveTaskState,
+                                    transportReceiveFn = receiveFn,
+                                    transportReceiveType = receiveType,
+                                    transportCloseKind = TlsCloseTaskState,
+                                    transportCloseFn = closeFn,
+                                    transportCloseType = closeType
+                                )
+                            in (steps, Some(HttpTlsSteps(httpHandshakeFn = handshakeFn, httpHandshakeType = handshakeType, httpTlsTransport = transport))))
+
+let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (usesTls: Bool) closureFnType =
     (let globals =
         SchedulerGlobals(
             readyQueueHead = addZeroWordGlobal(module_)(i64)("__ashes_ready_head"),
@@ -4057,59 +5371,70 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                                             |> emitStepTcpClose
                                             |> defineLeafStep(module_)(sc)("__ashes_step_tcp_close")) with
                                                 | ((stepTcpSendFn, stepTcpSendType), (stepTcpReceiveFn, stepTcpReceiveType), (stepTcpCloseFn, stepTcpCloseType)) ->
-                                                    let httpChildren =
-                                                        HttpChildSteps(
-                                                            connectStepFn = stepTcpConnectFn,
-                                                            connectStepType = stepTcpConnectType,
-                                                            sendStepFn = stepTcpSendFn,
-                                                            sendStepType = stepTcpSendType,
-                                                            receiveStepFn = stepTcpReceiveFn,
-                                                            receiveStepType = stepTcpReceiveType,
-                                                            closeStepFn = stepTcpCloseFn,
-                                                            closeStepType = stepTcpCloseType
-                                                        )
-                                                    in
-                                                        let leafStep =
-                                                            given (kind: TaskStateKind) ->
-                                                                given (step: (LLVMValueRef, LLVMTypeRef)) ->
-                                                                    match step with
-                                                                        | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
-                                                        in
-                                                            let socketLeafSteps =
-                                                                [
-                                                                    leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
-                                                                    false
-                                                                    |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_get")
-                                                                    |> leafStep(HttpGetTaskState),
-                                                                    true
-                                                                    |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_post")
-                                                                    |> leafStep(HttpPostTaskState),
-                                                                    leafStep(TcpSendTaskState)((stepTcpSendFn, stepTcpSendType)),
-                                                                    leafStep(TcpReceiveTaskState)((stepTcpReceiveFn, stepTcpReceiveType)),
-                                                                    leafStep(TcpCloseTaskState)((stepTcpCloseFn, stepTcpCloseType)),
-                                                                    sc
-                                                                    |> emitStepTcpListen
-                                                                    |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
-                                                                    |> leafStep(TcpListenTaskState),
-                                                                    sc
-                                                                    |> emitStepTcpAccept
-                                                                    |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
-                                                                    |> leafStep(TcpAcceptTaskState)
-                                                                ]
+                                                    match if usesTls
+                                                    then defineTlsLeafSteps(module_)(sc)((stepTcpConnectFn, stepTcpConnectType))
+                                                    else ([], None) with
+                                                        | (tlsLeafSteps, tlsHttp) ->
+                                                            let httpChildren =
+                                                                HttpChildSteps(
+                                                                    connectStepFn = stepTcpConnectFn,
+                                                                    connectStepType = stepTcpConnectType,
+                                                                    plainTransport = HttpTransport(
+                                                                        transportBits = 0,
+                                                                        transportSendKind = TcpSendTaskState,
+                                                                        transportSendFn = stepTcpSendFn,
+                                                                        transportSendType = stepTcpSendType,
+                                                                        transportReceiveKind = TcpReceiveTaskState,
+                                                                        transportReceiveFn = stepTcpReceiveFn,
+                                                                        transportReceiveType = stepTcpReceiveType,
+                                                                        transportCloseKind = TcpCloseTaskState,
+                                                                        transportCloseFn = stepTcpCloseFn,
+                                                                        transportCloseType = stepTcpCloseType
+                                                                    ),
+                                                                    tlsSteps = tlsHttp
+                                                                )
                                                             in
-                                                                closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
-                                                                    stepCompositeFn = stepCompositeFn,
-                                                                    stepCompositeType = stepCompositeType,
-                                                                    waitParkedFn = waitParkedFn,
-                                                                    waitParkedType = waitParkedType,
-                                                                    cancelFn = cancelFn,
-                                                                    cancelType = cancelType,
-                                                                    dequeueFn = dequeueFn,
-                                                                    dequeueType = dequeueType,
-                                                                    forkScopedFn = forkScopedFn,
-                                                                    forkScopedType = forkScopedType,
-                                                                    socketLeafSteps = socketLeafSteps
-                                                                )))
+                                                                let leafStep =
+                                                                    given (kind: TaskStateKind) ->
+                                                                        given (step: (LLVMValueRef, LLVMTypeRef)) ->
+                                                                            match step with
+                                                                                | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
+                                                                in
+                                                                    let socketLeafSteps =
+                                                                        Ashes.Collection.List.append([
+                                                                            leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
+                                                                            false
+                                                                            |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_get")
+                                                                            |> leafStep(HttpGetTaskState),
+                                                                            true
+                                                                            |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_post")
+                                                                            |> leafStep(HttpPostTaskState),
+                                                                            leafStep(TcpSendTaskState)((stepTcpSendFn, stepTcpSendType)),
+                                                                            leafStep(TcpReceiveTaskState)((stepTcpReceiveFn, stepTcpReceiveType)),
+                                                                            leafStep(TcpCloseTaskState)((stepTcpCloseFn, stepTcpCloseType)),
+                                                                            sc
+                                                                            |> emitStepTcpListen
+                                                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
+                                                                            |> leafStep(TcpListenTaskState),
+                                                                            sc
+                                                                            |> emitStepTcpAccept
+                                                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
+                                                                            |> leafStep(TcpAcceptTaskState)
+                                                                        ])(tlsLeafSteps)
+                                                                    in
+                                                                        closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
+                                                                            stepCompositeFn = stepCompositeFn,
+                                                                            stepCompositeType = stepCompositeType,
+                                                                            waitParkedFn = waitParkedFn,
+                                                                            waitParkedType = waitParkedType,
+                                                                            cancelFn = cancelFn,
+                                                                            cancelType = cancelType,
+                                                                            dequeueFn = dequeueFn,
+                                                                            dequeueType = dequeueType,
+                                                                            forkScopedFn = forkScopedFn,
+                                                                            forkScopedType = forkScopedType,
+                                                                            socketLeafSteps = socketLeafSteps
+                                                                        )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
 // to the start of a fresh 4 MiB chunk that becomes its private arena, the copy is its own arena

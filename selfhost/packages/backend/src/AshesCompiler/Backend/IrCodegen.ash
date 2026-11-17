@@ -1014,7 +1014,13 @@ let codegenInstructionKind cx builder kind state =
                                                             in (tempEnv, terminated)
                                                         else
                                                             if typeName == "TlsSocket"
-                                                            then (tempEnv, terminated)
+                                                            then
+                                                                let _ =
+                                                                    match taskRuntime with
+                                                                        | Some(runtime) ->
+                                                                            emitRunTask(builder)(runtime)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(sourceTemp)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("tls_cleanup_task"))("tls_cleanup")
+                                                                        | None -> constInt(i64)(0u64)(false)
+                                                                in (tempEnv, terminated)
                                                             else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
                         // `CopyOutArena`/`CopyOutList` move a value that lives above a scope's
                         // restored watermark to storage that survives the reset — an RC cell or an
@@ -2383,7 +2389,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                 moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
                                                                                 then
                                                                                     closureFnType
-                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
+                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))
                                                                                     |> Some
                                                                                 else None,
                                                                                 moduleBuilder = builder
