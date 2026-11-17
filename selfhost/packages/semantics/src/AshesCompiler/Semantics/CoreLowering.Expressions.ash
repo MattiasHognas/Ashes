@@ -2468,6 +2468,10 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
             then true
             else performsProvidedParameterizedCapability(value)(rest)
 
+// Stage 0's `_parallelSpecializable`: the grained data-parallel combinators, copied at each
+// concrete call site so the `both` splits in the copy see a concrete result type and fork.
+let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
+
 let registerConcreteSource name value isRecursive state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
@@ -2478,7 +2482,7 @@ let registerConcreteSource name value isRecursive state =
                 in
                     let registry = stateConcreteRegistry(state)
                     in
-                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state))
+                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
                         then
                             match lambdaParameterChain(value)([]) with
                                 | (parameters, _body) ->
