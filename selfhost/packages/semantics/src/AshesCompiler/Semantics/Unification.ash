@@ -237,11 +237,17 @@ and unifyWith (flat: Bool) substitution left right =
                             rightElement
                         )
                     | (SemTuple(leftElements), SemTuple(rightElements)) ->
-                        unifyTypeLists(flat)(
-                            leftElements,
-                            rightElements,
-                            substitution
-                        )
+                        if typeListLength(leftElements) == typeListLength(rightElements)
+                        then
+                            unifyTypeLists(flat)(
+                                leftElements,
+                                rightElements,
+                                substitution
+                            )
+                        else
+                            resolvedRight
+                            |> TypeMismatch(resolvedLeft)
+                            |> unificationFailure(substitution)
                     | (SemFunction(leftArgument, leftResult, leftRow), SemFunction(rightArgument, rightResult, rightRow)) ->
                         match unifyWith(flat)(substitution)(leftArgument)(rightArgument) with
                             | UnificationResult { substitution = afterArgument, error = None } ->
