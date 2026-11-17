@@ -676,7 +676,7 @@ let codegenInstructionKind cx builder kind state =
                         // `IrOptimizer.ash`'s `foldConcatStrChains` runs as the very last pass over
                         // the whole program and rewrites every `ConcatStr` it can safely fold into
                         // a `ConcatStrN` (declined only when an arena/stack bracket, a label, or a
-                        // branch sits between the chain's parts — `chainRangeIsSafe`), so real
+                        // branch sits between the chain's parts — `chainRangeReleases`), so real
                         // source reaching this codegen almost always presents as `ConcatStrN`, not
                         // a bare two-operand `ConcatStr` — this case exists for robustness against
                         // whatever the fold declines, sharing the exact same N-ary helper with a

@@ -3269,12 +3269,35 @@ let recursive collectConcatChain singleDefs useCounts (left: IrTemp) (managed: B
             else (left :: rights, absorbed)
         | _ -> (left :: rights, absorbed)
 
-// Scans from the first instruction that defines the innermost part or the innermost link through
-// the instruction that defines the root.
-let recursive chainRangeIsSafe instructions (innermostPart: IrTemp) (innermostLink: IrTemp) (rootTarget: IrTemp) scanning =
+let isRcDropInstruction inst =
+    match inst with
+        | RcDrop(_, _, _, _, _, _) -> true
+        | _ -> false
+
+// A release that yields a value or closes a resource is never moved past a fold.
+let isUnsinkableRelease inst =
+    match inst with
+        | DropReuse(_, _, _, _) -> true
+        | CleanupResource(_, _, _) -> true
+        | _ -> false
+
+// What one chain's range holds: the positions of its RcDrop instructions and the instructions
+// themselves, both in their original order.
+type ConcatChainReleases =
+    | releasePositions: List(Int)
+    | releaseInstructions: List(IrInstruction)
+
+// Scans from the first instruction that defines the innermost part or the innermost link up to
+// the root link. A bracket, label or branch in that range declines the fold, as does a release
+// that yields a value or closes a resource. Otherwise the result is the range's RcDrop
+// instructions: the lifetime placement releases an owned part right after the link that last
+// reads it, and the fold reads every part at the root, so each such release moves to just after
+// the folded instruction, in its original order (left in place it would free the part before the
+// fold reads it).
+let recursive chainRangeReleases instructions (innermostPart: IrTemp) (innermostLink: IrTemp) (rootTarget: IrTemp) scanning (position: Int) (positions: List(Int)) (releases: List(IrInstruction)) =
     match instructions with
-        | [] -> true
-        | IrInstruction { instruction = inst } :: tail ->
+        | [] -> Some(ConcatChainReleases(releasePositions = reverse(positions), releaseInstructions = reverse(releases)))
+        | (IrInstruction { instruction = inst } as irInst) :: tail ->
             let defined = getDefinedTemps(inst)
             in
                 let nowScanning =
@@ -3288,45 +3311,82 @@ let recursive chainRangeIsSafe instructions (innermostPart: IrTemp) (innermostLi
                     if nowScanning
                     then
                         if isArenaOrControlFlowInstruction(inst)
-                        then false
+                        then None
                         else
                             if intListContains(rootTarget)(defined)
-                            then true
-                            else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(true)
-                    else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(false)
+                            then Some(ConcatChainReleases(releasePositions = reverse(positions), releaseInstructions = reverse(releases)))
+                            else
+                                if isUnsinkableRelease(inst)
+                                then None
+                                else
+                                    if isRcDropInstruction(inst)
+                                    then chainRangeReleases(tail)(innermostPart)(innermostLink)(rootTarget)(true)(position + 1)(position :: positions)(irInst :: releases)
+                                    else chainRangeReleases(tail)(innermostPart)(innermostLink)(rootTarget)(true)(position + 1)(positions)(releases)
+                    else chainRangeReleases(tail)(innermostPart)(innermostLink)(rootTarget)(false)(position + 1)(positions)(releases)
+
+// Every fold of a body: the ConcatStrN that replaces each root (by root target), the absorbed
+// inner links, the releases that follow each root's fold (by root target), and the positions
+// those releases leave.
+type ConcatFoldPlan =
+    | foldsByRoot: MapTree(Int, IrInstructionKind)
+    | absorbedLinks: MapTree(Int, Bool)
+    | releasesAfterRoot: MapTree(Int, List(IrInstruction))
+    | sunkPositions: MapTree(Int, Bool)
+
+let emptyConcatFoldPlan = ConcatFoldPlan(foldsByRoot = Ashes.Collection.Map.empty, absorbedLinks = Ashes.Collection.Map.empty, releasesAfterRoot = Ashes.Collection.Map.empty, sunkPositions = Ashes.Collection.Map.empty)
+
+let addConcatFold (target: IrTemp) (folded: IrInstructionKind) (absorbed: List(Int)) (releases: ConcatChainReleases) (plan: ConcatFoldPlan) =
+    match (plan, releases) with
+        | (ConcatFoldPlan { foldsByRoot = folds, absorbedLinks = links, releasesAfterRoot = after, sunkPositions = sunk }, ConcatChainReleases { releasePositions = positions, releaseInstructions = instructions }) -> ConcatFoldPlan(foldsByRoot = intSet(target)(folded)(folds), absorbedLinks = addAllToSet(absorbed)(links), releasesAfterRoot = intSet(target)(instructions)(after), sunkPositions = addAllToSet(positions)(sunk))
 
 // Each fold, by root target, as the ConcatStrN that replaces the root; a chain needs at least one inner link.
-let recursive collectConcatFolds allInsts instructions singleDefs useCounts consumedLefts folds absorbedAll =
+let recursive collectConcatFolds allInsts instructions singleDefs useCounts consumedLefts (plan: ConcatFoldPlan) =
     match instructions with
-        | [] -> (folds, absorbedAll)
+        | [] -> plan
         | IrInstruction { instruction = ConcatStr(target, left, right, managed) } :: tail ->
             if intHas(target)(consumedLefts)
-            then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+            then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(plan)
             else
                 match collectConcatChain(singleDefs)(useCounts)(left)(managed)([right])([]) with
                     | (parts, absorbed) ->
                         match (parts, absorbed) with
                             | (innermostPart :: _, innermostLink :: _) ->
-                                if chainRangeIsSafe(allInsts)(innermostPart)(innermostLink)(target)(false)
-                                then
-                                    absorbedAll
-                                    |> addAllToSet(absorbed)
-                                    |> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(intSet(target)(ConcatStrN(target)(parts)(managed))(folds))
-                                else collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
-                            | _ -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
-        | _ :: tail -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+                                match chainRangeReleases(allInsts)(innermostPart)(innermostLink)(target)(false)(0)([])([]) with
+                                    | Some(releases) ->
+                                        plan
+                                        |> addConcatFold(target)(ConcatStrN(target)(parts)(managed))(absorbed)(releases)
+                                        |> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)
+                                    | None -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(plan)
+                            | _ -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(plan)
+        | _ :: tail -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(plan)
 
-let recursive rewriteConcatFolds instructions (folds: MapTree(Int, IrInstructionKind)) absorbed acc =
+let recursive prependReversed (items: List(IrInstruction)) (acc: List(IrInstruction)) =
+    match items with
+        | [] -> acc
+        | item :: rest -> prependReversed(rest)(item :: acc)
+
+let recursive rewriteConcatFolds instructions (plan: ConcatFoldPlan) (position: Int) acc =
     match instructions with
         | [] -> reverse(acc)
         | (IrInstruction { instruction = ConcatStr(target, _, _, _), location = loc } as irInst) :: tail ->
-            if intHas(target)(absorbed)
-            then rewriteConcatFolds(tail)(folds)(absorbed)(acc)
+            if intHas(target)(plan.absorbedLinks)
+            then rewriteConcatFolds(tail)(plan)(position + 1)(acc)
             else
-                match intGet(target)(folds) with
-                    | Some(folded) -> rewriteConcatFolds(tail)(folds)(absorbed)(IrInstruction(instruction = folded, location = loc) :: acc)
-                    | None -> rewriteConcatFolds(tail)(folds)(absorbed)(irInst :: acc)
-        | head :: tail -> rewriteConcatFolds(tail)(folds)(absorbed)(head :: acc)
+                match intGet(target)(plan.foldsByRoot) with
+                    | Some(folded) ->
+                        let releases =
+                            match intGet(target)(plan.releasesAfterRoot) with
+                                | Some(found) -> found
+                                | None -> []
+                        in
+                            IrInstruction(instruction = folded, location = loc) :: acc
+                            |> prependReversed(releases)
+                            |> rewriteConcatFolds(tail)(plan)(position + 1)
+                    | None -> rewriteConcatFolds(tail)(plan)(position + 1)(irInst :: acc)
+        | head :: tail ->
+            if intHas(position)(plan.sunkPositions)
+            then rewriteConcatFolds(tail)(plan)(position + 1)(acc)
+            else rewriteConcatFolds(tail)(plan)(position + 1)(head :: acc)
 
 let recursive collectConcatLefts instructions acc =
     match instructions with
@@ -3360,11 +3420,11 @@ let foldConcatStrChains (fn: IrFunction) =
         in
             let consumedLefts = consumedAsConcatLeft(fn.instructions)(useCounts)(Ashes.Collection.Map.empty)
             in
-                match collectConcatFolds(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(consumedLefts)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
-                    | (folds, absorbed) ->
+                match collectConcatFolds(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(consumedLefts)(emptyConcatFoldPlan) with
+                    | ConcatFoldPlan { foldsByRoot = folds } as plan ->
                         if Ashes.Collection.Map.isEmpty(folds)
                         then fn
-                        else fn with instructions = rewriteConcatFolds(fn.instructions)(folds)(absorbed)([]))
+                        else fn with instructions = rewriteConcatFolds(fn.instructions)(plan)(0)([]))
 
 let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgram) =
     (let programAfterCtEval =
