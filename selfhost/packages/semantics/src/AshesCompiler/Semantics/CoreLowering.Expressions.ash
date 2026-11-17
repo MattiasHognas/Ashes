@@ -62,6 +62,7 @@ import AshesCompiler.Semantics.CoreLowering.Records
 import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Handlers
 import AshesCompiler.Semantics.CoreLowering.TailCalls
+import AshesCompiler.Semantics.CoreLowering.ResultHandOver.arenaDeepCopySupported
 import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
 import AshesCompiler.Semantics.PerceusLifetimePlacement.placeFunctionLifetimes
 import AshesCompiler.Semantics.StateMachineTransform.transformStateMachine
@@ -2123,25 +2124,120 @@ let lowerNonAsyncCallExpression expression function argument lower state =
 
 let unitArgument (function: Expr) = ExprCall(function)(ExprVar("Unit"))(false)(callArgumentsInline)
 
-// `Ashes.Task.Parallel.both(left)(right)` and `withWorkers(count)(action)` as the sequential
-// evaluation stage 0 falls back to: both thunks applied in order and paired, and the action applied
-// once the count is checked positive. No worker thread runs them, so a result is the same and only
-// the parallelism is missing.
-let parallelCallRewrite expression =
+let plainLet (name: Str) (value: Expr) (body: Expr) = ExprLet(name)(value)(body)([])(None)([])
+
+let recursive callWith (function: Expr) (arguments: List(Expr)) =
+    match arguments with
+        | [] -> function
+        | argument :: rest ->
+            callWith(ExprCall(function)(argument)(false)(callArgumentsInline))(rest)
+
+let internalCall (memberName: Str) (arguments: List(Expr)) =
+    callWith(ExprQualifiedVar("Ashes.Internal")(memberName))(arguments)
+
+let parallelLeftName = "__parallel_left"
+
+let parallelRightName = "__parallel_right"
+
+let parallelDescName = "__parallel_desc"
+
+// Stage 0's `CanRunRightOnWorker`: a result a worker can hand back to the parent, one with no
+// pointer into the worker's arena once it is deep-copied: a scalar, a string or bytes, a list of
+// scalars, strings or scalar lists, a tuple of such values, or a non-resource type with an arena
+// deep copy.
+let recursive canRunRightOnWorker (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemRune -> true
+        | SemBool -> true
+        | SemString -> true
+        | SemBytes -> true
+        | SemList(element) ->
+            match resolveType(state)(element) with
+                | SemString -> true
+                | SemList(inner) -> resultSurvivesReset(inner)(state)
+                | resolvedElement -> resultSurvivesReset(resolvedElement)(state)
+        | SemTuple(elements) -> allRunRightOnWorker(elements)(state)
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            !isResourceTypeName(name) && arenaDeepCopySupported(heapFactsOf(named)(state))
+        | _ -> false
+and allRunRightOnWorker (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest -> canRunRightOnWorker(element)(state) && allRunRightOnWorker(rest)(state)
+
+// The result type of the thunk a local binding holds, once it is known.
+let thunkResultType (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = bindingType } }) ->
+            match resolveType(state)(bindingType) with
+                | SemFunction(_parameter, result, _row) -> Some(result)
+                | _ -> None
+        | None -> None
+
+// Stage 0's `LowerParallelBoth` once both thunks are bound: at a result type a worker can hand
+// back, the right thunk is forked onto a worker while the left one runs here, then joined, its
+// result deep-copied into this arena and the worker released, the pair built from the two
+// results; at any other type (an abstract one included) both run here in order.
+let parallelBothBound (state: CoreLoweringState) =
+    (let left = ExprVar(parallelLeftName)
+    in
+        let right = ExprVar(parallelRightName)
+        in
+            match thunkResultType(parallelRightName)(state) with
+                | Some(resultType) ->
+                    if canRunRightOnWorker(resultType)(state)
+                    then
+                        ExprTuple([ExprVar("__parallel_a"), ExprVar("__parallel_b")])
+                        |> plainLet("_")(internalCall("parallelCleanup")([ExprVar(parallelDescName), right]))
+                        |> plainLet("__parallel_b")(internalCall("deepCopy")([internalCall("parallelJoin")([ExprVar(parallelDescName), right])]))
+                        |> plainLet("__parallel_a")(unitArgument(left))
+                        |> plainLet(parallelDescName)(internalCall("parallelFork")([right]))
+                    else ExprTuple([unitArgument(left), unitArgument(right)])
+                | None -> ExprTuple([unitArgument(left), unitArgument(right)]))
+
+// `Ashes.Task.Parallel.both(left)(right)` binds its two thunks in order and continues with the
+// bound form above; `withWorkers(count)(action)` checks the count, installs it as the worker
+// override for the action and restores the enclosing override after it, stage 0's
+// `LowerParallelWithWorkers`.
+let parallelCallRewrite expression (state: CoreLoweringState) =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName), arguments = first :: second :: [] } ->
             if moduleName == "Ashes.Task.Parallel"
             then
                 if memberName == "both"
-                then Some(ExprTuple([unitArgument(first), unitArgument(second)]))
+                then
+                    [ExprVar(parallelLeftName), ExprVar(parallelRightName)]
+                    |> callWith(ExprQualifiedVar("Ashes.Task.Parallel")("__bothBound"))
+                    |> plainLet(parallelRightName)(second)
+                    |> plainLet(parallelLeftName)(first)
+                    |> Some
                 else
-                    if memberName == "withWorkers"
+                    if memberName == "__bothBound"
                     then
-                        callArgumentsInline
-                        |> ExprCall(ExprQualifiedVar("Ashes.IO")("panic"))(ExprString("Ashes.Task.Parallel.withWorkers: worker count must be positive."))(false)
-                        |> ExprIf(ExprGreaterThan(first)(ExprInt(0)))(unitArgument(second))
+                        state
+                        |> parallelBothBound
                         |> Some
-                    else None
+                    else
+                        if memberName == "withWorkers"
+                        then
+                            let count = ExprVar("__parallel_count")
+                            in
+                                let scoped =
+                                    ExprVar("__parallel_result")
+                                    |> plainLet("_")(internalCall("setParallelOverride")([ExprVar("__parallel_saved")]))
+                                    |> plainLet("__parallel_result")(unitArgument(second))
+                                    |> plainLet("_")(internalCall("setParallelOverride")([count]))
+                                    |> plainLet("__parallel_saved")(internalCall("parallelOverride")([ExprVar("Unit")]))
+                                in
+                                    callArgumentsInline
+                                    |> ExprCall(ExprQualifiedVar("Ashes.IO")("panic"))(ExprString("Ashes.Task.Parallel.withWorkers: worker count must be positive."))(false)
+                                    |> ExprIf(ExprGreaterThan(count)(ExprInt(0)))(scoped)
+                                    |> plainLet("__parallel_count")(first)
+                                    |> Some
+                        else None
             else None
         | _ -> None
 
@@ -2182,7 +2278,7 @@ let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
         | None ->
-            match parallelCallRewrite(expression) with
+            match parallelCallRewrite(expression)(state) with
                 | None ->
                     if forksOutsideAsync(expression)(state)
                     then failure(state)(UnsupportedCoreBuiltinLowering("Ashes.Task.fork() must be used inside an async task."))
