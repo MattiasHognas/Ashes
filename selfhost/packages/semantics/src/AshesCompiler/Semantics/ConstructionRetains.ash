@@ -15,6 +15,7 @@ export (
     value constructionWordSource,
     value countTempUses,
     value isArenaCell,
+    value isBorrowedRead,
     value isUnrealizedConstructionRetain,
     value leaveWithdrawnPartDuplicateToItsCell,
     value retainsHeldPastTheCopy,
@@ -95,6 +96,12 @@ let recursive readDefinitionOf (temp: Int) (instructions: List(IrInstruction)) =
             if definesRead(temp)(instruction)
             then Some(kind)
             else readDefinitionOf(temp)(rest)
+
+// Whether `temp` is a borrowed read: the construction storing it took no reference of its own.
+let isBorrowedRead (temp: Int) (instructions: List(IrInstruction)) =
+    match readDefinitionOf(temp)(instructions) with
+        | Some(Borrow(_target, _source)) -> true
+        | _ -> false
 
 // Whether `temp` reads one of `slots` or a field, at any depth, of one: a value that loop
 // parameter keeps alive. A provisional copy of a tuple element whose type was unresolved when

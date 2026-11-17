@@ -1205,17 +1205,31 @@ let storedInOwnedSlot (stored: Maybe(Int)) (state: CoreLoweringState) =
 // recursively; any other child is a reference the construction retained and is released whole,
 // unless the retain the construction stored (`stored`) was left without effect, when the cell
 // only borrowed the child.
+// Stage 0's `IsBorrowedBindingChild`: a child the construction stored as a borrowed read of a
+// binding (`State(refs = [text])` with `text` matched out of the list the loop walks) took no
+// reference; the binding's owner releases the one it holds.
+let isBorrowedBindingChild (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
+    match (expression, stored) with
+        | (Some(child), Some(storedTemp)) ->
+            match unspanArgument(child) with
+                | ExprVar(_name) -> isBorrowedRead(storedTemp)(state.reversedInstructions)
+                | _ -> false
+        | _ -> false
+
 let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
-    match expression with
-        | Some(literal) ->
-            if storedInOwnedSlot(stored)(state)
-            then state
-            else
-                if isFreshAggregateLiteral(literal)(state)
-                then
-                    emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
-                else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
-        | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+    if isBorrowedBindingChild(expression)(stored)(state)
+    then state
+    else
+        match expression with
+            | Some(literal) ->
+                if storedInOwnedSlot(stored)(state)
+                then state
+                else
+                    if isFreshAggregateLiteral(literal)(state)
+                    then
+                        emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
+                    else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+            | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
 and emitStoredSourceChildRelease (childTemp: Int) (childType: SemanticType) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match stored with
         | Some(storedTemp) ->

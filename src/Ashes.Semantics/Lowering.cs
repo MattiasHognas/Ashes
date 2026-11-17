@@ -2755,9 +2755,19 @@ public sealed partial class Lowering
         EmitRuntimeManagedTcoSourceChildRelease(headTemp, elementType, element, ListCellConstructionWord(constructionTemp, HeapLayouts.ListHeadIndex));
     }
 
+    // A child the construction stored as a borrowed read of a binding (`State(refs = [text])` with
+    // `text` matched out of the list the loop walks) took no reference: the binding's owner releases
+    // the reference it holds, so the dying successor's cell only borrowed it.
+    private bool IsBorrowedBindingChild(Expr? sourceExpression, int? storedTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_BORROWEDBINDINGCHILDKEEP") is null
+            && sourceExpression is Expr.Var
+            && storedTemp is int stored
+            && IsDefinedBy<IrInst.Borrow>(stored);
+
     private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null, int? storedTemp = null)
     {
-        if (sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
+        if ((sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
+            || IsBorrowedBindingChild(sourceExpression, storedTemp))
         {
             return;
         }
@@ -2872,6 +2882,7 @@ public sealed partial class Lowering
             IrInst.RcDup duplicate => duplicate.Target == temp,
             IrInst.GetAdtField field => field.Target == temp,
             IrInst.LoadLocal load => load.Target == temp,
+            IrInst.Borrow borrow => borrow.Target == temp,
             IrInst.Alloc allocation => allocation.Target == temp,
             _ => false,
         });
