@@ -56,6 +56,11 @@ export (
     value loadWordAt,
     value storeWordAt,
     value defineArenaRuntime,
+    value threadControlBlockBytes,
+    value threadSlotPointer,
+    value emitArenaOsAllocate,
+    value emitRegionChunkSetup,
+    value emitInstallThreadControlBlock,
     value emitSaveStackPointer,
     value emitRestoreStackPointer,
     value emitArenaInit,
@@ -114,6 +119,9 @@ type ArenaRuntime =
     | arenaFailureMessage: LLVMValueRef
     | arenaFailureMessageLength: Int
     | arenaCopyOut: Maybe(CopyOutRuntime)
+    // Whether the allocator state lives in the calling thread's control block (a program that runs
+    // `Ashes.Task.Parallel` work on worker threads) instead of in module globals.
+    | arenaThreadSlots: Bool
     | stackSaveFn: LLVMValueRef
     | stackSaveType: LLVMTypeRef
     | stackRestoreFn: LLVMValueRef
@@ -287,11 +295,44 @@ let emitArenaReclaimBody context builder i64 i8 ptrType (arena: ArenaRuntime) =
                 |> (given (_) -> buildRetVoid(builder)))
 
 // The entry prologue's first chunk: one standard chunk with no predecessor.
+// A thread's control block, stage 0's per-thread TCB: one page whose first word points at itself,
+// then the arena cursor and end (8, 16) and the to-space and blob region cursors and ends (24 to
+// 48). The thread's GS base points at it, so a slot is reached as `%gs:offset`.
+let threadControlBlockBytes = 4096
+
+let threadSlotPointer context i64 (offset: Int) =
+    256u32
+    |> pointerType(context)
+    |> constIntToPtr(arenaConst(i64)(offset))
+
+// Maps a zeroed control block, points it at itself and makes it this thread's GS base
+// (`arch_prctl(ARCH_SET_GS, block)`); answers the block's address.
+let emitInstallThreadControlBlock context function_ builder i64 i8 ptrType (arena: ArenaRuntime) prefix =
+    (let block =
+        emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(arenaConst(i64)(threadControlBlockBytes))(prefix)
+    in
+        let _ =
+            prefix + "_self"
+            |> memOffsetPtr(builder)(i64)(i8)(ptrType)(block)(0)
+            |> buildStore(builder)(block)
+        in
+            let _ =
+                emitLinuxSyscallCall(builder)(i64)(arenaConst(i64)(158))(arenaConst(i64)(4097))(block)(arenaConst(i64)(0))(prefix + "_set_gs")
+            in block)
+
+// The entry's first chunk; with thread slots the main thread's control block is installed first.
 let emitArenaInit context function_ builder i64 i8 ptrType (arena: ArenaRuntime) =
-    "init_heap"
-    |> emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(arenaConst(i64)(arenaChunkBytes))
-    |> (given (chunkBase) ->
-        emitArenaChunkSetup(builder)(i64)(i8)(ptrType)(arena)(chunkBase)(arenaConst(i64)(arenaChunkBytes))(arenaConst(i64)(0))("init_heap"))
+    (let _ =
+        if arena.arenaThreadSlots
+        then
+            let _ = emitInstallThreadControlBlock(context)(function_)(builder)(i64)(i8)(ptrType)(arena)("main_tcb")
+            in Unit
+        else Unit
+    in
+        "init_heap"
+        |> emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(arenaConst(i64)(arenaChunkBytes))
+        |> (given (chunkBase) ->
+            emitArenaChunkSetup(builder)(i64)(i8)(ptrType)(arena)(chunkBase)(arenaConst(i64)(arenaChunkBytes))(arenaConst(i64)(0))("init_heap")))
 
 // Bumps the cursor by `sizeRef` (an already-aligned `i64` byte count), growing first when the
 // request does not fit in the current chunk, and returns the allocation's address word.
@@ -1105,7 +1146,9 @@ let withCopyOutRuntime (arena: ArenaRuntime) copyOut = arena with arenaCopyOut =
 // Creates the two arena globals, the failure message, and the grow/reclaim helpers in `module_`,
 // emitting the helper bodies with `builder` (repositioned by the caller afterwards); the copy-out
 // helpers join them only when `usesCopyOut` says the program's IR needs them.
-let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut mallocFn mallocType freeFn freeType memcpyFn memcpyType isReferenceCounted =
+// With `threadSlots` the cursor and end are the calling thread's control-block slots instead of
+// globals, so each worker thread bumps its own arena.
+let defineArenaRuntime module_ context builder i64 i8 ptrType (threadSlots: Bool) usesCopyOut mallocFn mallocType freeFn freeType memcpyFn memcpyType isReferenceCounted =
     match (functionType(voidType(context))([i64])(1u32)(false), functionType(voidType(context))([i64, i64])(2u32)(false), functionType(ptrType)([])(0u32)(false), functionType(voidType(context))([ptrType])(1u32)(false)) with
         | (growType, reclaimType, stackSaveType, stackRestoreType) ->
             ((given (arena) ->
@@ -1119,8 +1162,12 @@ let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut malloc
                         |> defineCopyOutRuntime(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)
                         |> withCopyOutRuntime(arena)
                     else arena)))(ArenaRuntime(
-                arenaCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_heap_cursor"),
-                arenaEndGlobal = addZeroWordGlobal(module_)(i64)("__ashes_heap_end"),
+                arenaCursorGlobal = if threadSlots
+                then threadSlotPointer(context)(i64)(8)
+                else addZeroWordGlobal(module_)(i64)("__ashes_heap_cursor"),
+                arenaEndGlobal = if threadSlots
+                then threadSlotPointer(context)(i64)(16)
+                else addZeroWordGlobal(module_)(i64)("__ashes_heap_end"),
                 arenaGrowFn = addInternalFunction(module_)("__ashes_heap_grow")(growType),
                 arenaGrowType = growType,
                 arenaReclaimFn = addInternalFunction(module_)("__ashes_reclaim_arena_chunks")(reclaimType),
@@ -1128,6 +1175,7 @@ let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut malloc
                 arenaFailureMessage = addFailureMessageGlobal(module_)(i8),
                 arenaFailureMessageLength = Ashes.Collection.List.length(arenaFailureMessageCodes),
                 arenaCopyOut = None,
+                arenaThreadSlots = threadSlots,
                 stackSaveFn = addFunction(module_)("llvm.stacksave.p0")(stackSaveType),
                 stackSaveType = stackSaveType,
                 stackRestoreFn = addFunction(module_)("llvm.stackrestore.p0")(stackRestoreType),

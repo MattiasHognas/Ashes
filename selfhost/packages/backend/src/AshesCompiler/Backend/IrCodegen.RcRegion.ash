@@ -315,8 +315,69 @@ let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree
 let emitIsReferenceCountedIn builder i64 (runtime: RcRegionRuntime) name valueRef =
     buildZExt(builder)(emitInRegion(builder)(i64)(runtime)(valueRef)(name))(i64)(name)
 
-// The two functions, and with `leakCheck` the live-cell counter they keep.
-let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType (leakCheck: Bool) =
+// Takes the allocator lock: an atomic exchange that retries until it finds the lock free.
+let emitTakeAllocatorLock context builder i64 function_ lock =
+    (let spinBlock = appendBasicBlock(context)(function_)("rc_lock_spin")
+    in
+        let takenBlock = appendBasicBlock(context)(function_)("rc_lock_taken")
+        in
+            let _ = buildBr(builder)(spinBlock)
+            in
+                let _ = positionBuilderAtEnd(builder)(spinBlock)
+                in
+                    let previous =
+                        buildAtomicRmw(builder)(atomicRmwXchg)(lock)(regionConst(i64)(1))(atomicOrderingSequentiallyConsistent)
+                    in
+                        let _ =
+                            buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(previous)(regionConst(i64)(0))("rc_lock_was_free"))(takenBlock)(spinBlock)
+                        in positionBuilderAtEnd(builder)(takenBlock))
+
+let emitReleaseAllocatorLock builder i64 lock =
+    (let _ =
+        buildAtomicRmw(builder)(atomicRmwXchg)(lock)(regionConst(i64)(0))(atomicOrderingSequentiallyConsistent)
+    in Unit)
+
+// The allocator functions of a program whose worker threads allocate concurrently: each takes the
+// process-wide allocator lock around the unlocked function of the same name, so the region's
+// cursor, free lists and counter are only ever updated by one thread at a time.
+let defineLockedAllocatorFunctions module_ context builder i64 ptrType mallocType freeType (inner: RcRegionRuntime) =
+    (let lock = zeroWordGlobal(module_)(i64)("__ashes_rc_lock")
+    in
+        let allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType)
+        in
+            let freeFn = internalFunction(module_)("__ashes_rc_free")(freeType)
+            in
+                let _ =
+                    "entry"
+                    |> appendBasicBlock(context)(allocFn)
+                    |> positionBuilderAtEnd(builder)
+                in
+                    let _ = emitTakeAllocatorLock(context)(builder)(i64)(allocFn)(lock)
+                    in
+                        let block = buildCall(builder)(mallocType)(inner.allocFn)([getParam(allocFn)(0u32)])(1u32)("rc_locked_block")
+                        in
+                            let _ = emitReleaseAllocatorLock(builder)(i64)(lock)
+                            in
+                                let _ = buildRet(builder)(block)
+                                in
+                                    let _ =
+                                        "entry"
+                                        |> appendBasicBlock(context)(freeFn)
+                                        |> positionBuilderAtEnd(builder)
+                                    in
+                                        let _ = emitTakeAllocatorLock(context)(builder)(i64)(freeFn)(lock)
+                                        in
+                                            let _ = buildCall(builder)(freeType)(inner.freeFn)([getParam(freeFn)(0u32)])(1u32)("")
+                                            in
+                                                let _ = emitReleaseAllocatorLock(builder)(i64)(lock)
+                                                in
+                                                    let _ = buildRetVoid(builder)
+                                                    in inner with allocFn = allocFn, freeFn = freeFn)
+
+// The two functions, and with `leakCheck` the live-cell counter they keep. With `locked` (a
+// program with worker threads) the region's own functions become `__ashes_rc_alloc_unlocked` and
+// `__ashes_rc_free_unlocked`, called under the allocator lock.
+let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType (leakCheck: Bool) (locked: Bool) =
     (let runtime =
         RcRegionRuntime(
             regionBaseGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_base"),
@@ -324,8 +385,12 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
             regionCursorGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_cursor"),
             regionInitializedGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_initialized"),
             freeLists = freeListsGlobal(module_)(i64),
-            allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType),
-            freeFn = internalFunction(module_)("__ashes_rc_free")(freeType),
+            allocFn = internalFunction(module_)(if locked
+            then "__ashes_rc_alloc_unlocked"
+            else "__ashes_rc_alloc")(mallocType),
+            freeFn = internalFunction(module_)(if locked
+            then "__ashes_rc_free_unlocked"
+            else "__ashes_rc_free")(freeType),
             liveCellsGlobal = if leakCheck
             then
                 "__ashes_rc_live"
@@ -337,4 +402,7 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
         mallocType
         |> emitAllocBody(context)(builder)(i64)(ptrType)(runtime)(libcMalloc)
         |> (given (_) -> emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType))
-        |> (given (_) -> runtime))
+        |> (given (_) ->
+            if locked
+            then defineLockedAllocatorFunctions(module_)(context)(builder)(i64)(ptrType)(mallocType)(freeType)(runtime)
+            else runtime))

@@ -82,6 +82,11 @@ export (
     value parseBitcodeInContext,
     value linkModules,
     value linkBitcodeFile,
+    value constIntToPtr,
+    value atomicRmwXchg,
+    value atomicRmwAdd,
+    value atomicOrderingSequentiallyConsistent,
+    value buildAtomicRmw,
     value objectFileType,
     value assemblyFileType,
     value relocModeStatic,
@@ -235,6 +240,8 @@ external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemo
 external LLVMCreateMemoryBufferWithContentsOfFile(Str, out LLVMMemoryBufferRef, out *u8) -> Bool = "LLVMCreateMemoryBufferWithContentsOfFile@libLLVM.so"
 external LLVMParseBitcodeInContext2(LLVMContextRef, LLVMMemoryBufferRef, out LLVMModuleRef) -> Bool = "LLVMParseBitcodeInContext2@libLLVM.so"
 external LLVMLinkModules2(LLVMModuleRef, LLVMModuleRef) -> Bool = "LLVMLinkModules2@libLLVM.so"
+external LLVMConstIntToPtr(LLVMValueRef, LLVMTypeRef) -> LLVMValueRef = "LLVMConstIntToPtr@libLLVM.so"
+external LLVMBuildAtomicRMW(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, u32, Bool) -> LLVMValueRef = "LLVMBuildAtomicRMW@libLLVM.so"
 external LLVMCreateTargetDataLayout(LLVMTargetMachineRef) -> LLVMTargetDataRef = "LLVMCreateTargetDataLayout@libLLVM.so"
 external LLVMCopyStringRepOfTargetData(LLVMTargetDataRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMCopyStringRepOfTargetData@libLLVM.so"
 external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetData@libLLVM.so"
@@ -704,6 +711,20 @@ let int1Type context = LLVMInt1TypeInContext(context)
 let voidType context = LLVMVoidTypeInContext(context)
 
 let pointerType context addressSpace = LLVMPointerTypeInContext(context)(addressSpace)
+
+// A constant integer address as a pointer of `type_`: with an address-space-256 pointer type, a
+// GS-relative slot that every load and store through it reaches as `%gs:offset`.
+let constIntToPtr value type_ = LLVMConstIntToPtr(value)(type_)
+
+// `LLVMAtomicRMWBinOp`'s exchange and add, and `LLVMAtomicOrderingSequentiallyConsistent`.
+let atomicRmwXchg = 0u32
+
+let atomicRmwAdd = 1u32
+
+let atomicOrderingSequentiallyConsistent = 7u32
+
+// An atomic read-modify-write of the word at `pointer`, answering the word it held before.
+let buildAtomicRmw builder (operation: u32) pointer value (ordering: u32) = LLVMBuildAtomicRMW(builder)(operation)(pointer)(value)(ordering)(false)
 
 let structType context elementTypes elementCount packed = LLVMStructTypeInContext(context)(elementTypes)(elementCount)(packed)
 

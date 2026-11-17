@@ -66,11 +66,26 @@ let regionCursorGlobalOf (region: PersistentRegion) = region.regionCursorGlobal
 
 let regionEndGlobalOf (region: PersistentRegion) = region.regionEndGlobal
 
-let definePersistentRegion module_ i64 name =
-    PersistentRegion(
-        regionCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_cursor"),
-        regionEndGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_end")
-    )
+// A persistent region's cursor and end: two `.bss` globals, or, in a module whose arena lives in
+// thread control blocks, the calling thread's slots at `slotOffset` and `slotOffset + 8`.
+let definePersistentRegion module_ context i64 (arena: ArenaRuntime) name (slotOffset: Int) =
+    if arena.arenaThreadSlots
+    then
+        PersistentRegion(
+            regionCursorGlobal = threadSlotPointer(context)(i64)(slotOffset),
+            regionEndGlobal = threadSlotPointer(context)(i64)(slotOffset + 8)
+        )
+    else
+        PersistentRegion(
+            regionCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_cursor"),
+            regionEndGlobal = addZeroWordGlobal(module_)(i64)("__ashes_" + name + "_end")
+        )
+
+// The pointer type the region grow helper takes its cursor and end through.
+let regionSlotType context ptrType (arena: ArenaRuntime) =
+    if arena.arenaThreadSlots
+    then pointerType(context)(256u32)
+    else ptrType
 
 // `void __ashes_region_grow(ptr cursor, ptr end, i64 needed)`: the arena grow body over the slots
 // passed in, shared by both persistent regions.
@@ -88,11 +103,11 @@ let emitRegionGrowBody context builder i64 i8 ptrType (arena: ArenaRuntime) (cop
 // body with `builder` (repositioned by the caller afterwards).
 let defineCopyRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) =
     false
-    |> functionType(voidType(context))([ptrType, ptrType, i64])(3u32)
+    |> functionType(voidType(context))([regionSlotType(context)(ptrType)(arena), regionSlotType(context)(ptrType)(arena), i64])(3u32)
     |> (given (growType) ->
         CopyRuntime(
-            toSpaceRegion = definePersistentRegion(module_)(i64)("tospace"),
-            blobRegion = definePersistentRegion(module_)(i64)("blob"),
+            toSpaceRegion = definePersistentRegion(module_)(context)(i64)(arena)("tospace")(24),
+            blobRegion = definePersistentRegion(module_)(context)(i64)(arena)("blob")(40),
             regionGrowFn = addInternalFunction(module_)("__ashes_region_grow")(growType),
             regionGrowType = growType
         ))

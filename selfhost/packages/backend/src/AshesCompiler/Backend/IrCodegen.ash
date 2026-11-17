@@ -126,6 +126,7 @@ import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
 import AshesCompiler.Backend.IrCodegen.ForeignStrings
 import AshesCompiler.Backend.IrCodegen.Tasks
+import AshesCompiler.Backend.IrCodegen.Parallel
 import AshesCompiler.Semantics.TaskStructLayout.TaskStateKind
 import Ashes.Number.UInt
 import Ashes.Collection.Map
@@ -293,7 +294,7 @@ type ExternalFunctions =
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
 // `malloc` and `free` for what the region does not hold.
-let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
+let declareExternalFunctions module_ context builder types (leakCheck: Bool) (threads: Bool) =
     (let mallocType = functionType(types.ptrType)([types.i64])(1u32)(false)
     in
         let freeType =
@@ -307,7 +308,7 @@ let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
                         functionType(doubleType(context))([doubleType(context)])(1u32)(false)
                     in
                         let region =
-                            defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)
+                            defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)(threads)
                         in
                             ExternalFunctions(
                                 mallocFn = region.allocFn,
@@ -352,6 +353,7 @@ type CodegenContext =
     | copyRuntime: Maybe(CopyRuntime)
     | bigIntRuntime: Maybe(BigIntRuntime)
     | taskRuntime: Maybe(TaskRuntime)
+    | parallelRuntime: Maybe(ParallelRuntime)
     | isEntry: Bool
 
 // A temp read in a block only dead code branches to, whose definition the optimizer's
@@ -393,6 +395,7 @@ type ModuleCodegen =
     | moduleCopyRuntime: Maybe(CopyRuntime)
     | moduleBigIntRuntime: Maybe(BigIntRuntime)
     | moduleTaskRuntime: Maybe(TaskRuntime)
+    | moduleParallelRuntime: Maybe(ParallelRuntime)
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -573,7 +576,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, taskRuntime = taskRuntime, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, taskRuntime = taskRuntime, parallelRuntime = parallelRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -1748,6 +1751,35 @@ let codegenInstructionKind cx builder kind state =
                                             let taskRef =
                                                 emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(RaceCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                        // `Ashes.Task.Parallel`: fork, join and cleanup of `both`'s right thunk, and the
+                        // `withWorkers` override, over the module's parallel runtime.
+                                        | ParallelFork(descTarget, rightClosureTemp) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(descTarget)(emitParallelFork(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(closureFunctionType)(runtime)(lookupTemp(cx)(rightClosureTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelFork without the parallel runtime")
+                                        | ParallelJoin(resultTarget, descTemp) ->
+                                            (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                        | ParallelCleanup(descTemp) ->
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
+                                            let _ =
+                                                emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
+                                            in (tempEnv, terminated)
+                                        | LoadParallelWorkerOverride(target) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    (bindTemp(target)(emitLoadParallelWorkerOverride(builder)(i64)(runtime)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: LoadParallelWorkerOverride without the parallel runtime")
+                                        | StoreParallelWorkerOverride(source) ->
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupTemp(cx)(source)
+                                                        |> emitStoreParallelWorkerOverride(builder)(runtime)
+                                                    in (tempEnv, terminated)
+                                                | None -> Ashes.IO.panic("codegen: StoreParallelWorkerOverride without the parallel runtime")
                         // The state-machine transform's own frame stores and loads carry a suspend and a
                         // resume; the markers themselves emit nothing.
                                         | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
@@ -1919,8 +1951,6 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -2017,6 +2047,8 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 |> allocateLocalSlots(builder)(types.i64)(localCount)
                                 |> indexIntEntries
                             in
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
@@ -2025,8 +2057,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             |> lookupIndexedInt(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexedInt(1)
@@ -2096,6 +2126,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                             copyRuntime = mc.moduleCopyRuntime,
                                                             bigIntRuntime = mc.moduleBigIntRuntime,
                                                             taskRuntime = mc.moduleTaskRuntime,
+                                                            parallelRuntime = mc.moduleParallelRuntime,
                                                             isEntry = isEntry
                                                         )
                                                     in (cx, instructions)
@@ -2197,6 +2228,34 @@ let recursive functionsUseRunTask functions =
     match functions with
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsUseRunTask(instructions) || functionsUseRunTask(rest)
+
+// Whether any instruction belongs to `Ashes.Task.Parallel`, so the module needs the parallel
+// runtime, and whether any forks a worker, so its allocator state moves into thread control blocks.
+let recursive instructionsUseParallel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ParallelFork(_target, _closure) } :: _ -> true
+        | IrInstruction { instruction = ParallelJoin(_target, _desc) } :: _ -> true
+        | IrInstruction { instruction = ParallelCleanup(_desc) } :: _ -> true
+        | IrInstruction { instruction = LoadParallelWorkerOverride(_target) } :: _ -> true
+        | IrInstruction { instruction = StoreParallelWorkerOverride(_source) } :: _ -> true
+        | _ :: rest -> instructionsUseParallel(rest)
+
+let recursive functionsUseParallel functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseParallel(instructions) || functionsUseParallel(rest)
+
+let recursive instructionsForkParallel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ParallelFork(_target, _closure) } :: _ -> true
+        | _ :: rest -> instructionsForkParallel(rest)
+
+let recursive functionsForkParallel functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsForkParallel(instructions) || functionsForkParallel(rest)
 
 let recursive functionsUseBigInt functions =
     match functions with
@@ -2328,7 +2387,10 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                     in
                                         let builder = createBuilder(context)
                                         in
-                                            let declaredExternals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
+                                            let declaredExternals =
+                                                entryFunction :: functions
+                                                |> functionsForkParallel
+                                                |> declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
                                             in
                                                 let externals =
                                                     declaredExternals with libmFunctions = declareLibmFunctions(module_)(context)(libmCallsInFunctions(entryFunction :: functions)([])), pcre2Functions = (if functionsUseRegex(entryFunction :: functions)
@@ -2340,7 +2402,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                         let arena =
                                                             externals.rcRegion
                                                             |> emitIsReferenceCountedIn(builder)(types.i64)
-                                                            |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
+                                                            |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(functionsForkParallel(entryFunction :: functions))(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
                                                         in
                                                             let stringLiteralGlobals =
                                                                 stringLiterals
@@ -2392,6 +2454,13 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                 then
                                                                                     closureFnType
                                                                                     |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleParallelRuntime = if functionsUseParallel(entryFunction :: functions)
+                                                                                then
+                                                                                    entryFunction :: functions
+                                                                                    |> functionsForkParallel
+                                                                                    |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)
                                                                                     |> Some
                                                                                 else None,
                                                                                 moduleBuilder = builder
