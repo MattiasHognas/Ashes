@@ -515,6 +515,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         state
                         |> lowerUpdatedFieldValue(updateRequest.recordFieldCells)(expression)(lower)
                         |> keepLoopResultFieldCellHeadDuplicateOwned(updateRequest)(runtimeManaged)(expression)
+                        |> retainEscapingArgumentRead(updateRequest)(false)(expression)
                         |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
                         |> handUpdatedFieldToOwnedSlot(expression)(fieldType)(handsOver)
             in

@@ -25,6 +25,7 @@ import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Aggregates
 export (
     value keepLoopResultFieldCellHeadDuplicateOwned,
+    value retainEscapingArgumentRead,
     value handsFreshChildrenToOwnedSlots,
     value handFreshChildToOwnedSlot,
     value lowerConstructor,
@@ -288,8 +289,10 @@ let keepLoopResultFieldCellHeadDuplicateOwned (request: ConsumerRequest) (runtim
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
 // pattern-owner duplicate of an argument that reads one, before the transfer retain; an
 // argument neither retained reads takes the loop-parameter marker. An ordinary call's argument
-// borrows the read whatever transfer the callee's result asks of it.
-let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+// borrows the read whatever transfer the callee's result asks of it. A record update's updated
+// field takes the same retains, as a constructor argument of a cell that is never a
+// runtime-managed candidate.
+let retainEscapingArgumentRead (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
     match request with
         | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition, callArgument = callArgument } ->
             lowered
@@ -301,7 +304,11 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
                     |> keepLoopResultCellOwnerDuplicateOwned(runtimeManaged == false && tailPosition)(argument)(value)
                 else value)
             |> retainSuccessorTransferredChild(argument)(runtimeManaged == false && transfers)
-            |> keepLoopResultFieldCellHeadDuplicateOwned(request)(runtimeManaged)(argument)
+
+let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+    lowered
+    |> retainEscapingArgumentRead(request)(runtimeManaged)(argument)
+    |> keepLoopResultFieldCellHeadDuplicateOwned(request)(runtimeManaged)(argument)
 
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
 // loop-parameter read (or a heap-typed field read out of one) stored into the cell takes the
