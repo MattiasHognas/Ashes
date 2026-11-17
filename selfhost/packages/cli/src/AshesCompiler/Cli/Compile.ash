@@ -585,18 +585,23 @@ let recursive firstExistingPayload (candidates: List(Str)) (fileName: Str) =
 let runtimePayloadPath (fileName: Str) =
     firstExistingPayload(runtimePayloadCandidates(fileName))(fileName)
 
-// The vendored bitcode payloads the program's runtime calls need: openlibm for a libm call and
-// PCRE2 for `Ashes.Text.Regex` (stage 0's `LinkOpenlibmBitcodeIfNeeded` and
-// `LinkPcre2BitcodeIfNeeded`).
+// The vendored bitcode payloads the program's runtime calls need: openlibm for a libm call, PCRE2
+// for `Ashes.Text.Regex` and Mbed TLS for HTTPS and TLS (stage 0's `LinkOpenlibmBitcodeIfNeeded`,
+// `LinkPcre2BitcodeIfNeeded` and the TLS runtime's payload).
 let runtimePayloadsFor (program: IrProgram) =
     (let math =
         if programUsesLibm(program)
         then ["libopenlibm.bc"]
         else []
     in
-        if programUsesRegex(program)
-        then "libpcre2.bc" :: math
-        else math)
+        let regex =
+            if programUsesRegex(program)
+            then "libpcre2.bc" :: math
+            else math
+        in
+            if programUsesTls(program)
+            then "libmbedtls.bc" :: regex
+            else regex)
 
 // Links each payload into the optimized module, as stage 0 links them after the program's passes:
 // the program's calls into the payload resolve inside the module, with no dynamic import.

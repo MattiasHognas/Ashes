@@ -136,6 +136,7 @@ export (
     value codegenProgramWith,
     value programUsesLibm,
     value programUsesRegex,
+    value programUsesTls,
     value externalLibraries,
 )
 
@@ -241,6 +242,30 @@ let recursive functionsUseRegex (functions: List(IrFunction)) =
 
 // Whether the program uses `Ashes.Text.Regex`, so the module needs the PCRE2 payload.
 let programUsesRegex (program: IrProgram) = functionsUseRegex(program.entryFunction :: program.functions)
+
+let recursive instructionsUseTls (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = HttpGet(_, _) } :: _rest -> true
+        | IrInstruction { instruction = HttpPost(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateHttpGetTask(_, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateHttpPostTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsConnectTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsHandshakeTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsServerHandshakeTask(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsSendTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsReceiveTask(_, _, _) } :: _rest -> true
+        | IrInstruction { instruction = CreateTlsCloseTask(_, _) } :: _rest -> true
+        | _instruction :: rest -> instructionsUseTls(rest)
+
+let recursive functionsUseTls (functions: List(IrFunction)) =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseTls(instructions) || functionsUseTls(rest)
+
+// Whether the program reaches HTTPS or TLS, so the module needs the Mbed TLS payload (stage 0's
+// `ProgramUsesTlsRuntimeAbi`).
+let programUsesTls (program: IrProgram) = functionsUseTls(program.entryFunction :: program.functions)
 
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
