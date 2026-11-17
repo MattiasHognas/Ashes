@@ -114,6 +114,13 @@ let parStore builder i64 i8 ptrType address (offset: Int) value name =
     |> memOffsetPtr(builder)(i64)(i8)(ptrType)(address)(offset)
     |> buildStore(builder)(value)
 
+// A word another thread writes, read so the optimizer can neither move the read out of a wait loop
+// nor drop it: a plain inline-assembly load that clobbers memory (an x86 load is an acquire).
+let emitSharedWordLoad context builder i64 address name =
+    (let loadType = functionType(i64)([i64])(1u32)(false)
+    in
+        buildCall(builder)(loadType)(getInlineAsm(loadType)("movq ($1), $0")("=r,r,~{memory}")(true)(false))([address])(1u32)(name))
+
 // `futex(address, operation, value, 0, 0, 0)`.
 let emitFutex builder i64 address (operation: Int) (value: Int) name =
     emitLinuxSyscallCall6(builder)(i64)(parConst(i64)(syscallFutex))(address)(parConst(i64)(operation))(parConst(i64)(value))(parConst(i64)(0))(parConst(i64)(0))(parConst(i64)(0))(name)
@@ -361,7 +368,8 @@ let emitParallelJoin context function_ builder i64 i8 ptrType desc name =
                 in
                     let _ = positionBuilderAtEnd(builder)(checkBlock)
                     in
-                        let doneWord = parWord(builder)(i64)(i8)(ptrType)(desc)(descDone)(name + "_done_word")
+                        let doneWord =
+                            emitSharedWordLoad(context)(builder)(i64)(buildAdd(builder)(desc)(parConst(i64)(descDone))(name + "_done_address"))(name + "_done_word")
                         in
                             let _ =
                                 buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(doneWord)(parConst(i64)(0))(name + "_is_done"))(doneBlock)(waitBlock)
@@ -438,7 +446,8 @@ let emitParallelCleanup context function_ builder i64 i8 ptrType desc name =
                                     in
                                         let _ = positionBuilderAtEnd(builder)(exitCheckBlock)
                                         in
-                                            let exited = parWord(builder)(i64)(i8)(ptrType)(desc)(descExited)(name + "_exit_word")
+                                            let exited =
+                                                emitSharedWordLoad(context)(builder)(i64)(buildAdd(builder)(desc)(parConst(i64)(descExited))(name + "_exit_address"))(name + "_exit_word")
                                             in
                                                 let _ =
                                                     buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(exited)(parConst(i64)(0))(name + "_running"))(exitWaitBlock)(exitedBlock)
@@ -508,8 +517,7 @@ let emitQueueFlagWait context function_ builder i64 flagAddress name =
                 in
                     let _ = positionBuilderAtEnd(builder)(checkBlock)
                     in
-                        let flag =
-                            buildAtomicRmw(builder)(atomicRmwAdd)(buildIntToPtr(builder)(flagAddress)(pointerType(context)(0u32))(name + "_flag_ptr"))(parConst(i64)(0))(atomicOrderingSequentiallyConsistent)
+                        let flag = emitSharedWordLoad(context)(builder)(i64)(flagAddress)(name + "_flag")
                         in
                             let _ =
                                 buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(flag)(parConst(i64)(0))(name + "_is_ready"))(readyBlock)(waitBlock)
@@ -799,7 +807,8 @@ let emitReleaseWorker context function_ builder i64 i8 ptrType record name =
                 in
                     let _ = positionBuilderAtEnd(builder)(exitCheckBlock)
                     in
-                        let exited = parWord(builder)(i64)(i8)(ptrType)(record)(descExited)(name + "_exit_word")
+                        let exited =
+                            emitSharedWordLoad(context)(builder)(i64)(buildAdd(builder)(record)(parConst(i64)(descExited))(name + "_exit_address"))(name + "_exit_word")
                         in
                             let _ =
                                 buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(exited)(parConst(i64)(0))(name + "_running"))(exitWaitBlock)(exitedBlock)
