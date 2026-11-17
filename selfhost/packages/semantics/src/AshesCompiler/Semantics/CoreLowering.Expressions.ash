@@ -1562,6 +1562,20 @@ let traitOperatorCall (function: Expr) (argument: Expr) =
                 | _ -> None
         | _ -> None
 
+// The operands of a saturated `Ord.compare(left)(right)`, the call a derived comparison makes per
+// field and the one `Ord`'s four comparison defaults are built on. A capability or provider named
+// `Ord` keeps its operation call.
+let traitCompareCall (expression: Expr) (function: Expr) (argument: Expr) (state: CoreLoweringState) =
+    match stripExprAt(function) with
+        | ExprCall(inner, left, _sugar, _layout) ->
+            match stripExprAt(inner) with
+                | ExprQualifiedVar(qualifier, "compare") ->
+                    if standardTraitName(qualifier) == "Ord" && isCapabilityOperationCall(expression)(state) == false
+                    then Some((left, argument))
+                    else None
+                | _ -> None
+        | _ -> None
+
 // The unary methods of the shipped operator traits, by the operator each stands for: `negate` is
 // `0 - x`, `not` is `!x`, `bitwiseNot` is `~x`.
 let shippedTraitUnaryOperator (function: Expr) =
@@ -2890,21 +2904,24 @@ let lowerCoreDispatch expression lowerCore state =
                     match traitOperatorCall(function)(argument) with
                         | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
                         | None ->
-                            match traitUnaryMethodCall(function) with
-                                | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
+                            match traitCompareCall(expression)(function)(argument)(state) with
+                                | Some((left, right)) -> lowerCoreTraitCompare(left)(right)(lowerCore)(state)
                                 | None ->
-                                    match shippedTraitUnaryOperator(function) with
-                                        | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
-                                        | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
-                                        | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
-                                        | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
+                                    match traitUnaryMethodCall(function) with
+                                        | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
                                         | None ->
-                                            match userTraitMethodCall(expression)(state) with
-                                                | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
+                                            match shippedTraitUnaryOperator(function) with
+                                                | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
+                                                | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
+                                                | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
+                                                | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
                                                 | None ->
-                                                    state
-                                                    |> lowerCallExpression(expression)(function)(argument)(lowerCore)
-                                                    |> describeCallArity(expression)
+                                                    match userTraitMethodCall(expression)(state) with
+                                                        | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
+                                                        | None ->
+                                                            state
+                                                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                                                            |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->

@@ -42,6 +42,7 @@ export (
     value applyDeferredOperators,
     value applySealedDeferredOperators,
     value lowerCoreBinary,
+    value lowerCoreTraitCompare,
     value lowerCoreLogicalNot,
     value lowerCoreBitwiseNot,
     value parseDecimalDigits,
@@ -1663,6 +1664,36 @@ let lowerCoreBinary operator left right lower state =
             |> observeCoreBinary(operator)(left)
             |> emitPreparedOrTraitBinary(operator)(left)(lower)
             |> clearAffineReservation
+
+// The type of an `Ordering` value as this program's constructor layouts declare it.
+let orderingResultType (state: CoreLoweringState) =
+    match constructorLayout("Less")(state) with
+        | Some(CoreConstructorLayout { scheme = TypeScheme { body = body } }) -> body
+        | None -> SemNamed(0)("Ordering")([])
+
+// The `compare` of the operands' shared type, typed as the `Ordering` it returns.
+let emitCoreTraitCompare lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
+            match bindType(leftType)(rightType)(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (boundState, None) ->
+                    match emitCoreTraitBinaryDispatch("Ord")("compare")(lower)((binary with state = boundState, leftType = resolveType(boundState)(leftType), rightType = resolveType(boundState)(rightType))) with
+                        | LoweredCoreValue { state = comparedState, temp = compareTemp, error = None } ->
+                            success(compareTemp)(orderingResultType(comparedState))(comparedState)
+                        | failed -> failed
+        | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
+
+// A saturated `Ord.compare(left)(right)`, the call a derived comparison makes per field: both
+// operands are lowered and unified, and the call dispatches through `Ord` at their type.
+let lowerCoreTraitCompare left right lower state =
+    match consumerRequestOf(state) with
+        | request ->
+            state
+            |> withConsumerRequest(emptyConsumerRequest)
+            |> lowerCoreBinaryOperands(left)(right)(lower)
+            |> restoreBinaryRequest(request)
+            |> emitCoreTraitCompare(lower)
 
 let finishCoreLogicalNot lowered =
     match lowered with
