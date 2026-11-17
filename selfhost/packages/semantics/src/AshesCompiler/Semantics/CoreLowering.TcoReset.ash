@@ -2515,7 +2515,16 @@ let backEdgeArgumentIsInPlaceReuse (argument: TcoResetArgument) (state: CoreLowe
                                 | _ -> false)
                         | _ -> false
 
-let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = backEdgeArgumentSurvivesReset(argument.argumentType)(state) || backEdgeArgumentIsInPlaceReuse(argument)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
+// An affine accumulator (`acc + f(i)`, consumed once as the leftmost leaf of its own append) is
+// extended in place at the arena tip, the case the per-iteration reset is built around, so a
+// pending operator default there still counts as the `Int` it falls back to. Without the reset
+// every iteration would copy the whole accumulator and the loop's arena would grow quadratically.
+let pendingAffineAccumulatorSurvives (argument: TcoResetArgument) (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(CoreTcoLoop { affineOrdinals = ordinals }) -> containsInt(argument.ordinal)(ordinals) && resultSurvivesReset(argument.argumentType)(state)
+        | None -> false
+
+let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = backEdgeArgumentSurvivesReset(argument.argumentType)(state) || pendingAffineAccumulatorSurvives(argument)(state) || backEdgeArgumentIsInPlaceReuse(argument)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
 
 let recursive allArgumentsSurvivePlainReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with
