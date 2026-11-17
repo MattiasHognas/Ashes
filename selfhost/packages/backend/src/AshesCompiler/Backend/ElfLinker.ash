@@ -1068,8 +1068,10 @@ let recursive neededEntries libraries dynstrOffsets =
         | library :: rest -> (1, lookupStrtabOffset(library)(dynstrOffsets)) :: neededEntries(rest)(dynstrOffsets)
 
 // `DT_NEEDED` per distinct library, `DT_RUNPATH`, then the hash/string/symbol/relocation table
-// descriptors every dynamic loader needs to resolve this executable's imports, terminated by
-// `DT_NULL` — matching `LlvmImageLinkerElf.cs`'s own `BuildLinuxDynamicTable` tag-for-tag.
+// descriptors every dynamic loader needs to resolve this executable's imports, then `DT_DEBUG`
+// (zero; the loader stores its `r_debug` address there, which is how a debugger finds the loaded
+// libraries), terminated by `DT_NULL`. `LlvmImageLinkerElf.cs`'s `BuildLinuxDynamicTable` has the
+// same entries without `DT_DEBUG`.
 let buildDynamicTable libraries dynstrOffsets hashVa dynstrVa dynstrSize dynsymVa relaVa relaSize =
     (let entries =
         appendList(neededEntries(libraries)(dynstrOffsets))(
@@ -1083,6 +1085,7 @@ let buildDynamicTable libraries dynstrOffsets hashVa dynstrVa dynstrSize dynsymV
                 (7, relaVa),
                 (8, relaSize),
                 (9, 24),
+                (21, 0),
                 (0, 0)
             ]
         )
