@@ -8,9 +8,9 @@
 // suspends, the task it awaits is scheduled with it as the waiter; a completed task hands its result
 // to its waiter; a sleeping leaf parks until the earliest parked timer elapses; a composite
 // schedules its children and completes when they have; a spawned task runs in a private arena
-// installed around each of its steps. Of the socket leaves only the TCP connect is stepped, and a
-// parked socket is polled rather than waited on with epoll; frame teardown and reclaiming a spawned
-// task's arena are not ported.
+// installed around each of its steps. TCP and HTTP leaves are stepped and park on their socket in an
+// epoll wait; TLS leaves are not ported, and frame teardown and reclaiming a spawned task's arena
+// are not ported either.
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Arena
@@ -22,6 +22,7 @@ import Ashes.Number.UInt
 // `Ashes.Task.all(tasks)` and `Ashes.Task.race(tasks)`: a composite over the task list, scheduled
 // when it is awaited.
 // A leaf completes with `Error(message)`.
+// A string followed by a literal, as one fresh arena string.
 export (
     value emitCreateCompletedTask,
     value emitRunCompletedTask,
@@ -1481,372 +1482,6 @@ let defineStepTcpConnect module_ (sc: SchedulerContext) =
                                                                                                                                                                                                                                     |> buildRet(sc.schedBuilder)
                                                                                                                                                                                                                                 in (stepFn, stepType))
 
-// "Ashes: HTTP is not supported by the self-hosted compiler yet\n".
-let unportedHttpMessageCodes = [65, 115, 104, 101, 115, 58, 32, 72, 84, 84, 80, 32, 105, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 115, 101, 108, 102, 45, 104, 111, 115, 116, 101, 100, 32, 99, 111, 109, 112, 105, 108, 101, 114, 32, 121, 101, 116, 10]
-
-// The scheme, host and port of an `http://` or `https://` URL, the connect stage of stage 0's
-// `EmitStepHttpTask`: the host runs to the first `:` or `/`, a port follows a `:`, and the default
-// port is 80 or 443. Answers whether the URL has one of the two schemes, the host as a fresh arena
-// string, and the port.
-let emitParseHttpTarget (sc: SchedulerContext) function_ urlRef =
-    (let block =
-        given (name) -> appendBasicBlock(sc.schedContext)(function_)(name)
-    in
-        let okSlot = schedSlot(sc)("http_url_ok")
-        in
-            let startSlot = schedSlot(sc)("http_host_start")
-            in
-                let endSlot = schedSlot(sc)("http_host_end")
-                in
-                    let portSlot = schedSlot(sc)("http_port")
-                    in
-                        let indexSlot = schedSlot(sc)("http_index")
-                        in
-                            match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(urlRef)("http_url") with
-                                | (urlLength, urlBytes) ->
-                                    let schemeBlock = block("http_scheme")
-                                    in
-                                        let httpsBlock = block("http_is_https")
-                                        in
-                                            let httpCheckBlock = block("http_http_check")
-                                            in
-                                                let httpBlock = block("http_is_http")
-                                                in
-                                                    let hostLoopBlock = block("http_host_loop")
-                                                    in
-                                                        let hostByteBlock = block("http_host_byte")
-                                                        in
-                                                            let hostNextBlock = block("http_host_next")
-                                                            in
-                                                                let hostEndBlock = block("http_host_end")
-                                                                in
-                                                                    let portStartBlock = block("http_port_start")
-                                                                    in
-                                                                        let portLoopBlock = block("http_port_loop")
-                                                                        in
-                                                                            let portByteBlock = block("http_port_byte")
-                                                                            in
-                                                                                let portDigitBlock = block("http_port_digit")
-                                                                                in
-                                                                                    let doneBlock = block("http_url_done")
-                                                                                    in
-                                                                                        let byteAt =
-                                                                                            given (index) ->
-                                                                                                buildZExt(sc.schedBuilder)(buildLoad(sc.schedBuilder)(sc.schedI8)(buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(urlBytes)(index)("http_byte_addr"))(sc.schedPtr)("http_byte_ptr"))("http_byte"))(sc.schedI64)("http_byte_wide")
-                                                                                        in
-                                                                                            let _ =
-                                                                                                0
-                                                                                                |> schedConst(sc)
-                                                                                                |> schedSet(sc)(okSlot)
-                                                                                            in
-                                                                                                let _ =
-                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(urlLength)(schedConst(sc)(8))("http_long_enough"))(schemeBlock)(doneBlock)
-                                                                                                in
-                                                                                                    let _ = schedAt(sc)(schemeBlock)
-                                                                                                    in
-                                                                                                        let firstWord =
-                                                                                                            buildLoad(sc.schedBuilder)(sc.schedI64)(buildIntToPtr(sc.schedBuilder)(urlBytes)(sc.schedPtr)("http_scheme_ptr"))("http_scheme_word")
-                                                                                                        in
-                                                                                                            let _ =
-                                                                                                                schedIf(sc)(schedEq(sc)(firstWord)(constInt(sc.schedI64)(3400000511170344040u64)(false))("http_https_prefix"))(httpsBlock)(httpCheckBlock)
-                                                                                                            in
-                                                                                                                let _ = schedAt(sc)(httpsBlock)
-                                                                                                                in
-                                                                                                                    let _ =
-                                                                                                                        8
-                                                                                                                        |> schedConst(sc)
-                                                                                                                        |> schedSet(sc)(startSlot)
-                                                                                                                    in
-                                                                                                                        let _ =
-                                                                                                                            443
-                                                                                                                            |> schedConst(sc)
-                                                                                                                            |> schedSet(sc)(portSlot)
-                                                                                                                        in
-                                                                                                                            let _ = schedBr(sc)(hostLoopBlock)
-                                                                                                                            in
-                                                                                                                                let _ = schedAt(sc)(httpCheckBlock)
-                                                                                                                                in
-                                                                                                                                    let _ =
-                                                                                                                                        schedIf(sc)(schedEq(sc)(buildAnd(sc.schedBuilder)(firstWord)(constInt(sc.schedI64)(72057594037927935u64)(false))("http_first_seven"))(constInt(sc.schedI64)(13281251946689640u64)(false))("http_http_prefix"))(httpBlock)(doneBlock)
-                                                                                                                                    in
-                                                                                                                                        let _ = schedAt(sc)(httpBlock)
-                                                                                                                                        in
-                                                                                                                                            let _ =
-                                                                                                                                                7
-                                                                                                                                                |> schedConst(sc)
-                                                                                                                                                |> schedSet(sc)(startSlot)
-                                                                                                                                            in
-                                                                                                                                                let _ =
-                                                                                                                                                    80
-                                                                                                                                                    |> schedConst(sc)
-                                                                                                                                                    |> schedSet(sc)(portSlot)
-                                                                                                                                                in
-                                                                                                                                                    let _ = schedBr(sc)(hostLoopBlock)
-                                                                                                                                                    in
-                                                                                                                                                        let _ = schedAt(sc)(hostLoopBlock)
-                                                                                                                                                        in
-                                                                                                                                                            let _ =
-                                                                                                                                                                "http_host_first"
-                                                                                                                                                                |> schedLoad(sc)(startSlot)
-                                                                                                                                                                |> schedSet(sc)(indexSlot)
-                                                                                                                                                            in
-                                                                                                                                                                let hostCheckBlock = block("http_host_check")
-                                                                                                                                                                in
-                                                                                                                                                                    let _ = schedBr(sc)(hostCheckBlock)
-                                                                                                                                                                    in
-                                                                                                                                                                        let _ = schedAt(sc)(hostCheckBlock)
-                                                                                                                                                                        in
-                                                                                                                                                                            let hostIndex = schedLoad(sc)(indexSlot)("http_host_index")
-                                                                                                                                                                            in
-                                                                                                                                                                                let _ =
-                                                                                                                                                                                    schedIf(sc)(schedEq(sc)(hostIndex)(urlLength)("http_host_at_end"))(hostEndBlock)(hostByteBlock)
-                                                                                                                                                                                in
-                                                                                                                                                                                    let _ = schedAt(sc)(hostByteBlock)
-                                                                                                                                                                                    in
-                                                                                                                                                                                        let hostByte = byteAt(hostIndex)
-                                                                                                                                                                                        in
-                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                schedIf(sc)(buildOr(sc.schedBuilder)(schedEq(sc)(hostByte)(schedConst(sc)(58))("http_host_colon"))(schedEq(sc)(hostByte)(schedConst(sc)(47))("http_host_slash"))("http_host_stop"))(hostEndBlock)(hostNextBlock)
-                                                                                                                                                                                            in
-                                                                                                                                                                                                let _ = schedAt(sc)(hostNextBlock)
-                                                                                                                                                                                                in
-                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                        "http_host_index_next"
-                                                                                                                                                                                                        |> buildAdd(sc.schedBuilder)(hostIndex)(schedConst(sc)(1))
-                                                                                                                                                                                                        |> schedSet(sc)(indexSlot)
-                                                                                                                                                                                                    in
-                                                                                                                                                                                                        let _ = schedBr(sc)(hostCheckBlock)
-                                                                                                                                                                                                        in
-                                                                                                                                                                                                            let _ = schedAt(sc)(hostEndBlock)
-                                                                                                                                                                                                            in
-                                                                                                                                                                                                                let hostEnd = schedLoad(sc)(indexSlot)("http_host_end_index")
-                                                                                                                                                                                                                in
-                                                                                                                                                                                                                    let _ = schedSet(sc)(endSlot)(hostEnd)
-                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                                            1
-                                                                                                                                                                                                                            |> schedConst(sc)
-                                                                                                                                                                                                                            |> schedSet(sc)(okSlot)
-                                                                                                                                                                                                                        in
-                                                                                                                                                                                                                            let hasPortBlock = block("http_has_port")
-                                                                                                                                                                                                                            in
-                                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSlt)(hostEnd)(urlLength)("http_host_not_last"))(hasPortBlock)(doneBlock)
-                                                                                                                                                                                                                                in
-                                                                                                                                                                                                                                    let _ = schedAt(sc)(hasPortBlock)
-                                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                                                            schedIf(sc)(schedEq(sc)(byteAt(hostEnd))(schedConst(sc)(58))("http_port_colon"))(portStartBlock)(doneBlock)
-                                                                                                                                                                                                                                        in
-                                                                                                                                                                                                                                            let _ = schedAt(sc)(portStartBlock)
-                                                                                                                                                                                                                                            in
-                                                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                                                    0
-                                                                                                                                                                                                                                                    |> schedConst(sc)
-                                                                                                                                                                                                                                                    |> schedSet(sc)(portSlot)
-                                                                                                                                                                                                                                                in
-                                                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                                                        "http_port_first"
-                                                                                                                                                                                                                                                        |> buildAdd(sc.schedBuilder)(hostEnd)(schedConst(sc)(1))
-                                                                                                                                                                                                                                                        |> schedSet(sc)(indexSlot)
-                                                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                                                        let _ = schedBr(sc)(portLoopBlock)
-                                                                                                                                                                                                                                                        in
-                                                                                                                                                                                                                                                            let _ = schedAt(sc)(portLoopBlock)
-                                                                                                                                                                                                                                                            in
-                                                                                                                                                                                                                                                                let portIndex = schedLoad(sc)(indexSlot)("http_port_index")
-                                                                                                                                                                                                                                                                in
-                                                                                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                                                                                        schedIf(sc)(schedEq(sc)(portIndex)(urlLength)("http_port_at_end"))(doneBlock)(portByteBlock)
-                                                                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(portByteBlock)
-                                                                                                                                                                                                                                                                        in
-                                                                                                                                                                                                                                                                            let portDigit =
-                                                                                                                                                                                                                                                                                buildSub(sc.schedBuilder)(byteAt(portIndex))(schedConst(sc)(48))("http_port_digit_value")
-                                                                                                                                                                                                                                                                            in
-                                                                                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUlt)(portDigit)(schedConst(sc)(10))("http_port_is_digit"))(portDigitBlock)(doneBlock)
-                                                                                                                                                                                                                                                                                in
-                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(portDigitBlock)
-                                                                                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                                                                                                            "http_port_next"
-                                                                                                                                                                                                                                                                                            |> buildAdd(sc.schedBuilder)(buildMul(sc.schedBuilder)(schedLoad(sc)(portSlot)("http_port_value"))(schedConst(sc)(10))("http_port_times_ten"))(portDigit)
-                                                                                                                                                                                                                                                                                            |> schedSet(sc)(portSlot)
-                                                                                                                                                                                                                                                                                        in
-                                                                                                                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                                                                                                                "http_port_index_next"
-                                                                                                                                                                                                                                                                                                |> buildAdd(sc.schedBuilder)(portIndex)(schedConst(sc)(1))
-                                                                                                                                                                                                                                                                                                |> schedSet(sc)(indexSlot)
-                                                                                                                                                                                                                                                                                            in
-                                                                                                                                                                                                                                                                                                let _ = schedBr(sc)(portLoopBlock)
-                                                                                                                                                                                                                                                                                                in
-                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(doneBlock)
-                                                                                                                                                                                                                                                                                                    in (schedLoad(sc)(okSlot)("http_url_ok_value"), schedLoad(sc)(startSlot)("http_host_start_value"), schedLoad(sc)(endSlot)("http_host_end_value"), schedLoad(sc)(portSlot)("http_port_final"), urlBytes))
-
-// The bytes `[start, end)` at `bytesAddr` as a fresh arena string, copied a byte at a time.
-let emitArenaSubstring (sc: SchedulerContext) function_ bytesAddr start end_ name =
-    (let length = buildSub(sc.schedBuilder)(end_)(start)(name + "_length")
-    in
-        let text =
-            emitArenaAllocDynamic(sc.schedContext)(function_)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(buildAnd(sc.schedBuilder)(buildAdd(sc.schedBuilder)(length)(schedConst(sc)(15))(name + "_size_plus"))(schedConst(sc)(-8))(name + "_size"))(name)
-        in
-            let indexSlot = schedSlot(sc)(name + "_index")
-            in
-                let loopBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_copy_loop")
-                in
-                    let bodyBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_copy_byte")
-                    in
-                        let doneBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_copied")
-                        in
-                            let _ = schedStore(sc)(text)(0)(length)
-                            in
-                                let _ =
-                                    0
-                                    |> schedConst(sc)
-                                    |> schedSet(sc)(indexSlot)
-                                in
-                                    let _ = schedBr(sc)(loopBlock)
-                                    in
-                                        let _ = schedAt(sc)(loopBlock)
-                                        in
-                                            let index = schedLoad(sc)(indexSlot)(name + "_index_value")
-                                            in
-                                                let _ =
-                                                    schedIf(sc)(schedEq(sc)(index)(length)(name + "_at_end"))(doneBlock)(bodyBlock)
-                                                in
-                                                    let _ = schedAt(sc)(bodyBlock)
-                                                    in
-                                                        let byte =
-                                                            buildLoad(sc.schedBuilder)(sc.schedI8)(buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(bytesAddr)(buildAdd(sc.schedBuilder)(start)(index)(name + "_source_index"))(name + "_source_addr"))(sc.schedPtr)(name + "_source_ptr"))(name + "_byte")
-                                                        in
-                                                            let _ =
-                                                                name + "_dest_ptr"
-                                                                |> buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(text)(buildAdd(sc.schedBuilder)(index)(schedConst(sc)(8))(name + "_dest_index"))(name + "_dest_addr"))(sc.schedPtr)
-                                                                |> buildStore(sc.schedBuilder)(byte)
-                                                            in
-                                                                let _ =
-                                                                    name + "_index_next"
-                                                                    |> buildAdd(sc.schedBuilder)(index)(schedConst(sc)(1))
-                                                                    |> schedSet(sc)(indexSlot)
-                                                                in
-                                                                    let _ = schedBr(sc)(loopBlock)
-                                                                    in
-                                                                        let _ = schedAt(sc)(doneBlock)
-                                                                        in text)
-
-// The connect stage of stage 0's HTTP leaf: the first step parses the URL and creates a TCP connect
-// task for its host and port, every step steps that task, and a failed connect completes the HTTP
-// task with the connect's error. A request over a connected socket is not ported, so a connect that
-// succeeds stops the program. Answers 1 when the task completed.
-let defineStepHttp module_ (sc: SchedulerContext) connectFn connectType =
-    (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
-    in
-        let stepFn = addInternalFunction(module_)("__ashes_step_http")(stepType)
-        in
-            let block =
-                given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
-            in
-                let entryBlock = block("entry")
-                in
-                    let createBlock = block("http_create_connect")
-                    in
-                        let parsedBlock = block("http_parsed")
-                        in
-                            let unportedBlock = block("http_unported")
-                            in
-                                let stepBlock = block("http_step_connect")
-                                in
-                                    let pendingBlock = block("http_connect_pending")
-                                    in
-                                        let connectedBlock = block("http_connected")
-                                        in
-                                            let failedBlock = block("http_connect_failed")
-                                            in
-                                                let task = getParam(stepFn)(0u32)
-                                                in
-                                                    let _ = schedAt(sc)(entryBlock)
-                                                    in
-                                                        let _ =
-                                                            schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetAwaitedTask)("http_child"))(schedConst(sc)(0))("http_first_step"))(createBlock)(stepBlock)
-                                                        in
-                                                            let _ = schedAt(sc)(unportedBlock)
-                                                            in
-                                                                let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedHttpMessageCodes)("http_unported")
-                                                                in
-                                                                    let _ = schedAt(sc)(createBlock)
-                                                                    in
-                                                                        match "http_url_value"
-                                                                        |> schedWord(sc)(task)(offsetIoArgument0)
-                                                                        |> emitParseHttpTarget(sc)(stepFn) with
-                                                                            | (parsed, hostStart, hostEnd, port, urlBytes) ->
-                                                                                let _ =
-                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateNe)(parsed)(schedConst(sc)(0))("http_url_parsed"))(parsedBlock)(unportedBlock)
-                                                                                in
-                                                                                    let _ = schedAt(sc)(parsedBlock)
-                                                                                    in
-                                                                                        let host = emitArenaSubstring(sc)(stepFn)(urlBytes)(hostStart)(hostEnd)("http_host")
-                                                                                        in
-                                                                                            let child =
-                                                                                                emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpConnectTaskState)(host)(port)(schedConst(sc)(0))("http_connect_task")
-                                                                                            in
-                                                                                                let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
-                                                                                                in
-                                                                                                    let _ = schedBr(sc)(stepBlock)
-                                                                                                    in
-                                                                                                        let _ = schedAt(sc)(stepBlock)
-                                                                                                        in
-                                                                                                            let connectTask = schedWord(sc)(task)(offsetAwaitedTask)("http_connect_child")
-                                                                                                            in
-                                                                                                                let status = buildCall(sc.schedBuilder)(connectType)(connectFn)([connectTask])(1u32)("http_connect_status")
-                                                                                                                in
-                                                                                                                    let _ =
-                                                                                                                        schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))("http_connect_waiting"))(pendingBlock)(connectedBlock)
-                                                                                                                    in
-                                                                                                                        let _ = schedAt(sc)(pendingBlock)
-                                                                                                                        in
-                                                                                                                            let _ =
-                                                                                                                                "http_child_wait_kind"
-                                                                                                                                |> schedWord(sc)(connectTask)(offsetWaitKind)
-                                                                                                                                |> schedStore(sc)(task)(offsetWaitKind)
-                                                                                                                            in
-                                                                                                                                let _ =
-                                                                                                                                    "http_child_wait_handle"
-                                                                                                                                    |> schedWord(sc)(connectTask)(offsetWaitHandle)
-                                                                                                                                    |> schedStore(sc)(task)(offsetWaitHandle)
-                                                                                                                                in
-                                                                                                                                    let _ =
-                                                                                                                                        0
-                                                                                                                                        |> schedConst(sc)
-                                                                                                                                        |> buildRet(sc.schedBuilder)
-                                                                                                                                    in
-                                                                                                                                        let _ = schedAt(sc)(connectedBlock)
-                                                                                                                                        in
-                                                                                                                                            let connectResult = schedWord(sc)(connectTask)(offsetResultSlot)("http_connect_result")
-                                                                                                                                            in
-                                                                                                                                                let _ =
-                                                                                                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(connectResult)(0)("http_connect_tag"))(schedConst(sc)(0))("http_connect_ok"))(unportedBlock)(failedBlock)
-                                                                                                                                                in
-                                                                                                                                                    let _ = schedAt(sc)(failedBlock)
-                                                                                                                                                    in
-                                                                                                                                                        let _ = schedStore(sc)(task)(offsetResultSlot)(connectResult)
-                                                                                                                                                        in
-                                                                                                                                                            let _ =
-                                                                                                                                                                0
-                                                                                                                                                                |> schedConst(sc)
-                                                                                                                                                                |> schedStore(sc)(task)(offsetWaitKind)
-                                                                                                                                                            in
-                                                                                                                                                                let _ =
-                                                                                                                                                                    CompletedTaskState
-                                                                                                                                                                    |> stateConst(sc.schedI64)
-                                                                                                                                                                    |> schedStore(sc)(task)(offsetStateIndex)
-                                                                                                                                                                in
-                                                                                                                                                                    let _ =
-                                                                                                                                                                        1
-                                                                                                                                                                        |> schedConst(sc)
-                                                                                                                                                                        |> buildRet(sc.schedBuilder)
-                                                                                                                                                                    in (stepFn, stepType))
-
 // Stage 0's networking failure messages.
 let tcpSendFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 115, 101, 110, 100, 40, 41, 32, 102, 97, 105, 108, 101, 100]
 
@@ -2248,6 +1883,1170 @@ let emitStepTcpAccept (sc: SchedulerContext) stepFn task =
                                                     in
                                                         let _ = schedAt(sc)(failBlock)
                                                         in schedFailLeaf(sc)(stepFn)(task)(tcpAcceptFailedCodes)("tcp_accept_failure"))
+
+// "Ashes: HTTPS is not supported by the self-hosted compiler yet\n": an HTTP leaf over TLS stops
+// the program once its TCP connect succeeds.
+let unportedHttpsMessageCodes = [65, 115, 104, 101, 115, 58, 32, 72, 84, 84, 80, 83, 32, 105, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 115, 101, 108, 102, 45, 104, 111, 115, 116, 101, 100, 32, 99, 111, 109, 112, 105, 108, 101, 114, 32, 121, 101, 116, 10]
+
+// Stage 0's HTTP request and response texts.
+let httpGetCodes = [71, 69, 84, 32]
+
+let httpPostCodes = [80, 79, 83, 84, 32]
+
+let httpVersionHostCodes = [32, 72, 84, 84, 80, 47, 49, 46, 49, 13, 10, 72, 111, 115, 116, 58, 32]
+
+let httpContentLengthCodes = [13, 10, 67, 111, 110, 116, 101, 110, 116, 45, 76, 101, 110, 103, 116, 104, 58, 32]
+
+let httpConnectionCloseCodes = [13, 10, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 58, 32, 99, 108, 111, 115, 101, 13, 10, 13, 10]
+
+let httpRootPathCodes = [47]
+
+let httpStatusPrefixCodes = [72, 84, 84, 80, 32]
+
+let httpMalformedUrlCodes = [109, 97, 108, 102, 111, 114, 109, 101, 100, 32, 85, 82, 76]
+
+let httpMalformedResponseCodes = [109, 97, 108, 102, 111, 114, 109, 101, 100, 32, 72, 84, 84, 80, 32, 114, 101, 115, 112, 111, 110, 115, 101]
+
+let httpUnsupportedTransferEncodingCodes = [117, 110, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 116, 114, 97, 110, 115, 102, 101, 114, 32, 101, 110, 99, 111, 100, 105, 110, 103]
+
+let httpUnknownStageCodes = [117, 110, 107, 110, 111, 119, 110, 32, 104, 116, 116, 112, 32, 116, 97, 115, 107, 32, 115, 116, 97, 103, 101]
+
+let httpChunkedHeaderCodes = [84, 114, 97, 110, 115, 102, 101, 114, 45, 69, 110, 99, 111, 100, 105, 110, 103, 58, 32, 99, 104, 117, 110, 107, 101, 100]
+
+let httpHeaderEndCodes = [13, 10, 13, 10]
+
+// The stack slots of an HTTP step, all made in its entry block so the stages it runs in a loop
+// never grow the stack: a scan index, two scratch words, and what the URL parse answers.
+type HttpStepSlots =
+    | scanSlot: LLVMValueRef
+    | countSlot: LLVMValueRef
+    | valueSlot: LLVMValueRef
+    | answerSlot: LLVMValueRef
+    | parsedSlot: LLVMValueRef
+    | hostStartSlot: LLVMValueRef
+    | hostSlot: LLVMValueRef
+    | pathSlot: LLVMValueRef
+    | portSlot: LLVMValueRef
+    | tlsSlot: LLVMValueRef
+
+// The step functions an HTTP leaf runs its child leaves with.
+type HttpChildSteps =
+    | connectStepFn: LLVMValueRef
+    | connectStepType: LLVMTypeRef
+    | sendStepFn: LLVMValueRef
+    | sendStepType: LLVMTypeRef
+    | receiveStepFn: LLVMValueRef
+    | receiveStepType: LLVMTypeRef
+    | closeStepFn: LLVMValueRef
+    | closeStepType: LLVMTypeRef
+
+// The byte at `bytes + index`, widened to a word.
+let schedByteAt (sc: SchedulerContext) bytes index name =
+    (let address = buildAdd(sc.schedBuilder)(bytes)(index)(name + "_addr")
+    in
+        let pointer = buildIntToPtr(sc.schedBuilder)(address)(sc.schedPtr)(name + "_ptr")
+        in
+            let byte = buildLoad(sc.schedBuilder)(sc.schedI8)(pointer)(name + "_byte")
+            in buildZExt(sc.schedBuilder)(byte)(sc.schedI64)(name))
+
+// Whether the bytes at `bytes + index` are `codes`, one comparison per code.
+let recursive emitBytesAt (sc: SchedulerContext) bytes index (offset: Int) (codes: List(Int)) matched name =
+    match codes with
+        | [] -> matched
+        | code :: rest ->
+            let position =
+                buildAdd(sc.schedBuilder)(index)(schedConst(sc)(offset))(name + "_position")
+            in
+                let same =
+                    schedEq(sc)(schedByteAt(sc)(bytes)(position)(name + "_value"))(schedConst(sc)(code))(name + "_same")
+                in
+                    emitBytesAt(sc)(bytes)(index)(offset + 1)(rest)(buildAnd(sc.schedBuilder)(matched)(same)(name + "_all"))(name)
+
+// The first index in `[start, limit)` where `codes` starts within the first `limit` bytes of
+// `bytes` (the whole sequence inside them), or -1, stage 0's `EmitFindByte` and
+// `EmitFindByteSequence`; the scan index lives in `indexSlot`.
+let emitFindBytes (sc: SchedulerContext) function_ indexSlot bytes start limit (codes: List(Int)) name =
+    (let block =
+        given (label) -> appendBasicBlock(sc.schedContext)(function_)(name + label)
+    in
+        let checkBlock = block("_check")
+        in
+            let compareBlock = block("_compare")
+            in
+                let nextBlock = block("_next")
+                in
+                    let missBlock = block("_miss")
+                    in
+                        let doneBlock = block("_done")
+                        in
+                            let last =
+                                buildSub(sc.schedBuilder)(limit)(codes
+                                |> Ashes.Collection.List.length
+                                |> schedConst(sc))(name + "_last")
+                            in
+                                let _ = schedSet(sc)(indexSlot)(start)
+                                in
+                                    let _ = schedBr(sc)(checkBlock)
+                                    in
+                                        let _ = schedAt(sc)(checkBlock)
+                                        in
+                                            let index = schedLoad(sc)(indexSlot)(name + "_index")
+                                            in
+                                                let _ =
+                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(index)(last)(name + "_past"))(missBlock)(compareBlock)
+                                                in
+                                                    let _ = schedAt(sc)(compareBlock)
+                                                    in
+                                                        let matched =
+                                                            emitBytesAt(sc)(bytes)(index)(0)(codes)(schedEq(sc)(index)(index)(name + "_seed"))(name)
+                                                        in
+                                                            let _ = schedIf(sc)(matched)(doneBlock)(nextBlock)
+                                                            in
+                                                                let _ = schedAt(sc)(nextBlock)
+                                                                in
+                                                                    let _ =
+                                                                        name + "_index_next"
+                                                                        |> buildAdd(sc.schedBuilder)(index)(schedConst(sc)(1))
+                                                                        |> schedSet(sc)(indexSlot)
+                                                                    in
+                                                                        let _ = schedBr(sc)(checkBlock)
+                                                                        in
+                                                                            let _ = schedAt(sc)(missBlock)
+                                                                            in
+                                                                                let _ =
+                                                                                    -1
+                                                                                    |> schedConst(sc)
+                                                                                    |> schedSet(sc)(indexSlot)
+                                                                                in
+                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                        in schedLoad(sc)(indexSlot)(name + "_found"))
+
+// Copies `length` bytes from `source` to `destination`, a byte at a time.
+let emitCopyBytes (sc: SchedulerContext) function_ indexSlot destination source length name =
+    (let checkBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_check")
+    in
+        let copyBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_copy")
+        in
+            let doneBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_done")
+            in
+                let _ =
+                    0
+                    |> schedConst(sc)
+                    |> schedSet(sc)(indexSlot)
+                in
+                    let _ = schedBr(sc)(checkBlock)
+                    in
+                        let _ = schedAt(sc)(checkBlock)
+                        in
+                            let index = schedLoad(sc)(indexSlot)(name + "_index")
+                            in
+                                let _ =
+                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(index)(length)(name + "_copied"))(doneBlock)(copyBlock)
+                                in
+                                    let _ = schedAt(sc)(copyBlock)
+                                    in
+                                        let byte =
+                                            buildLoad(sc.schedBuilder)(sc.schedI8)(buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(source)(index)(name + "_from"))(sc.schedPtr)(name + "_from_ptr"))(name + "_byte")
+                                        in
+                                            let _ =
+                                                name + "_to_ptr"
+                                                |> buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(destination)(index)(name + "_to"))(sc.schedPtr)
+                                                |> buildStore(sc.schedBuilder)(byte)
+                                            in
+                                                let _ =
+                                                    name + "_index_next"
+                                                    |> buildAdd(sc.schedBuilder)(index)(schedConst(sc)(1))
+                                                    |> schedSet(sc)(indexSlot)
+                                                in
+                                                    let _ = schedBr(sc)(checkBlock)
+                                                    in schedAt(sc)(doneBlock))
+
+// A fresh arena string `[len][bytes]` with room for `length` bytes, its length word written.
+let emitArenaStringOfLength (sc: SchedulerContext) function_ length name =
+    (let size =
+        name + "_size" |> buildAnd(sc.schedBuilder)(buildAdd(sc.schedBuilder)(length)(schedConst(sc)(15))(name + "_size_plus"))(schedConst(sc)(-8))
+    in
+        let text = emitArenaAllocDynamic(sc.schedContext)(function_)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(size)(name)
+        in
+            let _ = schedStore(sc)(text)(0)(length)
+            in text)
+
+// The `length` bytes at `source` as a fresh arena string.
+let emitArenaStringFromBytes (sc: SchedulerContext) function_ indexSlot source length name =
+    (let text = emitArenaStringOfLength(sc)(function_)(length)(name)
+    in
+        let _ =
+            emitCopyBytes(sc)(function_)(indexSlot)(buildAdd(sc.schedBuilder)(text)(schedConst(sc)(8))(name + "_bytes"))(source)(length)(name + "_fill")
+        in text)
+
+// Two strings joined into a fresh arena string.
+let emitArenaConcat (sc: SchedulerContext) function_ indexSlot leftRef rightRef name =
+    match (emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(leftRef)(name + "_left"), emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(rightRef)(name + "_right")) with
+        | ((leftLength, leftBytes), (rightLength, rightBytes)) ->
+            let text =
+                emitArenaStringOfLength(sc)(function_)(buildAdd(sc.schedBuilder)(leftLength)(rightLength)(name + "_length"))(name)
+            in
+                let bytes =
+                    buildAdd(sc.schedBuilder)(text)(schedConst(sc)(8))(name + "_bytes")
+                in
+                    let _ = emitCopyBytes(sc)(function_)(indexSlot)(bytes)(leftBytes)(leftLength)(name + "_copy_left")
+                    in
+                        let _ =
+                            emitCopyBytes(sc)(function_)(indexSlot)(buildAdd(sc.schedBuilder)(bytes)(leftLength)(name + "_right_at"))(rightBytes)(rightLength)(name + "_copy_right")
+                        in text
+
+// A literal followed by a string, as one fresh arena string.
+let emitArenaPrefixed (sc: SchedulerContext) function_ indexSlot (codes: List(Int)) textRef name =
+    emitArenaConcat(sc)(function_)(indexSlot)(schedStringLiteral(sc)(function_)(codes)(name + "_literal"))(textRef)(name)
+
+let emitArenaSuffixed (sc: SchedulerContext) function_ indexSlot textRef (codes: List(Int)) name =
+    emitArenaConcat(sc)(function_)(indexSlot)(textRef)(schedStringLiteral(sc)(function_)(codes)(name + "_literal"))(name)
+
+// The decimal digits of a non-negative word as a fresh arena string, stage 0's
+// `EmitNonNegativeIntToString`: the digits are counted first, then written from the last.
+let emitArenaDecimal (sc: SchedulerContext) function_ (slots: HttpStepSlots) value name =
+    (let block =
+        given (label) -> appendBasicBlock(sc.schedContext)(function_)(name + label)
+    in
+        let countBlock = block("_count")
+        in
+            let countMoreBlock = block("_count_more")
+            in
+                let writeBlock = block("_write")
+                in
+                    let doneBlock = block("_done")
+                    in
+                        let ten = schedConst(sc)(10)
+                        in
+                            let _ = schedSet(sc)(slots.valueSlot)(value)
+                            in
+                                let _ =
+                                    1
+                                    |> schedConst(sc)
+                                    |> schedSet(sc)(slots.countSlot)
+                                in
+                                    let _ = schedBr(sc)(countBlock)
+                                    in
+                                        let _ = schedAt(sc)(countBlock)
+                                        in
+                                            let remaining = schedLoad(sc)(slots.valueSlot)(name + "_remaining")
+                                            in
+                                                let _ =
+                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(remaining)(ten)(name + "_more_digits"))(countMoreBlock)(writeBlock)
+                                                in
+                                                    let _ = schedAt(sc)(countMoreBlock)
+                                                    in
+                                                        let _ =
+                                                            name + "_shifted"
+                                                            |> buildUDiv(sc.schedBuilder)(remaining)(ten)
+                                                            |> schedSet(sc)(slots.valueSlot)
+                                                        in
+                                                            let _ =
+                                                                name + "_count_next"
+                                                                |> buildAdd(sc.schedBuilder)(schedLoad(sc)(slots.countSlot)(name + "_count_value"))(schedConst(sc)(1))
+                                                                |> schedSet(sc)(slots.countSlot)
+                                                            in
+                                                                let _ = schedBr(sc)(countBlock)
+                                                                in
+                                                                    let _ = schedAt(sc)(writeBlock)
+                                                                    in
+                                                                        let text =
+                                                                            emitArenaStringOfLength(sc)(function_)(schedLoad(sc)(slots.countSlot)(name + "_digits"))(name)
+                                                                        in
+                                                                            let digitBlock = block("_digit")
+                                                                            in
+                                                                                let _ = schedSet(sc)(slots.valueSlot)(value)
+                                                                                in
+                                                                                    let _ = schedBr(sc)(digitBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(digitBlock)
+                                                                                        in
+                                                                                            let index =
+                                                                                                name + "_index" |> buildSub(sc.schedBuilder)(schedLoad(sc)(slots.countSlot)(name + "_position"))(schedConst(sc)(1))
+                                                                                            in
+                                                                                                let current = schedLoad(sc)(slots.valueSlot)(name + "_current")
+                                                                                                in
+                                                                                                    let digit =
+                                                                                                        buildTrunc(sc.schedBuilder)(buildAdd(sc.schedBuilder)(buildURem(sc.schedBuilder)(current)(ten)(name + "_rem"))(schedConst(sc)(48))(name + "_code"))(sc.schedI8)(name + "_char")
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            name + "_char_ptr"
+                                                                                                            |> buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(text)(buildAdd(sc.schedBuilder)(index)(schedConst(sc)(8))(name + "_offset"))(name + "_char_addr"))(sc.schedPtr)
+                                                                                                            |> buildStore(sc.schedBuilder)(digit)
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                name + "_next_value"
+                                                                                                                |> buildUDiv(sc.schedBuilder)(current)(ten)
+                                                                                                                |> schedSet(sc)(slots.valueSlot)
+                                                                                                            in
+                                                                                                                let _ = schedSet(sc)(slots.countSlot)(index)
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(index)(schedConst(sc)(0))(name + "_digits_left"))(digitBlock)(doneBlock)
+                                                                                                                    in
+                                                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                                                        in text)
+
+// Stage 0's `EmitParseHttpUrl`: `http://` (port 80) or `https://` (port 443), a host up to the
+// first `:` or `/` that must not be empty, an optional port of decimal digits up to 65535 that
+// must not be empty, and a path from the first `/` (`/` when there is none). Writes the host,
+// path, port and whether the scheme is TLS to their slots and answers whether the URL parsed.
+let emitParseHttpUrl (sc: SchedulerContext) function_ (slots: HttpStepSlots) urlRef =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(function_)(name)
+    in
+        match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(urlRef)("http_url") with
+            | (urlLength, urlBytes) ->
+                let schemeBlock = block("http_url_scheme")
+                in
+                    let httpsBlock = block("http_url_https")
+                    in
+                        let httpCheckBlock = block("http_url_http_check")
+                        in
+                            let httpBlock = block("http_url_http")
+                            in
+                                let hostBlock = block("http_url_host")
+                                in
+                                    let storeHostBlock = block("http_url_store_host")
+                                    in
+                                        let portCheckBlock = block("http_url_port_check")
+                                        in
+                                            let portLoopBlock = block("http_url_port_loop")
+                                            in
+                                                let portByteBlock = block("http_url_port_byte")
+                                                in
+                                                    let portDigitBlock = block("http_url_port_digit")
+                                                    in
+                                                        let portNextBlock = block("http_url_port_next")
+                                                        in
+                                                            let portDoneBlock = block("http_url_port_done")
+                                                            in
+                                                                let pathBlock = block("http_url_path")
+                                                                in
+                                                                    let pathSliceBlock = block("http_url_path_slice")
+                                                                    in
+                                                                        let pathRootBlock = block("http_url_path_root")
+                                                                        in
+                                                                            let parsedBlock = block("http_url_parsed")
+                                                                            in
+                                                                                let malformedBlock = block("http_url_malformed")
+                                                                                in
+                                                                                    let doneBlock = block("http_url_done")
+                                                                                    in
+                                                                                        let _ =
+                                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(urlLength)(schedConst(sc)(8))("http_url_long_enough"))(schemeBlock)(malformedBlock)
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(schemeBlock)
+                                                                                            in
+                                                                                                let firstWord =
+                                                                                                    buildLoad(sc.schedBuilder)(sc.schedI64)(buildIntToPtr(sc.schedBuilder)(urlBytes)(sc.schedPtr)("http_url_scheme_ptr"))("http_url_scheme_word")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        schedIf(sc)(schedEq(sc)(firstWord)(constInt(sc.schedI64)(3400000511170344040u64)(false))("http_url_is_https"))(httpsBlock)(httpCheckBlock)
+                                                                                                    in
+                                                                                                        let _ = schedAt(sc)(httpsBlock)
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                1
+                                                                                                                |> schedConst(sc)
+                                                                                                                |> schedSet(sc)(slots.tlsSlot)
+                                                                                                            in
+                                                                                                                let _ =
+                                                                                                                    443
+                                                                                                                    |> schedConst(sc)
+                                                                                                                    |> schedSet(sc)(slots.portSlot)
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        8
+                                                                                                                        |> schedConst(sc)
+                                                                                                                        |> schedSet(sc)(slots.hostStartSlot)
+                                                                                                                    in
+                                                                                                                        let _ = schedBr(sc)(hostBlock)
+                                                                                                                        in
+                                                                                                                            let _ = schedAt(sc)(httpCheckBlock)
+                                                                                                                            in
+                                                                                                                                let firstSeven =
+                                                                                                                                    buildAnd(sc.schedBuilder)(firstWord)(constInt(sc.schedI64)(72057594037927935u64)(false))("http_url_first_seven")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        schedIf(sc)(schedEq(sc)(firstSeven)(constInt(sc.schedI64)(13281251946689640u64)(false))("http_url_is_http"))(httpBlock)(malformedBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ = schedAt(sc)(httpBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                0
+                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                |> schedSet(sc)(slots.tlsSlot)
+                                                                                                                                            in
+                                                                                                                                                let _ =
+                                                                                                                                                    80
+                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                    |> schedSet(sc)(slots.portSlot)
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        7
+                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                        |> schedSet(sc)(slots.hostStartSlot)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedBr(sc)(hostBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedAt(sc)(hostBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let hostStart = schedLoad(sc)(slots.hostStartSlot)("http_url_host_start")
+                                                                                                                                                                in
+                                                                                                                                                                    let slash = emitFindBytes(sc)(function_)(slots.scanSlot)(urlBytes)(hostStart)(urlLength)(httpRootPathCodes)("http_url_slash")
+                                                                                                                                                                    in
+                                                                                                                                                                        let hasSlash =
+                                                                                                                                                                            buildICmp(sc.schedBuilder)(intPredicateSge)(slash)(schedConst(sc)(0))("http_url_has_slash")
+                                                                                                                                                                        in
+                                                                                                                                                                            let searchEnd = buildSelect(sc.schedBuilder)(hasSlash)(slash)(urlLength)("http_url_search_end")
+                                                                                                                                                                            in
+                                                                                                                                                                                let colon = emitFindBytes(sc)(function_)(slots.scanSlot)(urlBytes)(hostStart)(searchEnd)([58])("http_url_colon")
+                                                                                                                                                                                in
+                                                                                                                                                                                    let hasColon =
+                                                                                                                                                                                        buildICmp(sc.schedBuilder)(intPredicateSge)(colon)(schedConst(sc)(0))("http_url_has_colon")
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let hostEnd = buildSelect(sc.schedBuilder)(hasColon)(colon)(searchEnd)("http_url_host_end")
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(hostEnd)(hostStart)("http_url_missing_host"))(malformedBlock)(storeHostBlock)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ = schedAt(sc)(storeHostBlock)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                        "http_url_host_text"
+                                                                                                                                                                                                        |> emitArenaStringFromBytes(sc)(function_)(slots.scanSlot)(buildAdd(sc.schedBuilder)(urlBytes)(hostStart)("http_url_host_from"))(buildSub(sc.schedBuilder)(hostEnd)(hostStart)("http_url_host_length"))
+                                                                                                                                                                                                        |> schedSet(sc)(slots.hostSlot)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = schedIf(sc)(hasColon)(portCheckBlock)(pathBlock)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = schedAt(sc)(portCheckBlock)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let portStart =
+                                                                                                                                                                                                                    buildAdd(sc.schedBuilder)(colon)(schedConst(sc)(1))("http_url_port_start")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = schedSet(sc)(slots.scanSlot)(portStart)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            0
+                                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                                            |> schedSet(sc)(slots.valueSlot)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                schedIf(sc)(schedEq(sc)(portStart)(searchEnd)("http_url_empty_port"))(malformedBlock)(portLoopBlock)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ = schedAt(sc)(portLoopBlock)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let portIndex = schedLoad(sc)(slots.scanSlot)("http_url_port_index")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(portIndex)(searchEnd)("http_url_port_end"))(portDoneBlock)(portByteBlock)
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let _ = schedAt(sc)(portByteBlock)
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let digit =
+                                                                                                                                                                                                                                                    buildSub(sc.schedBuilder)(schedByteAt(sc)(urlBytes)(portIndex)("http_url_port_char"))(schedConst(sc)(48))("http_url_port_digit_value")
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUlt)(digit)(schedConst(sc)(10))("http_url_port_is_digit"))(portDigitBlock)(malformedBlock)
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let _ = schedAt(sc)(portDigitBlock)
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let nextPort =
+                                                                                                                                                                                                                                                                buildAdd(sc.schedBuilder)(buildMul(sc.schedBuilder)(schedLoad(sc)(slots.valueSlot)("http_url_port_value"))(schedConst(sc)(10))("http_url_port_times_ten"))(digit)("http_url_port_next")
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUgt)(nextPort)(schedConst(sc)(65535))("http_url_port_too_large"))(malformedBlock)(portNextBlock)
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(portNextBlock)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ = schedSet(sc)(slots.valueSlot)(nextPort)
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                "http_url_port_index_next"
+                                                                                                                                                                                                                                                                                |> buildAdd(sc.schedBuilder)(portIndex)(schedConst(sc)(1))
+                                                                                                                                                                                                                                                                                |> schedSet(sc)(slots.scanSlot)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let _ = schedBr(sc)(portLoopBlock)
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(portDoneBlock)
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                            "http_url_port_final"
+                                                                                                                                                                                                                                                                                            |> schedLoad(sc)(slots.valueSlot)
+                                                                                                                                                                                                                                                                                            |> schedSet(sc)(slots.portSlot)
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ = schedBr(sc)(pathBlock)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(pathBlock)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ = schedIf(sc)(hasSlash)(pathSliceBlock)(pathRootBlock)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(pathSliceBlock)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                                                                "http_url_path_text"
+                                                                                                                                                                                                                                                                                                                |> emitArenaStringFromBytes(sc)(function_)(slots.scanSlot)(buildAdd(sc.schedBuilder)(urlBytes)(slash)("http_url_path_from"))(buildSub(sc.schedBuilder)(urlLength)(slash)("http_url_path_length"))
+                                                                                                                                                                                                                                                                                                                |> schedSet(sc)(slots.pathSlot)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = schedBr(sc)(parsedBlock)
+                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                    let _ = schedAt(sc)(pathRootBlock)
+                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                                            "http_url_root_path"
+                                                                                                                                                                                                                                                                                                                            |> schedStringLiteral(sc)(function_)(httpRootPathCodes)
+                                                                                                                                                                                                                                                                                                                            |> schedSet(sc)(slots.pathSlot)
+                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                            let _ = schedBr(sc)(parsedBlock)
+                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(parsedBlock)
+                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                                                        1
+                                                                                                                                                                                                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                                                        |> schedSet(sc)(slots.parsedSlot)
+                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                        let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                            let _ = schedAt(sc)(malformedBlock)
+                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                                                                                                    0
+                                                                                                                                                                                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                                                                    |> schedSet(sc)(slots.parsedSlot)
+                                                                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                                                                            let parsed = schedLoad(sc)(slots.parsedSlot)("http_url_parsed_value")
+                                                                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                                                                buildICmp(sc.schedBuilder)(intPredicateNe)(parsed)(schedConst(sc)(0))("http_url_ok"))
+
+// Stage 0's `EmitParseHttpResponseResult` over the received response text (0 when nothing came):
+// a status line with three digits after its first space, headers up to a blank line, no chunked
+// transfer encoding, then the body. A 2xx status answers `Ok(body)`, another `Error("HTTP <code>")`;
+// a response of another shape answers `Error("malformed HTTP response")`.
+let emitParseHttpResponse (sc: SchedulerContext) function_ (slots: HttpStepSlots) responseRef =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(function_)(name)
+    in
+        let presentBlock = block("http_response_present")
+        in
+            let separatorBlock = block("http_response_separator")
+            in
+                let statusBlock = block("http_response_status")
+                in
+                    let digitsBlock = block("http_response_digits")
+                    in
+                        let digitCheckBlock = block("http_response_digit_check")
+                        in
+                            let chunkedCheckBlock = block("http_response_chunked_check")
+                            in
+                                let chunkedBlock = block("http_response_chunked")
+                                in
+                                    let codeBlock = block("http_response_code")
+                                    in
+                                        let okBlock = block("http_response_ok")
+                                        in
+                                            let statusErrorBlock = block("http_response_status_error")
+                                            in
+                                                let malformedBlock = block("http_response_malformed")
+                                                in
+                                                    let doneBlock = block("http_response_done")
+                                                    in
+                                                        let _ =
+                                                            schedIf(sc)(schedEq(sc)(responseRef)(schedConst(sc)(0))("http_response_missing"))(malformedBlock)(presentBlock)
+                                                        in
+                                                            let _ = schedAt(sc)(presentBlock)
+                                                            in
+                                                                match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(responseRef)("http_response") with
+                                                                    | (length, bytes) ->
+                                                                        let _ =
+                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUlt)(length)(schedConst(sc)(12))("http_response_too_short"))(malformedBlock)(separatorBlock)
+                                                                        in
+                                                                            let _ = schedAt(sc)(separatorBlock)
+                                                                            in
+                                                                                let separator =
+                                                                                    emitFindBytes(sc)(function_)(slots.scanSlot)(bytes)(schedConst(sc)(0))(length)(httpHeaderEndCodes)("http_response_header_end")
+                                                                                in
+                                                                                    let _ =
+                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(separator)(schedConst(sc)(0))("http_response_has_header_end"))(statusBlock)(malformedBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(statusBlock)
+                                                                                        in
+                                                                                            let space =
+                                                                                                emitFindBytes(sc)(function_)(slots.scanSlot)(bytes)(schedConst(sc)(0))(separator)([32])("http_response_space")
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(space)(schedConst(sc)(0))("http_response_has_space"))(digitsBlock)(malformedBlock)
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(digitsBlock)
+                                                                                                    in
+                                                                                                        let statusEnd =
+                                                                                                            buildAdd(sc.schedBuilder)(space)(schedConst(sc)(3))("http_response_status_end")
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUlt)(statusEnd)(separator)("http_response_digits_fit"))(digitCheckBlock)(malformedBlock)
+                                                                                                            in
+                                                                                                                let _ = schedAt(sc)(digitCheckBlock)
+                                                                                                                in
+                                                                                                                    let digitAt =
+                                                                                                                        given (offset) ->
+                                                                                                                            given (name) ->
+                                                                                                                                buildSub(sc.schedBuilder)(schedByteAt(sc)(bytes)(buildAdd(sc.schedBuilder)(space)(schedConst(sc)(offset))(name + "_index"))(name + "_char"))(schedConst(sc)(48))(name)
+                                                                                                                    in
+                                                                                                                        let hundreds = digitAt(1)("http_response_hundreds")
+                                                                                                                        in
+                                                                                                                            let tens = digitAt(2)("http_response_tens")
+                                                                                                                            in
+                                                                                                                                let ones = digitAt(3)("http_response_ones")
+                                                                                                                                in
+                                                                                                                                    let isDigit =
+                                                                                                                                        given (digit) ->
+                                                                                                                                            given (name) ->
+                                                                                                                                                buildICmp(sc.schedBuilder)(intPredicateUlt)(digit)(schedConst(sc)(10))(name)
+                                                                                                                                    in
+                                                                                                                                        let digitsValid =
+                                                                                                                                            buildAnd(sc.schedBuilder)(buildAnd(sc.schedBuilder)(isDigit(hundreds)("http_response_hundreds_digit"))(isDigit(tens)("http_response_tens_digit"))("http_response_two_digits"))(isDigit(ones)("http_response_ones_digit"))("http_response_three_digits")
+                                                                                                                                        in
+                                                                                                                                            let _ = schedIf(sc)(digitsValid)(chunkedCheckBlock)(malformedBlock)
+                                                                                                                                            in
+                                                                                                                                                let _ = schedAt(sc)(chunkedCheckBlock)
+                                                                                                                                                in
+                                                                                                                                                    let chunkedHeader =
+                                                                                                                                                        emitFindBytes(sc)(function_)(slots.scanSlot)(bytes)(schedConst(sc)(0))(separator)(httpChunkedHeaderCodes)("http_response_chunked_header")
+                                                                                                                                                    in
+                                                                                                                                                        let _ =
+                                                                                                                                                            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(chunkedHeader)(schedConst(sc)(0))("http_response_is_chunked"))(chunkedBlock)(codeBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedAt(sc)(chunkedBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let _ =
+                                                                                                                                                                    "http_response_chunked_error"
+                                                                                                                                                                    |> schedError(sc)(function_)(schedStringLiteral(sc)(function_)(httpUnsupportedTransferEncodingCodes)("http_response_chunked_message"))
+                                                                                                                                                                    |> schedSet(sc)(slots.answerSlot)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedAt(sc)(codeBlock)
+                                                                                                                                                                        in
+                                                                                                                                                                            let code =
+                                                                                                                                                                                buildAdd(sc.schedBuilder)(buildAdd(sc.schedBuilder)(buildMul(sc.schedBuilder)(hundreds)(schedConst(sc)(100))("http_response_hundreds_value"))(buildMul(sc.schedBuilder)(tens)(schedConst(sc)(10))("http_response_tens_value"))("http_response_code_partial"))(ones)("http_response_code")
+                                                                                                                                                                            in
+                                                                                                                                                                                let successful =
+                                                                                                                                                                                    buildICmp(sc.schedBuilder)(intPredicateUlt)(buildSub(sc.schedBuilder)(code)(schedConst(sc)(200))("http_response_code_offset"))(schedConst(sc)(100))("http_response_successful")
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ = schedIf(sc)(successful)(okBlock)(statusErrorBlock)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ = schedAt(sc)(okBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let bodyStart =
+                                                                                                                                                                                                buildAdd(sc.schedBuilder)(separator)(schedConst(sc)(4))("http_response_body_start")
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let body =
+                                                                                                                                                                                                    emitArenaStringFromBytes(sc)(function_)(slots.scanSlot)(buildAdd(sc.schedBuilder)(bytes)(bodyStart)("http_response_body_from"))(buildSub(sc.schedBuilder)(length)(bodyStart)("http_response_body_length"))("http_response_body")
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                        "http_response_ok_result"
+                                                                                                                                                                                                        |> schedOk(sc)(function_)(body)
+                                                                                                                                                                                                        |> schedSet(sc)(slots.answerSlot)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = schedAt(sc)(statusErrorBlock)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let statusText =
+                                                                                                                                                                                                                    emitArenaPrefixed(sc)(function_)(slots.scanSlot)(httpStatusPrefixCodes)(emitArenaDecimal(sc)(function_)(slots)(code)("http_response_code_text"))("http_response_status_text")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                        "http_response_status_result"
+                                                                                                                                                                                                                        |> schedError(sc)(function_)(statusText)
+                                                                                                                                                                                                                        |> schedSet(sc)(slots.answerSlot)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ = schedAt(sc)(malformedBlock)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                    "http_response_malformed_error"
+                                                                                                                                                                                                                                    |> schedError(sc)(function_)(schedStringLiteral(sc)(function_)(httpMalformedResponseCodes)("http_response_malformed_message"))
+                                                                                                                                                                                                                                    |> schedSet(sc)(slots.answerSlot)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                                                                                                                                                                        in schedLoad(sc)(slots.answerSlot)("http_response_result"))
+
+// A stage's first step creates its child leaf, every later step steps it: answers the block that
+// creates the child and the block that steps it.
+let emitHttpStageEntry (sc: SchedulerContext) stepFn task stageBlock name =
+    (let createBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_create")
+    in
+        let stepBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_step")
+        in
+            let _ = schedAt(sc)(stageBlock)
+            in
+                let child = schedWord(sc)(task)(offsetAwaitedTask)(name + "_awaited")
+                in
+                    let _ =
+                        schedIf(sc)(schedEq(sc)(child)(schedConst(sc)(0))(name + "_no_child"))(createBlock)(stepBlock)
+                    in (createBlock, stepBlock))
+
+// Stage 0's stepping of an HTTP leaf's child (`ashes_step_task_until_wait_or_done` and
+// `EmitPendingAwaitedHttpTask`): a child still waiting hands its wait to the HTTP leaf, which parks
+// on it (the step answers 0); a finished child is cleared and its result answered, with the blocks
+// that take its failure and its success.
+let emitHttpChildStep (sc: SchedulerContext) stepFn task childFn childType name =
+    (let pendingBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_pending")
+    in
+        let doneBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_done")
+        in
+            let failedBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_failed")
+            in
+                let succeededBlock = appendBasicBlock(sc.schedContext)(stepFn)(name + "_succeeded")
+                in
+                    let child = schedWord(sc)(task)(offsetAwaitedTask)(name + "_child")
+                    in
+                        let status = buildCall(sc.schedBuilder)(childType)(childFn)([child])(1u32)(name + "_status")
+                        in
+                            let _ =
+                                schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))(name + "_waiting"))(pendingBlock)(doneBlock)
+                            in
+                                let _ = schedAt(sc)(pendingBlock)
+                                in
+                                    let _ =
+                                        name + "_wait_kind"
+                                        |> schedWord(sc)(child)(offsetWaitKind)
+                                        |> schedStore(sc)(task)(offsetWaitKind)
+                                    in
+                                        let _ =
+                                            name + "_wait_handle"
+                                            |> schedWord(sc)(child)(offsetWaitHandle)
+                                            |> schedStore(sc)(task)(offsetWaitHandle)
+                                        in
+                                            let _ =
+                                                0
+                                                |> schedConst(sc)
+                                                |> buildRet(sc.schedBuilder)
+                                            in
+                                                let _ = schedAt(sc)(doneBlock)
+                                                in
+                                                    let _ =
+                                                        0
+                                                        |> schedConst(sc)
+                                                        |> schedStore(sc)(task)(offsetWaitKind)
+                                                    in
+                                                        let result = schedWord(sc)(child)(offsetResultSlot)(name + "_result")
+                                                        in
+                                                            let _ =
+                                                                0
+                                                                |> schedConst(sc)
+                                                                |> schedStore(sc)(task)(offsetAwaitedTask)
+                                                            in
+                                                                let _ =
+                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(result)(0)(name + "_tag"))(schedConst(sc)(0))(name + "_ok"))(succeededBlock)(failedBlock)
+                                                                in (result, failedBlock, succeededBlock))
+
+// Moves the HTTP leaf to stage `kind` (keeping its TLS bit) and dispatches again.
+let emitHttpAdvance (sc: SchedulerContext) task tlsBits (kind: Int) dispatchBlock name =
+    (let _ =
+        name
+        |> buildOr(sc.schedBuilder)(tlsBits)(schedConst(sc)(kind))
+        |> schedStore(sc)(task)(offsetWaitData1)
+    in schedBr(sc)(dispatchBlock))
+
+// A POST request's tail after its host: the `Content-Length` of the body, `Connection: close` and
+// the body.
+let emitHttpRequestWithBody (sc: SchedulerContext) stepFn (slots: HttpStepSlots) task withHost =
+    (let scan = slots.scanSlot
+    in
+        let body = schedWord(sc)(task)(offsetIoArgument1)("http_request_body")
+        in
+            let bodyLength = schedWord(sc)(body)(0)("http_request_body_length")
+            in
+                let lengthLine = emitArenaSuffixed(sc)(stepFn)(scan)(withHost)(httpContentLengthCodes)("http_request_content_length")
+                in
+                    let lengthText = emitArenaDecimal(sc)(stepFn)(slots)(bodyLength)("http_request_length_text")
+                    in
+                        let withLength = emitArenaConcat(sc)(stepFn)(scan)(lengthLine)(lengthText)("http_request_length")
+                        in
+                            let headers = emitArenaSuffixed(sc)(stepFn)(scan)(withLength)(httpConnectionCloseCodes)("http_request_close")
+                            in emitArenaConcat(sc)(stepFn)(scan)(headers)(body)("http_request_with_body"))
+
+// The request text stage 0's `EmitHttpRequestString` builds: `GET` or `POST`, the path, the host,
+// a `Content-Length` and the body for a POST, and `Connection: close`.
+let emitHttpRequestText (sc: SchedulerContext) stepFn (slots: HttpStepSlots) task (hasBody: Bool) =
+    (let scan = slots.scanSlot
+    in
+        let path = schedLoad(sc)(slots.pathSlot)("http_request_path")
+        in
+            let host = schedLoad(sc)(slots.hostSlot)("http_request_host")
+            in
+                let methodCodes =
+                    if hasBody
+                    then httpPostCodes
+                    else httpGetCodes
+                in
+                    let requestLine = emitArenaPrefixed(sc)(stepFn)(scan)(methodCodes)(path)("http_request_line")
+                    in
+                        let versionLine = emitArenaSuffixed(sc)(stepFn)(scan)(requestLine)(httpVersionHostCodes)("http_request_version")
+                        in
+                            let withHost = emitArenaConcat(sc)(stepFn)(scan)(versionLine)(host)("http_request_host_line")
+                            in
+                                if hasBody
+                                then emitHttpRequestWithBody(sc)(stepFn)(slots)(task)(withHost)
+                                else emitArenaSuffixed(sc)(stepFn)(scan)(withHost)(httpConnectionCloseCodes)("http_request_close"))
+
+// The connect stage: the first step parses the URL (a malformed one completes the leaf with
+// `Error("malformed URL")`) and creates a TCP connect child for its host and port, keeping the
+// scheme's TLS bit in the stage word; once connected, the socket is kept in `WaitData0` and the
+// leaf moves on to the TLS handshake or to sending the request.
+let emitHttpConnectStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task stageBlock dispatchBlock =
+    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_connect") with
+        | (createBlock, stepBlock) ->
+            let parsedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_connect_parsed")
+            in
+                let malformedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_connect_malformed")
+                in
+                    let _ = schedAt(sc)(createBlock)
+                    in
+                        let parsed =
+                            "http_connect_url"
+                            |> schedWord(sc)(task)(offsetIoArgument0)
+                            |> emitParseHttpUrl(sc)(stepFn)(slots)
+                        in
+                            let _ = schedIf(sc)(parsed)(parsedBlock)(malformedBlock)
+                            in
+                                let _ = schedAt(sc)(malformedBlock)
+                                in
+                                    let _ =
+                                        "http_connect_malformed_error"
+                                        |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpMalformedUrlCodes)("http_connect_malformed_message"))
+                                        |> schedCompleteLeaf(sc)(task)
+                                    in
+                                        let _ = schedAt(sc)(parsedBlock)
+                                        in
+                                            let _ =
+                                                "http_connect_tls_bits"
+                                                |> buildShl(sc.schedBuilder)(schedLoad(sc)(slots.tlsSlot)("http_connect_tls"))(schedConst(sc)(3))
+                                                |> schedStore(sc)(task)(offsetWaitData1)
+                                            in
+                                                let child =
+                                                    emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpConnectTaskState)(schedLoad(sc)(slots.hostSlot)("http_connect_host"))(schedLoad(sc)(slots.portSlot)("http_connect_port"))(schedConst(sc)(0))("http_connect_task")
+                                                in
+                                                    let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                                                    in
+                                                        let _ = schedBr(sc)(stepBlock)
+                                                        in
+                                                            let _ = schedAt(sc)(stepBlock)
+                                                            in
+                                                                match emitHttpChildStep(sc)(stepFn)(task)(children.connectStepFn)(children.connectStepType)("http_connect_child") with
+                                                                    | (result, failedBlock, succeededBlock) ->
+                                                                        let _ = schedAt(sc)(failedBlock)
+                                                                        in
+                                                                            let _ = schedCompleteLeaf(sc)(task)(result)
+                                                                            in
+                                                                                let _ = schedAt(sc)(succeededBlock)
+                                                                                in
+                                                                                    let _ =
+                                                                                        "http_connect_socket"
+                                                                                        |> schedWord(sc)(result)(8)
+                                                                                        |> schedStore(sc)(task)(offsetWaitData0)
+                                                                                    in
+                                                                                        let _ =
+                                                                                            0
+                                                                                            |> schedConst(sc)
+                                                                                            |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                        in
+                                                                                            let tlsBits =
+                                                                                                buildAnd(sc.schedBuilder)(schedWord(sc)(task)(offsetWaitData1)("http_connect_stage"))(schedConst(sc)(8))("http_connect_stage_tls")
+                                                                                            in
+                                                                                                let overTls =
+                                                                                                    buildICmp(sc.schedBuilder)(intPredicateNe)(tlsBits)(schedConst(sc)(0))("http_connect_over_tls")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        "http_connect_next_stage"
+                                                                                                        |> buildSelect(sc.schedBuilder)(overTls)(schedConst(sc)(9))(schedConst(sc)(2))
+                                                                                                        |> schedStore(sc)(task)(offsetWaitData1)
+                                                                                                    in schedBr(sc)(dispatchBlock)
+
+// The send stage: the request built from the URL again is written by a TCP send child; the leaf
+// then receives, or, when the send fails, closes and completes with the failure.
+let emitHttpSendStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task (hasBody: Bool) tlsBits stageBlock dispatchBlock =
+    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_send") with
+        | (createBlock, stepBlock) ->
+            let parsedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_parsed")
+            in
+                let malformedBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_send_malformed")
+                in
+                    let _ = schedAt(sc)(createBlock)
+                    in
+                        let parsed =
+                            "http_send_url"
+                            |> schedWord(sc)(task)(offsetIoArgument0)
+                            |> emitParseHttpUrl(sc)(stepFn)(slots)
+                        in
+                            let _ = schedIf(sc)(parsed)(parsedBlock)(malformedBlock)
+                            in
+                                let _ = schedAt(sc)(malformedBlock)
+                                in
+                                    let _ =
+                                        "http_send_malformed_error"
+                                        |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpMalformedUrlCodes)("http_send_malformed_message"))
+                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                    in
+                                        let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_malformed_stage")
+                                        in
+                                            let _ = schedAt(sc)(parsedBlock)
+                                            in
+                                                let request = emitHttpRequestText(sc)(stepFn)(slots)(task)(hasBody)
+                                                in
+                                                    let child =
+                                                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpSendTaskState)(schedWord(sc)(task)(offsetWaitData0)("http_send_socket"))(request)(schedConst(sc)(0))("http_send_task")
+                                                    in
+                                                        let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                                                        in
+                                                            let _ = schedBr(sc)(stepBlock)
+                                                            in
+                                                                let _ = schedAt(sc)(stepBlock)
+                                                                in
+                                                                    match emitHttpChildStep(sc)(stepFn)(task)(children.sendStepFn)(children.sendStepType)("http_send_child") with
+                                                                        | (result, failedBlock, succeededBlock) ->
+                                                                            let _ = schedAt(sc)(failedBlock)
+                                                                            in
+                                                                                let _ = schedStore(sc)(task)(offsetResultSlot)(result)
+                                                                                in
+                                                                                    let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_send_failed_stage")
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(succeededBlock)
+                                                                                        in emitHttpAdvance(sc)(task)(tlsBits)(3)(dispatchBlock)("http_send_receive_stage")
+
+// The receive stage: a TCP receive child reads up to 64 KiB at a time, each chunk appended to the
+// response kept in `ResultSlot`, until an empty chunk ends the stream and the leaf closes.
+let emitHttpReceiveStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task tlsBits stageBlock dispatchBlock =
+    match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)("http_receive") with
+        | (createBlock, stepBlock) ->
+            let _ = schedAt(sc)(createBlock)
+            in
+                let child =
+                    emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpReceiveTaskState)(schedWord(sc)(task)(offsetWaitData0)("http_receive_socket"))(schedConst(sc)(65536))(schedConst(sc)(0))("http_receive_task")
+                in
+                    let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                    in
+                        let _ = schedBr(sc)(stepBlock)
+                        in
+                            let _ = schedAt(sc)(stepBlock)
+                            in
+                                match emitHttpChildStep(sc)(stepFn)(task)(children.receiveStepFn)(children.receiveStepType)("http_receive_child") with
+                                    | (result, failedBlock, succeededBlock) ->
+                                        let endBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_end")
+                                        in
+                                            let appendBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_append")
+                                            in
+                                                let firstBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_first")
+                                                in
+                                                    let moreBlock = appendBasicBlock(sc.schedContext)(stepFn)("http_receive_more")
+                                                    in
+                                                        let _ = schedAt(sc)(failedBlock)
+                                                        in
+                                                            let _ = schedStore(sc)(task)(offsetResultSlot)(result)
+                                                            in
+                                                                let _ = emitHttpAdvance(sc)(task)(tlsBits)(5)(dispatchBlock)("http_receive_failed_stage")
+                                                                in
+                                                                    let _ = schedAt(sc)(succeededBlock)
+                                                                    in
+                                                                        let chunk = schedWord(sc)(result)(8)("http_receive_chunk")
+                                                                        in
+                                                                            let _ =
+                                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(chunk)(0)("http_receive_chunk_length"))(schedConst(sc)(0))("http_receive_chunk_empty"))(endBlock)(appendBlock)
+                                                                            in
+                                                                                let _ = schedAt(sc)(endBlock)
+                                                                                in
+                                                                                    let _ = emitHttpAdvance(sc)(task)(tlsBits)(4)(dispatchBlock)("http_receive_close_stage")
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(appendBlock)
+                                                                                        in
+                                                                                            let response = schedWord(sc)(task)(offsetResultSlot)("http_receive_response")
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    schedIf(sc)(schedEq(sc)(response)(schedConst(sc)(0))("http_receive_first_chunk"))(firstBlock)(moreBlock)
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(firstBlock)
+                                                                                                    in
+                                                                                                        let _ = schedStore(sc)(task)(offsetResultSlot)(chunk)
+                                                                                                        in
+                                                                                                            let _ = schedBr(sc)(dispatchBlock)
+                                                                                                            in
+                                                                                                                let _ = schedAt(sc)(moreBlock)
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        "http_receive_joined"
+                                                                                                                        |> emitArenaConcat(sc)(stepFn)(slots.scanSlot)(response)(chunk)
+                                                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                    in schedBr(sc)(dispatchBlock)
+
+// The close stages: a TCP close child closes the socket. After a received response the leaf
+// completes with the parsed response, after a failure with that failure; a failed close completes
+// with the close's failure after a response and with the earlier failure otherwise.
+let emitHttpCloseStage (sc: SchedulerContext) stepFn (slots: HttpStepSlots) (children: HttpChildSteps) task (afterFailure: Bool) stageBlock =
+    (let name =
+        if afterFailure
+        then "http_close_failure"
+        else "http_close_success"
+    in
+        match emitHttpStageEntry(sc)(stepFn)(task)(stageBlock)(name) with
+            | (createBlock, stepBlock) ->
+                let _ = schedAt(sc)(createBlock)
+                in
+                    let child =
+                        emitLeafTask(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(TcpCloseTaskState)(schedWord(sc)(task)(offsetWaitData0)(name + "_socket"))(schedConst(sc)(0))(schedConst(sc)(0))(name + "_task")
+                    in
+                        let _ = schedStore(sc)(task)(offsetAwaitedTask)(child)
+                        in
+                            let _ = schedBr(sc)(stepBlock)
+                            in
+                                let _ = schedAt(sc)(stepBlock)
+                                in
+                                    match emitHttpChildStep(sc)(stepFn)(task)(children.closeStepFn)(children.closeStepType)(name + "_child") with
+                                        | (result, failedBlock, succeededBlock) ->
+                                            let _ = schedAt(sc)(failedBlock)
+                                            in
+                                                let _ =
+                                                    if afterFailure
+                                                    then
+                                                        name + "_earlier_failure"
+                                                        |> schedWord(sc)(task)(offsetResultSlot)
+                                                        |> schedCompleteLeaf(sc)(task)
+                                                    else schedCompleteLeaf(sc)(task)(result)
+                                                in
+                                                    let _ = schedAt(sc)(succeededBlock)
+                                                    in
+                                                        let stored = schedWord(sc)(task)(offsetResultSlot)(name + "_stored")
+                                                        in
+                                                            if afterFailure
+                                                            then schedCompleteLeaf(sc)(task)(stored)
+                                                            else
+                                                                stored
+                                                                |> emitParseHttpResponse(sc)(stepFn)(slots)
+                                                                |> schedCompleteLeaf(sc)(task))
+
+// Stage 0's `ashes_step_http_get_task` and `ashes_step_http_post_task` (`EmitStepHttpTask`): the
+// leaf runs as stages kept in `WaitData1` (0 connect, 2 send, 3 receive, 4 close after the
+// response, 5 close after a failure, bit 8 for TLS), each stage stepping one TCP child leaf and
+// moving to the next in the same step until a child waits, which parks the leaf on the child's
+// socket (the step answers 0), or the leaf completes (the step answers 1). The TLS stages are not
+// ported: an `https` request that connects stops the program.
+let defineStepHttp module_ (sc: SchedulerContext) (children: HttpChildSteps) name (hasBody: Bool) =
+    (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
+    in
+        let stepFn = addInternalFunction(module_)(name)(stepType)
+        in
+            let block =
+                given (label) -> appendBasicBlock(sc.schedContext)(stepFn)(label)
+            in
+                let entryBlock = block("entry")
+                in
+                    let dispatchBlock = block("http_dispatch")
+                    in
+                        let plainBlock = block("http_plain_stage")
+                        in
+                            let httpsBlock = block("http_tls_unported")
+                            in
+                                let connectBlock = block("http_connect_stage")
+                                in
+                                    let sendBlock = block("http_send_stage")
+                                    in
+                                        let receiveBlock = block("http_receive_stage")
+                                        in
+                                            let closeSuccessBlock = block("http_close_success_stage")
+                                            in
+                                                let closeFailureBlock = block("http_close_failure_stage")
+                                                in
+                                                    let invalidBlock = block("http_invalid_stage")
+                                                    in
+                                                        let task = getParam(stepFn)(0u32)
+                                                        in
+                                                            let _ = schedAt(sc)(entryBlock)
+                                                            in
+                                                                let slots =
+                                                                    HttpStepSlots(
+                                                                        scanSlot = schedSlot(sc)("http_scan"),
+                                                                        countSlot = schedSlot(sc)("http_count"),
+                                                                        valueSlot = schedSlot(sc)("http_value"),
+                                                                        answerSlot = schedSlot(sc)("http_answer"),
+                                                                        parsedSlot = schedSlot(sc)("http_parsed"),
+                                                                        hostStartSlot = schedSlot(sc)("http_host_start"),
+                                                                        hostSlot = schedSlot(sc)("http_host"),
+                                                                        pathSlot = schedSlot(sc)("http_path"),
+                                                                        portSlot = schedSlot(sc)("http_port"),
+                                                                        tlsSlot = schedSlot(sc)("http_tls")
+                                                                    )
+                                                                in
+                                                                    let _ = schedBr(sc)(dispatchBlock)
+                                                                    in
+                                                                        let _ = schedAt(sc)(dispatchBlock)
+                                                                        in
+                                                                            let stage = schedWord(sc)(task)(offsetWaitData1)("http_stage")
+                                                                            in
+                                                                                let kind =
+                                                                                    buildAnd(sc.schedBuilder)(stage)(schedConst(sc)(7))("http_stage_kind")
+                                                                                in
+                                                                                    let tlsBits =
+                                                                                        buildAnd(sc.schedBuilder)(stage)(schedConst(sc)(8))("http_stage_tls")
+                                                                                    in
+                                                                                        let pastConnect =
+                                                                                            buildICmp(sc.schedBuilder)(intPredicateNe)(kind)(schedConst(sc)(0))("http_past_connect")
+                                                                                        in
+                                                                                            let overTls =
+                                                                                                buildICmp(sc.schedBuilder)(intPredicateNe)(tlsBits)(schedConst(sc)(0))("http_over_tls")
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    schedIf(sc)(buildAnd(sc.schedBuilder)(pastConnect)(overTls)("http_tls_stage"))(httpsBlock)(plainBlock)
+                                                                                                in
+                                                                                                    let _ = schedAt(sc)(httpsBlock)
+                                                                                                    in
+                                                                                                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedHttpsMessageCodes)("http_tls_unported")
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(plainBlock)
+                                                                                                            in
+                                                                                                                let stageSwitch = buildSwitch(sc.schedBuilder)(kind)(invalidBlock)(5u32)
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        addCase(stageSwitch)(schedConst(sc)(0))(connectBlock)
+                                                                                                                    in
+                                                                                                                        let _ =
+                                                                                                                            addCase(stageSwitch)(schedConst(sc)(2))(sendBlock)
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                addCase(stageSwitch)(schedConst(sc)(3))(receiveBlock)
+                                                                                                                            in
+                                                                                                                                let _ =
+                                                                                                                                    addCase(stageSwitch)(schedConst(sc)(4))(closeSuccessBlock)
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        addCase(stageSwitch)(schedConst(sc)(5))(closeFailureBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ = emitHttpConnectStage(sc)(stepFn)(slots)(children)(task)(connectBlock)(dispatchBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ = emitHttpSendStage(sc)(stepFn)(slots)(children)(task)(hasBody)(tlsBits)(sendBlock)(dispatchBlock)
+                                                                                                                                            in
+                                                                                                                                                let _ = emitHttpReceiveStage(sc)(stepFn)(slots)(children)(task)(tlsBits)(receiveBlock)(dispatchBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ = emitHttpCloseStage(sc)(stepFn)(slots)(children)(task)(false)(closeSuccessBlock)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = emitHttpCloseStage(sc)(stepFn)(slots)(children)(task)(true)(closeFailureBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedAt(sc)(invalidBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let _ =
+                                                                                                                                                                    "http_invalid_error"
+                                                                                                                                                                    |> schedError(sc)(stepFn)(schedStringLiteral(sc)(stepFn)(httpUnknownStageCodes)("http_invalid_message"))
+                                                                                                                                                                    |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                in (stepFn, stepType))
 
 // Stage 0's `EmitStepComposite` for `all` and `race`. The first step schedules every child with the
 // composite as its waiter and counts them (`all` waits for that many completions, `race` for one);
@@ -3250,54 +4049,67 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                                 | (scopeFn, scopeType) ->
                                     match (defineReadyDequeue(module_)(context)(builder)(i64)(i8)(ptrType)(globals), defineStepComposite(module_)(sc)(scopeFn)(scopeType), defineWaitParked(module_)(sc), defineForkScoped(module_)(sc), defineStepTcpConnect(module_)(sc)) with
                                         | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (forkScopedFn, forkScopedType), (stepTcpConnectFn, stepTcpConnectType)) ->
-                                            match defineStepHttp(module_)(sc)(stepTcpConnectFn)(stepTcpConnectType) with
-                                                | (stepHttpFn, stepHttpType) ->
-                                                    let leafStep =
-                                                        given (kind: TaskStateKind) ->
-                                                            given (step: (LLVMValueRef, LLVMTypeRef)) ->
-                                                                match step with
-                                                                    | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
+                                            match (sc
+                                            |> emitStepTcpSend
+                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_send"), sc
+                                            |> emitStepTcpReceive
+                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_receive"), sc
+                                            |> emitStepTcpClose
+                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_close")) with
+                                                | ((stepTcpSendFn, stepTcpSendType), (stepTcpReceiveFn, stepTcpReceiveType), (stepTcpCloseFn, stepTcpCloseType)) ->
+                                                    let httpChildren =
+                                                        HttpChildSteps(
+                                                            connectStepFn = stepTcpConnectFn,
+                                                            connectStepType = stepTcpConnectType,
+                                                            sendStepFn = stepTcpSendFn,
+                                                            sendStepType = stepTcpSendType,
+                                                            receiveStepFn = stepTcpReceiveFn,
+                                                            receiveStepType = stepTcpReceiveType,
+                                                            closeStepFn = stepTcpCloseFn,
+                                                            closeStepType = stepTcpCloseType
+                                                        )
                                                     in
-                                                        let socketLeafSteps =
-                                                            [
-                                                                leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
-                                                                leafStep(HttpGetTaskState)((stepHttpFn, stepHttpType)),
-                                                                leafStep(HttpPostTaskState)((stepHttpFn, stepHttpType)),
-                                                                sc
-                                                                |> emitStepTcpSend
-                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_send")
-                                                                |> leafStep(TcpSendTaskState),
-                                                                sc
-                                                                |> emitStepTcpReceive
-                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_receive")
-                                                                |> leafStep(TcpReceiveTaskState),
-                                                                sc
-                                                                |> emitStepTcpClose
-                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_close")
-                                                                |> leafStep(TcpCloseTaskState),
-                                                                sc
-                                                                |> emitStepTcpListen
-                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
-                                                                |> leafStep(TcpListenTaskState),
-                                                                sc
-                                                                |> emitStepTcpAccept
-                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
-                                                                |> leafStep(TcpAcceptTaskState)
-                                                            ]
+                                                        let leafStep =
+                                                            given (kind: TaskStateKind) ->
+                                                                given (step: (LLVMValueRef, LLVMTypeRef)) ->
+                                                                    match step with
+                                                                        | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
                                                         in
-                                                            closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
-                                                                stepCompositeFn = stepCompositeFn,
-                                                                stepCompositeType = stepCompositeType,
-                                                                waitParkedFn = waitParkedFn,
-                                                                waitParkedType = waitParkedType,
-                                                                cancelFn = cancelFn,
-                                                                cancelType = cancelType,
-                                                                dequeueFn = dequeueFn,
-                                                                dequeueType = dequeueType,
-                                                                forkScopedFn = forkScopedFn,
-                                                                forkScopedType = forkScopedType,
-                                                                socketLeafSteps = socketLeafSteps
-                                                            )))
+                                                            let socketLeafSteps =
+                                                                [
+                                                                    leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
+                                                                    false
+                                                                    |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_get")
+                                                                    |> leafStep(HttpGetTaskState),
+                                                                    true
+                                                                    |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_post")
+                                                                    |> leafStep(HttpPostTaskState),
+                                                                    leafStep(TcpSendTaskState)((stepTcpSendFn, stepTcpSendType)),
+                                                                    leafStep(TcpReceiveTaskState)((stepTcpReceiveFn, stepTcpReceiveType)),
+                                                                    leafStep(TcpCloseTaskState)((stepTcpCloseFn, stepTcpCloseType)),
+                                                                    sc
+                                                                    |> emitStepTcpListen
+                                                                    |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
+                                                                    |> leafStep(TcpListenTaskState),
+                                                                    sc
+                                                                    |> emitStepTcpAccept
+                                                                    |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
+                                                                    |> leafStep(TcpAcceptTaskState)
+                                                                ]
+                                                            in
+                                                                closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
+                                                                    stepCompositeFn = stepCompositeFn,
+                                                                    stepCompositeType = stepCompositeType,
+                                                                    waitParkedFn = waitParkedFn,
+                                                                    waitParkedType = waitParkedType,
+                                                                    cancelFn = cancelFn,
+                                                                    cancelType = cancelType,
+                                                                    dequeueFn = dequeueFn,
+                                                                    dequeueType = dequeueType,
+                                                                    forkScopedFn = forkScopedFn,
+                                                                    forkScopedType = forkScopedType,
+                                                                    socketLeafSteps = socketLeafSteps
+                                                                )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
 // to the start of a fresh 4 MiB chunk that becomes its private arena, the copy is its own arena
