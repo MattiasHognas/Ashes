@@ -4445,6 +4445,17 @@ and inferUnaryTrait traitName operand environment substitution supply ambientRow
                         inferenceSuccess(resolvedOperand)(operandSubstitution)(operandSupply)
                     ))
         | failure -> failure
+// Outside program inference `0 - x` stays the integer subtraction it was, except over an operand
+// whose type is already known not to be `Int` (`-5u32`, `-5N` as a call argument), which only
+// reads as the negation the parser wrote it for.
+and negatedOperandIsNotInteger operand environment substitution supply ambientRow =
+    match inferWith(operand)(environment)(substitution)(supply)(ambientRow) with
+        | TypeInferenceResult { semanticType = operandType, substitution = operandSubstitution, error = None } ->
+            match applySubstitution(operandSubstitution)(operandType) with
+                | SemInt -> false
+                | SemVariable(_id) -> false
+                | _ -> true
+        | _ -> false
 and inferHandlerReturn returnArm bodyType handlerResult environment substitution supply ambientRow accumulatedConstraints =
     match returnArm with
         | None ->
@@ -5271,16 +5282,19 @@ and inferWith expression environment substitution supply ambientRow =
                 |> inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)
                 |> noteNegatedZero(environment)(identifiedNode(left))
             else
-                inferBinaryTrait(
-                    "Subtract",
-                    false,
-                    left,
-                    right,
-                    environment,
-                    substitution,
-                    supply,
-                    ambientRow
-                )
+                if isZeroLiteralExpression(left) && negatedOperandIsNotInteger(right)(environment)(substitution)(supply)(ambientRow)
+                then inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow)
+                else
+                    inferBinaryTrait(
+                        "Subtract",
+                        false,
+                        left,
+                        right,
+                        environment,
+                        substitution,
+                        supply,
+                        ambientRow
+                    )
         | ExprMultiply(left, right) ->
             inferBinaryTrait(
                 "Multiply",
