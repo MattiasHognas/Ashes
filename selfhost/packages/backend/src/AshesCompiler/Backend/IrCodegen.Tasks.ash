@@ -3879,7 +3879,8 @@ let emitStepTlsHandshake (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
 
 // Stage 0's `ashes_step_tls_send_task`: writes what remains of the text (`WaitData0` counts what
 // was accepted) with `mbedtls_ssl_write`, completing with `Ok(length)` once all of it went and
-// nothing is left to flush, and parking while the connection wants its socket.
+// nothing is left to flush, and parking while the connection wants its socket or after a write
+// that took only part of the text.
 let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
     (let block =
         given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
@@ -3894,86 +3895,104 @@ let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
                     in
                         let readCheckBlock = block("tls_send_read_check")
                         in
-                            let pendingReadBlock = block("tls_send_pending_read")
+                            let partialWriteBlock = block("tls_send_partial_write")
                             in
-                                let pendingWriteBlock = block("tls_send_pending_write")
+                                let pendingReadBlock = block("tls_send_pending_read")
                                 in
-                                    let completeBlock = block("tls_send_complete")
+                                    let pendingWriteBlock = block("tls_send_pending_write")
                                     in
-                                        let failBlock = block("tls_send_fail")
+                                        let completeBlock = block("tls_send_complete")
                                         in
-                                            let session = schedWord(sc)(task)(offsetIoArgument0)("tls_send_session")
+                                            let failBlock = block("tls_send_fail")
                                             in
-                                                let connection = schedWord(sc)(session)(8)("tls_send_connection")
+                                                let session = schedWord(sc)(task)(offsetIoArgument0)("tls_send_session")
                                                 in
-                                                    match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(schedWord(sc)(task)(offsetIoArgument1)("tls_send_text"))("tls_send_text") with
-                                                        | (total, bytes) ->
-                                                            let sent = schedWord(sc)(task)(offsetWaitData0)("tls_send_sent")
-                                                            in
-                                                                let _ =
-                                                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(sent)(total)("tls_send_already_done"))(finalizeBlock)(writeBlock)
+                                                    let connection = schedWord(sc)(session)(8)("tls_send_connection")
+                                                    in
+                                                        match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(schedWord(sc)(task)(offsetIoArgument1)("tls_send_text"))("tls_send_text") with
+                                                            | (total, bytes) ->
+                                                                let sent = schedWord(sc)(task)(offsetWaitData0)("tls_send_sent")
                                                                 in
-                                                                    let _ = schedAt(sc)(writeBlock)
+                                                                    let acceptedSlot = schedSlot(sc)("tls_send_accepted_slot")
                                                                     in
-                                                                        let status =
-                                                                            tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_write")([tlsPointer(sc)(connection)("tls_send_ssl"), tlsPointer(sc)(buildAdd(sc.schedBuilder)(bytes)(sent)("tls_send_cursor"))("tls_send_cursor_ptr"), buildSub(sc.schedBuilder)(total)(sent)("tls_send_remaining")])(3u32)("tls_send_status")
+                                                                        let _ =
+                                                                            0
+                                                                            |> schedConst(sc)
+                                                                            |> schedSet(sc)(acceptedSlot)
                                                                         in
-                                                                            let _ = emitTlsSetWantFlags(sc)(connection)(status)("tls_send_flags")
+                                                                            let _ =
+                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(sent)(total)("tls_send_already_done"))(finalizeBlock)(writeBlock)
                                                                             in
-                                                                                let accepted =
-                                                                                    buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSgt)(status)(schedConst(sc)(0))("tls_send_wrote"))(status)(schedConst(sc)(0))("tls_send_accepted")
+                                                                                let _ = schedAt(sc)(writeBlock)
                                                                                 in
-                                                                                    let _ =
-                                                                                        "tls_send_next_sent"
-                                                                                        |> buildAdd(sc.schedBuilder)(sent)(accepted)
-                                                                                        |> schedStore(sc)(task)(offsetWaitData0)
+                                                                                    let status =
+                                                                                        tlsStatusCall(sc)(rt.tlsFunctions)("mbedtls_ssl_write")([tlsPointer(sc)(connection)("tls_send_ssl"), tlsPointer(sc)(buildAdd(sc.schedBuilder)(bytes)(sent)("tls_send_cursor"))("tls_send_cursor_ptr"), buildSub(sc.schedBuilder)(total)(sent)("tls_send_remaining")])(3u32)("tls_send_status")
                                                                                     in
-                                                                                        let _ =
-                                                                                            schedIf(sc)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))("tls_send_ok"))(emitTlsIsWant(sc)(status)("tls_send_want"))("tls_send_progressing"))(finalizeBlock)(failBlock)
+                                                                                        let _ = emitTlsSetWantFlags(sc)(connection)(status)("tls_send_flags")
                                                                                         in
-                                                                                            let _ = schedAt(sc)(finalizeBlock)
+                                                                                            let accepted =
+                                                                                                buildSelect(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSgt)(status)(schedConst(sc)(0))("tls_send_wrote"))(status)(schedConst(sc)(0))("tls_send_accepted")
                                                                                             in
-                                                                                                let wantsWrite = emitTlsFlagSet(sc)(connection)(tlsConnectionWantWrite)("tls_send_wants_write")
+                                                                                                let _ = schedSet(sc)(acceptedSlot)(accepted)
                                                                                                 in
                                                                                                     let _ =
-                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(schedWord(sc)(task)(offsetWaitData0)("tls_send_sent_now"))(total)("tls_send_all_accepted"))(allSentBlock)(partialBlock)
+                                                                                                        "tls_send_next_sent"
+                                                                                                        |> buildAdd(sc.schedBuilder)(sent)(accepted)
+                                                                                                        |> schedStore(sc)(task)(offsetWaitData0)
                                                                                                     in
-                                                                                                        let _ = schedAt(sc)(allSentBlock)
+                                                                                                        let _ =
+                                                                                                            schedIf(sc)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))("tls_send_ok"))(emitTlsIsWant(sc)(status)("tls_send_want"))("tls_send_progressing"))(finalizeBlock)(failBlock)
                                                                                                         in
-                                                                                                            let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(completeBlock)
+                                                                                                            let _ = schedAt(sc)(finalizeBlock)
                                                                                                             in
-                                                                                                                let _ = schedAt(sc)(partialBlock)
+                                                                                                                let wantsWrite = emitTlsFlagSet(sc)(connection)(tlsConnectionWantWrite)("tls_send_wants_write")
                                                                                                                 in
-                                                                                                                    let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(readCheckBlock)
+                                                                                                                    let _ =
+                                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUge)(schedWord(sc)(task)(offsetWaitData0)("tls_send_sent_now"))(total)("tls_send_all_accepted"))(allSentBlock)(partialBlock)
                                                                                                                     in
-                                                                                                                        let _ = schedAt(sc)(readCheckBlock)
+                                                                                                                        let _ = schedAt(sc)(allSentBlock)
                                                                                                                         in
-                                                                                                                            let _ =
-                                                                                                                                schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantRead)("tls_send_wants_read"))(pendingReadBlock)(failBlock)
+                                                                                                                            let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(completeBlock)
                                                                                                                             in
-                                                                                                                                let _ = schedAt(sc)(pendingReadBlock)
+                                                                                                                                let _ = schedAt(sc)(partialBlock)
                                                                                                                                 in
-                                                                                                                                    let _ =
-                                                                                                                                        "tls_send_read_socket"
-                                                                                                                                        |> schedWord(sc)(session)(0)
-                                                                                                                                        |> schedPendLeaf(sc)(task)(TlsReadTaskWait)
+                                                                                                                                    let _ = schedIf(sc)(wantsWrite)(pendingWriteBlock)(readCheckBlock)
                                                                                                                                     in
-                                                                                                                                        let _ = schedAt(sc)(pendingWriteBlock)
+                                                                                                                                        let _ = schedAt(sc)(readCheckBlock)
                                                                                                                                         in
                                                                                                                                             let _ =
-                                                                                                                                                "tls_send_write_socket"
-                                                                                                                                                |> schedWord(sc)(session)(0)
-                                                                                                                                                |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                                                                                                                                schedIf(sc)(emitTlsFlagSet(sc)(connection)(tlsConnectionWantRead)("tls_send_wants_read"))(pendingReadBlock)(partialWriteBlock)
                                                                                                                                             in
-                                                                                                                                                let _ = schedAt(sc)(completeBlock)
+                                                                                                                                                let _ = schedAt(sc)(partialWriteBlock)
                                                                                                                                                 in
+// Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
+// nothing left to flush or read waits for the socket to accept more and sends the rest.
                                                                                                                                                     let _ =
-                                                                                                                                                        "tls_send_result"
-                                                                                                                                                        |> schedOk(sc)(stepFn)(total)
-                                                                                                                                                        |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(schedLoad(sc)(acceptedSlot)("tls_send_took_part"))(schedConst(sc)(0))("tls_send_partial_write"))(pendingWriteBlock)(failBlock)
                                                                                                                                                     in
-                                                                                                                                                        let _ = schedAt(sc)(failBlock)
-                                                                                                                                                        in schedFailLeaf(sc)(stepFn)(task)(tlsSendFailedCodes)("tls_send_failure"))
+                                                                                                                                                        let _ = schedAt(sc)(pendingReadBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ =
+                                                                                                                                                                "tls_send_read_socket"
+                                                                                                                                                                |> schedWord(sc)(session)(0)
+                                                                                                                                                                |> schedPendLeaf(sc)(task)(TlsReadTaskWait)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = schedAt(sc)(pendingWriteBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ =
+                                                                                                                                                                        "tls_send_write_socket"
+                                                                                                                                                                        |> schedWord(sc)(session)(0)
+                                                                                                                                                                        |> schedPendLeaf(sc)(task)(TlsWriteTaskWait)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedAt(sc)(completeBlock)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                "tls_send_result"
+                                                                                                                                                                                |> schedOk(sc)(stepFn)(total)
+                                                                                                                                                                                |> schedCompleteLeaf(sc)(task)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = schedAt(sc)(failBlock)
+                                                                                                                                                                                in schedFailLeaf(sc)(stepFn)(task)(tlsSendFailedCodes)("tls_send_failure"))
 
 // One `mbedtls_ssl_read` of up to `maxBytes` into the receive buffer: the byte count it read (0
 // when nothing is ready or the peer closed), and whether the read failed.
