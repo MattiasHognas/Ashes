@@ -2183,12 +2183,14 @@ let recursive instructionsUseBigInt instructions =
         | IrInstruction { instruction = BigIntCompare(_target, _left, _right) } :: _ -> true
         | _ :: rest -> instructionsUseBigInt(rest)
 
-// Whether any instruction runs or spawns a task, so the module needs the task scheduler.
+// Whether any instruction runs, spawns or forks a task, so the module needs the task scheduler
+// (stage 0 emits it for structured concurrency too, even when nothing runs the task).
 let recursive instructionsUseRunTask instructions =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = RunTask(_target, _task) } :: _ -> true
         | IrInstruction { instruction = SpawnTask(_target, _task) } :: _ -> true
+        | IrInstruction { instruction = ForkScopedTask(_target, _owner, _task) } :: _ -> true
         | _ :: rest -> instructionsUseRunTask(rest)
 
 let recursive functionsUseRunTask functions =
