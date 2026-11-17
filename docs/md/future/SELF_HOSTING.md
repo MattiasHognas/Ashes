@@ -372,6 +372,11 @@ Work is verified in shared rounds: agents finish a batch, run only cheap checks 
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
 behavioural check for all of them and the stage-2 round above.
 
+**Known work parked for later items (2026-11-17), so it is not lost:**
+- Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
+- Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
+- Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
+
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
 matching its output instruction for instruction.
