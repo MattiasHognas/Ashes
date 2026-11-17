@@ -3254,20 +3254,39 @@ let checkTrailingRequirements expression (environment: TypeEnvironment) (result:
             |> locateInferenceError(span)
         | _ -> checkSettledTrailingRequirements(environment)(result)
 
+// The empty tuple a standard trait's method scheme writes for `Unit` (`Default.default`), as the
+// type of the `Unit` value the environment defines.
+let recursive withEnvironmentUnit (unitType: SemanticType) (semanticType: SemanticType) =
+    match semanticType with
+        | SemTuple([]) -> unitType
+        | SemFunction(parameter, result, row) ->
+            SemFunction(withEnvironmentUnit(unitType)(parameter))(withEnvironmentUnit(unitType)(result))(row)
+        | other -> other
+
+let schemeWithEnvironmentUnit (environment: TypeEnvironment) (scheme: TypeScheme) =
+    match resolveConstructorBinding("Unit")(environment) with
+        | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = unitType } }) ->
+            match scheme with
+                | TypeScheme { body = body } -> scheme with body = withEnvironmentUnit(unitType)(body)
+        | None -> scheme
+
 // A trait's method named through the trait (`Eq.equal`, `Hash.hash`) where no value binding answers
 // to it, as in a constrained binding's inference environment: the method's own scheme, its
-// requirement on the trait included, instantiated as a variable's would be.
+// requirement on the trait included, instantiated as a variable's would be. The scheme's `()` is
+// the environment's `Unit`, so `Default.default(Unit)` takes the value the program passes.
 let inferTraitMethodReference (methodScheme: TypeScheme) (environment: TypeEnvironment) substitution supply =
-    match instantiate(methodScheme)(supply) with
-        | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } ->
-            addConstraints(
-                instantiatedConstraints,
-                inferenceSuccess(
-                    applySubstitution(substitution)(instantiatedType),
-                    substitution,
-                    noteInstantiation(environment)(methodScheme)(supply)(instantiatedConstraints)(nextSupply)
-                )
-            )
+    (let scheme = schemeWithEnvironmentUnit(environment)(methodScheme)
+    in
+        match instantiate(scheme)(supply) with
+            | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } ->
+                addConstraints(
+                    instantiatedConstraints,
+                    inferenceSuccess(
+                        applySubstitution(substitution)(instantiatedType),
+                        substitution,
+                        noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
+                    )
+                ))
 
 let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
