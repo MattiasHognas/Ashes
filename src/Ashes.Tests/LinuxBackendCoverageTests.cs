@@ -21830,6 +21830,48 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("loop record field cons returned at exit", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildConsLiteralChainResultProgram(int rounds)
+        => $$"""
+            let recursive sum xs =
+                match xs with
+                    | [] -> 0
+                    | h :: t -> h + sum(t)
+
+            let ints x = 1 :: 2 :: x :: []
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + sum(ints(n)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_cons_literal_chain_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returning `1 :: 2 :: x :: []` builds every cell of the chain on the
+        // reference-counted heap: an arena tail cell under the reference-counted head was reclaimed
+        // with the call window while the caller still walked the list.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildConsLiteralChainResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = (3L * rounds) + ((long)rounds * (rounds + 1) / 2);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons literal chain result", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildLoopRebuildsListOfListsProgram(int rounds)
         => $$"""
             let recursive recordCall (arguments: List(Int)) (flow: List(List(Int))) =

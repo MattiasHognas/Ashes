@@ -939,12 +939,22 @@ let cellHeadIsRuntimeManageable (request: ConsumerRequest) (headExpression: Expr
 
 let cellIsRuntimeManaged (request: ConsumerRequest) (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) = requestsRuntimeList(request) && cellHeadIsRuntimeManageable(request)(headExpression)(headTemp)(headType)(state)
 
+// Stage 0's `ConsTailKeepsRequest` for a literal chain: a reference-counted cell over the rest of a
+// chain bottoming out in a list literal (`1 :: 2 :: []` as a function's result) is followed by
+// reference-counted cells too, as a list literal's are: an arena cell there is reclaimed with the
+// call window while the head cell still points at it.
+let literalChainTailKeepsRequest (request: ConsumerRequest) (tailExpression: Expr) =
+    match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
+        | (ExprCons(_head, _tail), None) -> requestsRuntimeList(request) && isFreshListConstruction(tailExpression)
+        | _ -> false
+
 // A reference-counted cell never points at an arena one: a cell of a chain consed onto a loop's
-// list parameter whose tail cell stayed in the arena (its head could not be reference-counted)
-// stays there too, stage 0's guard in `LowerConsTail`.
+// list parameter or of a reference-counted literal chain whose tail cell stayed in the arena (its
+// head could not be reference-counted) stays there too, stage 0's guard in `LowerConsTail`.
 let chainTailKeepsCellInArena (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
     match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
         | (ExprCons(_head, _tail), Some(_slot)) -> !isRuntimeTemp(tailTemp)(state)
+        | (ExprCons(_head, _tail), None) -> literalChainTailKeepsRequest(request)(tailExpression) && !isRuntimeTemp(tailTemp)(state)
         | _ -> false
 
 // Stage 0's `CopiesFreshScalarListHeadIntoLoopCell`: inside a loop an owned slot holds one
@@ -1361,7 +1371,10 @@ let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType:
         | (ExprCons(_head, _tail), None) ->
             if request.copiedInnerCell
             then withConsumerRequest((emptyConsumerRequest with expectedType = Some(SemList(headType)), borrowsCellParts = true, copiedInnerCell = true))(state)
-            else withOnlyExpectedType(Some(SemList(headType)))(state)
+            else
+                if literalChainTailKeepsRequest(request)(tailExpression)
+                then withConsumerRequest((request with expectedType = Some(SemList(headType))))(state)
+                else withOnlyExpectedType(Some(SemList(headType)))(state)
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
 // Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned

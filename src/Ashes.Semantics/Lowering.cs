@@ -18641,9 +18641,10 @@ public sealed partial class Lowering
         bool savedTailPos,
         LoweredValueRequest request)
     {
-        // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) takes a
-        // tail built the same way, so every cell of the chain is reference-counted, not only the first.
-        LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
+        // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) or of a
+        // reference-counted literal chain takes a tail built the same way.
+        bool tailKeepsRequest = ConsTailKeepsRequest(cons, request);
+        LoweredValueRequest tailRequest = tailKeepsRequest
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
         bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
@@ -18675,9 +18676,7 @@ public sealed partial class Lowering
 
         // A reference-counted cell never points at an arena one: a chain cell whose tail cell stayed
         // in the arena (its head could not be reference-counted) stays there too.
-        if (cons.Tail is Expr.Cons
-            && request.RuntimeTcoListTailSlot is not null
-            && !IsRuntimeManagedResultTemp(tailTemp))
+        if (tailKeepsRequest && !IsRuntimeManagedResultTemp(tailTemp))
         {
             request = request with
             {
@@ -18699,6 +18698,17 @@ public sealed partial class Lowering
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
+
+    // Every cell of a chain consed onto a loop's list parameter is reference-counted, not only the
+    // first. A reference-counted cell over the rest of a literal chain (`1 :: 2 :: []` as a
+    // function's result) is followed by reference-counted cells too, as a list literal's are: an
+    // arena cell there is reclaimed with the call window while the head cell still points at it.
+    private bool ConsTailKeepsRequest(Expr.Cons cons, LoweredValueRequest request)
+        => cons.Tail is Expr.Cons
+            && (request.RuntimeTcoListTailSlot is not null
+                || (Environment.GetEnvironmentVariable("GRC_NO_LITERALCHAINTAIL") is null
+                    && request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                    && IsFreshListConstructionExpression(cons.Tail)));
 
     // A cell of a chain consed onto a loop's list parameter over a reference-counted cell is
     // reference-counted too. An arena cell there would be the only holder of the cells after it: the
