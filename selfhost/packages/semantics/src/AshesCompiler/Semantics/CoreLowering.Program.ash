@@ -42,6 +42,8 @@ import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.TypeResolution.addTypeAliasDefinition
 import AshesCompiler.Semantics.TypeResolution.addExternalTypeDefinition
 import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
+import AshesCompiler.Semantics.TypeResolution.addZeroCostTypeDefinitionWithProvenance
+import AshesCompiler.Semantics.TypeResolution.DeclarationProvenance
 import AshesCompiler.Semantics.TypeResolution.emptyTypeResolutionContext
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
@@ -1211,7 +1213,15 @@ let decideTaglessLayouts (state: CoreLoweringState) (newLayouts: List(CoreConstr
         in
             markTaglessLayouts(state)(extendTaglessConstructorIndex(layoutSchemes(newLayouts))(registered.taglessShapes))(newLayouts))
 
-let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
+let recursive markZeroCostLayouts (isZeroCost: Bool) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | layout :: rest -> (layout with isZeroCost = isZeroCost) :: markZeroCostLayouts(isZeroCost)(rest)
+
+// Stage 0's `RegisterTypeDeclaration`: a declared type's constructor layouts. A zero-cost nominal
+// type registers its one constructor marked zero-cost, which construction and matching represent
+// as the payload itself.
+let registerTypeDeclarationWith (isZeroCost: Bool) (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
         | TypeDecl { name = name, typeParameters = typeParameters, constructors = constructors } ->
             if isReservedTypeName(name)
@@ -1241,7 +1251,10 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                 match buildUserConstructorLayoutsFromIndex(stateTypeAliases(state))(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
                                                     | Error(error) -> Error(error)
                                                     | Ok(newLayouts) ->
-                                                        let decidedLayouts = decideTaglessLayouts(state)(newLayouts)
+                                                        let decidedLayouts =
+                                                            newLayouts
+                                                            |> markZeroCostLayouts(isZeroCost)
+                                                            |> decideTaglessLayouts(state)
                                                         in
                                                             (state with typeSupply = nextSupply)
                                                             |> withAppendedConstructorLayouts(decidedLayouts)
@@ -1515,15 +1528,31 @@ let recursive declaredTypeNamesOf (items: List(TopLevelItem)) (names: MapTree(St
             |> declaredTypeNamesOf(rest)
         | _ :: rest -> declaredTypeNamesOf(rest)(names)
 
-let recursive registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
+let recursive registerDeclaredOrdinaryTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
     match items with
         | [] -> Ok(state)
-        | TopLevelAt(_span, inner) :: rest -> registerDeclaredTypes(inner :: rest)(state)
+        | TopLevelAt(_span, inner) :: rest -> registerDeclaredOrdinaryTypes(inner :: rest)(state)
         | TopLevelType(declaration) :: rest ->
-            match registerTopLevelTypeDeclaration(declaration)(state) with
+            match registerTypeDeclarationWith(false)(declaration)(state) with
                 | Error(error) -> Error(error)
-                | Ok(registered) -> registerDeclaredTypes(rest)(registered)
-        | _ :: rest -> registerDeclaredTypes(rest)(state)
+                | Ok(registered) -> registerDeclaredOrdinaryTypes(rest)(registered)
+        | _ :: rest -> registerDeclaredOrdinaryTypes(rest)(state)
+
+let recursive registerDeclaredZeroCostTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match items with
+        | [] -> Ok(state)
+        | TopLevelAt(_span, inner) :: rest -> registerDeclaredZeroCostTypes(inner :: rest)(state)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = typeParameters, constructor = constructor, derivingTraits = derivingTraits }) :: rest ->
+            match registerTypeDeclarationWith(true)(TypeDecl(name = name, typeParameters = typeParameters, constructors = [constructor], isRecord = false, derivingTraits = derivingTraits))(state) with
+                | Error(error) -> Error(error)
+                | Ok(registered) -> registerDeclaredZeroCostTypes(rest)(registered)
+        | _ :: rest -> registerDeclaredZeroCostTypes(rest)(state)
+
+// Stage 0's `RegisterTypeDeclarations`: every ordinary type declaration, then every zero-cost one.
+let registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match registerDeclaredOrdinaryTypes(items)(state) with
+        | Error(error) -> Error(error)
+        | Ok(registered) -> registerDeclaredZeroCostTypes(items)(registered)
 
 let recursive queryAliasParameters names index =
     match names with
@@ -1585,23 +1614,45 @@ let recursive collectExternalDeclarationsOf (items: List(TopLevelItem)) (reverse
         | TopLevelExternal(declaration) :: rest -> collectExternalDeclarationsOf(rest)(declaration :: reversed)
         | _ :: rest -> collectExternalDeclarationsOf(rest)(reversed)
 
-let recursive externalResolutionContextOf (items: List(TopLevelItem)) context =
+// A parameterless type alias an external signature may name, as stage 0's
+// `ResolveDeclaredExternalType` resolves it.
+let externalAliasDefinition (aliases: MapTree(Str, (List(Str), TypeExpr))) (name: Str) (target: TypeExpr) context =
+    match typeExprToSemanticType(expandTypeAliases(aliases)(32)(target))([]) with
+        | Some(resolved) -> addTypeAliasDefinition(name)([])(resolved)(context)
+        | None -> context
+
+// A zero-cost type an external signature may name: one without type parameters is represented
+// across the boundary as its payload, as stage 0's `EraseZeroCostTypeRepresentation` erases it.
+let externalZeroCostDefinition (aliases: MapTree(Str, (List(Str), TypeExpr))) (name: Str) (typeParameters: List(TypeParameter)) (constructor: TypeConstructor) context =
+    match (typeParameters, constructor) with
+        | ([], TypeConstructor { parameters = payload :: [] }) ->
+            match typeExprToSemanticType(expandTypeAliases(aliases)(32)(payload))([]) with
+                | Some(representation) -> addZeroCostTypeDefinitionWithProvenance(0)(name)([])(representation)(DeclarationProvenance(packageId = "standalone"))(context)
+                | None -> addTypeDefinition(0)(name)(0)(context)
+        | _ ->
+            addTypeDefinition(0)(name)(length(typeParameters))(context)
+
+let recursive externalResolutionContextOf (aliases: MapTree(Str, (List(Str), TypeExpr))) (items: List(TopLevelItem)) context =
     match items with
         | [] -> context
-        | TopLevelAt(_span, inner) :: rest -> externalResolutionContextOf(inner :: rest)(context)
+        | TopLevelAt(_span, inner) :: rest -> externalResolutionContextOf(aliases)(inner :: rest)(context)
         | TopLevelType(TypeDecl { name = name, typeParameters = typeParameters }) :: rest ->
             context
             |> addTypeDefinition(0)(name)(length(typeParameters))
-            |> externalResolutionContextOf(rest)
-        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = typeParameters }) :: rest ->
+            |> externalResolutionContextOf(aliases)(rest)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = typeParameters, constructor = constructor }) :: rest ->
             context
-            |> addTypeDefinition(0)(name)(length(typeParameters))
-            |> externalResolutionContextOf(rest)
+            |> externalZeroCostDefinition(aliases)(name)(typeParameters)(constructor)
+            |> externalResolutionContextOf(aliases)(rest)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = [], target = target }) :: rest ->
+            context
+            |> externalAliasDefinition(aliases)(name)(target)
+            |> externalResolutionContextOf(aliases)(rest)
         | TopLevelExternal(ExternalOpaqueType(name, destructor)) :: rest ->
             context
             |> addExternalTypeDefinition(name)(destructor)
-            |> externalResolutionContextOf(rest)
-        | _ :: rest -> externalResolutionContextOf(rest)(context)
+            |> externalResolutionContextOf(aliases)(rest)
+        | _ :: rest -> externalResolutionContextOf(aliases)(rest)(context)
 
 let standardExternalResolutionContext (unit: Unit) =
     unit
@@ -1640,7 +1691,7 @@ let registerProgramExternals (items: List(TopLevelItem)) (state: CoreLoweringSta
         | declarations ->
             match Unit
             |> standardExternalResolutionContext
-            |> externalResolutionContextOf(items)
+            |> externalResolutionContextOf(typeAliasesOf(items)(Ashes.Collection.Map.empty))(items)
             |> validateExternalProgramAbi(declarations) with
                 | ExternalAbiValidation { metadata = Some(ExternalProgramAbi { functions = functions, opaqueTypes = opaqueTypes }), error = None } ->
                     (state with externalFunctions = append(state.externalFunctions)(functions), externalOpaqueTypes = append(state.externalOpaqueTypes)(opaqueTypes))

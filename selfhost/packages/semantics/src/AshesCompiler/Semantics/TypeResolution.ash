@@ -299,10 +299,28 @@ and resolveTypeDefinition name arguments definitions =
 
 let resolveSemanticTypeApplication name arguments context = resolveNamed(name)(arguments)(context)
 
+// The zero-cost definition a named type refers to: the one registered under its symbol id when
+// that one has its name, or else the one of its name with the same id. Core lowering gives every
+// program type the id 0, so there the id alone does not tell two zero-cost types apart.
+let recursive zeroCostDefinitionOf (symbolId: Int) (name: Str) (context: TypeResolutionContext) =
+    match Ashes.Collection.Map.getInt(symbolId)(context.zeroCostById) with
+        | Some(ZeroCostTypeDefinition(_definitionId, definitionName, _parameterIds, _representation, _provenance) as definition) ->
+            if definitionName == name
+            then Some(definition)
+            else zeroCostDefinitionNamed(symbolId)(name)(context)
+        | _ -> zeroCostDefinitionNamed(symbolId)(name)(context)
+and zeroCostDefinitionNamed (symbolId: Int) (name: Str) (context: TypeResolutionContext) =
+    match Ashes.Collection.Map.getStr(name)(context.definitionsByName) with
+        | Some(ZeroCostTypeDefinition(definitionId, _definitionName, _parameterIds, _representation, _provenance) as definition) ->
+            if definitionId == symbolId
+            then Some(definition)
+            else None
+        | _ -> None
+
 let recursive semanticRuntimeRepresentation semanticType context =
     match (semanticType, context) with
-        | (SemNamed(symbolId, _name, arguments), TypeResolutionContext { zeroCostById = definitions }) ->
-            match Ashes.Collection.Map.getInt(symbolId)(definitions) with
+        | (SemNamed(symbolId, name, arguments), TypeResolutionContext { zeroCostById = _definitions }) ->
+            match zeroCostDefinitionOf(symbolId)(name)(context) with
                 | Some(ZeroCostTypeDefinition(_definitionId, _definitionName, parameterIds, representation, _provenance)) ->
                     semanticRuntimeRepresentation(
                         substituteAliasType(parameterIds)(arguments)(representation)
