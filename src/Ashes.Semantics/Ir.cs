@@ -989,12 +989,6 @@ public abstract record IrInst
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
     public sealed record TextParseInt(int Target, int TextTemp, bool RuntimeManaged = false)
         : IrInst, IRuntimeManagedTargetResult;
-    /// <summary>Parses a string as a float, yielding a result option into <paramref name="Target"/>.</summary>
-    /// <param name="Target">Temp receiving the parse result.</param>
-    /// <param name="TextTemp">Temp holding the string to parse.</param>
-    /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextParseFloat(int Target, int TextTemp, bool RuntimeManaged = false)
-        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Renders an integer to its decimal string into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the rendered string.</param>
     /// <param name="ValueTemp">Temp holding the integer to render.</param>

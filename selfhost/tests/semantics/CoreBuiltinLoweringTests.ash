@@ -64,7 +64,6 @@ let builtinCases =
         (CoreRuneIsAsciiDigit, unaryArguments, unaryTypes),
         (CoreRuneIsAsciiWhiteSpace, unaryArguments, unaryTypes),
         (CoreTextParseInt, unaryArguments, unaryTypes),
-        (CoreTextParseFloat, unaryArguments, unaryTypes),
         (CoreTextFromInt, unaryArguments, unaryTypes),
         (CoreTextFromFloat, unaryArguments, unaryTypes),
         (CoreTextFormatFloat, binaryArguments, binaryTypes),

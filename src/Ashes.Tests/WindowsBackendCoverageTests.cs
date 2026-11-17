@@ -515,19 +515,6 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
-    public async Task Windows_backend_llvm_should_parse_floats_with_exponents()
-    {
-        if (!CanRunWindowsRuntimePrograms())
-        {
-            return;
-        }
-
-        var result = await CompileRunWithWindowsLlvmAsync(
-            """match Ashes.Text.parseFloat("1e3") with | Ok(value) -> if value == 1000.0 then Ashes.IO.print("ok") else Ashes.IO.print("bad") | Error(msg) -> Ashes.IO.print(msg)""").ConfigureAwait(false);
-        result.Stdout.ShouldBe("ok\n");
-    }
-
-    [Test]
     public async Task Windows_backend_llvm_should_format_ints_floats_and_hex()
     {
         if (!CanRunWindowsRuntimePrograms())

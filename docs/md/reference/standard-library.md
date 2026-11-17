@@ -632,7 +632,9 @@ layer is shipped Ashes code built on `Ashes.Byte`.
 - `isLetterText(text)`, `isDigitText(text)`, and `isWhiteSpaceText(text)` — one-release
   compatibility helpers for the former string-typed character predicates
 - `parseInt(text)` returning `Result(Str, Int)`
-- `parseFloat(text)` returning `Result(Str, Float)`
+- `parseFloat(text)` returning `Result(Str, Float)` — the nearest Float to the decimal text (ties to
+  even); accepts an optional `-`, a fraction, and an `e`/`E` exponent; malformed input and magnitudes
+  beyond the Float range are `Error`. Shipped Ashes code, unlike the other conversions
 - `parseBigInt(text)` returning `Result(Str, BigInt)` — decimal parse into a [`BigInt`](#ashesnumberbigint)
 - `fromInt(value)` returning `Str`
 - `fromFloat(value)` returning `Str`

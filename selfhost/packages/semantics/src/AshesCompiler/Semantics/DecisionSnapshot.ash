@@ -463,9 +463,6 @@ let recursive classifyInstructionRepr (kind: IrInstructionKind) (reprs: List((In
         | TextParseInt(target, _value, runtimeManaged) ->
             match reprOfFlag(runtimeManaged) with
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
-        | TextParseFloat(target, _value, runtimeManaged) ->
-            match reprOfFlag(runtimeManaged) with
-                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
         | TextToHex(target, _value, runtimeManaged) ->
             match reprOfFlag(runtimeManaged) with
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)

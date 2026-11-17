@@ -132,7 +132,6 @@ let ioInstructions =
         RuneToText(0)(1)(true),
         RuneFromInt(0)(1)(true),
         TextParseInt(0)(1)(true),
-        TextParseFloat(0)(1)(true),
         TextFromInt(0)(1)(true),
         TextFromFloat(0)(1)(true),
         TextFormatFloat(0)(1)(2)(true),

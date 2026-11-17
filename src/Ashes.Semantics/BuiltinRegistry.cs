@@ -115,7 +115,6 @@ public static class BuiltinRegistry
         /// <summary>Parses text into an integer.</summary>
         TextParseInt,
         /// <summary>Parses text into a floating-point number.</summary>
-        TextParseFloat,
         /// <summary>Renders an integer as text.</summary>
         TextFromInt,
         /// <summary>Renders a floating-point number as text.</summary>
@@ -632,7 +631,6 @@ public static class BuiltinRegistry
                     ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
                     ["unconsText"] = new("unconsText", BuiltinValueKind.TextUnconsText, IsCallable: true, Arity: 1),
                     ["parseInt"] = new("parseInt", BuiltinValueKind.TextParseInt, IsCallable: true, Arity: 1),
-                    ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["formatFloat"] = new("formatFloat", BuiltinValueKind.TextFormatFloat, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.String),

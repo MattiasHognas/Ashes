@@ -192,7 +192,6 @@ type IrInstructionKind =
     | RuneToText(IrTemp, IrTemp, Bool)
     | RuneFromInt(IrTemp, IrTemp, Bool)
     | TextParseInt(IrTemp, IrTemp, Bool)
-    | TextParseFloat(IrTemp, IrTemp, Bool)
     | TextFromInt(IrTemp, IrTemp, Bool)
     | TextFromFloat(IrTemp, IrTemp, Bool)
     | TextFormatFloat(IrTemp, IrTemp, IrTemp, Bool)

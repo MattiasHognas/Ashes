@@ -878,8 +878,7 @@ public sealed partial class Lowering
             IrInst.BigIntToInt
                 or IrInst.BigIntFromString
                 or IrInst.TextUncons
-                or IrInst.TextParseInt
-                or IrInst.TextParseFloat => LoweredTempLayoutKind.Adt,
+                or IrInst.TextParseInt => LoweredTempLayoutKind.Adt,
             IrInst.MakeClosure or IrInst.CopyOutClosure => LoweredTempLayoutKind.Closure,
             IrInst.AllocAdt => LoweredTempLayoutKind.Adt,
             IrInst.AllocReusing { ListCell: true } => LoweredTempLayoutKind.ListCell,
