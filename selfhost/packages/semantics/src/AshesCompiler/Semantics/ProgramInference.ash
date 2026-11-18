@@ -1077,7 +1077,8 @@ let registerParameterizedTypeDeclaration declaration state =
 
 // A type declared without parameters takes one for each payload name that denotes no known type,
 // in the order the names first appear. The declaring type's own name and every declared or
-// built-in type stay concrete field types.
+// built-in type stay concrete field types, and so does a type of a module the declaring module
+// does not import (marked by the reference rewriter), which the field's resolution then reports.
 let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExpr) (found: List(Str)) =
     match typeExpr with
         | TypeAt(_span, inner) -> implicitTypeParameterNames(owner)(context)(inner)(found)
@@ -1085,7 +1086,7 @@ let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExp
             if candidate == owner
             then found
             else
-                if nameExists(candidate)(found)
+                if nameExists(candidate)(found) || Ashes.Text.indexOf(candidate)("$unimported$") >= 0
                 then found
                 else
                     match resolveTypeExpression(typeExpr)(context) with

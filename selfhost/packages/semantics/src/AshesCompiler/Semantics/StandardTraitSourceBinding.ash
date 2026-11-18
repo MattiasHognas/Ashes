@@ -15,6 +15,7 @@ import AshesCompiler.Semantics.ModuleReferenceRewriting
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.Types
 export (
     type StandardTraitSourceBinding(..),
     type StandardTraitSourceBindingError(..),

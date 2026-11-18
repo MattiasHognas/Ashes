@@ -69,9 +69,28 @@ let traitResolutionCode = "ASH036"
 
 let recursiveTypeAliasCode = "ASH039"
 
+let unimportedModuleNameCode = "ASH048"
+
 let coded (code: Str) (message: Str) = Some((Some(code), message))
 
 let uncoded (message: Str) = Some((None, message))
+
+// A name the reference rewriter marked as a type or constructor of a module the referencing module
+// does not import, `Name$unimported$Declaring/Module`: the source name and the declaring module.
+let unimportedName (name: Str) =
+    match Ashes.Text.split(name)("$unimported$") with
+        | sourceName :: encodedModule :: [] ->
+            Some((sourceName, "/"
+            |> Ashes.Text.split(encodedModule)
+            |> Ashes.Text.join(".")))
+        | _ -> None
+
+// ASH048 for a marked name, worded by what it names (`Type` or `Constructor`); `fallback` for
+// any other name.
+let unimportedNameOr (word: Str) (name: Str) fallback =
+    match unimportedName(name) with
+        | Some((sourceName, moduleName)) -> coded(unimportedModuleNameCode)(word + " '" + sourceName + "' is declared in module '" + moduleName + "', which this module does not import.")
+        | None -> fallback
 
 let recursive definitionNamed (placements: List(StitchedDefinitionPlacement)) (compilerName: Str) =
     match placements with
@@ -552,7 +571,10 @@ let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (ca
 
 let typeResolutionDiagnostic (error: TypeResolutionError) =
     match error with
-        | UnknownTypeName(name) -> uncoded("Unknown type name '" + name + "'.")
+        | UnknownTypeName(name) ->
+            "Unknown type name '" + name + "'."
+            |> uncoded
+            |> unimportedNameOr("Type")(name)
         | TypeNameArityMismatch(name, expected, actual) -> uncoded("Type '" + name + "' expects " + Ashes.Text.fromInt(expected) + " type argument(s) but got " + Ashes.Text.fromInt(actual) + ".")
 
 // `capability.operation` as the inference spells an operation in a handler error.
@@ -721,14 +743,23 @@ let externalAbiDiagnostic (error: ExternalAbiError) =
 
 let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
     match error with
-        | UnknownValue(name) -> unknownValueDiagnostic(placements)(builtins)(location)(name)
+        | UnknownValue(name) ->
+            name
+            |> unknownValueDiagnostic(placements)(builtins)(location)
+            |> unimportedNameOr("Constructor")(name)
         | InferenceUnificationError(unification) -> unificationDiagnostic(placements)(unification)
         | InferenceTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicatePatternBinding(name) -> uncoded("Duplicate binding '" + name + "' in pattern.")
-        | UnknownPatternConstructor(name) -> uncoded("Unknown constructor '" + name + "' in pattern." + constructorHint(placements)(builtins)(name))
+        | UnknownPatternConstructor(name) ->
+            "Unknown constructor '" + name + "' in pattern." + constructorHint(placements)(builtins)(name)
+            |> uncoded
+            |> unimportedNameOr("Constructor")(name)
         | ConstructorPatternArityMismatch(name, expected, actual) -> uncoded("Constructor '" + name + "' expects " + Ashes.Text.fromInt(expected) + " argument(s) but pattern has " + Ashes.Text.fromInt(actual) + ".")
         | UnknownRecordPatternField(typeName, field) -> uncoded("Record type '" + sourceNameOf(placements)(typeName) + "' has no field '" + field + "'.")
-        | UnknownRecordType(typeName) -> uncoded("Unknown record type '" + sourceNameOf(placements)(typeName) + "'.")
+        | UnknownRecordType(typeName) ->
+            "Unknown record type '" + sourceNameOf(placements)(typeName) + "'."
+            |> uncoded
+            |> unimportedNameOr("Constructor")(typeName)
         | RecordUpdateRequiresRecord(target) -> uncoded("Record update requires a record type, got " + typeText(placements)(target) + ".")
         | MissingRecordField(typeName, field) -> uncoded("Missing field '" + field + "' in record literal for '" + sourceNameOf(placements)(typeName) + "'.")
         | UnknownRecordField(typeName, field) -> uncoded("Record type '" + sourceNameOf(placements)(typeName) + "' has no field '" + field + "'.")
