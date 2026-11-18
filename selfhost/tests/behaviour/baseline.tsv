@@ -1067,6 +1067,7 @@ trait_capability_async	stage1-compile-fails	UnknownLoweringBinding("Adjust.adjus
 trait_concrete_requirement_inside_polymorphic_function	same	
 trait_deriving	stage1-compile-fails	UnsupportedCoreDerivingExpansion("UnsupportedDerivedField("Tree", "Eq")")
 trait_deriving_self_referential_via_list	same	
+trait_goals_of_generic_binding_used_at_one_type_settled_at_site	same	
 trait_inferred_evidence	live-differs	stage 1 fewer (stage0=2 stage1=1)
 trait_method_string_result_released	same	
 trait_operand_type_fixed_after_comparison	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")

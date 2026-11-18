@@ -47,6 +47,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -1086,6 +1087,29 @@ and appendRecorded (left: List((Str, SemanticType))) (right: List((Str, Semantic
         | [] -> right
         | head :: rest -> head :: appendRecorded(rest)(right)
 
+// A requirement whose type argument is still open once the closed recorded dictionaries are pinned
+// takes the recorded argument closed by the variables the program's uses settle, unless the body
+// being lowered carries the trait's evidence for it, which then answers it. The recorded
+// dictionaries are read in the scheme's order, one per requirement; a requirement whose recorded
+// trait differs is left as it is.
+let recursive pinSettledDictionaries (constraints: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match (constraints, recorded) with
+        | ([], _recorded) -> state
+        | (_constraints, []) -> state
+        | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest, (recordedTrait, Some(settled)) :: recordedRest) ->
+            let resolved = resolveType(state)(argument)
+            in
+                if recordedTrait != traitName || freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state)
+                then pinSettledDictionaries(rest)(recordedRest)(state)
+                else
+                    match bindType(argument)(settled)(state) with
+                        | (bound, None) ->
+                            bound
+                            |> observeLoweringEvent(0)
+                            |> pinSettledDictionaries(rest)(recordedRest)
+                        | (_failed, Some(_error)) -> pinSettledDictionaries(rest)(recordedRest)(state)
+        | (_constraint :: rest, _entry :: recordedRest) -> pinSettledDictionaries(rest)(recordedRest)(state)
+
 // The identity of the innermost numbered node around a call's root, the callee reference the
 // inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
 // unnumbered tree.
@@ -1123,7 +1147,8 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                 | (bound, None) ->
                                                     match bound
                                                     |> pinConstrainedGoals(0)(constraints)
-                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(callRootNode(expression)(-1))(bound)) with
+                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(callRootNode(expression)(-1))(bound))
+                                                    |> pinSettledDictionaries(constraints)(recordedSettledDictionariesAt(callRootNode(expression)(-1))(bound)) with
                                                         | settled ->
                                                             let goals =
                                                                 map((given (constraint: TraitConstraint) ->
@@ -1843,19 +1868,30 @@ let shippedTraitMethodReference (qualifier: Str) (methodName: Str) =
         | None -> None
 
 // A result type still open takes the closed type the standalone inference recorded for the call
-// node being lowered, the way a later pass pins a proven goal.
-let pinRecordedResultType (resultType: SemanticType) (state: CoreLoweringState) =
+// node being lowered, the way a later pass pins a proven goal. A recorded type that holds a
+// variable of a binding the program uses at one type is closed by that use, unless the body being
+// lowered carries the trait's evidence for the result, which then answers it.
+let pinRecordedResultType (traitName: Str) (resultType: SemanticType) (state: CoreLoweringState) =
     match resultType
     |> resolveType(state)
     |> freeTypeVariables with
         | [] -> state
         | _open ->
-            match recordedClosedNodeType(state) with
-                | Some(recorded) ->
-                    match bindType(resultType)(recorded)(state) with
-                        | (bound, None) -> observeLoweringEvent(0)(bound)
-                        | (_failed, Some(_error)) -> state
-                | None -> state
+            let recorded =
+                match (recordedClosedNodeType(state), state.currentNode) with
+                    | (Some(closed), _node) -> Some(closed)
+                    | (None, Some(node)) ->
+                        if hasActiveTraitEvidence(traitName)(resolveType(state)(resultType))(state)
+                        then None
+                        else recordedSettledTypeAt(node)(state)
+                    | (None, None) -> None
+            in
+                match recorded with
+                    | Some(closedType) ->
+                        match bindType(resultType)(closedType)(state) with
+                            | (bound, None) -> observeLoweringEvent(0)(bound)
+                            | (_failed, Some(_error)) -> state
+                    | None -> state
 
 // `Default.default(Unit)` resolves the instance by its result type rather than by an operand: the
 // type the context expects, the type the standalone inference recorded for the call, or a goal a
@@ -1872,13 +1908,13 @@ let lowerTraitDefaultCall argument lower state =
                             match bindType(valueType)(expected)(typeState) with
                                 | (failedState, Some(error)) -> failure(failedState)(error)
                                 | (boundState, None) ->
-                                    let pinned = pinRecordedResultType(valueType)(boundState)
+                                    let pinned = pinRecordedResultType("Default")(valueType)(boundState)
                                     in
                                         pinned
                                         |> withConsumerRequest(state.consumerRequest)
                                         |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(resolveType(pinned)(valueType))
                         | None ->
-                            let pinned = pinRecordedResultType(valueType)(typeState)
+                            let pinned = pinRecordedResultType("Default")(valueType)(typeState)
                             in
                                 pinned
                                 |> withConsumerRequest(state.consumerRequest)

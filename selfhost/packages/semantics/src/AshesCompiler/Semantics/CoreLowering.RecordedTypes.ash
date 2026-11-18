@@ -32,6 +32,7 @@ export (
     value recordedOperatorGenericScheme,
     value recordedSettledType,
     value recordedSettledTypeAt,
+    value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
     value recordedNestedOperatorGenericScheme,
 )
@@ -340,6 +341,26 @@ let recordedSettledType (recorded: SemanticType) (state: CoreLoweringState) =
             then Some(translated)
             else None
         | Error(_message) -> None
+
+let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) (state: CoreLoweringState) =
+    match requirements with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            match recordedSettledType(argument)(state) with
+                | Some(settled) -> (traitName, Some(settled)) :: settledRecordedRequirements(rest)(state)
+                | None -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+        | TraitConstraint { traitName = traitName } :: rest -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+
+// The dictionaries the reference with this identity was recorded to pass, in the scheme's order,
+// each with its type argument closed through the instantiation of the body being lowered and the
+// variables the program's uses settle, or None when that leaves it open or it does not map.
+let recordedSettledDictionariesAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeInstantiationAt(node)(table) with
+                | Some(NodeInstantiation { dictionaries = dictionaries }) -> settledRecordedRequirements(dictionaries)(state)
+                | None -> []
+        | None -> []
 
 // The type recorded for the node with this identity, closed by the variables the program's uses
 // settle.
