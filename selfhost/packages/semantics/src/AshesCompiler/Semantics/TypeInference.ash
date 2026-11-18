@@ -2938,6 +2938,14 @@ let subsumeCapabilityRow capabilityRow environment ambientRow substitution suppl
                             resultType
                         ))
 
+// The ambient row a lambda's body is inferred in when its type is expected: the expected arrow's
+// own row, so a capability the body may not perform is reported where it is performed, as stage 0
+// reports it; a fresh row when the expected arrow has none.
+let lambdaBodyRow (expectedRow: Maybe(SemanticType)) substitution supply =
+    match expectedRow with
+        | Some(row) -> (applySubstitution(substitution)(row), supply)
+        | None -> freshTypeVariable(supply)
+
 // The parameter type of a callee whose type is already a function.
 let expectedParameterOf (functionType: SemanticType) =
     match functionType with
@@ -5129,6 +5137,7 @@ and inferCallArgument argument (expected: Maybe(SemanticType)) environment subst
                 |> recordNodeType(node)
             else inferCallArgument(inner)(expected)(environment)(substitution)(supply)(ambientRow)
         | (Some(_expectedType), ExprCall(function, callArgument, _whitespace, _layout)) -> inferCallApplication(function)(callArgument)(expected)(environment)(substitution)(supply)(ambientRow)
+        | (Some(expectedType), ExprLambda(_name, _body, None)) -> inferAgainst(expectedType)(argument)(environment)(substitution)(supply)(ambientRow)
         | _ -> inferWith(argument)(environment)(substitution)(supply)(ambientRow)
 and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
@@ -5226,10 +5235,10 @@ and inferAgainst expected expression environment substitution supply ambientRow 
             else inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprLambda(name, body, None) ->
             match applySubstitution(substitution)(expected) with
-                | SemFunction(expectedParameter, expectedResult, _expectedRow) ->
+                | SemFunction(expectedParameter, expectedResult, expectedRow) ->
                     let parameterScheme = TypeScheme(quantified = [], body = expectedParameter, constraints = [])
                     in
-                        match freshTypeVariable(supply) with
+                        match lambdaBodyRow(expectedRow)(substitution)(supply) with
                             | (bodyAmbientRow, bodyAmbientSupply) ->
                                 match inferAgainst(expectedResult)(body)(environment
                                 |> lambdaBodyEnvironment
