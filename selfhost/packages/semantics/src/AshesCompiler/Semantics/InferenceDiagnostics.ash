@@ -35,6 +35,7 @@ export (
     value inferenceErrorDiagnostic,
     value inferenceErrorWantsCallSiteWording,
     value inferenceErrorText,
+    value inferenceErrorLocationPrefix,
     value parseDiagnosticsText,
 )
 
@@ -952,6 +953,10 @@ let recursive parseDiagnosticsText (entryPath: Str) (entrySource: Str) (diagnost
         | [] -> ""
         | (sourcePath, entry) :: [] -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry)
         | (sourcePath, entry) :: rest -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry) + "\n" + parseDiagnosticsText(entryPath)(entrySource)(rest)
+
+// The `path:line:column ` of the error the inference rejected a program with, or "" when it has
+// no location.
+let inferenceErrorLocationPrefix (entryPath: Str) (entrySource: Str) (result: ProgramInferenceResult) = locationPrefix(entryPath)(entrySource)(result.errorLocation)
 
 // Stage 0 names the entry module `Main` and qualifies nothing declared there: a trait of the entry
 // module reads by its bare name, where stitching qualified it by the entry file's module name.

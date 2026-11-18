@@ -74,6 +74,7 @@ export (
     value defaultBuiltinArguments,
     value openBuiltinPrintArgument,
     value checkInferenceBindingSignature,
+    value checkValueBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
     value inferExpressionFrom,
@@ -3613,6 +3614,25 @@ let finishInferenceBindingSignature requirements context checkedType inferredCon
                             supply
                         )
 
+// A written signature's mismatch reads the written type first, as stage 0 reports a value
+// against the type its context expects.
+let writtenTypeFirst (result: UnificationResult) =
+    match result with
+        | UnificationResult { error = Some(TypeMismatch(valueType, writtenType)) } ->
+            result with error = Some(TypeMismatch(writtenType)(valueType))
+        | _ -> result
+
+// A value that does not unify with its written signature is located at the value, where stage 0
+// reports it, rather than at the declaration that holds it.
+let recursive locateAtValue (value: Expr) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceUnificationError(_error)) } ->
+            match value with
+                | ExprAt(span, _inner) -> locateInferenceError(span)(result)
+                | ExprNode(_node, inner) -> locateAtValue(inner)(result)
+                | _ -> result
+        | _ -> result
+
 let checkInferenceBindingSignature annotation requirements expectedType inferredConstraints environment substitution supply =
     match prepareBindingSignatureContext(annotation)(requirements)(environment)(supply) with
         | TypeResolutionPreparationResult { context = context, supply = preparedSupply } ->
@@ -3624,7 +3644,9 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                             | (annotationType, None) ->
                                 mergeUnificationIn(environment)(
                                     substitution,
-                                    unifyIn(environment)(applySubstitution(substitution)(expectedType))(annotationType),
+                                    annotationType
+                                    |> unifyIn(environment)(applySubstitution(substitution)(expectedType))
+                                    |> writtenTypeFirst,
                                     preparedSupply,
                                     expectedType
                                 )
@@ -3648,6 +3670,12 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                             checkedSupply
                         )
                     | failure -> failure
+
+// `checkInferenceBindingSignature` for the binding of `value`, a mismatch located at the value.
+let checkValueBindingSignature (value: Expr) annotation requirements expectedType inferredConstraints environment substitution supply =
+    supply
+    |> checkInferenceBindingSignature(annotation)(requirements)(expectedType)(inferredConstraints)(environment)(substitution)
+    |> locateAtValue(value)
 
 let checkTrailingRequirements expression (environment: TypeEnvironment) (result: TypeInferenceResult) =
     match expression with
@@ -5414,7 +5442,8 @@ and inferWith expression environment substitution supply ambientRow =
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
             match inferAnnotatedValue(annotation)(value)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
-                    match checkInferenceBindingSignature(
+                    match checkValueBindingSignature(
+                        value,
                         annotation,
                         requirements,
                         valueType,
@@ -5466,7 +5495,8 @@ and inferWith expression environment substitution supply ambientRow =
                                             recursiveType
                                         ) with
                                             | TypeInferenceResult { semanticType = unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                match checkInferenceBindingSignature(
+                                                match checkValueBindingSignature(
+                                                    value,
                                                     annotation,
                                                     requirements,
                                                     unifiedType,
@@ -6032,7 +6062,8 @@ let inferExpressionFrom expression environment substitution supply =
 let inferTopLevelBindingLocated name value annotation requirements environment substitution supply =
     match inferTopLevelValueLocated(annotation)(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
-            match checkInferenceBindingSignature(
+            match checkValueBindingSignature(
+                value,
                 annotation,
                 requirements,
                 valueType,

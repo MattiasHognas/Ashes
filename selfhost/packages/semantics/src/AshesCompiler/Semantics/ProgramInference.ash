@@ -318,7 +318,8 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
                             in
                                 let unifiedType = applySubstitution(unifiedSubstitution)(placeholderType)
                                 in
-                                    match checkInferenceBindingSignature(
+                                    match checkValueBindingSignature(
+                                        value,
                                         annotation,
                                         requirements,
                                         unifiedType,

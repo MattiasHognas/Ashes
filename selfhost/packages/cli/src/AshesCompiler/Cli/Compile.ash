@@ -427,16 +427,19 @@ let builtinInferenceEnvironment unit =
     |> withIntrinsicBuiltinSignatures
 
 // A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
-// program or rejects it with an error that keeps its structural form.
-let wordedLoweringError (lowering: CoreLoweringResult) =
+// program or rejects it with an error that keeps its structural form. An error lowering does not
+// locate (an operator's operands of two types) is printed at `fallbackPrefix`, the location the
+// inference rejected the program at, which is where stage 0 reports it.
+let wordedLoweringError (fallbackPrefix: Str) (lowering: CoreLoweringResult) =
     match lowering with
         | CoreLoweringResult { error = Some(error) } ->
-            match loweringErrorDiagnostic(error) with
-                | Some(_diagnostic) ->
+            match (loweringErrorDiagnostic(error), loweringErrorLocation(error)) with
+                | (Some(DiagnosticEntry { message = message, code = code }), None) -> Some(fallbackPrefix + codePrefix(code) + message)
+                | (Some(_diagnostic), Some(_location)) ->
                     error
                     |> loweringErrorText
                     |> Some
-                | None -> None
+                | (None, _) -> None
         | _ -> None
 
 // The compile error of a program the inference rejects. A bare unification error lacks the call,
@@ -450,7 +453,7 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         then
             match stitched.program
             |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-            |> wordedLoweringError with
+            |> wordedLoweringError(inferenceErrorLocationPrefix(inputPath)(source)(result)) with
                 | Some(text) -> text
                 | None -> inferenceText
         else inferenceText)
