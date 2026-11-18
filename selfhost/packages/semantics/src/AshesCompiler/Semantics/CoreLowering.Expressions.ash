@@ -2377,6 +2377,22 @@ let lowerAsParallelWorker lowerCall (state: CoreLoweringState) =
         |> lowerCall with
             | LoweredCoreValue { state = loweredState } as lowered -> lowered with state = withStateMayRunAsParallelWorker(enclosing)(loweredState))
 
+// Lowers an expression lowering built in place of the node being lowered that is not that node's
+// own value, such as an eta expansion or the runtime machinery around a call: it has no identity
+// of its own, so nothing recorded for the enclosing node is read for it, while the nodes it
+// carries from the source keep theirs. The enclosing node is current again afterwards.
+let lowerSynthesized lower (expression: Expr) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { currentNode = previous } ->
+            match lower(expression)((state with currentNode = None)) with
+                | LoweredCoreValue { state = innerState, temp = temp, semanticType = semanticType, error = error } ->
+                    LoweredCoreValue(
+                        state = (innerState with currentNode = previous),
+                        temp = temp,
+                        semanticType = semanticType,
+                        error = error
+                    )
+
 let lowerCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
@@ -2393,8 +2409,8 @@ let lowerCallExpression expression function argument lower state =
                 | Some(rewritten) ->
                     if isParallelWorkerCall(expression)
                     then
-                        lowerAsParallelWorker(lower(rewritten))(state)
-                    else lower(rewritten)(state)
+                        lowerAsParallelWorker(lowerSynthesized(lower)(rewritten))(state)
+                    else lowerSynthesized(lower)(rewritten)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =
@@ -3106,13 +3122,13 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprVar(name) -> lowerPossiblyConstrainedVariable(name)(lowerCore)(state)
         | ExprQualifiedVar(receiverName, fieldName) ->
             match operationEtaExpansion(receiverName)(fieldName)(state) with
-                | Some(lambda) -> lowerCore(lambda)(state)
+                | Some(lambda) -> lowerSynthesized(lowerCore)(lambda)(state)
                 | None ->
                     match shippedTraitMethodReference(receiverName)(fieldName) with
-                        | Some(etaLambda) -> lowerCore(etaLambda)(state)
+                        | Some(etaLambda) -> lowerSynthesized(lowerCore)(etaLambda)(state)
                         | None ->
                             match userTraitMethodReference(receiverName)(fieldName)(state) with
-                                | Some(etaLambda) -> lowerCore(etaLambda)(state)
+                                | Some(etaLambda) -> lowerSynthesized(lowerCore)(etaLambda)(state)
                                 | None -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
         | ExprLet(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLet(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) -> lowerPossiblyConstrainedLetRecursive(name)(value)(body)(annotation)(requirements)(lowerCore)(state)
