@@ -3,6 +3,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrInstructions
 import Ashes.Collection.Map.MapTree
+import Ashes.Collection.List.map
 type CoreConstructorLayout =
     | name: Str
     | tag: Int
@@ -104,3 +105,7 @@ let stateCoverageTypes (state: CoreLoweringState) = state.environment
 let queryCoreShallowCopy (semanticType: SemanticType) (state: CoreLoweringState) = (classifyHeapShallowCopy(semanticType)(state.environment), state)
 
 let queryCoreChildTypes (semanticType: SemanticType) (state: CoreLoweringState) = (classifyHeapChildTypes(semanticType)(state.environment), state)
+
+let queryCoreCopyPlan (semanticType: SemanticType) (state: CoreLoweringState) = (classifyHeapCopyPlan(semanticType)(state.environment), state)
+
+let isGeneralRcAdmissibleIndexed (_named: SemanticType) (_path: List(SemanticType)) (state: CoreLoweringState) = (state.admissible, state)
