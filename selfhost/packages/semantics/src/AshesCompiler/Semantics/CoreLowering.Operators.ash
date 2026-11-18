@@ -18,6 +18,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -1335,20 +1336,42 @@ let recordedOperandType (state: CoreLoweringState) =
                 | None -> None
         | _ -> None
 
+// The operand type recorded for the operator node being lowered, closed by the variables the
+// program's uses settle, unless the body being lowered carries the operator trait's evidence for
+// `operandType`, which then dispatches through it.
+let recordedSettledOperandType (operandType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { traitName = traitName, operandType = recorded }) ->
+                    if hasActiveTraitEvidence(traitName)(resolveType(state)(operandType))(state)
+                    then None
+                    else recordedSettledType(recorded)(state)
+                | None -> None
+        | _ -> None
+
+let recursive bindRecordedOperands (recorded: SemanticType) (remaining: List(SemanticType)) (bound: CoreLoweringState) =
+    match remaining with
+        | [] -> Some(bound)
+        | operandType :: rest ->
+            match bindType(operandType)(recorded)(bound) with
+                | (next, None) -> bindRecordedOperands(recorded)(rest)(next)
+                | (_failed, Some(_error)) -> None
+
 // The state with an operator's still-open operand types bound to the recorded operand type, the
-// way a later pass pins a proven goal; None when nothing is recorded or the types do not unify.
+// way a later pass pins a proven goal; None when nothing is recorded or the types do not unify. A
+// recorded type that holds a variable of a binding the program uses at one type is closed by that
+// use.
 let pinRecordedOperands (operandTypes: List(SemanticType)) (state: CoreLoweringState) =
     match recordedOperandType(state) with
-        | None -> None
-        | Some(recorded) ->
-            let recursive bindAll (remaining: List(SemanticType)) (bound: CoreLoweringState) =
-                match remaining with
-                    | [] -> Some(bound)
-                    | operandType :: rest ->
-                        match bindType(operandType)(recorded)(bound) with
-                            | (next, None) -> bindAll(rest)(next)
-                            | (_failed, Some(_error)) -> None
-            in bindAll(operandTypes)(state)
+        | Some(recorded) -> bindRecordedOperands(recorded)(operandTypes)(state)
+        | None ->
+            match operandTypes with
+                | [] -> None
+                | first :: _rest ->
+                    match recordedSettledOperandType(first)(state) with
+                        | Some(settled) -> bindRecordedOperands(settled)(operandTypes)(state)
+                        | None -> None
 
 // An ordered comparison's operand type still open after an earlier pass's proof is pinned to the
 // recorded operand type when there is one.

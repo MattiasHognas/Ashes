@@ -36,6 +36,7 @@ import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
+import AshesCompiler.Semantics.NodeTypeTable.settledInstantiationArguments
 export (
     type ConsumerRequest(..),
     type RuntimeTempState(..),
@@ -73,6 +74,7 @@ export (
     value stateNodeTypes,
     value stateNodeInstantiation,
     value withStateNodeInstantiation,
+    value stateSettledNodeVariables,
     value observeLoweringEvent,
     value carryTypeObservation,
     value stateConstructorLayouts,
@@ -982,6 +984,9 @@ type CoreProgramState =
     // variable of the body's recorded scheme, by the inference's id, with its recorded type at that
     // instance. Empty outside such a body.
     | nodeInstantiation: List((Int, SemanticType))
+    // The inference variables every reference to their binding instantiates at one closed type,
+    // read off `nodeTypes` once when it is given.
+    | settledNodeVariables: MapTree(Int, SemanticType)
 
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
@@ -1394,7 +1399,7 @@ let stateTypeObservation (state: CoreLoweringState) =
 
 let withNodeTypes (table: NodeTypeTable) (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with nodeTypes = Some(table)))
+    in state with programState = (group with nodeTypes = Some(table), settledNodeVariables = settledInstantiationArguments(table)))
 
 let stateNodeTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1407,6 +1412,10 @@ let stateNodeInstantiation (state: CoreLoweringState) =
 let withStateNodeInstantiation (instantiation: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with nodeInstantiation = instantiation))
+
+let stateSettledNodeVariables (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.settledNodeVariables)
 
 // Both observations leave the state as it is unless the lowering was asked to observe.
 let observeTopLevelScope (state: CoreLoweringState) =

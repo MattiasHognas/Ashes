@@ -30,6 +30,8 @@ export (
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
     value recordedOperatorGenericScheme,
+    value recordedSettledType,
+    value recordedSettledTypeAt,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -316,3 +318,28 @@ let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
                                 else None
                         | _ -> None
                 | None -> None
+
+// A recorded type, read through the instantiation of the body being lowered, with the variables the
+// program's uses settle replaced by their settled types, as lowering writes it, when that leaves no
+// variable. A body lowering holds at one type while the inference generalized it reads its
+// quantified variables this way.
+let recordedSettledType (recorded: SemanticType) (state: CoreLoweringState) =
+    match recorded
+    |> instantiatedRecordedType(state)
+    |> applySubstitutionMap(stateSettledNodeVariables(state))
+    |> translateRecordedTypeAsIs(state) with
+        | Ok(translated) ->
+            if freeTypeVariables(translated) == []
+            then Some(translated)
+            else None
+        | Error(_message) -> None
+
+// The type recorded for the node with this identity, closed by the variables the program's uses
+// settle.
+let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) -> recordedSettledType(recorded)(state)
+                | None -> None
+        | None -> None

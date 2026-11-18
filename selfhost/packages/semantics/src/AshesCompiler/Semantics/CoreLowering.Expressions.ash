@@ -46,6 +46,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
@@ -1687,26 +1688,37 @@ let traitUnaryMethodCall (function: Expr) =
         | _ -> None
 
 // An operand type still open takes the closed type the standalone inference recorded for the
-// operand node, the way a later pass pins a proven goal.
-let pinRecordedOperandType (operand: Expr) (operandType: SemanticType) (state: CoreLoweringState) =
+// operand node, the way a later pass pins a proven goal. A recorded type that holds a variable of a
+// binding the program uses at one type is closed by that use, unless the body being lowered carries
+// the trait's evidence for the operand, which then dispatches through it.
+let pinRecordedOperandType (traitName: Str) (operand: Expr) (operandType: SemanticType) (state: CoreLoweringState) =
     match operandType
     |> resolveType(state)
     |> freeTypeVariables with
         | [] -> (state, operandType)
         | _open ->
-            match recordedClosedTypeAt(nodeIdentityOf(operand))(state) with
-                | Some(recorded) ->
-                    match bindType(operandType)(recorded)(state) with
-                        | (bound, None) -> (observeLoweringEvent(0)(bound), resolveType(bound)(operandType))
-                        | (_failed, Some(_error)) -> (state, operandType)
-                | None -> (state, operandType)
+            let recorded =
+                match recordedClosedTypeAt(nodeIdentityOf(operand))(state) with
+                    | Some(closed) -> Some(closed)
+                    | None ->
+                        if hasActiveTraitEvidence(traitName)(resolveType(state)(operandType))(state)
+                        then None
+                        else
+                            recordedSettledTypeAt(nodeIdentityOf(operand))(state)
+            in
+                match recorded with
+                    | Some(closedType) ->
+                        match bindType(operandType)(closedType)(state) with
+                            | (bound, None) -> (observeLoweringEvent(0)(bound), resolveType(bound)(operandType))
+                            | (_failed, Some(_error)) -> (state, operandType)
+                    | None -> (state, operandType)
 
 let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: SemanticType) argument lower state =
     match state
     |> clearConsumerRequest
     |> lower(argument) with
         | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = loweredType, error = None } ->
-            match pinRecordedOperandType(argument)(loweredType)(loweredState) with
+            match pinRecordedOperandType(traitName)(argument)(loweredType)(loweredState) with
                 | (operandState, operandType) ->
                     operandState
                     |> withConsumerRequest(state.consumerRequest)

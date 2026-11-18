@@ -21,6 +21,7 @@ export (
     value nodeInstantiationAt,
     value nodeBindingsAt,
     value nodeDeclarationAt,
+    value settledInstantiationArguments,
 )
 
 // The trait an operator node maps to and the type of its operands. A concrete operand type names
@@ -128,3 +129,40 @@ let settleNodeNotes (substitution: List((Int, SemanticType))) (notes: List(NodeT
         | [] -> table
         | _ ->
             settleNotes(extendSubstitutionMap(substitution)(Ashes.Collection.Map.empty))(notes)(table)
+
+// One instantiation's arguments weighed against the settled arguments so far: a closed argument
+// settles its variable unless another reference instantiated it differently; an open one, or two
+// references that disagree, leave it unsettled.
+let recursive weighArguments (arguments: List((Int, SemanticType))) (weighed: (MapTree(Int, SemanticType), MapTree(Int, Bool))) =
+    match (arguments, weighed) with
+        | ([], _) -> weighed
+        | ((variable, semanticType) :: rest, (settled, unsettled)) ->
+            match Ashes.Collection.Map.getInt(variable)(unsettled) with
+                | Some(_unsettled) -> weighArguments(rest)(weighed)
+                | None ->
+                    if freeTypeVariables(semanticType) == []
+                    then
+                        match Ashes.Collection.Map.getInt(variable)(settled) with
+                            | None -> weighArguments(rest)((Ashes.Collection.Map.setInt(variable)(semanticType)(settled), unsettled))
+                            | Some(previous) ->
+                                if previous == semanticType
+                                then weighArguments(rest)(weighed)
+                                else weighArguments(rest)((settled, Ashes.Collection.Map.setInt(variable)(true)(unsettled)))
+                    else weighArguments(rest)((settled, Ashes.Collection.Map.setInt(variable)(true)(unsettled)))
+
+let weighInstantiation (weighed: (MapTree(Int, SemanticType), MapTree(Int, Bool))) (_node: Int) (instantiation: NodeInstantiation) =
+    match instantiation with
+        | NodeInstantiation { arguments = arguments } -> weighArguments(arguments)(weighed)
+
+let keepSettled (unsettled: MapTree(Int, Bool)) (kept: MapTree(Int, SemanticType)) (variable: Int) (semanticType: SemanticType) =
+    match Ashes.Collection.Map.getInt(variable)(unsettled) with
+        | Some(_unsettled) -> kept
+        | None -> Ashes.Collection.Map.setInt(variable)(semanticType)(kept)
+
+// The closed type of every quantified variable that all references to its binding instantiate at
+// that one type. A binding the program uses at a single type is settled by its uses there; a
+// variable instantiated at two types, or at a type still holding a variable, is left out.
+let settledInstantiationArguments (table: NodeTypeTable) =
+    match Ashes.Collection.Map.foldLeft(weighInstantiation)((Ashes.Collection.Map.empty, Ashes.Collection.Map.empty))(table.instantiations) with
+        | (settled, unsettled) ->
+            Ashes.Collection.Map.foldLeft(keepSettled(unsettled))(Ashes.Collection.Map.empty)(settled)
