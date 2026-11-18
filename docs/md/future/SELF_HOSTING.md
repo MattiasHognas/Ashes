@@ -440,7 +440,7 @@ Whole-compiler type check with the standalone inference on the head: `ok`. Stage
 
 | Branch (worktree) | What | State |
 | --- | --- | --- |
-| `fix/parity-bugs-4` (`parity-bugs`) | The `semantics` suite's "recursive bindings should remain monomorphic inside their group"; the `projects` suite binary built by stage 0 segfaulting; stage 1 `MissingCoreTraitEvidence("Eq", ...)` on two `xs == []` lambdas; the rest of the unported diagnostic details and stage 1's module list; parser recovery (stage 0's extra errors may be artifacts of its wrapped source) | running (on 5d6c7990) |
+| `fix/parity-bugs-4` (`parity-bugs`) | The `semantics` suite's "recursive bindings should remain monomorphic inside their group"; `logical-not-inference` failing "recursive discovery placeholder escaped"; `stitching-lookup-index` differing from its frozen oracle at seed 4 (scopes); the `projects` suite binary built by stage 0 segfaulting; stage 1 `MissingCoreTraitEvidence("Eq", ...)` on two `xs == []` lambdas; the rest of the unported diagnostic details and stage 1's module list; parser recovery (stage 0's extra errors may be artifacts of its wrapped source) | running (on 5d6c7990) |
 | `fix/strict-imports` (`typecheck-decisions`) | Decision 2, strict imports, in both compilers (shipped modules follow the rule; trait names in `deriving`, `requires`, `implement` stay visible), plus the imports the leniency hid | running (on a4baf21a) |
 | `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
 
