@@ -2201,11 +2201,7 @@ public static class ProjectSupport
         // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
         bool appendFlatEntryBare = ApplyEntryBoundary(prefix, entryShape, legacyBindingEmitted);
 
-        var entryExpression = BuildEntryExpression(
-            entryModule,
-            entryShape,
-            exportedNames,
-            exportAnnotations);
+        var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames, exportAnnotations);
         return ComposeEntryLayout(
             entryModule,
             entryShape,
@@ -2216,7 +2212,8 @@ public static class ProjectSupport
             functionSourceNames,
             moduleProvenanceByPath,
             entryTypeDeclFragments,
-            appendFlatEntryBare) with { VisibleModules = BuildVisibleModules(orderedModules) };
+            appendFlatEntryBare) with
+        { VisibleModules = BuildVisibleModules(orderedModules) };
     }
 
     /// <summary>
