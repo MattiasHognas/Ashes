@@ -441,6 +441,14 @@ Whole-compiler type check with the standalone inference on the head: `ok`. Stage
 | `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
 
 **Open bugs not yet assigned** (after the running batches). Stage 1's missing uniqueness check on matching an owned call result (see the crash fix above) is one. Usage ran out at 20:50 on 2026-11-18: the two running agents (`fix/parity-bugs-3`, `fix/s2-crash`) were stopped early; resume them from their worktrees' `work/PROGRESS.md`. Checks of batch 2 passed (whole compiler and `semantics` suite type-check, the new tests behave as expected, both fixtures pass with stage 0); round 9's suite runs were still running on the machine:
+- `examples/restful_api` does not compile with stage 0 (ASH010 ambiguous `Eq(a)` at Main.ash
+  1:1 and 18:1, ASH002 at Api.ash:25:13); broken before this week.
+- Left by the strict-imports batch: stage 1 cannot stitch a type selector import of a shipped
+  module (`import Ashes.Collection.Map.MapTree`, reproducer `shipped_type_selector_import.ash`);
+  stage 0 does not check alias names (`type X = Y`) for visibility; ASH048 names an inline module
+  `file#Inner` in stage 1 where stage 0 says `File.Inner`; a user trait of an unimported module in
+  `requires`/`implement` is rejected by stage 1 although the reference now says trait names
+  resolve without an import.
 - The 30 of 95 `ir-program-parity` fixtures that differ from stage 0: decide each from round 9's
   IR-parity run (below) as a stale fixture or a stage-1 bug.
 - Re-check the "Open work recorded at bootstrap36" list above with small programs; fix what still
