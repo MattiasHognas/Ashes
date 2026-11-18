@@ -1444,7 +1444,9 @@ let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLo
 // bound under the candidate's own name, so its self calls reach the copy; the call itself is
 // lowered over the call site's bindings with only the copy added under a fresh name, so an
 // argument naming the candidate still reads the binding it read before.
-let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) functionType arguments lower (state: CoreLoweringState) =
+// Its body reads the recorded types through the instantiation recorded at the call's callee
+// reference, as an isolated copy's does; the call itself reads them as the call site does.
+let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) (reference: Int) functionType arguments lower (state: CoreLoweringState) =
     (let callName =
         let supply = state.typeSupply
         in "__core_concrete_in_place_" + Ashes.Text.fromInt(supply.nextId)
@@ -1454,33 +1456,39 @@ let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) functionType arg
             then candidate.name
             else callName
         in
-            match prepareRecursiveGroup([(groupName, candidate.source)])(state)([]) with
-                | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
-                    match bindType(member.semanticType)(functionType)(preparedState) with
-                        | (_failed, Some(_error)) -> None
-                        | (pinned, None) ->
-                            let continuation =
-                                if candidate.isRecursive
-                                then
+            let instantiated =
+                withStateNodeInstantiation(recordedCopyInstantiation(reference)(nodeIdentityOf(candidate.source))(functionType)(state))(state)
+            in
+                match prepareRecursiveGroup([(groupName, candidate.source)])(instantiated)([]) with
+                    | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
+                        match bindType(member.semanticType)(functionType)(preparedState) with
+                            | (_failed, Some(_error)) -> None
+                            | (pinned, None) ->
+                                let continuation =
                                     given (call) ->
                                         given (opened) ->
-                                            opened
-                                            |> restoreBindings(state.bindings)
-                                            |> addBinding(callName)(emptyScheme(functionType))(CoreLocal(member.slot))
-                                            |> lower(call)
-                                else lower
-                            in
-                                match (prepared with state = pinned) |> lowerPreparedRecursiveGroupWith([(groupName, candidate.source)])(appendConstrainedArguments(ExprVar(callName))(arguments))(lower)(continuation)(state.bindings) with
-                                    | LoweredCoreValue { error = None } as lowered -> Some(lowered)
-                                    | _failed -> None
-                | _ -> None)
+                                            let restored =
+                                                withStateNodeInstantiation(stateNodeInstantiation(state))(opened)
+                                            in
+                                                if candidate.isRecursive
+                                                then
+                                                    restored
+                                                    |> restoreBindings(state.bindings)
+                                                    |> addBinding(callName)(emptyScheme(functionType))(CoreLocal(member.slot))
+                                                    |> lower(call)
+                                                else lower(call)(restored)
+                                in
+                                    match (prepared with state = pinned) |> lowerPreparedRecursiveGroupWith([(groupName, candidate.source)])(appendConstrainedArguments(ExprVar(callName))(arguments))(lower)(continuation)(state.bindings) with
+                                        | LoweredCoreValue { error = None } as lowered -> Some(lowered)
+                                        | _failed -> None
+                    | _ -> None)
 
 // A copy that was declined: lowered in place when the candidate allows it, otherwise left to the
 // caller with the state as the decline left it.
-let declinedConcreteCopy (candidate: CoreConcreteCandidate) functionType arguments lower (declined: CoreLoweringState) (state: CoreLoweringState) =
+let declinedConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) functionType arguments lower (declined: CoreLoweringState) (state: CoreLoweringState) =
     if concreteCopyInPlaceAllowed(candidate)(state)
     then
-        match lowerConcreteCopyInPlace(candidate)(functionType)(arguments)(lower)(state) with
+        match lowerConcreteCopyInPlace(candidate)(reference)(functionType)(arguments)(lower)(state) with
             | Some(lowered) -> (state, Some(lowered))
             | None -> (declined, None)
     else (declined, None)
@@ -1500,10 +1508,10 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                         |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) ->
-                        declinedConcreteCopy(candidate)(functionType)(arguments)(lower)(concreteCopyDeclined(state))(state)
+                        declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(concreteCopyDeclined(state))(state)
                     | None ->
                         match generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state) with
-                            | (rejected, None) -> declinedConcreteCopy(candidate)(functionType)(arguments)(lower)(rejected)(rejected)
+                            | (rejected, None) -> declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(rejected)(rejected)
                             | generated -> generated
 
 // The registry key of a candidate a `let` below top level registered: its name and its slot. The
