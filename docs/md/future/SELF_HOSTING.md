@@ -416,6 +416,66 @@ worktree's `work/PROGRESS.md`. The coordinator pushes each agent branch and the 
 after every commit, cherry-picks batches onto the integration branch, and updates this section. The
 agent rules are in the `step-f-round3` worktree's `work/coord/rules.md` (machine-local).
 
+**Orientation for a new session.** Everything below is either on `origin` (branches, this file) or
+on the development machine (marked *local*: git-ignored, under the repository checkout).
+
+Read first, in this order:
+1. This section.
+2. `CLAUDE.md` / `AGENTS.md` at the repository root (build, test and format gates, coding rules).
+3. In this file: "Start here" above it (where things stand, the order of work) and "Type inference
+   before lowering" (steps 7 and 8, the order-dependent rules, what the table gives lowering).
+4. The references the bugs touch: `docs/md/reference/language.md` (sections 13.1 imports, 21.2
+   trait declarations, 21.5 to 21.6 requirements and operators), `docs/md/reference/diagnostics.md`
+   (codes, including ASH048), `docs/md/guide/testing.md` (test directives).
+5. Tools: `selfhost/tests/behaviour/README.md` (the behavioural check), `scripts/selfhost-dev/README.md`
+   (the suite runner `suites.sh`, `--focused`, the probes), `selfhost/README.md` (packages).
+
+Branches on `origin`:
+
+| Branch | Role |
+| --- | --- |
+| `main` | Last merge: #1159 (`f6e28970`). |
+| `selfhost/round10` | The integration branch; everything below is cherry-picked onto it. |
+| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Finished batches waiting to be integrated (table below). |
+| `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
+| `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
+
+Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works in its own):
+
+| Worktree | Branch | Use |
+| --- | --- | --- |
+| `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
+| `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
+| `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
+| `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
+| `s2-diff-b` | `fix/s2-crash` | Stage-2 crash notes and gdb scripts in `work/r/`. |
+| `typed-nodes` | (`work/check/infer`) | Holds an inference tool binary used for quick type checks. |
+| `main-baseline` | detached at `main` | For running a check against `main` (its C# failure list: see below). |
+
+Binaries (*local*, in `step-f-round3/artifacts/`): stage 0 `stage0-b58/ashes` (built from the
+head after strict imports; rebuild with `dotnet build src/Ashes.Cli/Ashes.Cli.csproj -c Release -o
+artifacts/stage0-bNN`, stage 0 embeds `lib/Ashes`, so rebuild it after any stdlib edit); stage 1
+`selfhost-dev/s1-f-bootstrap54-debug` (round 9, before every round-10 batch); stage 2
+`selfhost-dev/s2-f-bootstrap54` with `.map` and `.map.names`; the inference tool
+`work/r10pre/strict/infer/infer` (from the head). Machine rules (caps, `heavy-coord.sh` /
+`heavy-agent.sh` slots, `ulimit -s 1048576`, swap allowed for stage 3) are in
+`step-f-round3/work/coord/rules.md` (*local*) and in the memory index of the coordinating
+assistant.
+
+Scripts and results (*local*, in `step-f-round3/work/`):
+- `step-f/round9.sh`: the template for a round (stage 1, stage 2 with link map, both behavioural
+  checks, crash trace, stage 3 and the byte comparison, suites); round 10 is a copy with the
+  numbers bumped and the typed-lowering steps added.
+- `r10pre/*.sh` and `r10pre/<name>/summary.txt`: the checks run on each batch this round
+  (`decisions`, `parity2`, `crashfix`, `batch3`, `strict`, `suites`); `r10pre/csharp-red-29.txt`
+  lists the 29 non-leak C# tests that were red on `main`.
+- `behaviour/b54-s1/`, `behaviour/b54-s2/`: round 9's behavioural results (`results.tsv`,
+  `summary.txt`); round 10 compares against them.
+- `round9/ir-opt/`: the `IrOptimizer` IR dump from the stage-2 crash hunt (no longer needed).
+- `r10pre/main-csharp-failed.txt`: the 39 C# tests that fail on `main` (`f6e28970`): the 10
+  leak tests (memory plateau and release) plus the 29; rerun the full suite in `main-baseline` to refresh it.
+
+
 **Integration branch:** `selfhost/round10` (from `main` after #1159), worktree `step-f-round3`.
 What it holds beyond `main`, none of it built by stage 1 yet:
 - typed lowering, all behind `ASHES_TYPED_LOWERING=1` (flag-off IR expected byte-identical):
