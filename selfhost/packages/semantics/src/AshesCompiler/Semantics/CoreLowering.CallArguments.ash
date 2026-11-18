@@ -409,6 +409,8 @@ type CoreCallContext =
     | siteSpan: Maybe(TextSpan)
     // Stage 0's `_discardedResultCalls`: an applied lambda discards this call's result.
     | resultDiscarded: Bool
+    // The spine's arguments, first applied first.
+    | arguments: List(Expr)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without

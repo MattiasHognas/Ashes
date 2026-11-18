@@ -1491,6 +1491,64 @@ let preconstrainCallResult expected (site: Maybe(CoreMismatchSite)) arity lowere
                     |> locateLoweredMismatch(site)
                 | (constrainedState, None) -> success(temp)(functionType)(constrainedState)
 
+// The type an argument's form gives it before it is lowered: a literal's, a variable's whose
+// binding is monomorphic, or a tuple's or a non-empty list's whose items all have one.
+let recursive knownArgumentType (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprInt(_value) -> Some(SemInt)
+        | ExprUInt(_value, bits, _raw) -> Some(SemUInt(bits))
+        | ExprFloat(_value, _raw) -> Some(SemFloat)
+        | ExprBigInt(_digits) -> Some(SemBigInt)
+        | ExprString(_value) -> Some(SemString)
+        | ExprRune(_value) -> Some(SemRune)
+        | ExprBool(_value) -> Some(SemBool)
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { scheme = TypeScheme { quantified = [], body = body, constraints = [] } }) -> Some(body)
+                | _ -> None
+        | ExprTuple(elements) ->
+            match knownArgumentTypes(elements)(state) with
+                | Some(types) -> Some(SemTuple(types))
+                | None -> None
+        | ExprList(item :: items, _layout) ->
+            match (knownArgumentType(item)(state), knownArgumentTypes(items)(state)) with
+                | (Some(itemType), Some(_types)) -> Some(SemList(itemType))
+                | _ -> None
+        | _ -> None
+and knownArgumentTypes (expressions: List(Expr)) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> Some([])
+        | expression :: rest ->
+            match (knownArgumentType(expression)(state), knownArgumentTypes(rest)(state)) with
+                | (Some(first), Some(others)) -> Some(first :: others)
+                | _ -> None
+
+// Stage 0's `PreconstrainKnownCallArgumentTypes`: before any argument of the spine is lowered,
+// each parameter meets the type its argument's form gives it, so a lambda argument lowered first
+// sees the type a later argument gives its parameter (`apply(given (x) -> print(x))(3)`). A
+// mismatch is left to the argument's own unification.
+let recursive preconstrainKnownArgumentTypes functionType (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | argument :: rest ->
+            match ensureFunctionType(functionType)(state) with
+                | FunctionTypeResolution { error = Some(_error) } -> state
+                | FunctionTypeResolution { state = functionState, argumentType = argumentType, resultType = resultType, error = None } ->
+                    match knownArgumentType(argument)(functionState) with
+                        | None -> preconstrainKnownArgumentTypes(resultType)(rest)(functionState)
+                        | Some(known) ->
+                            match bindType(argumentType)(known)(functionState) with
+                                | (constrained, None) -> preconstrainKnownArgumentTypes(resultType)(rest)(constrained)
+                                | (_failed, Some(_error)) -> preconstrainKnownArgumentTypes(resultType)(rest)(functionState)
+
+let preconstrainKnownArguments (context: CoreCallContext) loweredCallee =
+    match loweredCallee with
+        | LoweredCoreValue { error = Some(_error) } -> loweredCallee
+        | LoweredCoreValue { state = state, temp = temp, semanticType = functionType, error = None } ->
+            state
+            |> preconstrainKnownArgumentTypes(functionType)(context.arguments)
+            |> success(temp)(functionType)
+
 // The callee of one application inside a call spine `f(a)(b)`: a further application is another
 // stage of the same spine, an applied lambda literal is lowered as a stack closure, and anything
 // else is an ordinary expression. The stages share the window `lowerCall` opened around the
@@ -1508,6 +1566,7 @@ let recursive lowerCallSpineCallee expression (context: CoreCallContext) expecte
                     state
                     |> lower(expression)
                     |> preconstrainCallResult(expected)(site)(arity)
+                    |> preconstrainKnownArguments(context)
                     |> callStageOf
         | ExprNode(_node, inner) ->
             match unspanArgument(inner) with
@@ -1517,17 +1576,20 @@ let recursive lowerCallSpineCallee expression (context: CoreCallContext) expecte
                     state
                     |> lower(expression)
                     |> preconstrainCallResult(expected)(site)(arity)
+                    |> preconstrainKnownArguments(context)
                     |> callStageOf
         | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(context)(expected)(site)(arity + 1)(transfers)(lower)(state)
         | ExprLambda(parameter, body, annotation) ->
             state
             |> lowerLambda(parameter)(body)(annotation)(true)(lower)
             |> preconstrainCallResult(expected)(site)(arity)
+            |> preconstrainKnownArguments(context)
             |> callStageOf
         | _ ->
             state
             |> lower(expression)
             |> preconstrainCallResult(expected)(site)(arity)
+            |> preconstrainKnownArguments(context)
             |> callStageOf
 and lowerCallSpineStage function argument (context: CoreCallContext) expected (site: Maybe(CoreMismatchSite)) arity (transfers: Bool) lower state =
     state
@@ -1576,7 +1638,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             calleeScheme = calleeSchemeOf(spine)(state),
             appliedLambdaLabel = appliedLambdaLabelOf(spine)(state),
             siteSpan = state.currentSpan,
-            resultDiscarded = resultDiscarded
+            resultDiscarded = resultDiscarded,
+            arguments = spine.arguments
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
