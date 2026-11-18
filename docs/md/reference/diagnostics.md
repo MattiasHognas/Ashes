@@ -76,7 +76,10 @@ except a trait the program's entry module declares, which reads by its bare name
 whether the entry file is compiled on its own, as a project's entry, or by the test runner.
 
 - `ASH010` — **Invalid trait declaration.** A trait has invalid parameters, methods, supertraits, a
-  malformed or unjustified `requires` clause, or an invalid `deriving` request. A written requirement
+  malformed or unjustified `requires` clause, or an invalid `deriving` request. A method whose
+  signature mentions none of the trait's type parameters (see [language.md section 21.2](language.md#212-trait-declarations))
+  is rejected at the trait declaration:
+  `Method 'version' of trait 'Named' must mention at least one of the trait's type parameters.` A written requirement
   on known types or one an implementation head matches (`Eq(Int)`, `Eq(List(a))`) is unjustified:
   `Written requires clause includes unjustified requirement 'Ashes.Trait.Eq(Int)'.` The code also
   reports an ambiguous requirement (see [language.md section 21.6](language.md#216-constrained-type-schemes-and-inference)):

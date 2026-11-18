@@ -3633,6 +3633,15 @@ together. Instantiating the binding freshens every quantified variable in both i
 its constraints. Constraints propagate through calls, closures, partial application, higher-order
 arguments, matches, async bodies, and capability-performing functions.
 
+A constraint on type variables that a local `let` does not generalize, because they belong to an
+enclosing binding (a parameter's type, say), is a requirement of that enclosing binding, whether or
+not the `let`'s name is ever used:
+
+```ash
+// describe : a -> Int requires {Named(a)}
+let describe x = (let _ = Named.label(x) in 1)
+```
+
 A written `requires` clause states the complete external trait requirement of that scheme after
 supertrait simplification. Missing inferred constraints and written constraints that the body does not
 justify are errors; annotations do not silently add or discard evidence. Non-recursive bindings,
