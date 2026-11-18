@@ -3254,6 +3254,12 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
 
+  Design notes for the stage-1 port (2026-11-18, research only, nothing implemented yet):
+  - Threads: `Ashes.Task.Parallel.both` forks a real `clone` worker in stage 1 too (`parallelBothBound` in CoreLowering.Expressions, codegen in IrCodegen.Parallel), with its own arena and reference-counting region and a deep copy of the result back. It forks only when the right thunk's result type passes `canRunRightOnWorker` and silently runs sequentially otherwise: return `(Bool, Bytes)` rather than `Result(Bytes, Str)` and annotate the job function. Chain `both` so partition 0 runs last on the main thread (it does the bitcode payload IO); capture only scalars and LLVM handles, since counts are not atomic. Each partition gets its own context, module, builder and target machine; codegen and verification stay on the main thread, only optimize and emit go to workers.
+  - Risk: worker stacks are a hard-coded 1 MiB (`workerStackBytes`, no stack-size flag); whether LLVM fits a partition's optimize and emit in that is unproven. Plan an `ASHES_LLVM_SEQUENTIAL=1` fallback that keeps the partitions and runs them one after another.
+  - Stage 1 differs from stage 0 in ways that remove two of stage 0's rules: every function but the entry is internal and libc names are always imports (no weak-helper rule), and the x64 arena cursors are GS-relative (no local-exec rule). Symbols shared between partitions need hidden visibility, or LLVM emits `REX_GOTPCRELX` relocations stage 1's linker does not relax. Share only the globals created before any function body (a sentinel global marks the end), not globals with equal names: the `.str_msg_<name>` constants reuse one name for different contents.
+  - LNK-14: a line-by-line port of the three `ElfRelocatableObjects` files, the output built as byte pieces joined once as the ELF linker does; 16- and 32-bit fields packed into 64-bit writes (no Int-to-u32 conversion). COFF is out of scope while stage 1 targets linux-x64 only. All LLVM C functions needed are exported by libLLVM 23.1.
+
 ### Object parsing and executable linking
 
 - [ ] **LNK-14** Merge several relocatable objects into one, the way `ld -r` does, so the
