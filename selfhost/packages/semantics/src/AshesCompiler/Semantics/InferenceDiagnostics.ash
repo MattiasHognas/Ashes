@@ -7,6 +7,7 @@ import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Token.DiagnosticEntry
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering.isIntrinsicBuiltinModule
 import AshesCompiler.Semantics.DerivingExpansion
 import AshesCompiler.Semantics.DiagnosticTypeText
 import AshesCompiler.Semantics.ExternalAbi.ExternalAbiError
@@ -398,9 +399,26 @@ let constructorHint (placements: List(StitchedDefinitionPlacement)) (builtins: T
                     | [] -> ""
                     | names -> " Did you mean: " + Ashes.Text.join(", ")(names) + "?")
 
+let recursive containsModuleName (moduleName: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == moduleName || containsModuleName(moduleName)(rest)
+
+// Whether stage 0's builtin registry has a module of this name: the `Ashes` root, an intrinsic
+// module, or one it searches for a suggestion.
+let builtinModule (moduleName: Str) = moduleName == "Ashes" || isIntrinsicBuiltinModule(moduleName) || containsModuleName(moduleName)(suggestionModules)
+
+// Whether a module of the stitched program declares anything under `moduleName`.
+let recursive stitchedModule (placements: List(StitchedDefinitionPlacement)) (moduleName: Str) =
+    match placements with
+        | [] -> false
+        | StitchedDefinitionPlacement { definition = definition } :: rest -> definition.moduleName == moduleName || stitchedModule(rest)(moduleName)
+
 // A name no binding answers to, as stage 0 words it: a top-level binding of the same module that
-// is declared further down, an unknown member of a standard-library module, an unknown
-// constructor, or an undefined variable with the intrinsic member it may have meant.
+// is declared further down, a name a stitched module does not export, an unknown member of an
+// intrinsic module, a qualifier that names no module (a field read through a record field,
+// `state.supply.next`, is one), an unknown constructor, or an undefined variable with the
+// intrinsic member it may have meant.
 let unknownValueDiagnostic (placements: List(StitchedDefinitionPlacement)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (name: Str) =
     match moduleAndMember(Ashes.Text.split(name)("."))([]) with
         | ("", _member) ->
@@ -410,7 +428,13 @@ let unknownValueDiagnostic (placements: List(StitchedDefinitionPlacement)) (buil
                 if startsUppercase(name)
                 then uncoded("Unknown constructor '" + name + "'." + constructorHint(placements)(builtins)(name))
                 else coded(unknownIdentifierCode)("Undefined variable '" + name + "'." + suggestionIn(builtins)(name)(suggestionModules))
-        | (moduleName, member) -> uncoded("Unknown member '" + member + "' in module " + moduleName + ".")
+        | (moduleName, member) ->
+            if stitchedModule(placements)(moduleName)
+            then uncoded("Module '" + moduleName + "' does not export '" + member + "'.")
+            else
+                if builtinModule(moduleName)
+                then uncoded("Unknown member '" + member + "' in module " + moduleName + ".")
+                else uncoded("Unknown module '" + moduleName + "'.")
 
 let recursive capabilityNames (placements: List(StitchedDefinitionPlacement)) (entries: List(SemanticType)) (reversed: List(Str)) =
     match entries with
