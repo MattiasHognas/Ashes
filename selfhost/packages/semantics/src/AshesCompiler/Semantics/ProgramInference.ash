@@ -376,7 +376,7 @@ let inferSeededRecursiveBindings groupType pending environment boundaryEnvironme
         | failure -> failure
 
 // The group's substitution with each builtin argument requirement on a variable the group would
-// generalize over settled to `Int`, as a single binding's is.
+// generalize over settled as a single binding's is.
 let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substitution =
     match bindings with
         | [] -> substitution
@@ -384,6 +384,16 @@ let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substit
             substitution
             |> defaultBuiltinArguments(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))
             |> defaultRecursiveBuiltinArguments(tail)(outerEnvironment)
+
+// The `print` argument a member of the group would generalize over, once the group's defaults are
+// settled.
+let recursive recursiveOpenPrintArgument bindings outerEnvironment substitution =
+    match bindings with
+        | [] -> None
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            match openBuiltinPrintArgument(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))(substitution) with
+                | Some(argument) -> Some(argument)
+                | None -> recursiveOpenPrintArgument(tail)(outerEnvironment)(substitution)
 
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
     match bindings with
@@ -429,14 +439,22 @@ let inferRecursiveGroup bindings state =
                                 | None ->
                                     let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
                                     in
-                                        let finalEnvironment =
-                                            generalizeRecursiveBindings(
-                                                resolved,
-                                                outerEnvironment,
-                                                defaultedSubstitution,
-                                                outerEnvironment
-                                            )
-                                        in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                        match recursiveOpenPrintArgument(resolved)(outerEnvironment)(defaultedSubstitution) with
+                                            | Some(argument) ->
+                                                ProgramInferenceState(environment = outerEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
+                                                    [argument]
+                                                    |> NoTraitImplementation("$PrintArgument")
+                                                    |> ProgramExpressionError
+                                                ))
+                                            | None ->
+                                                let finalEnvironment =
+                                                    generalizeRecursiveBindings(
+                                                        resolved,
+                                                        outerEnvironment,
+                                                        defaultedSubstitution,
+                                                        outerEnvironment
+                                                    )
+                                                in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)

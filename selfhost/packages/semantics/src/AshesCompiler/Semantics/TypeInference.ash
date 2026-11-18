@@ -72,6 +72,7 @@ export (
     value resolveWrittenTypeBinding,
     value requirementsLeftToWrite,
     value defaultBuiltinArguments,
+    value openBuiltinPrintArgument,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
@@ -3140,48 +3141,91 @@ let validateWrittenBindingRequirements inferred written semanticType substitutio
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
 
-// `Ashes.Text.fromInt` and `Ashes.Text.toHex` are typed `Int -> Str` and take an unsigned width
-// only where the argument is already known to be one, so a requirement of theirs on a variable the
-// binding would generalize over settles that variable to `Int` instead.
-let defaultsBuiltinArgumentToInt (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+// The compiler-private argument requirements of `Ashes.Text.fromInt`, `Ashes.Text.toHex`,
+// `Ashes.Number.UInt.toInt` and `Ashes.IO.print` accept several argument types, and stage 0 types
+// the argument at the call when nothing has typed it yet. A requirement of theirs on a variable
+// the binding would generalize over follows that rule: `fromInt` and `toHex` settle it to `Int`,
+// `UInt.toInt` to `u8`, and `print`, which stage 0 rejects for an open argument, is an error.
+let builtinArgumentDefault (traitName: Str) =
+    if traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+    then Some(SemInt)
+    else
+        if traitName == "$UnsignedIntegerArgument"
+        then Some(SemUInt(8))
+        else None
+
+let isBuiltinArgumentTrait (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument" || traitName == "$UnsignedIntegerArgument" || traitName == "$PrintArgument"
 
 let recursive variableListed (variableId: Int) (variables: List(Int)) =
     match variables with
         | [] -> false
         | head :: tail -> head == variableId || variableListed(variableId)(tail)
 
-let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List(Int)) =
+let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List((Int, Str))) =
     match constraints with
         | [] -> found
         | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
-            if defaultsBuiltinArgumentToInt(traitName)
+            if isBuiltinArgumentTrait(traitName)
             then
                 match applySubstitution(substitution)(argument) with
-                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)(variableId :: found)
+                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)((variableId, traitName) :: found)
                     | _ -> builtinArgumentCandidates(rest)(substitution)(found)
             else builtinArgumentCandidates(rest)(substitution)(found)
         | _ :: rest -> builtinArgumentCandidates(rest)(substitution)(found)
 
-let recursive bindBuiltinArgumentDefaults (candidates: List(Int)) (environmentVariables: List(Int)) substitution =
+let recursive bindBuiltinArgumentDefaults (candidates: List((Int, Str))) (environmentVariables: List(Int)) (bound: List(Int)) substitution =
     match candidates with
         | [] -> substitution
-        | variableId :: rest ->
-            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(rest)
-            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(substitution)
-            else bindBuiltinArgumentDefaults(rest)(environmentVariables)((variableId, SemInt) :: substitution)
+        | (variableId, traitName) :: rest ->
+            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(bound)
+            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(bound)(substitution)
+            else
+                match builtinArgumentDefault(traitName) with
+                    | Some(defaultType) -> bindBuiltinArgumentDefaults(rest)(environmentVariables)(variableId :: bound)((variableId, defaultType) :: substitution)
+                    | None -> bindBuiltinArgumentDefaults(rest)(environmentVariables)(bound)(substitution)
 
-// The substitution with every such variable bound to `Int`, under the program inference rules
-// only; the environment is scanned only when a candidate exists.
+// A `print` argument the binding would generalize over that no default settled.
+let recursive openPrintArgument (candidates: List((Int, Str))) (environmentVariables: List(Int)) substitution =
+    match candidates with
+        | [] -> None
+        | (variableId, traitName) :: rest ->
+            if traitName == "$PrintArgument" && variableListed(variableId)(environmentVariables) == false
+            then
+                match applySubstitution(substitution)(SemVariable(variableId)) with
+                    | SemVariable(openId) -> Some(SemVariable(openId))
+                    | _ -> openPrintArgument(rest)(environmentVariables)(substitution)
+            else openPrintArgument(rest)(environmentVariables)(substitution)
+
+// The substitution with every such variable settled, and the open `print` argument if one is left.
+// The environment is scanned only when a candidate exists.
+let settleBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    match builtinArgumentCandidates(constraints)(substitution)([]) with
+        | [] -> (substitution, None)
+        | candidates ->
+            let environmentVariables =
+                resolveEnvironmentVariables(substitution)(environment
+                |> inferenceEnvironmentSchemes
+                |> freeEnvironmentVariables)([])
+            in
+                let defaulted = bindBuiltinArgumentDefaults(candidates)(environmentVariables)([])(substitution)
+                in (defaulted, openPrintArgument(candidates)(environmentVariables)(defaulted))
+
+// The substitution with every such variable settled, under the program inference rules only.
 let defaultBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
     if environment.programInferenceRules
     then
-        match builtinArgumentCandidates(constraints)(substitution)([]) with
-            | [] -> substitution
-            | candidates ->
-                bindBuiltinArgumentDefaults(candidates)(resolveEnvironmentVariables(substitution)(environment
-                |> inferenceEnvironmentSchemes
-                |> freeEnvironmentVariables)([]))(substitution)
+        match settleBuiltinArguments(environment)(constraints)(substitution) with
+            | (defaulted, _openPrint) -> defaulted
     else substitution
+
+// The `print` argument a binding would generalize over, under the program inference rules only;
+// `substitution` is the one its defaults were settled in.
+let openBuiltinPrintArgument (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    if environment.programInferenceRules
+    then
+        match settleBuiltinArguments(environment)(constraints)(substitution) with
+            | (_defaulted, openPrint) -> openPrint
+    else None
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
@@ -3197,12 +3241,19 @@ let validateSettledBindingRequirements requirements inferred written selected se
                 | [] ->
                     if environment.programInferenceRules
                     then
-                        let defaulted = defaultBuiltinArguments(environment)(selected)(substitution)
-                        in
-                            selected
-                            |> applyInferenceConstraints(defaulted)
-                            |> requirementsLeftToWrite(environment)
-                            |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
+                        match settleBuiltinArguments(environment)(selected)(substitution) with
+                            | (_defaulted, Some(openArgument)) ->
+                                inferenceFailure(
+                                    semanticType,
+                                    substitution,
+                                    supply,
+                                    NoTraitImplementation("$PrintArgument")([openArgument])
+                                )
+                            | (defaulted, None) ->
+                                selected
+                                |> applyInferenceConstraints(defaulted)
+                                |> requirementsLeftToWrite(environment)
+                                |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
                     else
                         selected
                         |> requirementsLeftToWrite(environment)
