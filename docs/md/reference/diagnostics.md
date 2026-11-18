@@ -71,6 +71,10 @@ coherence, and evidence resolution. Requirement failures include a deterministic
 original goal to the failing dependency. Coherence failures identify both conflicting source paths
 and source offsets so editor and command-line users can find both declarations.
 
+Messages name a trait by its module-qualified name (`Ashes.Trait.Eq(Int)`, `Shapes.Area(Circle)`),
+except a trait the program's entry module declares, which reads by its bare name (`Grow(List<a>)`)
+whether the entry file is compiled on its own, as a project's entry, or by the test runner.
+
 - `ASH010` — **Invalid trait declaration.** A trait has invalid parameters, methods, supertraits, a
   malformed or unjustified `requires` clause, or an invalid `deriving` request. A written requirement
   on known types or one an implementation head matches (`Eq(Int)`, `Eq(List(a))`) is unjustified:

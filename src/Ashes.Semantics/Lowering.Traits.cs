@@ -480,7 +480,20 @@ public sealed partial class Lowering
 
     private string FormatTraitConstraint(TraitConstraint constraint)
     {
-        return $"{constraint.Trait.QualifiedName}({string.Join(", ", constraint.TypeArgs.Select(Pretty))})";
+        return $"{DiagnosticTraitName(constraint.Trait)}({string.Join(", ", constraint.TypeArgs.Select(Pretty))})";
+    }
+
+    /// <summary>
+    /// The name a diagnostic gives a trait: its module-qualified name, or its bare name when the
+    /// program's entry module declares it, so an entry-module trait reads the same whether the entry
+    /// file was compiled on its own or as the entry of a project.
+    /// </summary>
+    private string DiagnosticTraitName(TraitSymbol trait)
+    {
+        return _moduleOffsets is { Count: > 0 } offsets
+            && string.Equals(trait.Provenance.SourcePath, offsets[^1].FilePath, StringComparison.Ordinal)
+            ? trait.Name
+            : trait.QualifiedName;
     }
 
     private bool TryGetTraitMethod(
