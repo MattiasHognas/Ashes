@@ -2405,6 +2405,15 @@ public sealed partial class Lowering
                     letValues,
                     state);
                 return;
+            // A self call in the tail of a cons (`head :: loop(rest)(next)`) becomes a back edge of
+            // the same loop once tail-modulo-cons applies, so its arguments are edges too: a
+            // parameter it grows is no longer handed on unchanged at every edge, however the
+            // other edges pass it.
+            case Expr.Cons cons:
+                TcoParamFactsWalk(
+                    cons.Tail, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness,
+                    letValues, state);
+                return;
         }
     }
 
