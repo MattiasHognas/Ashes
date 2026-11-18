@@ -36,8 +36,8 @@ type CoreConcreteCandidate =
     | isRecursive: Bool
     // For a candidate whose scheme the standalone inference recorded: each name its value reads,
     // with the slot of the local of its definition frame the name resolves to there, or -1 for a
-    // name no binding of that frame holds. None when a name resolves to anything else, when the
-    // value is recursive, and for every other candidate.
+    // name no binding of that frame holds; its own name is left out. None when a name resolves to
+    // anything else, and for every other candidate.
     | inPlaceScope: Maybe(List((Str, Int)))
 
 // None is a proved rejection, distinct from an absent cache entry. An in-progress

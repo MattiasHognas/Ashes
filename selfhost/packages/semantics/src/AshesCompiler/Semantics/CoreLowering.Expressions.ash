@@ -1330,10 +1330,15 @@ let recursive concreteNewFunctionsReferenceSelf label boundary functions =
             then false
             else concreteCopyReferencesSelf(label)(instructions) || concreteNewFunctionsReferenceSelf(label)(boundary)(rest)
 
-let concreteCopyAdmissible label original generated =
+// A candidate whose scheme the standalone inference recorded has no generic body that compiles at
+// every type: its copy at a type is the only form there, and the copy's own label in its body is
+// the copy recursing at that type, so a self call that is not a tail call does not decline it.
+let candidateSchemeRecorded (candidate: CoreConcreteCandidate) = candidate.scheme != candidate.bindingScheme
+
+let concreteCopyAdmissible label (recursesAtItsType: Bool) original generated =
     stateConcreteDeclines(generated) == stateConcreteDeclines(original) && (match functionWithLabel(label)(generated.functions) with
         | None -> false
-        | Some(IrFunction { instructions = instructions }) -> !concreteRootReadsEnvironment(instructions)) && !concreteNewFunctionsReferenceSelf(label)(concreteFunctionsBoundary(original.functions))(generated.functions)
+        | Some(IrFunction { instructions = instructions }) -> !concreteRootReadsEnvironment(instructions)) && (recursesAtItsType || !concreteNewFunctionsReferenceSelf(label)(concreteFunctionsBoundary(original.functions))(generated.functions))
 
 let lowerConcreteCopyCall label functionType arguments lower state =
     match freshTemp(state) with
@@ -1379,7 +1384,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                     | (pinned, None) ->
                         match openPreparedRecursiveGroup([(candidate.name, candidate.source)])(lower)([])((prepared with state = pinned)) with
                             | LoweredCoreValue { state = generated, error = None } ->
-                                if concreteCopyAdmissible(member.label)(state)(generated)
+                                if concreteCopyAdmissible(member.label)(candidateSchemeRecorded(candidate))(state)(generated)
                                 then
                                     let restored =
                                         generated
@@ -1405,12 +1410,9 @@ let recursive definitionScopeOf (names: List(Str)) (bindings: List(CoreBinding))
                 | Some(_binding) -> None
 
 // The scope a candidate whose scheme the standalone inference recorded is lowered in place against:
-// what each name its value reads resolves to where it is defined. None for a recursive value.
-let inPlaceScopeOf name value isRecursive (state: CoreLoweringState) =
-    if isRecursive
-    then None
-    else
-        definitionScopeOf(collectFree(value)([name])([]))(state.bindings)([])
+// what each name its value reads, other than its own name, resolves to where it is defined.
+let inPlaceScopeOf name value (state: CoreLoweringState) =
+    definitionScopeOf(collectFree(value)([name])([]))(state.bindings)([])
 
 let recursive sameDefinitionScope (scope: List((Str, Int))) (bindings: List(CoreBinding)) =
     match scope with
@@ -1438,21 +1440,40 @@ let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLo
 // A candidate whose copy could not be lowered on its own, because its value reads a binding of its
 // definition frame, is lowered at a call in that frame as a local group of its own, pinned to the
 // call's type before its body is lowered and capturing what it reads, and called there. None when
-// that lowering fails; the caller then lowers the call as before.
+// that lowering fails; the caller then lowers the call as before. A recursive candidate's group is
+// bound under the candidate's own name, so its self calls reach the copy; the call itself is
+// lowered over the call site's bindings with only the copy added under a fresh name, so an
+// argument naming the candidate still reads the binding it read before.
 let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) functionType arguments lower (state: CoreLoweringState) =
-    (let name =
+    (let callName =
         let supply = state.typeSupply
         in "__core_concrete_in_place_" + Ashes.Text.fromInt(supply.nextId)
     in
-        match prepareRecursiveGroup([(name, candidate.source)])(state)([]) with
-            | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
-                match bindType(member.semanticType)(functionType)(preparedState) with
-                    | (_failed, Some(_error)) -> None
-                    | (pinned, None) ->
-                        match (prepared with state = pinned) |> lowerPreparedRecursiveGroupWith([(name, candidate.source)])(appendConstrainedArguments(ExprVar(name))(arguments))(lower)(lower)(state.bindings) with
-                            | LoweredCoreValue { error = None } as lowered -> Some(lowered)
-                            | _failed -> None
-            | _ -> None)
+        let groupName =
+            if candidate.isRecursive
+            then candidate.name
+            else callName
+        in
+            match prepareRecursiveGroup([(groupName, candidate.source)])(state)([]) with
+                | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
+                    match bindType(member.semanticType)(functionType)(preparedState) with
+                        | (_failed, Some(_error)) -> None
+                        | (pinned, None) ->
+                            let continuation =
+                                if candidate.isRecursive
+                                then
+                                    given (call) ->
+                                        given (opened) ->
+                                            opened
+                                            |> restoreBindings(state.bindings)
+                                            |> addBinding(callName)(emptyScheme(functionType))(CoreLocal(member.slot))
+                                            |> lower(call)
+                                else lower
+                            in
+                                match (prepared with state = pinned) |> lowerPreparedRecursiveGroupWith([(groupName, candidate.source)])(appendConstrainedArguments(ExprVar(callName))(arguments))(lower)(continuation)(state.bindings) with
+                                    | LoweredCoreValue { error = None } as lowered -> Some(lowered)
+                                    | _failed -> None
+                | _ -> None)
 
 // A copy that was declined: lowered in place when the candidate allows it, otherwise left to the
 // caller with the state as the decline left it.
@@ -2742,7 +2763,7 @@ let registerConcreteSource name value isRecursive state =
                     else
                         match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
                             | Some(recorded) ->
-                                registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(inPlaceScopeOf(name)(value)(isRecursive)(state))(state)
+                                registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(inPlaceScopeOf(name)(value)(state))(state)
                             | None ->
                                 if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
                                 then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
@@ -2768,7 +2789,7 @@ let registerNestedConcreteSource name value (recorded: TypeScheme) (state: CoreL
         | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
             if scheme.constraints == [] && schemeNamesItsBinding(scheme)
             then
-                match (lambdaParameterChain(value)([]), inPlaceScopeOf(name)(value)(false)(state)) with
+                match (lambdaParameterChain(value)([]), inPlaceScopeOf(name)(value)(state)) with
                     | ((parameters, _body), inPlaceScope) ->
                         withStateConcreteRegistry(state
                         |> stateConcreteRegistry
