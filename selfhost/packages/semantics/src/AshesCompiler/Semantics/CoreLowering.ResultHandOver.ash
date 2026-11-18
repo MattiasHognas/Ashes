@@ -2793,13 +2793,13 @@ let tempIsProducedOwned (temp: Int) (state: CoreLoweringState) =
 
 let finishGeneralRcFunctionResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) = finishGeneralRcFunctionResultAs(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(bodyTemp)(bodyType)(state)
 
-// Whether the function's result is reference-counted once it is finished, the fact its callers
-// close their call windows on: it was produced so, it is of the contract's types, or it is
-// normalized into an owned value behind the function's owned slots.
-let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
-    isRuntimeTemp(bodyTemp)(state) || (match (isGeneralRcValueType(bodyType)(state), generalCopyPlanOf(bodyType)(state)) with
-        | (true, Some(_plan)) -> true
-        | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
+// Whether a result outside the contract's types is normalized into an owned value behind the
+// function's owned slots, asked of the state the return finishes it in: the part duplicates'
+// slots are withdrawn first there, and a result that reached the owned values only through them
+// stays in place, so asking before the withdrawal promised callers a reference-counted result
+// the return left in the arena.
+let normalizesOutsideContractResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
         | Some(OwnedResultCopy(_plan)) -> !keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state)
         | Some(ArenaResultCopy(_copyOut)) -> false
         | Some(ArenaDeepResultCopy(_type)) -> false
@@ -2807,6 +2807,14 @@ let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state
             match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
                 | Some(_plan) -> true
                 | None -> false)
+
+// Whether the function's result is reference-counted once it is finished, the fact its callers
+// close their call windows on: it was produced so, it is of the contract's types, or it is
+// normalized into an owned value behind the function's owned slots.
+let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    isRuntimeTemp(bodyTemp)(state) || (match (isGeneralRcValueType(bodyType)(state), generalCopyPlanOf(bodyType)(state)) with
+        | (true, Some(_plan)) -> true
+        | _ -> false) || (state |> dropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp)(bodyType) |> normalizesOutsideContractResult(bodyTemp)(bodyType))
 
 // Stage 0's `LowerLambdaCoreNormalizeRequestedArenaResult`: a callee whose result is
 // reference-counted can be invoked from a body that cannot own such a result (a generic function
