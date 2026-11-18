@@ -341,6 +341,7 @@ generic_lookup_key_reference_released	live-differs	stage 1 more (stage0=1 stage1
 generic_map_passed_as_value_keeps_closure_results	same	
 generic_map_string_churn_plateau	same	
 generic_multiply_binding_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'square'.
+generic_multiply_binding_used_at_two_types_inside_a_function	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'square'.
 generic_parameter_adt_argument_not_copied_to_space	same	
 generic_parameter_list_argument_handed_over_not_copied	same	
 generic_result_beside_owned_record_releases_the_record	same	

@@ -10,6 +10,7 @@ export (
     type CoreConcreteRegistry(..),
     value emptyCoreConcreteRegistry,
     value registerCoreConcreteCandidate,
+    value registerCoreRecordedConcreteCandidate,
     value coreConcreteOpenSchemes,
     value lookupCoreConcreteCandidate,
     value lookupCoreConcreteCopy,
@@ -26,6 +27,9 @@ type CoreConcreteCandidate =
     | name: Str
     | source: Expr
     | scheme: TypeScheme
+    // The scheme of the binding the candidate was registered from, as lowering holds it: equal to
+    // `scheme` unless the candidate takes its scheme from the standalone inference.
+    | bindingScheme: TypeScheme
     | arity: Int
     | bindingSlot: Int
     | isRecursive: Bool
@@ -60,9 +64,11 @@ let registeredOpenSchemes (name: Str) (scheme: TypeScheme) (open: MapTree(Str, M
 
 // The caller admits only top-level sources and keeps the pre-dictionary scheme.
 // A new declaration gets a distinct cache identity even when its spelling repeats.
-let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) =
-    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive)
+let registerCoreRecordedConcreteCandidate name source scheme bindingScheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) =
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive)
     in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates), inferenceBindings = (name, scheme) :: registry.inferenceBindings, openSchemes = registeredOpenSchemes(name)(scheme)(registry.openSchemes))
+
+let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) = registerCoreRecordedConcreteCandidate(name)(source)(scheme)(scheme)(arity)(bindingSlot)(isRecursive)(registry)
 
 // The schemes of the current candidates that hold a free type variable, in the order a fold of
 // `candidates` lists them.

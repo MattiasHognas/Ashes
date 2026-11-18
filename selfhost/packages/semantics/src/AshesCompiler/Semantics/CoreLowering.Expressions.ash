@@ -1244,10 +1244,14 @@ let concreteCopyInferenceEnvironment state =
 // Stage 0's `NamesConstrainedCandidate`: the root names the registered top-level function, not a
 // local binding of the same name. A function body reads the top-level function through a capture,
 // which carries the candidate's own generalized scheme, quantified variable identities included.
+// A candidate whose scheme the standalone inference recorded is captured with the scheme lowering
+// holds for the binding instead, whose own variables name that binding and no other.
+let recordedCandidateCaptured (candidate: CoreConcreteCandidate) (scheme: TypeScheme) = candidate.scheme != candidate.bindingScheme && scheme == candidate.bindingScheme && (scheme.quantified != [] || !schemeIsClosed(scheme))
+
 let concreteCandidateBindingMatches (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
     match lookupBinding(candidate.name)(state.bindings) with
         | Some(CoreBinding { location = CoreLocal(slot) }) -> inProgramEntryFrame(state) && slot == candidate.bindingSlot
-        | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) -> scheme.quantified != [] && scheme == candidate.scheme
+        | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) -> scheme.quantified != [] && scheme == candidate.scheme || recordedCandidateCaptured(candidate)(scheme)
         | Some(_binding) -> false
         | None -> stateConcreteDepth(state) > 0
 
@@ -2578,12 +2582,12 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
 // concrete call site so the `both` splits in the copy see a concrete result type and fork.
 let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
 
-let registerConcreteCandidateScheme name value (scheme: TypeScheme) slot isRecursive state =
+let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingScheme: TypeScheme) slot isRecursive state =
     match lambdaParameterChain(value)([]) with
         | (parameters, _body) ->
             withStateConcreteRegistry(state
             |> stateConcreteRegistry
-            |> registerCoreConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive))(state)
+            |> registerCoreRecordedConcreteCandidate(name)(value)(scheme)(bindingScheme)(length(parameters))(slot)(isRecursive))(state)
 
 // A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
 // over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
@@ -2597,13 +2601,13 @@ let registerConcreteSource name value isRecursive state =
                 let scheme = binding.scheme
                 in
                     if scheme.constraints != []
-                    then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                    then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(state)
                     else
                         match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
-                            | Some(recorded) -> registerConcreteCandidateScheme(name)(value)(recorded)(slot)(isRecursive)(state)
+                            | Some(recorded) -> registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(state)
                             | None ->
                                 if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
-                                then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                                then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(state)
                                 else state
             | _ -> state
 
