@@ -201,6 +201,10 @@ type TypeEnvironment =
     // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
     // program inference does, an environment built for lowering does not.
     | lookupIndex: Maybe(BindingLookupIndex)
+    // Whether the expression being inferred runs in the body of an `async` activation, where
+    // `Ashes.Task.fork` may register a child. A lambda's body is a function of its own and runs
+    // outside it. Set under the program inference rules only.
+    | inAsyncBody: Bool
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -246,6 +250,8 @@ type TypeInferenceError =
     | NonExhaustiveMatch(Str)
     | UnreachableMatchArm(Str)
     | ConstructorPatternsFromDifferentAdts(List(Str))
+    // A call of `Ashes.Task.fork` outside the body of an `async` activation.
+    | ForkOutsideAsync
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     // An error with the span of the innermost located expression it was raised in. Only the
@@ -342,7 +348,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -1574,6 +1580,50 @@ let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeI
                 |> BuiltinIntArgumentMismatch(name))
             else failure
         | None -> failure
+
+// Whether a call's argument is the body of an `async` activation: the argument of `async` or of
+// `Ashes.Task.task`.
+let callStartsAsyncBody function =
+    match calledVariableName(function) with
+        | Some(name) -> name == "async" || name == "Ashes.Task.task"
+        | None -> false
+
+// The environment a call's argument is inferred in: inside an `async` body when the call starts
+// one, under the program inference rules.
+let callArgumentEnvironment function (environment: TypeEnvironment) =
+    if environment.programInferenceRules && callStartsAsyncBody(function)
+    then environment with inAsyncBody = true
+    else environment
+
+// The environment a lambda's body is inferred in: a lambda is a function of its own, so its body
+// is outside any enclosing `async` body.
+let lambdaBodyEnvironment (environment: TypeEnvironment) =
+    if environment.inAsyncBody
+    then environment with inAsyncBody = false
+    else environment
+
+// Whether a call is of `Ashes.Task.fork` outside an `async` body, which stage 0 rejects at the
+// call's argument.
+let forkCalledOutsideAsync function (environment: TypeEnvironment) =
+    if environment.programInferenceRules && environment.inAsyncBody == false
+    then
+        match calledVariableName(function) with
+            | Some(name) -> name == "Ashes.Task.fork"
+            | None -> false
+    else false
+
+let recursive expressionSpan expression =
+    match expression with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> expressionSpan(inner)
+        | _ -> None
+
+let forkOutsideAsyncFailure argument substitution supply =
+    (let failure = inferenceFailure(SemNever)(substitution)(supply)(ForkOutsideAsync)
+    in
+        match expressionSpan(argument) with
+            | Some(span) -> locateInferenceError(span)(failure)
+            | None -> failure)
 
 let recursive coverageWildcards (count: Int) acc =
     if count <= 0
@@ -4709,7 +4759,9 @@ and inferAgainst expected expression environment substitution supply ambientRow 
                     in
                         match freshTypeVariable(supply) with
                             | (bodyAmbientRow, bodyAmbientSupply) ->
-                                match inferAgainst(expectedResult)(body)(addTypeBinding(name)(parameterScheme)(environment))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
+                                match inferAgainst(expectedResult)(body)(environment
+                                |> lambdaBodyEnvironment
+                                |> addTypeBinding(name)(parameterScheme))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
                                     | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
                                         addConstraints(
                                             bodyConstraints,
@@ -4865,7 +4917,10 @@ and inferWith expression environment substitution supply ambientRow =
                             | TypeInferenceResult { semanticType = checkedParameter, substitution = annotationSubstitution, supply = annotationSupply, constraints = _annotationConstraints, error = None } ->
                                 let parameterScheme = TypeScheme(quantified = [], body = checkedParameter, constraints = [])
                                 in
-                                    let bodyEnvironment = addTypeBinding(name)(parameterScheme)(environment)
+                                    let bodyEnvironment =
+                                        environment
+                                        |> lambdaBodyEnvironment
+                                        |> addTypeBinding(name)(parameterScheme)
                                     in
                                         match freshTypeVariable(annotationSupply) with
                                             | (bodyAmbientRow, bodyAmbientSupply) ->
@@ -4910,54 +4965,57 @@ and inferWith expression environment substitution supply ambientRow =
                                                     | failure -> failure
                             | failure -> failure
         | ExprCall(function, argument, _whitespace, _layout) ->
-            match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
-                | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
-                    match inferWith(argument)(environment)(functionSubstitution)(functionSupply)(ambientRow) with
-                        | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
-                            match freshTypeVariable(argumentSupply) with
-                                | (resultType, resultSupply) ->
-                                    match freshTypeVariable(resultSupply) with
-                                        | (callRow, callRowSupply) ->
-                                            let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
-                                            in
-                                                let unification =
-                                                    unifyIn(environment)(
-                                                        applySubstitution(argumentSubstitution)(functionType),
-                                                        expectedFunction
-                                                    )
+            if forkCalledOutsideAsync(function)(environment)
+            then forkOutsideAsyncFailure(argument)(substitution)(supply)
+            else
+                match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
+                    | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
+                        match inferWith(argument)(callArgumentEnvironment(function)(environment))(functionSubstitution)(functionSupply)(ambientRow) with
+                            | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
+                                match freshTypeVariable(argumentSupply) with
+                                    | (resultType, resultSupply) ->
+                                        match freshTypeVariable(resultSupply) with
+                                            | (callRow, callRowSupply) ->
+                                                let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
                                                 in
-                                                    match mergeUnificationIn(environment)(
-                                                        argumentSubstitution,
-                                                        unification,
-                                                        callRowSupply,
-                                                        resultType
-                                                    ) with
-                                                        | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                            let callResult =
-                                                                subsumeCapabilityRow(
-                                                                    callRow,
-                                                                    environment,
-                                                                    ambientRow,
-                                                                    unifiedSubstitution,
-                                                                    unifiedSupply,
-                                                                    unifiedResultType
-                                                                )
-                                                            in
-                                                                addConstraints(
-                                                                    appendConstraints(
-                                                                        functionConstraints,
-                                                                        argumentConstraints
-                                                                    ),
-                                                                    subsumeUnsignedCapabilityOperation(
-                                                                        function,
+                                                    let unification =
+                                                        unifyIn(environment)(
+                                                            applySubstitution(argumentSubstitution)(functionType),
+                                                            expectedFunction
+                                                        )
+                                                    in
+                                                        match mergeUnificationIn(environment)(
+                                                            argumentSubstitution,
+                                                            unification,
+                                                            callRowSupply,
+                                                            resultType
+                                                        ) with
+                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
+                                                                let callResult =
+                                                                    subsumeCapabilityRow(
+                                                                        callRow,
                                                                         environment,
                                                                         ambientRow,
-                                                                        callResult
+                                                                        unifiedSubstitution,
+                                                                        unifiedSupply,
+                                                                        unifiedResultType
                                                                     )
-                                                                )
-                                                        | failure -> builtinArgumentFailure(function)(argumentType)(failure)
-                        | failure -> failure
-                | failure -> failure
+                                                                in
+                                                                    addConstraints(
+                                                                        appendConstraints(
+                                                                            functionConstraints,
+                                                                            argumentConstraints
+                                                                        ),
+                                                                        subsumeUnsignedCapabilityOperation(
+                                                                            function,
+                                                                            environment,
+                                                                            ambientRow,
+                                                                            callResult
+                                                                        )
+                                                                    )
+                                                            | failure -> builtinArgumentFailure(function)(argumentType)(failure)
+                            | failure -> failure
+                    | failure -> failure
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
