@@ -251,6 +251,7 @@ type TypeInferenceError =
     | MissingWrittenTraitRequirement(Str, List(SemanticType))
     | UnjustifiedWrittenTraitRequirement(Str, List(SemanticType))
     | AmbiguousTraitRequirement(Str, List(SemanticType))
+    | UndeterminedTraitRequirement(Str, List(SemanticType))
     | NoTraitImplementation(Str, List(SemanticType))
     | ExternalFunctionRequiresDirectCall(Str)
     | NonExhaustiveMatch(Str)
@@ -3280,38 +3281,46 @@ let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(Tr
         |> canonicalizeTraitConstraints
     else constraints
 
-// A written `requires` reduced as an inferred one is, so `requires {Eq(a)}` states what a body
-// needing `Eq(List(a))` asks of its users. A written requirement on known types is kept as written,
-// so one an implementation already supplies is still reported as unjustified. Under the program
-// inference rules only.
-let recursive reduceOpenRequirements (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
-    match constraints with
-        | [] -> []
-        | (TraitConstraint { typeArguments = typeArguments } as constraint) :: tail ->
-            match freeTypeVariables(SemTuple(typeArguments)) with
-                | [] -> constraint :: reduceOpenRequirements(environment)(tail)
-                | _ ->
-                    tail
-                    |> reduceOpenRequirements(environment)
-                    |> appendConstraints(reduceRequirement(16)(environment)(constraint))
+let recursive implementationHeadMatches typeArguments (implementations: List(TraitImplementationInferenceDefinition)) =
+    match implementations with
+        | [] -> false
+        | implementation :: tail ->
+            match implementationHeadsFit(implementation.typeArguments)(typeArguments)([])(false) with
+                | HeadFits(_bindings) -> true
+                | _ -> implementationHeadMatches(typeArguments)(tail)
 
-let writtenRequirementsReduced (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
-    if environment.programInferenceRules
-    then
-        constraints
-        |> reduceOpenRequirements(environment)
-        |> canonicalizeTraitConstraints
-    else constraints
+// A written requirement on known types, or one an implementation head matches, is not something
+// the binding asks of its users: the implementation supplies it, or leaves only its own
+// requirements, and those are what the binding states (`Eq(a)`, not `Eq(List(a))`). The first such
+// written requirement is reported as unjustified, as stage 0 reports it.
+let recursive firstSuppliedWrittenRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> None
+        | (TraitConstraint { traitName = traitName, typeArguments = typeArguments } as constraint) :: tail ->
+            if freeTypeVariables(SemTuple(typeArguments)) == [] || implementationHeadMatches(typeArguments)(resolveTraitImplementations(traitName)(environment))
+            then Some(constraint)
+            else firstSuppliedWrittenRequirement(environment)(tail)
+
+// The first requirement that still holds a type variable, leaving out the compiler-private builtin
+// argument requirements, which have rules of their own.
+let recursive firstUndeterminedRequirement (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> None
+        | (TraitConstraint { traitName = traitName, typeArguments = typeArguments } as constraint) :: tail ->
+            if Ashes.Text.startsWith(traitName)("$") || freeTypeVariables(SemTuple(typeArguments)) == []
+            then firstUndeterminedRequirement(tail)
+            else Some(constraint)
 
 // A requirement no implementation can fit, on a type that is still partly unknown, is reported as
-// ambiguous: nothing says which type was meant. On a known type it has no implementation.
+// undetermined: nothing says which type was meant. On a known type it has no implementation.
 let failedRequirementError (traitName: Str) (typeArguments: List(SemanticType)) =
     match freeTypeVariables(SemTuple(typeArguments)) with
         | [] -> NoTraitImplementation(traitName)(typeArguments)
-        | _ -> AmbiguousTraitRequirement(traitName)(typeArguments)
+        | _ -> UndeterminedTraitRequirement(traitName)(typeArguments)
 
 // The trailing expression is generalized by nothing, so a requirement that has failed there has
-// failed for good.
+// failed for good, and one that still holds a type variable after the implementations have reduced
+// it is never settled: no binding quantifies the variable and no numeric default is taken for it.
 let checkSettledTrailingRequirements (environment: TypeEnvironment) (result: TypeInferenceResult) =
     if environment.programInferenceRules
     then
@@ -3330,7 +3339,18 @@ let checkSettledTrailingRequirements (environment: TypeEnvironment) (result: Typ
                                 supply,
                                 failedRequirementError(traitName)(typeArguments)
                             )
-                        | None -> result
+                        | None ->
+                            match settled
+                            |> reduceRequirements(16)(environment)
+                            |> firstUndeterminedRequirement with
+                                | Some(TraitConstraint { traitName = traitName, typeArguments = typeArguments }) ->
+                                    inferenceFailure(
+                                        semanticType,
+                                        substitution,
+                                        supply,
+                                        UndeterminedTraitRequirement(traitName)(typeArguments)
+                                    )
+                                | None -> result
             | _ -> result
     else result
 
@@ -3467,7 +3487,12 @@ let recursive retainedBuiltinArgumentRequirements (environment: TypeEnvironment)
     else []
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
-    match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
+    match bindingRequirementAmbiguity(if appliesProgramInferenceRules(environment)
+    then
+        selected
+        |> applyInferenceConstraints(substitution)
+        |> requirementsLeftToWrite(environment)
+    else selected)(semanticType)(environment)(substitution) with
         | Some((traitName, typeArguments)) ->
             inferenceFailure(
                 semanticType,
@@ -3498,7 +3523,18 @@ let validateSettledBindingRequirements requirements inferred written selected se
                         |> requirementsLeftToWrite(environment)
                         |> bindingSignatureSuccess(semanticType)(substitution)(supply)
                 | _ ->
-                    validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(writtenRequirementsReduced(environment)(written))(semanticType)(substitution)(supply)
+                    match if appliesProgramInferenceRules(environment)
+                    then firstSuppliedWrittenRequirement(environment)(written)
+                    else None with
+                        | Some(TraitConstraint { traitName = suppliedTrait, typeArguments = suppliedArguments }) ->
+                            inferenceFailure(
+                                semanticType,
+                                substitution,
+                                supply,
+                                UnjustifiedWrittenTraitRequirement(suppliedTrait)(suppliedArguments)
+                            )
+                        | None ->
+                            validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
 
 let validateBindingRequirementSet requirements inferred written semanticType environment substitution supply =
     (let selected =
