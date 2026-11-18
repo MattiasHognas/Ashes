@@ -819,6 +819,8 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | MissingTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Implementation of '" + traitName + "' is missing required method '" + method + "'.")
         | OrphanTraitImplementation(traitName, head, packageId) -> coded(traitCoherenceCode)("Orphan implementation '" + requirementText(placements)(traitName)(head) + "' is illegal: package '" + packageId + "' owns neither the trait nor an outer nominal head type.")
         | OverlappingTraitImplementations(traitName, first, conflicting) -> overlapDiagnostic(placements)(traitName)(first)(conflicting)
+        | NonDecreasingTraitImplementationRequirement(traitName, headTypes, requirementTrait, requirementTypes) -> coded(traitCycleCode)("Implementation requirement '" + requirementText(placements)(requirementTrait)(requirementTypes) + "' must be structurally smaller than head '" + requirementText(placements)(traitName)(headTypes) + "'.")
+        | DefaultTraitMethodDependencyCycle(traitName, trace) -> coded(traitCycleCode)("Default-method dependency cycle in implementation of '" + sourceNameOf(placements)(traitName) + "': " + trace + ".")
         | ProgramDerivingExpansionError(expansion) -> derivingDiagnostic(placements)(items)(expansion)
         | ProgramExternalTypingError(name, typing) -> externalTypingDiagnostic(items)(name)(typing)
         | ProgramExternalAbiError(abi) -> externalAbiDiagnostic(abi)
@@ -888,6 +890,18 @@ let codePrefix (code: Maybe(Str)) =
         | Some(text) -> text + " "
         | None -> ""
 
+// Stage 0 names the entry module `Main` and qualifies nothing declared there: a trait of the entry
+// module reads by its bare name, where stitching qualified it by the entry file's module name.
+let recursive withEntryQualifiedNames (entryModule: Str) (placements: List(StitchedDefinitionPlacement)) =
+    match placements with
+        | [] -> []
+        | StitchedDefinitionPlacement { definition = definition, combinedItemIndex = index } :: rest ->
+            let named =
+                if definition.moduleName == entryModule
+                then definition with qualifiedName = definition.sourceName
+                else definition
+            in StitchedDefinitionPlacement(definition = named, combinedItemIndex = index) :: withEntryQualifiedNames(entryModule)(rest)
+
 // The rejected program's diagnostic line: `path:line:column CODE message` as stage 0 prints it, or
 // the error's structural form with its location when stage 0 has no wording for it.
 let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironment) (entryPath: Str) (entrySource: Str) (result: ProgramInferenceResult) =
@@ -896,6 +910,6 @@ let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironm
         | Some(error) ->
             let prefix = locationPrefix(entryPath)(entrySource)(result.errorLocation)
             in
-                match inferenceErrorDiagnostic(stitched.definitionPlacements)(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
+                match inferenceErrorDiagnostic(withEntryQualifiedNames(stitched.entryModuleName)(stitched.definitionPlacements))(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
                     | Some((code, message)) -> prefix + codePrefix(code) + message
                     | None -> prefix + "Type inference failed: " + Ashes.Trait.Show.show(error)

@@ -258,7 +258,7 @@ let rejectsDefaultMethodDependencyCycle unit =
             match inferProgram(
                 ProgramSyntax(items = [TopLevelTrait(choice), TopLevelImplementation(implementation)], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first")) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first -> second -> first")) } -> Unit
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } ->
                     test.fail(
                         "unexpected default cycle result: " + Ashes.Trait.Show.show(error)
@@ -282,7 +282,7 @@ let rejectsSelfDependentDefaultMethod unit =
                     recursiveChoice
                 ), TopLevelImplementation(implementation)], body = None)
             ) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first")) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first -> first")) } -> Unit
                 | _ -> test.fail("a selected trait default should not depend on itself"))
 
 let acceptsOverrideBreakingDefaultMethodCycle unit =
@@ -565,7 +565,7 @@ let rejectsExpandingTraitImplementationRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(expanding)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(NonDecreasingTraitImplementationRequirement("Equal", "Equal")) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(NonDecreasingTraitImplementationRequirement("Equal", _head, "Equal", _requirement)) } -> Unit
             | _ -> test.fail("generic implementation requirements should be structurally smaller than their head"))
 
 let rejectsUnchangedTraitImplementationRequirement unit =
@@ -581,7 +581,7 @@ let rejectsUnchangedTraitImplementationRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(unchanged)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(NonDecreasingTraitImplementationRequirement("Equal", "Equal")) } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(NonDecreasingTraitImplementationRequirement("Equal", _head, "Equal", _requirement)) } -> Unit
             | _ -> test.fail("equal-sized generic implementation requirements should be rejected"))
 
 let acceptsDecreasingTraitImplementationRequirement unit =
