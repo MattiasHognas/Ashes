@@ -25,6 +25,8 @@ import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Aggregates
 import AshesCompiler.Semantics.CoreLowering.Constructors
 import AshesCompiler.Semantics.CoreLowering.Records
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 export (
     value lowerPerform,
     value operationEtaExpansion,
@@ -492,22 +494,35 @@ and armBodyCapturePlaceholderCases cases =
 // `given postName -> postBody` is lowered as a fresh closure and stashed in the pending-post
 // register for collectCapabilityPost (at the perform call site) to pick up. The post runs after
 // the arm that made it has returned, so every binding its body reads is named among the
-// escaping captures while its closure is built.
-let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex state =
+// escaping captures while its closure is built. The post's parameter is what `resume` returns;
+// when the standalone inference recorded a closed type for the `resume` call, the parameter takes
+// it before the post's body is lowered.
+let lowerOneShotPost resumeCall resumeArgument postName postBody lower postRegisterIndex state =
     match lower(resumeArgument)(state) with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
-            match valueState
-            |> withStateEscapingCaptureNames(valueState
-            |> stateEscapingCaptureNames
-            |> collectFree(postBody)([postName]))
-            |> lowerLambda(postName)(postBody)(None)(false)(lower) with
-                | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
-                | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
-                    postState
-                    |> withStateEscapingCaptureNames(stateEscapingCaptureNames(valueState))
-                    |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
-                    |> success(valueTemp)(valueType)
+            let capturingState =
+                valueState |> withStateEscapingCaptureNames(valueState
+                |> stateEscapingCaptureNames
+                |> collectFree(postBody)([postName]))
+            in
+                let postState =
+                    match recordedSettledTypeAt(nodeIdentityOf(resumeCall))(capturingState) with
+                        | Some(resumedType) ->
+                            match freshType(capturingState) with
+                                | FreshType { state = typedState, semanticType = postResultType } ->
+                                    withOnlyExpectedType(None
+                                    |> SemFunction(resumedType)(postResultType)
+                                    |> Some)(typedState)
+                        | None -> capturingState
+                in
+                    match postState |> lowerLambda(postName)(postBody)(None)(false)(lower) with
+                        | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                        | LoweredCoreValue { state = loweredPostState, temp = postTemp, error = None } ->
+                            loweredPostState
+                            |> withStateEscapingCaptureNames(stateEscapingCaptureNames(valueState))
+                            |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
+                            |> success(valueTemp)(valueType)
 
 // Resolves an operation arm's body (after all of its own operation parameters have been peeled
 // off by lowerOperationArmParameters) to its final lowered value: recurses through any
@@ -541,7 +556,7 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
     match unspanForResumeCheck(body) with
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
             match tailResumeArgument(value) with
-                | Some(resumeArgument) -> lowerOneShotPost(resumeArgument)(name)(letBody)(lower)(postRegisterIndex)(state)
+                | Some(resumeArgument) -> lowerOneShotPost(value)(resumeArgument)(name)(letBody)(lower)(postRegisterIndex)(state)
                 | None ->
                     if exprReferencesResume(value)
                     then
@@ -624,7 +639,7 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                                 let postParamName = "__resume_result_" + Ashes.Text.fromInt(paramId)
                                 in
                                     let postBody = ExprMatch(ExprVar(postParamName))(cases)(position)
-                                    in lowerOneShotPost(resumeArgument)(postParamName)(postBody)(lower)(postRegisterIndex)(namedState)
+                                    in lowerOneShotPost(value)(resumeArgument)(postParamName)(postBody)(lower)(postRegisterIndex)(namedState)
                 | None ->
                     // Case-body recursion only (mirrors stage-0's TryRewriteResumeMatchCases): the
                     // scrutinee and every guard must not reference resume at all, and each case
