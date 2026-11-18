@@ -433,7 +433,7 @@ What it holds beyond `main`, none of it built by stage 1 yet:
 - two of the three type-checking decisions in both compilers: a requirement on an outer variable
   is passed past a local `let` (stage 0 already did), and a trait method that mentions no trait
   parameter is rejected with ASH010 (stage 1 already rejected it; now with stage 0's wording).
-Whole-compiler type check with the standalone inference on the head: `ok`.
+Whole-compiler type check with the standalone inference on the head: `ok`. Stage 0 from the head (after the crash fix): `dotnet build` and format clean, `OwnershipTests` green, `LinuxBackendCoverageTests` only the 10 leak tests that fail on `main`, `ashes test tests` 1,261 passed and 0 failed.
 
 **In flight** (agent branches are pushed to origin when the agent hands back):
 
