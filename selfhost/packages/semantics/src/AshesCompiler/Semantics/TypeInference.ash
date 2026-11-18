@@ -3462,28 +3462,32 @@ let openBuiltinPrintArgument (environment: TypeEnvironment) (constraints: List(T
             | (_defaulted, openPrint) -> openPrint
     else None
 
-let recursive quantifiedIdListed (variableId: Int) (quantified: List((Int, Str))) =
-    match quantified with
-        | [] -> false
-        | (candidate, _name) :: rest -> candidate == variableId || quantifiedIdListed(variableId)(rest)
+// A requirement of a `let` value on type variables none of which its scheme quantifies: every
+// variable it mentions belongs to the enclosing binding. A requirement on known types only is
+// settled by the `let` itself.
+let passesPastLet (quantified: List((Int, Str))) substitution (constraint: TraitConstraint) =
+    match constraint with
+        | TraitConstraint { typeArguments = typeArguments } ->
+            match typeArguments
+            |> instantiatedTypes(substitution)
+            |> SemTuple
+            |> freeTypeVariables with
+                | [] -> false
+                | variables -> anyMentionsQuantified(quantified)(variables) == false
 
-// The builtin argument requirements of a `let` value on a variable its scheme does not quantify.
-// They belong to the enclosing binding, which settles or rejects them when it generalizes, so they
-// are passed on with the `let`'s body also when the bound name is never used (`let _ = print(x)`).
+// The requirements of a `let` value on variables its scheme does not quantify. They belong to the
+// enclosing binding, which generalizes over them or settles or rejects them, so they are passed on
+// with the `let`'s body also when the bound name is never used (`let _ = Named.label(x) in 1`).
 // Under the program inference rules only.
-let recursive retainedBuiltinArgumentRequirements (environment: TypeEnvironment) (quantified: List((Int, Str))) substitution (constraints: List(TraitConstraint)) =
+let recursive retainedOuterRequirements (environment: TypeEnvironment) (quantified: List((Int, Str))) substitution (constraints: List(TraitConstraint)) =
     if environment.programInferenceRules
     then
         match constraints with
             | [] -> []
-            | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as constraint) :: rest ->
-                match (isBuiltinArgumentTrait(traitName), applySubstitution(substitution)(argument)) with
-                    | (true, SemVariable(variableId)) ->
-                        if quantifiedIdListed(variableId)(quantified)
-                        then retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
-                        else constraint :: retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
-                    | _ -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
-            | _ :: rest -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+            | constraint :: rest ->
+                if passesPastLet(quantified)(substitution)(constraint)
+                then constraint :: retainedOuterRequirements(environment)(quantified)(substitution)(rest)
+                else retainedOuterRequirements(environment)(quantified)(substitution)(rest)
     else []
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
@@ -5383,7 +5387,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         match scheme with
                                             | TypeScheme { quantified = quantified } ->
                                                 addConstraints(
-                                                    retainedBuiltinArgumentRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
+                                                    retainedOuterRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
                                                     inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
                                                 )
                         | failure -> failure
@@ -5434,13 +5438,18 @@ and inferWith expression environment substitution supply ambientRow =
                                                                     selectedConstraints
                                                                 )
                                                             in
-                                                                inferWith(
-                                                                    body,
-                                                                    addTypeBinding(name)(scheme)(environment),
-                                                                    checkedSubstitution,
-                                                                    noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply),
-                                                                    ambientRow
-                                                                )
+                                                                match scheme with
+                                                                    | TypeScheme { quantified = quantified } ->
+                                                                        addConstraints(
+                                                                            retainedOuterRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
+                                                                            inferWith(
+                                                                                body,
+                                                                                addTypeBinding(name)(scheme)(environment),
+                                                                                checkedSubstitution,
+                                                                                noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply),
+                                                                                ambientRow
+                                                                            )
+                                                                        )
                                                     | failure -> failure
                                             | failure -> failure
                                 | failure -> failure
