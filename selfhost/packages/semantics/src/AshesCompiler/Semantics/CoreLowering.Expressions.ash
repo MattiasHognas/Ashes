@@ -47,6 +47,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
@@ -1217,11 +1218,15 @@ let lowerPossiblyConstrainedVariable name lower (state: CoreLoweringState) =
                 | Some(lowered) -> lowered
                 | None -> lowerCoreVariable(name)(lower)(state)
 
-// Concrete copies share the source schemes used by dictionary call inference.
+// Concrete copies share the source schemes used by dictionary call inference. A candidate a `let`
+// below top level registered is kept under a key other than its name and does not take part.
 let concreteCopyInferenceBindings (registry: CoreConcreteRegistry) =
     Ashes.Collection.Map.foldLeft(given (bindings) ->
-        given (_name) ->
-            given (candidate: CoreConcreteCandidate) -> (candidate.name, candidate.scheme) :: bindings)([])(registry.candidates)
+        given (key) ->
+            given (candidate: CoreConcreteCandidate) ->
+                if key == candidate.name
+                then (candidate.name, candidate.scheme) :: bindings
+                else bindings)([])(registry.candidates)
 
 // A candidate's scheme answers a name no visible binding has. When the environment lists its open
 // schemes, the registry's bindings are read as the environment's fallback and its open schemes
@@ -1241,12 +1246,16 @@ let concreteCopyInferenceEnvironment state =
                 | None ->
                     environment with bindings = append(environment.bindings)(concreteCopyInferenceBindings(registry)))
 
+// A scheme lowering holds for a binding names that binding when its variables are its own: open,
+// or quantified.
+let schemeNamesItsBinding (scheme: TypeScheme) = scheme.quantified != [] || !schemeIsClosed(scheme)
+
 // Stage 0's `NamesConstrainedCandidate`: the root names the registered top-level function, not a
 // local binding of the same name. A function body reads the top-level function through a capture,
 // which carries the candidate's own generalized scheme, quantified variable identities included.
 // A candidate whose scheme the standalone inference recorded is captured with the scheme lowering
-// holds for the binding instead, whose own variables name that binding and no other.
-let recordedCandidateCaptured (candidate: CoreConcreteCandidate) (scheme: TypeScheme) = candidate.scheme != candidate.bindingScheme && scheme == candidate.bindingScheme && (scheme.quantified != [] || !schemeIsClosed(scheme))
+// holds for the binding instead.
+let recordedCandidateCaptured (candidate: CoreConcreteCandidate) (scheme: TypeScheme) = candidate.scheme != candidate.bindingScheme && scheme == candidate.bindingScheme && schemeNamesItsBinding(scheme)
 
 let concreteCandidateBindingMatches (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
     match lookupBinding(candidate.name)(state.bindings) with
@@ -1401,20 +1410,45 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                     | Some(None) -> (concreteCopyDeclined(state), None)
                     | None -> generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state)
 
+// The registry key of a candidate a `let` below top level registered: its name and its slot.
+let nestedConcreteCandidateKey (name: Str) (slot: Int) = name + "#" + Ashes.Text.fromInt(slot)
+
+// The candidate a `let` below top level registered for the local binding `name` resolves to, when
+// that binding still holds the scheme lowering gave it at registration.
+let nestedConcreteCandidate (name: Str) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(_table) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
+                    match state
+                    |> stateConcreteRegistry
+                    |> lookupCoreConcreteCandidate(nestedConcreteCandidateKey(name)(slot)) with
+                        | Some(CoreConcreteCandidate { bindingScheme = bindingScheme } as candidate) ->
+                            if scheme == bindingScheme
+                            then Some(candidate)
+                            else None
+                        | None -> None
+                | _ -> None
+
 let tryConcreteSourceCall expression lower state =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = root, arguments = arguments } ->
             match stripExprAt(root) with
                 | ExprVar(name) ->
-                    match state
-                    |> stateConcreteRegistry
-                    |> lookupCoreConcreteCandidate(name) with
-                        | Some(candidate) ->
-                            if concreteCandidateBindingMatches(candidate)(state)
-                            then
-                                tryConcreteCandidateCall(candidate)(callRootNode(expression)(-1))(arguments)(lower)(state)
-                            else (state, None)
-                        | None -> (state, None)
+                    match nestedConcreteCandidate(name)(state) with
+                        | Some(nested) ->
+                            tryConcreteCandidateCall(nested)(callRootNode(expression)(-1))(arguments)(lower)(state)
+                        | None ->
+                            match state
+                            |> stateConcreteRegistry
+                            |> lookupCoreConcreteCandidate(name) with
+                                | Some(candidate) ->
+                                    if concreteCandidateBindingMatches(candidate)(state)
+                                    then
+                                        tryConcreteCandidateCall(candidate)(callRootNode(expression)(-1))(arguments)(lower)(state)
+                                    else (state, None)
+                                | None -> (state, None)
                 | _ -> (state, None)
 
 let tryConstrainedCall expression lower (state: CoreLoweringState) =
@@ -2611,6 +2645,44 @@ let registerConcreteSource name value isRecursive state =
                                 else state
             | _ -> state
 
+// The recorded scheme of a `let` below top level whose lambda value the standalone inference
+// generalized over an operator trait lowering holds monomorphic, read at the `let` node being
+// lowered; outside a concrete copy only.
+let nestedOperatorGenericLetScheme name value (state: CoreLoweringState) =
+    if stateConcreteDepth(state) != 0
+    then None
+    else
+        match (state.currentNode, lambdaParts(value)) with
+            | (Some(node), Some(_parts)) ->
+                recordedNestedOperatorGenericScheme(node)(name)(nodeIdentityOf(value))(state)
+            | _ -> None
+
+// Such a `let`, once its value is bound, registers as a candidate under its local binding: each
+// call through that binding at a concrete type gets its own copy, as a top-level one does.
+let registerNestedConcreteSource name value (recorded: TypeScheme) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
+            if scheme.constraints == [] && schemeNamesItsBinding(scheme)
+            then
+                match lambdaParameterChain(value)([]) with
+                    | (parameters, _body) ->
+                        withStateConcreteRegistry(state
+                        |> stateConcreteRegistry
+                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateKey(name)(slot))(name)(value)(recorded)(scheme)(length(parameters))(slot))(state)
+            else state
+        | _ -> state
+
+let lowerNestedOperatorGenericLet name value body (recorded: TypeScheme) lower (state: CoreLoweringState) =
+    (let lowerBody =
+        given (bodyExpression) ->
+            given (bodyState) ->
+                bodyState
+                |> registerNestedConcreteSource(name)(value)(recorded)
+                |> lower(bodyExpression)
+    in
+        match collectPendingBorrowedOwners(name)(value)(state) with
+            | CoreLoweringState { bindings = outerBindings } as collected -> lowerArenaBracketedNestedLetWith(name)(value)(body)(lowerBody)(lower)(outerBindings)(collected))
+
 // These mapped operators already have typed active-evidence dispatch in Core.
 // Arithmetic/bitwise fallback operators keep their existing inference path until
 // their dictionary dispatch is implemented, rather than emitting a generic body
@@ -3005,7 +3077,11 @@ let lowerPossiblyConstrainedLet name value body annotation requirements lower (s
                     match annotatedValueType(annotation)(value)(state) with
                         | Some(annotationType) -> lowerAnnotatedLet(name)(value)(body)(Some(annotationType))(lower)(state)
                         | None ->
-                            lowerLet(name)(bindingLambdaValue(annotation)(value)(state))(body)(lower)(state)
+                            let lambdaValue = bindingLambdaValue(annotation)(value)(state)
+                            in
+                                match nestedOperatorGenericLetScheme(name)(lambdaValue)(state) with
+                                    | Some(recorded) -> lowerNestedOperatorGenericLet(name)(lambdaValue)(body)(recorded)(lower)(state)
+                                    | None -> lowerLet(name)(lambdaValue)(body)(lower)(state)
 
 let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
     match constrainedBindingPlan(name)(true)(value)(annotation)(requirements)(state) with

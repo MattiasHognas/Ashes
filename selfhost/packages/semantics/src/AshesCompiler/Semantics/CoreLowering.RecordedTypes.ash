@@ -33,6 +33,7 @@ export (
     value recordedSettledType,
     value recordedSettledTypeAt,
     value recordedDeclarationAt,
+    value recordedNestedOperatorGenericScheme,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -300,24 +301,29 @@ let recursive translateRecordedRequirements (state: CoreLoweringState) (requirem
                 | Ok(translated) -> translateRecordedRequirements(state)(rest)(TraitConstraint(traitName = traitName, typeArguments = translated) :: reversed)
                 | Error(message) -> Error(message)
 
-// The scheme the standalone inference recorded for the top-level binding whose value has the
-// identity `node`, as lowering writes it, when it quantifies every variable it holds and requires
-// an operator trait lowering holds monomorphic at a quantified variable: a binding the inference
-// generalizes where lowering's own inference does not.
+// A scheme the standalone inference recorded, as lowering writes it, when it quantifies every
+// variable it holds and requires an operator trait lowering holds monomorphic at a quantified
+// variable: a binding the inference generalizes where lowering's own inference does not.
+let operatorGenericScheme (recorded: TypeScheme) (state: CoreLoweringState) =
+    match recorded with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
+            match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                | (Ok(translatedBody), Ok(translatedConstraints)) ->
+                    let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
+                    in
+                        if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
+                        then Some(scheme)
+                        else None
+                | _ -> None
+
+// The operator-generic scheme the standalone inference recorded for the top-level binding whose
+// value has the identity `node`.
 let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | None -> None
         | Some(table) ->
             match nodeDeclarationAt(node)(table) with
-                | Some((_name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
-                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
-                        | (Ok(translatedBody), Ok(translatedConstraints)) ->
-                            let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
-                            in
-                                if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
-                                then Some(scheme)
-                                else None
-                        | _ -> None
+                | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)
                 | None -> None
 
 // A recorded type, read through the instantiation of the body being lowered, with the variables the
@@ -359,3 +365,27 @@ let recordedDeclarationAt (node: Int) (state: CoreLoweringState) =
                         | _ -> None
                 | None -> None
         | None -> None
+
+let recursive recordedSchemeNamed (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (candidate, scheme) :: rest ->
+            if candidate == name
+            then Some(scheme)
+            else recordedSchemeNamed(name)(rest)
+
+// The operator-generic scheme the standalone inference recorded for `name` at the `let` node
+// `node` below top level, when the type recorded for the value node `valueNode` is the scheme's
+// body: the binding the `let` introduces, not a parameter or pattern variable of the same name.
+let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match (table
+            |> nodeBindingsAt(node)
+            |> recordedSchemeNamed(name), nodeTypeAt(valueNode)(table)) with
+                | (Some(TypeScheme { body = body } as recorded), Some(valueType)) ->
+                    if valueType == body
+                    then operatorGenericScheme(recorded)(state)
+                    else None
+                | _ -> None
