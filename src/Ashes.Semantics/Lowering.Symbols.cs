@@ -40,7 +40,7 @@ public sealed partial class Lowering
     /// </summary>
     private (int, TypeRef) LowerRecordLit(Expr.RecordLit recordLit, LoweredValueRequest request)
     {
-        if (!_constructorSymbols.TryGetValue(recordLit.TypeName, out var ctor))
+        if (!TryResolveConstructorSymbol(recordLit.TypeName, GetSpan(recordLit), out var ctor))
         {
             if (!_typeSymbols.TryGetValue(recordLit.TypeName, out var typeSym))
             {
@@ -355,6 +355,7 @@ public sealed partial class Lowering
         // constructor list is filled in place below.
         _typeSymbols[decl.Name] = typeSymbol;
         _typeProvenanceBySymbol[typeSymbol] = ResolveDeclarationProvenance(GetSpan(decl));
+        _typeDeclarationSpans.Add(GetSpan(decl));
         _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
             typeSymbol,
             typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
@@ -395,7 +396,7 @@ public sealed partial class Lowering
                 ParentType: decl.Name,
                 Arity: ctor.Parameters.Count,
                 ParameterTypes: ctor.Parameters
-                    .Select(fieldType => ResolveConstructorFieldType(fieldType, typeSymbol))
+                    .Select(fieldType => WithTypeReferenceSpan(GetSpan(ctor), () => ResolveConstructorFieldType(fieldType, typeSymbol)))
                     .ToList(),
                 DeclaringSyntax: ctor
             );
@@ -1030,7 +1031,103 @@ public sealed partial class Lowering
         {
             return true;
         }
-        return _constructorSymbols.TryGetValue(name, out constructor);
+        if (!_constructorSymbols.TryGetValue(name, out constructor))
+        {
+            return false;
+        }
+
+        ReportUnimportedConstructor(constructor, contextSpan);
+        return true;
+    }
+
+    /// <summary>
+    /// The module that declares <paramref name="type"/> when code at <paramref name="referenceSpan"/>
+    /// may not name it unqualified, or null when it may: a built-in type, a type of the referencing
+    /// module, and a type of a module the referencing module imports are visible. Code the stitched
+    /// layout cannot place (a synthesized node at offset 0) and code derived for a type declaration,
+    /// which carries the declaration's span, are not checked.
+    /// </summary>
+    private string? FindUnimportedDeclaringModule(TypeSymbol type, TextSpan referenceSpan)
+    {
+        if (_visibleModulesByModule is null
+            || type.IsBuiltin
+            || referenceSpan.Start == 0
+            || _typeDeclarationSpans.Contains(referenceSpan)
+            || !_typeProvenanceBySymbol.TryGetValue(type, out TraitDeclarationProvenance? declaring))
+        {
+            return null;
+        }
+
+        if (!_referencingModuleByOffset.TryGetValue(referenceSpan.Start, out string? referencing))
+        {
+            referencing = ResolveDeclarationProvenance(referenceSpan).ModuleName;
+            _referencingModuleByOffset[referenceSpan.Start] = referencing;
+        }
+
+        if (string.Equals(referencing, declaring.ModuleName, StringComparison.Ordinal)
+            || !_visibleModulesByModule.TryGetValue(referencing, out IReadOnlySet<string>? visible)
+            || visible.Contains(declaring.ModuleName))
+        {
+            return null;
+        }
+
+        return declaring.ModuleName;
+    }
+
+    /// <summary>
+    /// Reports a constructor named unqualified at <paramref name="referenceSpan"/> in a module that
+    /// does not import the module declaring it. Each span is reported once.
+    /// </summary>
+    private void ReportUnimportedConstructor(ConstructorSymbol constructor, TextSpan referenceSpan)
+    {
+        if (constructor.IsBuiltin
+            || _derivedSpans.Contains(referenceSpan)
+            || !_typeSymbols.TryGetValue(constructor.ParentType, out TypeSymbol? parent)
+            || FindUnimportedDeclaringModule(parent, referenceSpan) is not { } declaringModule
+            || !_reportedUnimportedNameSpans.Add(referenceSpan))
+        {
+            return;
+        }
+
+        ReportDiagnostic(
+            referenceSpan,
+            $"Constructor '{constructor.Name}' is declared in module '{declaringModule}', which this module does not import.",
+            DiagnosticCodes.UnimportedModuleName);
+    }
+
+    /// <summary>
+    /// Reports a type named unqualified in an annotation at <see cref="_typeReferenceSpan"/> in a
+    /// module that does not import the module declaring it. Each span is reported once.
+    /// </summary>
+    private void ReportUnimportedType(TypeSymbol type)
+    {
+        if (_typeReferenceSpan is not { } referenceSpan
+            || FindUnimportedDeclaringModule(type, referenceSpan) is not { } declaringModule
+            || !_reportedUnimportedNameSpans.Add(referenceSpan))
+        {
+            return;
+        }
+
+        ReportDiagnostic(
+            referenceSpan,
+            $"Type '{type.Name}' is declared in module '{declaringModule}', which this module does not import.",
+            DiagnosticCodes.UnimportedModuleName);
+    }
+
+    /// <summary>Runs <paramref name="resolve"/> as the resolution of an annotation written at <paramref name="referenceSpan"/>,
+    /// so the types it names are checked against the referencing module's imports.</summary>
+    private T WithTypeReferenceSpan<T>(TextSpan referenceSpan, Func<T> resolve)
+    {
+        TextSpan? saved = _typeReferenceSpan;
+        _typeReferenceSpan = referenceSpan;
+        try
+        {
+            return resolve();
+        }
+        finally
+        {
+            _typeReferenceSpan = saved;
+        }
     }
 
     /// <summary>
@@ -1193,6 +1290,8 @@ public sealed partial class Lowering
             return new TypeRef.TNever();
         }
 
+        ReportUnimportedType(sym);
+
         var expectedArity = sym.TypeParameters.Count;
         if (typeArgs.Count != expectedArity)
         {
@@ -1239,7 +1338,7 @@ public sealed partial class Lowering
         _typeAliasExpansionStack.Add(name);
         try
         {
-            return ResolveTypeExpr(declaration.Target);
+            return WithTypeReferenceSpan(GetSpan(declaration), () => ResolveTypeExpr(declaration.Target));
         }
         finally
         {

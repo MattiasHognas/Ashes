@@ -98,6 +98,13 @@ public sealed partial class Lowering
     private SourceTextIndex[]? _moduleSourceIndexes;
     private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
     private IReadOnlyDictionary<string, ModuleProvenance>? _moduleProvenanceByPath;
+    private IReadOnlyDictionary<string, IReadOnlySet<string>>? _visibleModulesByModule;
+    private TextSpan? _typeReferenceSpan;
+    private readonly HashSet<TextSpan> _reportedUnimportedNameSpans = [];
+    private readonly Dictionary<int, string> _referencingModuleByOffset = [];
+
+    // Spans of the type declarations; code the compiler derives for a declaration carries its span.
+    private readonly HashSet<TextSpan> _typeDeclarationSpans = [];
 
     private readonly bool _hasAshesIO;
     private readonly IReadOnlyDictionary<string, string> _moduleAliases;
@@ -9464,7 +9471,7 @@ public sealed partial class Lowering
         {
             // An unknown type name in the annotation is reported at the parameter it annotates.
             using IDisposable parameterSpan = PushDiagnosticSpan(AstSpans.GetLambdaParameterOrDefault(lam));
-            Unify(paramTy, ResolveInlineParameterAnnotation(inlineAnnotation));
+            Unify(paramTy, WithTypeReferenceSpan(AstSpans.GetLambdaParameterOrDefault(lam), () => ResolveInlineParameterAnnotation(inlineAnnotation)));
         }
 
         LowerLambdaCoreSeedParamTypeFromConstructorFields(lam, paramTy);

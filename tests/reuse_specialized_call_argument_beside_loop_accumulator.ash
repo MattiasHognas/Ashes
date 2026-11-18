@@ -4,6 +4,7 @@
 // accumulator, so the key is passed borrowed: a key handed over instead was released only at the
 // loop's exit, one string per iteration.
 
+import Ashes.Collection.Map
 let recursive enqueue (pending: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) =
     match pending with
         | [] -> (back, queued)

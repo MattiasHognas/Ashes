@@ -1,5 +1,6 @@
 // expect: 1 1 1 k1
 
+import Ashes.Collection.Map
 let recursive keysOf (n: Int) (keys: MapTree(Str, Bool)) =
     if n == 0
     then keys

@@ -30,6 +30,7 @@ public sealed partial class Lowering
         _anchoredRegions = null;
         _functionSourceNames = null;
         _moduleProvenanceByPath = null;
+        _visibleModulesByModule = null;
     }
 
     /// <summary>
@@ -42,6 +43,7 @@ public sealed partial class Lowering
         _moduleOffsets = layout.ModuleOffsets;
         _functionSourceNames = layout.FunctionSourceNames;
         _moduleProvenanceByPath = layout.ModuleProvenanceByPath;
+        _visibleModulesByModule = layout.VisibleModules;
 
         // Pre-compute line starts per region (not per file) so disjoint regions
         // for the same file each get correct line/column mappings.
@@ -146,6 +148,7 @@ public sealed partial class Lowering
         target._anchoredRegions = _anchoredRegions;
         target._functionSourceNames = _functionSourceNames;
         target._moduleProvenanceByPath = _moduleProvenanceByPath;
+        target._visibleModulesByModule = _visibleModulesByModule;
     }
 
     /// <summary>

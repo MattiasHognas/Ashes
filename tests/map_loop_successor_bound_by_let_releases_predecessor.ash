@@ -2,6 +2,7 @@
 // owned result itself, so the back edge releases the previous iteration's map as it does when the
 // call is written in the argument's place.
 // expect: 45
+import Ashes.Collection.Map
 let recursive solve (front: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) (fuel: Int) =
     match front with
         | [] ->

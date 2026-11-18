@@ -79,6 +79,8 @@ public static class DiagnosticCodes
     public const string InvalidFfiOutParameter = "ASH045";
     /// <summary>A native FFI string has an invalid position, ownership, or destructor contract.</summary>
     public const string InvalidFfiString = "ASH046";
+    /// <summary>A type or constructor is named unqualified in a module that does not import its declaring module.</summary>
+    public const string UnimportedModuleName = "ASH048";
 }
 
 /// <summary>

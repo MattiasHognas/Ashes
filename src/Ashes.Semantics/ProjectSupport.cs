@@ -147,6 +147,7 @@ public readonly record struct ParsedImportHeader(
 /// <param name="ModuleProvenanceByPath">Maps stitched source paths to manifest package and module identities.</param>
 /// <param name="SourceLineAnchors">Line anchors for every fragment of reconstructed module text (a
 /// rendered binding value or a hoisted declaration), in combined-source order; see <see cref="SourceLineAnchor"/>.</param>
+/// <param name="VisibleModules">Maps each module name to the modules whose types and constructors it may name unqualified; null when the layout does not stitch modules.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
@@ -156,7 +157,8 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null,
     IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null,
     IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null,
-    IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null
+    IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null,
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? VisibleModules = null
 );
 
 /// <summary>
@@ -2205,9 +2207,35 @@ public static class ProjectSupport
             functionSourceNames,
             moduleProvenanceByPath,
             entryTypeDeclFragments,
-            appendFlatEntryBare);
+            appendFlatEntryBare) with { VisibleModules = BuildVisibleModules(orderedModules) };
     }
 
+    /// <summary>
+    /// Maps each module to the modules whose types and constructors it may name unqualified: the
+    /// modules it imports whole, under an alias, or through a type selector, which imports the
+    /// module whole. A value selector brings in only its binding.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildVisibleModules(
+        IReadOnlyList<ProjectModule> modules)
+    {
+        Dictionary<string, IReadOnlySet<string>> result = new(StringComparer.Ordinal);
+        foreach (ProjectModule module in modules)
+        {
+            HashSet<string> visible = new(module.Imports, StringComparer.Ordinal);
+            visible.UnionWith(module.Aliases.Values);
+            foreach (ImportSelector selector in module.Selectors)
+            {
+                if (selector.ExportName.Length > 0 && char.IsUpper(selector.ExportName[0]))
+                {
+                    visible.Add(selector.ModuleName);
+                }
+            }
+
+            result[module.ModuleName] = visible;
+        }
+
+        return result;
+    }
     // The combined source's region table and fragment anchors, grown together while the prefix is
     // assembled and handed to the layout as one unit.
     private sealed record LayoutRegions(

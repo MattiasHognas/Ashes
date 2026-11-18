@@ -199,6 +199,20 @@ public sealed partial class Lowering
         IReadOnlyList<TraitConstraint> Requirements,
         IReadOnlyList<TraitConstraint> SourceOrderedRequirements);
 
+    // A binding annotation the user wrote is checked against the imports of the module it is
+    // written in; one the compiler wrote is not.
+    private TypeRef? ResolveBindingAnnotation(TypeExpr? annotation, TextSpan span)
+    {
+        if (annotation is null)
+        {
+            return null;
+        }
+
+        return CompilerWrittenAnnotations.TryGetValue(annotation, out _)
+            ? ResolveTypeExpr(annotation)
+            : WithTypeReferenceSpan(span, () => ResolveTypeExpr(annotation));
+    }
+
     private ResolvedBindingSignature ResolveBindingSignature(
         TypeExpr? annotation,
         IReadOnlyList<TraitConstraintSyntax> requirements,
@@ -225,7 +239,7 @@ public sealed partial class Lowering
         _annotationRowVars = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         try
         {
-            TypeRef? resolvedType = annotation is null ? null : ResolveTypeExpr(annotation);
+            TypeRef? resolvedType = ResolveBindingAnnotation(annotation, span);
             List<TraitConstraint> resolvedRequirements = [];
             foreach (TraitConstraintSyntax requirement in requirements)
             {
@@ -1163,6 +1177,7 @@ public sealed partial class Lowering
             Requires = CollectValidationRequirements(method.DefaultImplementation!, trait, arguments),
         };
         AstSpans.Set(binding, GetSpan(method));
+        CompilerWrittenAnnotations.AddOrUpdate(binding.TypeAnnotation, binding.TypeAnnotation);
         return binding;
     }
 
@@ -1186,6 +1201,7 @@ public sealed partial class Lowering
             Requires = implementation.Requirements,
         };
         AstSpans.Set(binding, GetSpan(method));
+        CompilerWrittenAnnotations.AddOrUpdate(binding.TypeAnnotation, binding.TypeAnnotation);
         return binding;
     }
 
@@ -1399,7 +1415,7 @@ public sealed partial class Lowering
             {
                 continue;
             }
-            TypeRef signature = ResolveAnnotationType(method.Signature, typeParameters);
+            TypeRef signature = WithTypeReferenceSpan(GetSpan(declaration), () => ResolveAnnotationType(method.Signature, typeParameters));
             if (!MentionsTraitTypeParameter(signature, typeParameters))
             {
                 ReportDiagnostic(
@@ -1490,7 +1506,7 @@ public sealed partial class Lowering
             .Select(name => new TypeParameterSymbol(name))
             .ToArray();
         TypeRef[] headTypes = declaration.TypeArgs
-            .Select(type => ResolveAnnotationType(type, instanceParameters))
+            .Select(type => WithTypeReferenceSpan(GetSpan(declaration), () => ResolveAnnotationType(type, instanceParameters)))
             .ToArray();
         TraitConstraint[] requirements = ResolveInstanceRequirements(declaration, instanceParameters, headTypes);
         Dictionary<string, Expr> methods = ValidateInstanceMethods(declaration, trait);

@@ -1,4 +1,5 @@
 // expect: 36
+import Ashes.Collection.Map
 let recursive solve (seen: MapTree(Str, Bool)) (front: List(Str)) (fuel: Int) =
     match front with
         | [] -> seen

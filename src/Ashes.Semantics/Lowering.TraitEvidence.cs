@@ -103,6 +103,12 @@ public sealed partial class Lowering
     private readonly Dictionary<(string Name, int Position), TypeExpr>
         _inferredTraitBindingTypeHints = [];
 
+    // The annotations the compiler writes for bindings: the ones the discovery pass infers for
+    // unannotated bindings and the trait signatures it checks implementations against. They name
+    // types the user did not write, so they are not checked against the binding module's imports.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TypeExpr, TypeExpr>
+        CompilerWrittenAnnotations = new();
+
     // A trait goal whose type was still a variable when its use site was lowered, recorded by the
     // discovery pass so the emitting pass can pin it. Inference can learn such a type AFTER the use
     // site — a comparison inside an expression whose later part is what fixes the operand's type — and
@@ -688,6 +694,7 @@ public sealed partial class Lowering
             .Select((variable, index) => (variable.Id, Name: $"inferredTraitT{index}"))
             .ToDictionary(item => item.Id, item => item.Name);
         TypeExpr annotation = ConvertInferredTypeToSyntax(scheme.Body, variableNames);
+        CompilerWrittenAnnotations.AddOrUpdate(annotation, annotation);
         if (scheme.Constraints.Count == 0)
         {
             _inferredTraitBindingTypeHints[key] = annotation;
