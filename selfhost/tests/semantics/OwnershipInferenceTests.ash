@@ -9,6 +9,7 @@ import AshesCompiler.Semantics.OwnershipProvenance
 import AshesCompiler.Semantics.OwnershipInference
 import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import Ashes.Collection.List.length
+import AshesCompiler.Frontend.Token.TextSpan
 export (
     value runOwnershipInferenceTests,
 )

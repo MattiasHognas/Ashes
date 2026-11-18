@@ -4,6 +4,8 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeResolution
+import AshesCompiler.Semantics.Unification
 let expectTypeIn expected expression environment =
     match inferExpression(expression)(environment) with
         | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, error = None } ->

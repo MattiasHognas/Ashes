@@ -5,6 +5,7 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import TypeInferenceTests
+import AshesCompiler.Semantics.Unification
 let expectMatchType expected expression =
     match Unit
     |> emptyTypeEnvironment

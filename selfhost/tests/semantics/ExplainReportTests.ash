@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.ExplainReportFormatter
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
+import AshesCompiler.Semantics.IrOrigins
 export (
     value runExplainReportTests,
 )

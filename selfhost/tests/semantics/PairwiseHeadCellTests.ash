@@ -3,6 +3,7 @@ import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrInstructions
 export (
     value runPairwiseHeadCellTests,
 )

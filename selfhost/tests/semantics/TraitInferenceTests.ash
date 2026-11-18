@@ -5,6 +5,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.Unification
 let equalMethod =
     TraitMethodDecl(name = "equal", signature = TypeArrow(
         TypeNamed("a"),
