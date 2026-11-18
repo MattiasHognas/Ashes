@@ -22,6 +22,7 @@ import AshesCompiler.Frontend.ModulePlan
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.DiagnosticEntry
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
@@ -30,6 +31,7 @@ export (
     type ShippedModuleText(..),
     type ShippedStitchError(..),
     value stitchWithShippedModules,
+    value shippedStitchParseDiagnostics,
 )
 
 type ShippedModuleText =
@@ -42,6 +44,7 @@ type ShippedStitchError =
     | ShippedModuleMissing(Str, Str)
     | ShippedImportHeaderError(Str, ImportHeaderError)
     | ShippedParseError(Str, Str)
+    | ShippedParseDiagnostics(Str, List(DiagnosticEntry))
     | ShippedInterfaceError(Str, ModuleInterfaceBuildError)
     | ShippedPlanError(ModulePlanError)
     | ShippedSyntaxStitchError(ProjectSyntaxStitchError)
@@ -158,8 +161,7 @@ let loadModuleText (shipped: List(ShippedModuleText)) name path source =
                             ))
                 | ProgramParseResult { diagnostics = diagnostics } ->
                     diagnostics
-                    |> Ashes.Trait.Show.show
-                    |> ShippedParseError(path)
+                    |> ShippedParseDiagnostics(path)
                     |> Error
 
 // Loads every module `pending` names that is not loaded yet, then whatever those modules import,
@@ -390,8 +392,7 @@ let loadInlineModule (shipped: List(ShippedModuleText)) (entryPath: Str) (names:
                                 ))
                     | ProgramParseResult { diagnostics = diagnostics } ->
                         diagnostics
-                        |> Ashes.Trait.Show.show
-                        |> ShippedParseError(path)
+                        |> ShippedParseDiagnostics(path)
                         |> Error
 
 let recursive loadInlineModules (shipped: List(ShippedModuleText)) (entryPath: Str) (names: List(Str)) (inlineModules: List(InlineModuleInfo)) =
@@ -488,3 +489,18 @@ let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str
             |> ShippedParseError(entryPath)
             |> Error
         | Ok(InlineModuleExpansion { source = outerSource, modules = inlineModules }) -> stitchExpandedEntry(entryName)(entryPath)(outerSource)(inlineModules)(shipped)
+
+let recursive pairedWithPath (path: Str) (diagnostics: List(DiagnosticEntry)) =
+    match diagnostics with
+        | [] -> []
+        | diagnostic :: rest -> (path, diagnostic) :: pairedWithPath(path)(rest)
+
+// The parse diagnostics stitching was rejected with, each with the path of the module text it is
+// in; None for every other stitching failure.
+let shippedStitchParseDiagnostics (error: ShippedStitchError) =
+    match error with
+        | ShippedParseDiagnostics(path, diagnostics) ->
+            diagnostics
+            |> pairedWithPath(path)
+            |> Some
+        | _ -> None

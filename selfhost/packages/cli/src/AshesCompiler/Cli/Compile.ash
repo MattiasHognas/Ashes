@@ -843,16 +843,28 @@ let duplicateConstructorOwner (source: Str) (name: Str) =
                 | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
         | Error(_error) -> None
 
-// A stitching failure as stage 0 words it: a constructor a type of the entry program declares
-// twice, or a binding the entry program declares twice. Every other failure prints its structural
-// form.
-let stitchErrorText (source: Str) (error: ShippedStitchError) =
+let stitchFailureText (source: Str) (error: ShippedStitchError) =
     match error with
         | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
                 | None -> "ASH013 Duplicate top-level binding '" + name + "'."
         | other -> Ashes.Trait.Show.show(other)
+
+// A stitching failure as stage 0 words it: the parse diagnostics of a module the parser rejected,
+// a constructor a type of the entry program declares twice, or a binding the entry program
+// declares twice. Every other failure prints its structural form.
+let stitchErrorText (inputPath: Str) (source: Str) (error: ShippedStitchError) =
+    match shippedStitchParseDiagnostics(error) with
+        | Some(diagnostics) -> parseDiagnosticsText(inputPath)(source)(diagnostics)
+        | None -> stitchFailureText(source)(error)
+
+// A project stitching failure: the parse diagnostics of the files the parser rejected as stage 0
+// words them, every other failure in its structural form.
+let projectStitchErrorText (entryPath: Str) (source: Str) (error: ProjectStitchError) =
+    match projectStitchParseDiagnostics(error) with
+        | Some(diagnostics) -> parseDiagnosticsText(entryPath)(source)(diagnostics)
+        | None -> Ashes.Trait.Show.show(error)
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
@@ -866,7 +878,7 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                     match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
                         | Error(error) ->
                             error
-                            |> stitchErrorText(source)
+                            |> stitchErrorText(inputPath)(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
@@ -883,7 +895,7 @@ let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: Expl
                     match stitchProject(Ashes.IO.Path.Unix)(layout)(shipped) with
                         | Error(error) ->
                             error
-                            |> Ashes.Trait.Show.show
+                            |> projectStitchErrorText(layout.entryPath)(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
 

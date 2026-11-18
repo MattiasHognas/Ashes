@@ -4,6 +4,7 @@
 // read as the source spells them. An error stage 0 has no wording for prints its structural form.
 
 import Ashes.Collection.List.reverse
+import AshesCompiler.Frontend.Token.DiagnosticEntry
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.DerivingExpansion
@@ -33,6 +34,7 @@ export (
     value inferenceErrorDiagnostic,
     value inferenceErrorWantsCallSiteWording,
     value inferenceErrorText,
+    value parseDiagnosticsText,
 )
 
 let typeMismatchCode = "ASH002"
@@ -890,6 +892,41 @@ let codePrefix (code: Maybe(Str)) =
     match code with
         | Some(text) -> text + " "
         | None -> ""
+
+// The offset a parse diagnostic is printed at: one past the end of the text's last
+// non-blank character (the end-of-input token) is printed at that end, as stage 0 prints it.
+let parseDiagnosticOffset (text: Str) (offset: Int) =
+    (let textEnd =
+        text
+        |> Ashes.Text.trimEnd
+        |> Ashes.Text.byteLength
+    in
+        if offset > textEnd
+        then textEnd
+        else offset)
+
+// A parse diagnostic as stage 0 prints it, `path:line:column CODE message`, located in the text
+// of the region `sourcePath` names.
+let parseDiagnosticLine (entryPath: Str) (entrySource: Str) (sourcePath: Str) (entry: DiagnosticEntry) =
+    match entry with
+        | DiagnosticEntry { span = TextSpan { start = start }, message = message, code = code } ->
+            let prefix =
+                match regionSourceText(entryPath)(entrySource)(sourcePath) with
+                    | None -> regionFilePath(sourcePath) + " "
+                    | Some(text) ->
+                        match start
+                        |> parseDiagnosticOffset(text)
+                        |> resolvePositionInIndex(buildSourceTextIndex(text)) with
+                            | (line, column) -> regionFilePath(sourcePath) + ":" + Ashes.Text.fromInt(line) + ":" + Ashes.Text.fromInt(column) + " "
+            in prefix + codePrefix(code) + message
+
+// The parse diagnostics of a program the parser rejected, each paired with the region its span
+// is an offset into, one line each in the order given.
+let recursive parseDiagnosticsText (entryPath: Str) (entrySource: Str) (diagnostics: List((Str, DiagnosticEntry))) =
+    match diagnostics with
+        | [] -> ""
+        | (sourcePath, entry) :: [] -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry)
+        | (sourcePath, entry) :: rest -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry) + "\n" + parseDiagnosticsText(entryPath)(entrySource)(rest)
 
 // Stage 0 names the entry module `Main` and qualifies nothing declared there: a trait of the entry
 // module reads by its bare name, where stitching qualified it by the entry file's module name.
