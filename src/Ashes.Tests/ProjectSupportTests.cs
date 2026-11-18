@@ -999,6 +999,25 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void MapDiagnosticsToOriginal_drops_standard_library_cascades_when_the_program_has_an_error()
+    {
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        var moduleRegion = layout.ModuleOffsets.First(m => m.FilePath.StartsWith("<std:", StringComparison.Ordinal));
+        var cascade = new DiagnosticEntry(TextSpan.FromBounds(moduleRegion.StartOffset, moduleRegion.StartOffset + 1), "cascade");
+        var real = new DiagnosticEntry(TextSpan.FromBounds(layout.EntryOffset, layout.EntryOffset + 1), "real");
+
+        var withProgramError = ProjectSupport.MapDiagnosticsToOriginal(layout, [real, cascade], "<memory>", original, parsed.SourceWithoutImports);
+        var standardLibraryOnly = ProjectSupport.MapDiagnosticsToOriginal(layout, [cascade], "<memory>", original, parsed.SourceWithoutImports);
+
+        withProgramError.Count.ShouldBe(1);
+        withProgramError[0].Entry.Message.ShouldBe("real");
+        standardLibraryOnly.Count.ShouldBe(1);
+        standardLibraryOnly[0].FilePath.ShouldBe(moduleRegion.FilePath);
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_resolves_module_region_spans_to_a_real_position_without_a_snippet()
     {
         var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";

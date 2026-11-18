@@ -1970,7 +1970,20 @@ public static class ProjectSupport
             results.Add(new MappedDiagnostic(entry, anchorPath ?? FindModuleRegionPath(layout, start, entryFilePath), HasPosition: false, moduleLine, moduleColumn));
         }
 
-        return results;
+        return WithoutStandardLibraryCascades(results);
+    }
+
+    // The standard library's own code compiles cleanly, so a diagnostic placed in a shipped module
+    // while the program's own code has an error is a consequence of that error (a type left
+    // unsettled by a mismatch, or the mismatch again without a span of its own) and is not reported.
+    private static IReadOnlyList<MappedDiagnostic> WithoutStandardLibraryCascades(List<MappedDiagnostic> results)
+    {
+        static bool InStandardLibrary(MappedDiagnostic diagnostic) =>
+            diagnostic.FilePath.StartsWith("<std:", StringComparison.Ordinal);
+
+        return results.Exists(diagnostic => !InStandardLibrary(diagnostic))
+            ? results.Where(diagnostic => !InStandardLibrary(diagnostic)).ToList()
+            : results;
     }
 
     private static string FindModuleRegionPath(CombinedCompilationLayout layout, int start, string fallback)
