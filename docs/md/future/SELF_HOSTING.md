@@ -404,6 +404,79 @@ Work is verified in shared rounds: agents finish a batch, run only cheap checks 
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
 behavioural check for all of them, then stage 2, its behavioural check, and stage 3.
 
+### Current round: round 10 (state 2026-11-18, evening)
+
+This section is the handoff: a session that starts fresh reads it first. Keep it current with each
+integration, and replace it when round 10 has run.
+
+**Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
+unless one blocks something. The inference content for round 10 is complete; all agent effort goes
+to the bugs below until then.
+
+**Integration branch:** `selfhost/round10` (from `main` after #1159), pushed after every commit.
+What it holds beyond `main`, none of it built by stage 1 yet:
+- typed lowering (all behind `ASHES_TYPED_LOWERING=1`, flag-off IR expected byte-identical):
+  the typed-nodes batch (node identities, the two `Show.show` goals, operator instance kinds,
+  top-level schemes by node, handler-arm types, requirement reduction, no numeric defaulting,
+  written-requirement diagnostics in both compilers), the typed-replay batch (operator-generic
+  copies inside functions, below top level and in place; `!`, `Default` and user trait method
+  goals from the table), and the step-7 leftovers with step-8 rules (a) and (b) (non-tail
+  recursive copies, in-place copies inside functions and through inner lambdas, partly open
+  operators, `Default` and dictionary goals settled at the site);
+- the entry-module trait naming fix in stage 0;
+- the first parity batch: entry module loaded by path, call parameters typed from argument forms
+  (`apply(given (x) -> print(x))(3)`), spans resolved against the import-blanked text (every
+  stage-1 position after an import header was shifted), parse errors printed with code and
+  position, unknown-qualifier wording.
+Whole-compiler type check with the standalone inference on the head: `ok`.
+
+**In flight** (agent branches are pushed to origin when the agent hands back):
+
+| Branch (worktree) | What | State |
+| --- | --- | --- |
+| `fix/typecheck-decisions` (`typecheck-decisions`) | The three decisions of 2026-11-18 in "Known gaps": requirement through an unused inner `let` (first), trait method without the trait parameter, strict imports in stage 0 (lists the files that rely on the leniency instead of editing them) | running |
+| `fix/parity-bugs-2` (`parity-bugs`) | `semantics` suite capability-row type error; `core-copy-plan-view` and `heap-drop-worklist` fixtures; stage 0 internal ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; stage 1's inference error spans and type order (`Int vs Str` at 4:15 in stage 0) | running |
+| `fix/s2-crash` (`s2-diff-b`) | Stage-2 use-after-free in `loop_predecessor_list_parts_kept_by_accumulator` (only with `ASHES_RC_LEAKCHECK=1`): `IrOptimizer.optimizeIrProgramWithOptions` copies an arena list of `IrFunction` to the heap, treats the copy as owned and frees it at exit while a returned value still points at an element; the linker reuses the block. The IR dump of every `IrOptimizer` function from the stage-1 compile that builds stage 2 is in the integration worktree's `work/round9/ir-opt/` (`opt.lowered.ir`, `opt.final.ir`; git-ignored, regenerate with `ASHES_DIAGNOSTIC_IR_PREFIX` and `ASHES_DIAGNOSTIC_IR_FILTER=IrOptimizer` if lost). Notes in that worktree's `work/PROGRESS.md` | next free slot |
+| `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
+
+**Open bugs not yet assigned** (after the two running batches):
+- Parser recovery after the first error: stage 0 reports more errors (`let y = x +` gives 3
+  diagnostics in stage 0, 1 in stage 1; a second error at 3:1 "found Int" against 3:2 "found
+  EOF").
+- Columns: stage 1 counts bytes, stage 0 counts Unicode characters.
+- Stage 0 prints spurious diagnostics after a real error (`<std:Ashes.Text>` ASH010/ASH036 when
+  the program uses `Ashes.Text`, once `<std:Ashes.Trait>:1:1 ASH002`).
+- Diagnostic details not ported to the inference: the "Expected shape: Some(T)." suffix, the
+  "in if branches" / "in match arm" contexts, stage 0's order of reporting an unjustified
+  requirement before ambiguity, a few internal errors still printed structurally.
+- `namespace_old_module_fails` fails under stage 0 itself.
+- The 30 of 95 `ir-program-parity` fixtures that differ from stage 0: decide each from round 9's
+  IR-parity run (below) as a stale fixture or a stage-1 bug.
+- Re-check the "Open work recorded at bootstrap36" list above with small programs; fix what still
+  fails, drop what no longer applies.
+- Anything new from round 9's suite runs (below).
+
+**Round 9's suite runs** (on `main`'s content): results in the `suite-debt` worktree's
+`work/round8/summary.txt` and `work/infer/r1-*/summary.tsv`. Type checks: 71 of 78 `ok`, the
+three ambiguous-`Main` suites (fixed since), `semantics` and the two fixtures above. The six
+suites, the focused fixtures and the IR-parity runs were still running at the time of writing.
+
+**Round 10, once the gate is met** (one shared round, run by the coordinator):
+1. Stage 0 from the head: `dotnet build Ashes.slnx`, `dotnet format --verify-no-changes`, the C#
+   filters the batches name (trait classes, the decisions batch's binding and module classes),
+   and `ashes test tests` against the previous stage 0.
+2. Stage 1 (`--debug -O2`, `ASHES_RC_LEAKCHECK=1`), stage 2 with a link map, the behavioural
+   check of both against stage 0, stage 3 and the byte comparison (stage 3 needs swap allowed).
+3. The same behavioural check of stage 1 with `ASHES_TYPED_LOWERING=1`, and the lowered-IR identity
+   sweep with the flag off against the previous stage 1.
+4. The whole-compiler counters with the flag on (pending trait goals, structural equality goals,
+   replay passes, bodies lowered again): expected 0 pending goals and no replay pass.
+5. The self-hosted suites (`scripts/selfhost-dev/suites.sh`, then `--focused`).
+6. The quick runs each batch lists in its worktree's `work/PROGRESS.md`.
+
+After round 10: the flag-on differences it shows, then typed lowering on by default (end of step
+7), then the step-8 ownership rules one at a time, and multithreading resumes.
+
 **Known work parked for later items (2026-11-17), so it is not lost:**
 - Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
 - Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
