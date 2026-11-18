@@ -48,6 +48,28 @@ public sealed class TraitRegistrationTests
     }
 
     [Test]
+    [Arguments("trait Named(a) = | label : a -> Str | version : Int", "Method 'version' of trait 'Named' must mention at least one of the trait's type parameters.")]
+    [Arguments("trait Convert(a, b) = | convert : a -> b | describe : Str -> Str", "Method 'describe' of trait 'Convert' must mention at least one of the trait's type parameters.")]
+    public void RejectsTraitMethodsThatMentionNoTraitParameter(string declarations, string expectedMessage)
+    {
+        _ = Lower($"{declarations}\n0", out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors
+            .ShouldContain(error => error.Code == DiagnosticCodes.InvalidTraitDeclaration
+                && error.Message.Contains(expectedMessage, StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments("trait Sized(a) = | size : List(a) -> Int")]
+    [Arguments("trait Pick(a, b) = | pick : b -> Int")]
+    public void AcceptsTraitMethodsThatMentionATraitParameterInsideAnotherType(string declarations)
+    {
+        _ = Lower($"{declarations}\n0", out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void RejectsDuplicateAndUnifiableOverlappingHeads()
     {
         const string source = """

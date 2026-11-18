@@ -1354,6 +1354,31 @@ public sealed partial class Lowering
         return order;
     }
 
+    /// <summary>
+    /// Whether a trait method signature mentions one of the trait's type parameters, directly or
+    /// inside another type or a capability row. A method that mentions none cannot select an
+    /// implementation from its argument and result types.
+    /// </summary>
+    private static bool MentionsTraitTypeParameter(TypeRef type, IReadOnlyList<TypeParameterSymbol> typeParameters)
+    {
+        return type switch
+        {
+            TypeRef.TTypeParam parameter => typeParameters.Any(candidate =>
+                string.Equals(candidate.Name, parameter.Symbol.Name, StringComparison.Ordinal)),
+            TypeRef.TFun function => MentionsTraitTypeParameter(function.Arg, typeParameters)
+                || MentionsTraitTypeParameter(function.Ret, typeParameters)
+                || (function.Row is not null && MentionsTraitTypeParameter(function.Row, typeParameters)),
+            TypeRef.TList list => MentionsTraitTypeParameter(list.Element, typeParameters),
+            TypeRef.TTuple tuple => tuple.Elements.Any(element => MentionsTraitTypeParameter(element, typeParameters)),
+            TypeRef.TNamedType named => named.TypeArgs.Any(argument => MentionsTraitTypeParameter(argument, typeParameters)),
+            TypeRef.TPtr pointer => MentionsTraitTypeParameter(pointer.Pointee, typeParameters),
+            TypeRef.TCapability capability => capability.Args.Any(argument => MentionsTraitTypeParameter(argument, typeParameters)),
+            TypeRef.TRow row => row.Capabilities.Any(capability => MentionsTraitTypeParameter(capability, typeParameters))
+                || (row.Tail is not null && MentionsTraitTypeParameter(row.Tail, typeParameters)),
+            _ => false,
+        };
+    }
+
     private void RegisterTraitDeclaration(TraitDecl declaration)
     {
         TraitDeclarationProvenance provenance = ResolveDeclarationProvenance(GetSpan(declaration));
@@ -1372,6 +1397,13 @@ public sealed partial class Lowering
                 continue;
             }
             TypeRef signature = ResolveAnnotationType(method.Signature, typeParameters);
+            if (!MentionsTraitTypeParameter(signature, typeParameters))
+            {
+                ReportDiagnostic(
+                    GetSpan(declaration),
+                    $"Method '{method.Name}' of trait '{qualifiedName}' must mention at least one of the trait's type parameters.",
+                    InvalidTraitDeclarationCode);
+            }
             methods[method.Name] = new TraitMethodSymbol(
                 method.Name,
                 new TypeScheme([], signature),

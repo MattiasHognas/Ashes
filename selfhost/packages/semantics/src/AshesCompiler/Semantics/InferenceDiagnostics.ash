@@ -833,6 +833,7 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | TraitRequiresTypeParameter(name) -> coded(invalidTraitDeclarationCode)("Trait '" + name + "' must declare at least one type parameter.")
         | DuplicateTraitTypeParameter(traitName, parameter) -> coded(invalidTraitDeclarationCode)("Duplicate type parameter '" + parameter + "' in trait '" + traitName + "'.")
         | DuplicateTraitMethod(traitName, method) -> coded(invalidTraitDeclarationCode)("Duplicate method '" + method + "' in trait '" + traitName + "'.")
+        | TraitMethodMustMentionParameter(traitName, method) -> coded(invalidTraitDeclarationCode)("Method '" + method + "' of trait '" + sourceNameOf(placements)(traitName) + "' must mention at least one of the trait's type parameters.")
         | UnknownSupertrait(traitName, supertrait) -> coded(invalidTraitDeclarationCode)("Unknown supertrait '" + supertrait + "' of trait '" + traitName + "'.")
         | SupertraitArityMismatch(supertrait, expected, actual) -> coded(invalidTraitDeclarationCode)("Trait '" + supertrait + "' expects " + Ashes.Text.fromInt(expected) + " type argument(s), but got " + Ashes.Text.fromInt(actual) + ".")
         | CyclicSupertraitRequirements(trace) -> coded(traitCycleCode)("Cyclic supertrait requirements: " + trace + ".")
