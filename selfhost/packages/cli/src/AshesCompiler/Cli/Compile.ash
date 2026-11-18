@@ -846,13 +846,16 @@ let duplicateConstructorOwner (source: Str) (name: Str) =
                 | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
         | Error(_error) -> None
 
+// Stage 0's standard-library module set, in the order its unknown-module diagnostic lists it.
+let knownStandardModulesText = "Ashes, Ashes.Trait, Ashes.IO, Ashes.Core.Result, Ashes.Collection.List, Ashes.Number.Math, Ashes.Collection.Array, Ashes.Collection.Map, Ashes.Collection.HashMap, Ashes.Collection.HashTrie, Ashes.Task.Parallel, Ashes.Core.Maybe, Ashes.Test, Ashes.Internal, Ashes.Internal.Regex, Ashes.IO.File, Ashes.IO.Directory, Ashes.IO.Path, Ashes.IO.Environment, Ashes.Text, Ashes.Text.Source, Ashes.Rune, Ashes.Number.BigInt, Ashes.Byte, Ashes.Ffi, Ashes.Number.UInt, Ashes.Net.Http, Ashes.Net.Tcp, Ashes.Net.Tcp.Server, Ashes.Net.Http.Server, Ashes.Net.Tls.Server, Ashes.Net.Tls, Ashes.Task, Ashes.IO.Process, Ashes.IO.Console, Ashes.Text.Json, Ashes.Net.Rpc, Ashes.Text.Regex"
+
 let stitchFailureText (source: Str) (error: ShippedStitchError) =
     match error with
         | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
                 | None -> "ASH013 Duplicate top-level binding '" + name + "'."
-        | ShippedModuleMissing(_importer, name) -> "Unknown standard library module '" + name + "'."
+        | ShippedModuleMissing(_importer, name) -> "Unknown standard library module '" + name + "'. Known modules: " + knownStandardModulesText + "."
         | other -> Ashes.Trait.Show.show(other)
 
 // A stitching failure as stage 0 words it: the parse diagnostics of a module the parser rejected,
