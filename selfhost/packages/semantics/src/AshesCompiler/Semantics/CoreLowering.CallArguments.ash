@@ -1629,22 +1629,15 @@ let isFunctionType (semanticType: SemanticType) =
         | SemFunction(_parameter, _result, _row) -> true
         | _ -> false
 
-// Whether the call spine still returns a function once its `remaining` later arguments are applied
-// to this application's result.
-let recursive spineReturnsFunction (semanticType: SemanticType) (remaining: Int) =
-    if remaining <= 0
-    then isFunctionType(semanticType)
-    else
-        match semanticType with
-            | SemFunction(_parameter, result, _row) -> spineReturnsFunction(result)(remaining - 1)
-            | _ -> false
-
 // Stage 0's forced retain of a named argument the callee's result may keep
-// (`CalleeResultMayReachParameter`), for a call spine that returns a curry stage. Stage 0 reads a
-// runtime owner's slot as a reference-counted temp, so a let or pattern binding handed to such a
+// (`CalleeResultMayReachParameter`), for an application that returns a curry stage. Stage 0 reads
+// a runtime owner's slot as a reference-counted temp, so a let or pattern binding handed to such a
 // call is retained outright and handed over, and `parkArgumentsHandedToCurryStage` keeps the
 // reference in an owned slot when the stage does not adopt it: the stage's closure environment
-// holds the argument after the binding's owner releases it.
+// holds the argument after the binding's owner releases it. This holds whether the closure is
+// the spine's result or is applied to the spine's later arguments at once: a later stage may
+// return the captured argument itself (`combine(left)(right)` answering `left`), and that result
+// outlives the owner's release too.
 let curryStageOwnerReach (context: CoreCallContext) (arity: Int) (argument: Expr) (resultType: SemanticType) (state: CoreLoweringState) (handOff: CoreArgumentHandOff) =
     if handOff.mayReach || handOff.fresh || handOff.borrowsOnly || handOff.transfers || handOff.keptWholeUnderOwnedResult || handOff.runtimeArgument == false
     then handOff
@@ -1652,7 +1645,7 @@ let curryStageOwnerReach (context: CoreCallContext) (arity: Int) (argument: Expr
         match handOff.pendingRootSlot with
             | Some(_slot) -> handOff
             | None ->
-                if spineReturnsFunction(resolveType(state)(resultType))(arity - 1) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
+                if isFunctionType(resolveType(state)(resultType)) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
                 then handOff with mayReach = true
                 else handOff
 
