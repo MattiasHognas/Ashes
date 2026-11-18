@@ -567,7 +567,10 @@ let handlerDiagnostic (placements: List(StitchedDefinitionPlacement)) (text: Str
                 else
                     if text == "the return arm takes exactly one parameter"
                     then coded(invalidHandlerCode)("The 'return' arm takes exactly one parameter.")
-                    else None
+                    else
+                        if text == "a handler needs at least one operation arm"
+                        then coded(invalidHandlerCode)("A handler must have at least one operation arm.")
+                        else None
 
 let recursive quotedNames (names: List(Str)) (reversed: List(Str)) =
     match names with
@@ -726,6 +729,10 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | ExpectedResultType(leftType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(leftType) + " vs Result<a, b>.")
         | ExpectedTaskType(awaitedType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(awaitedType) + " vs Task<a, b>.")
         | ForkOutsideAsync -> uncoded("Ashes.Task.fork() must be used inside an async task.")
+        | DuplicateRecordPatternField(typeName, field) -> uncoded("Duplicate field '" + field + "' in record pattern for '" + sourceNameOf(placements)(typeName) + "'.")
+        | DuplicateRecordField(typeName, field) -> uncoded("Field '" + field + "' is provided more than once in record literal for '" + sourceNameOf(placements)(typeName) + "'.")
+        | UnsignedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability operation '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' needs an explicit signature to be used as a value.")
+        | HandlerArmParameterCountMismatch(capabilityName, operation, armParameters, operationArity) -> coded(invalidHandlerCode)("Handler arm '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' has " + Ashes.Text.fromInt(armParameters) + " parameter(s) but the operation takes " + Ashes.Text.fromInt(operationArity) + ".")
         | CallArgumentMismatch(mismatch, ordinal, callee) -> callArgumentDiagnostic(placements)(mismatch)(ordinal)(callee)
         | CallArityMismatch(callee, expected, provided, calleeType) -> callArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
         | _ -> None
@@ -792,6 +799,9 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | DuplicateCapabilityProvider(instance) -> coded(duplicateProviderCode)("Duplicate provider for '" + typeText(placements)(instance) + "'.")
         | UnknownProviderOperation(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability '" + sourceNameOf(placements)(capabilityName) + "' has no operation '" + operation + "'.")
         | MissingProviderOperation(capabilityName, operation) -> coded(duplicateProviderCode)("Provider for '" + sourceNameOf(placements)(capabilityName) + "' is missing operation '" + operation + "'.")
+        | DuplicateProviderOperation(capabilityName, operation) -> coded(duplicateProviderCode)("Provider for '" + sourceNameOf(placements)(capabilityName) + "' supplies operation '" + operation + "' more than once.")
+        | UnknownProviderCapability(capabilityName) -> coded(unknownCapabilityCode)("'provide' refers to unknown capability '" + capabilityName + "'.")
+        | ParameterizedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Operation '" + operation + "' of parameterized capability '" + sourceNameOf(placements)(capabilityName) + "' requires an explicit signature.")
         | DuplicateTraitDeclaration(name) -> coded(invalidTraitDeclarationCode)("Duplicate trait name '" + name + "'.")
         | TraitRequiresTypeParameter(name) -> coded(invalidTraitDeclarationCode)("Trait '" + name + "' must declare at least one type parameter.")
         | DuplicateTraitTypeParameter(traitName, parameter) -> coded(invalidTraitDeclarationCode)("Duplicate type parameter '" + parameter + "' in trait '" + traitName + "'.")

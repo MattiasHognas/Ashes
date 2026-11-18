@@ -220,12 +220,14 @@ type TypeInferenceError =
     // its qualified name, with the argument's type.
     | BuiltinIntArgumentMismatch(Str, SemanticType)
     | UnknownRecordPatternField(Str, Str)
-    | DuplicateRecordPatternField(Str)
+    // A field named twice in a record pattern: the record type and the field.
+    | DuplicateRecordPatternField(Str, Str)
     | UnknownRecordType(Str)
     | RecordUpdateRequiresRecord(SemanticType)
     | MissingRecordField(Str, Str)
     | UnknownRecordField(Str, Str)
-    | DuplicateRecordField(Str)
+    // A field given twice in a record literal or update: the record type and the field.
+    | DuplicateRecordField(Str, Str)
     // The left operand of a Result-aware pipe is not a Result.
     | ExpectedResultType(SemanticType)
     // The value of a `let?` is not a Result.
@@ -237,6 +239,9 @@ type TypeInferenceError =
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InvalidHandler(Str)
+    // A handler operation arm whose parameter count is not the operation's: the capability, the
+    // operation, the arm's parameters, and the arrows of the operation's signature.
+    | HandlerArmParameterCountMismatch(Str, Str, Int, Int)
     | AmbiguousCapabilitySatisfaction(Str)
     | UnsatisfiedCapability(Str)
     | UnknownCapabilityInRow(Str)
@@ -1540,6 +1545,12 @@ let recursive coverageLength items (acc: Int) =
     match items with
         | [] -> acc
         | _ :: rest -> coverageLength(rest)(acc + 1)
+
+// The arrows of a signature, counting through a result that is itself a function.
+let recursive signatureArrowCount (count: Int) (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> signatureArrowCount(count + 1)(result)
+        | _ -> count
 
 // A match arm whose whole pattern is a tuple of another length than the scrutinee's tuple type.
 let tuplePatternArityError (scrutineeType: SemanticType) pattern =
@@ -3646,7 +3657,7 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                     substitution,
                     supply,
                     names,
-                    DuplicateRecordPatternField(fieldName)
+                    DuplicateRecordPatternField(constructorName)(fieldName)
                 )
             else
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
@@ -3713,7 +3724,10 @@ and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultTy
                 )
         | (fieldName, fieldExpression) :: tail ->
             if patternNameExists(fieldName)(seenFields)
-            then inferenceFailure(SemNever)(substitution)(supply)(DuplicateRecordField(fieldName))
+            then
+                fieldName
+                |> DuplicateRecordField(recordName)
+                |> inferenceFailure(SemNever)(substitution)(supply)
             else
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
                     | None ->
@@ -4116,8 +4130,13 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                             ) with
                                 | None ->
                                     HandlerArmInference(substitution = operationSubstitution, supply = operationSupply, constraints = accumulatedConstraints, error = Some(
-                                        InvalidHandler(
-                                            "operation arm parameter count does not match " + capabilityName + "." + operationName
+                                        HandlerArmParameterCountMismatch(
+                                            capabilityName,
+                                            operationName,
+                                            coverageLength(parameters)(0),
+                                            operationType
+                                            |> applySubstitution(operationSubstitution)
+                                            |> signatureArrowCount(0)
                                         )
                                     ))
                                 | Some(HandlerOperationShape { parameters = parameterTypes, resultType = operationResultType }) ->

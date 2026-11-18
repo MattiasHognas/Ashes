@@ -52,7 +52,7 @@ let rejectDuplicateRecordField unit =
     match [("x", ExprInt(1)), ("x", ExprInt(2)), ("label", ExprString("origin"))]
     |> (given (fields) -> ExprRecord("Point")(fields)(false))
     |> inferPointExpression with
-        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(DuplicateRecordField("x"))) } -> Unit
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(DuplicateRecordField("Point", "x"))) } -> Unit
         | _ -> test.fail("record fields should not be repeated")
 
 let rejectWrongRecordFieldType unit =
