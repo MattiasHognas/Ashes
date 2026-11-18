@@ -43,12 +43,14 @@ export (
 // number, so an offset resolves to its line in logarithmic time however long the file is.
 type LineTree =
     | LineLeaf
-    | LineNode(LineTree, Int, Int, LineTree)
+    | LineNode(LineTree, Int, Int, Bool, LineTree)
     deriving {Eq, Show}
 
 type SourceTextIndex =
     | sourceText: Str
     | lineTree: LineTree
+    // Whether the first line holds only ASCII bytes; every later line's flag is in its tree node.
+    | firstLineAscii: Bool
     deriving {Eq, Show}
 
 type ModuleRegion =
@@ -103,18 +105,44 @@ let recursive scanLineStarts (bytes: Bytes) (limit: Int) (i: Int) (acc: List(Int
                     else scanLineStarts(bytes)(limit)(i + 1)(i + 1 :: acc)
                 else scanLineStarts(bytes)(limit)(i + 1)(acc)
 
+// Whether the bytes in `[from, to)` are all ASCII.
+let recursive bytesAscii (bytes: Bytes) (from: Int) (to: Int) =
+    if from >= to
+    then true
+    else
+        let value =
+            from
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
+        in
+            if value >= 128
+            then false
+            else bytesAscii(bytes)(from + 1)(to)
+
+// Each later line's start with whether that line holds only ASCII bytes; a line ends where the next
+// one starts, the last at the end of the text.
+let recursive lineFlags (bytes: Bytes) (limit: Int) (starts: List(Int)) =
+    match starts with
+        | [] -> []
+        | start :: rest ->
+            let next =
+                match rest with
+                    | following :: _ -> following
+                    | [] -> limit
+            in (start, bytesAscii(bytes)(start)(next)) :: lineFlags(bytes)(limit)(rest)
+
 // A balanced tree over the first `count` of the ascending `starts`, numbered from `firstLine`, with
 // the starts left over after them.
-let recursive buildLineTree (starts: List(Int)) (firstLine: Int) (count: Int) =
+let recursive buildLineTree (starts: List((Int, Bool))) (firstLine: Int) (count: Int) =
     if count <= 0
     then (LineLeaf, starts)
     else
         let leftCount = count / 2
         in
             match buildLineTree(starts)(firstLine)(leftCount) with
-                | (left, start :: afterLeft) ->
+                | (left, (start, ascii) :: afterLeft) ->
                     match buildLineTree(afterLeft)(firstLine + leftCount + 1)(count - leftCount - 1) with
-                        | (right, afterRight) -> (LineNode(left)(firstLine + leftCount)(start)(right), afterRight)
+                        | (right, afterRight) -> (LineNode(left)(firstLine + leftCount)(start)(ascii)(right), afterRight)
                 | (left, []) -> (left, [])
 
 let buildSourceTextIndex (source: Str) =
@@ -124,33 +152,61 @@ let buildSourceTextIndex (source: Str) =
         in
             match scanLineStarts(bytes)(limit)(0)([]) with
                 | laterStarts ->
-                    match laterStarts
-                    |> length
-                    |> buildLineTree(laterStarts)(2) with
-                        | (tree, _remaining) -> SourceTextIndex(sourceText = source, lineTree = tree))
+                    let firstEnd =
+                        match laterStarts with
+                            | start :: _ -> start
+                            | [] -> limit
+                    in
+                        match laterStarts
+                        |> length
+                        |> buildLineTree(lineFlags(bytes)(limit)(laterStarts))(2) with
+                            | (tree, _remaining) -> SourceTextIndex(sourceText = source, lineTree = tree, firstLineAscii = bytesAscii(bytes)(0)(firstEnd)))
 
-// The line whose start is the greatest at or below `targetOffset`, with that start; the first line
-// from offset 0 when no later line starts at or before it.
-let recursive findLine (tree: LineTree) (targetOffset: Int) (currentLine: Int) (lastStart: Int) =
+// The line whose start is the greatest at or below `targetOffset`, with that start and whether the
+// line holds only ASCII bytes; the first line from offset 0 when no later line starts at or before
+// it.
+let recursive findLine (tree: LineTree) (targetOffset: Int) (currentLine: Int) (lastStart: Int) (lastAscii: Bool) =
     match tree with
-        | LineLeaf -> (currentLine, lastStart)
-        | LineNode(left, line, start, right) ->
+        | LineLeaf -> (currentLine, lastStart, lastAscii)
+        | LineNode(left, line, start, ascii, right) ->
             if start > targetOffset
-            then findLine(left)(targetOffset)(currentLine)(lastStart)
-            else findLine(right)(targetOffset)(line)(start)
+            then findLine(left)(targetOffset)(currentLine)(lastStart)(lastAscii)
+            else findLine(right)(targetOffset)(line)(start)(ascii)
 
+// The Unicode scalars in `[from, to)`: every byte that does not continue a UTF-8 sequence starts one.
+let recursive scalarCount (bytes: Bytes) (from: Int) (to: Int) (count: Int) =
+    if from >= to
+    then count
+    else
+        let value =
+            from
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
+        in
+            if value >= 128 && value < 192
+            then scalarCount(bytes)(from + 1)(to)(count)
+            else scalarCount(bytes)(from + 1)(to)(count + 1)
+
+// A one-based line and column, the column counted in Unicode scalars as stage 0 counts it. A line of
+// ASCII bytes counts bytes; only a line holding other text is read again.
 let resolvePositionInIndex (sourceIndex: SourceTextIndex) (offset: Int) =
     match sourceIndex with
-        | SourceTextIndex(_sourceText, tree) ->
+        | SourceTextIndex { sourceText = sourceText, lineTree = tree, firstLineAscii = firstLineAscii } ->
             let normalizedOffset =
                 if offset < 0
                 then 0
                 else offset
             in
-                match findLine(tree)(normalizedOffset)(1)(0) with
-                    | (line, lineStart) ->
-                        let col = normalizedOffset - lineStart + 1
-                        in (line, col)
+                match findLine(tree)(normalizedOffset)(1)(0)(firstLineAscii) with
+                    | (line, lineStart, true) -> (line, normalizedOffset - lineStart + 1)
+                    | (line, lineStart, false) ->
+                        let bytes = Ashes.Byte.fromText(sourceText)
+                        in
+                            let stop =
+                                if normalizedOffset > Ashes.Byte.length(bytes)
+                                then Ashes.Byte.length(bytes)
+                                else normalizedOffset
+                            in (line, scalarCount(bytes)(lineStart)(stop)(0) + 1)
 
 let createSourceContext (filePath: Str) (source: Str) =
     (let index = buildSourceTextIndex(source)

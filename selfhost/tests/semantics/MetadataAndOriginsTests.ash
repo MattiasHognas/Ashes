@@ -143,6 +143,14 @@ let testRegionTextBlanksImportHeader unit =
                 |> resolvePositionInIndex(index))
             |> test.assertEqual((2, 5))
 
+// A column counts Unicode scalars, as stage 0 counts it: the `+` after a two-byte `é` is at byte 13
+// and column 13, and a line after it counts from its own start.
+let testColumnsCountUnicodeScalars unit =
+    "let s = \"é\" + 1\nlet t = 2"
+    |> buildSourceTextIndex
+    |> (given (index) -> (resolvePositionInIndex(index)(13), resolvePositionInIndex(index)(21)))
+    |> test.assertEqual(((1, 13), (2, 5)))
+
 let testStitchedSourceContext unit =
     (let ctx = stitchedContext(Unit)
     in
@@ -540,17 +548,19 @@ let runMetadataAndOriginsTests unit =
             in
                 let _ = testRegionTextBlanksImportHeader(Unit)
                 in
-                    let _ = testLoweredDependencyItemCarriesItsOwnFileLines(Unit)
+                    let _ = testColumnsCountUnicodeScalars(Unit)
                     in
-                        let _ = testRuntimeMachineryTagging(Unit)
+                        let _ = testLoweredDependencyItemCarriesItsOwnFileLines(Unit)
                         in
-                            let _ = testFunctionOriginsCreation(Unit)
+                            let _ = testRuntimeMachineryTagging(Unit)
                             in
-                                let _ = testFunctionOriginsDiscovery(Unit)
+                                let _ = testFunctionOriginsCreation(Unit)
                                 in
-                                    let _ = testHoverTypeInfo(Unit)
+                                    let _ = testFunctionOriginsDiscovery(Unit)
                                     in
-                                        let _ = testDecisionSnapshot(Unit)
+                                        let _ = testHoverTypeInfo(Unit)
                                         in
-                                            let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
-                                            in Unit)
+                                            let _ = testDecisionSnapshot(Unit)
+                                            in
+                                                let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
+                                                in Unit)
