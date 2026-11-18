@@ -302,6 +302,18 @@ let publicCompilerName : Str -> Str -> Bool -> Str =
                 then deepCopy(sourceName)
                 else sanitizeModuleName(moduleName) + "_" + sourceName
 
+// Ported from 2ca820f2, which postdates the snapshot: an exported type or constructor of a
+// project module keeps its source name, as stage 0 hoists types into one program-wide scope;
+// the shipped modules keep their module-qualified names.
+let keepsSourceName (moduleName: Str) (kind: StitchedNameKind) =
+    if Ashes.Text.startsWith(moduleName)("Ashes.")
+    then false
+    else
+        match kind with
+            | StitchedType -> true
+            | StitchedConstructor -> true
+            | _ -> false
+
 let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
     given (moduleName) ->
         given (sourceName) ->
@@ -309,7 +321,10 @@ let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
                 given (isEntry) ->
                     given (exported) ->
                         if exported
-                        then publicCompilerName(moduleName)(sourceName)(isEntry)
+                        then
+                            if keepsSourceName(moduleName)(kind)
+                            then deepCopy(sourceName)
+                            else publicCompilerName(moduleName)(sourceName)(isEntry)
                         else privateCompilerName(moduleName)(sourceName)(kind)
 
 let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId reversed =

@@ -4,7 +4,9 @@
 lookups were indexed. Its scope and project types and its exported functions are renamed so both
 modules can be imported side by side, its pending collection's `reversed` field is renamed because
 two copies of the type make an unannotated field access ambiguous, and the types both modules share
-are imported from the indexed module. Nothing else differs.
+are imported from the indexed module. One rule is ported from 2ca820f2, which postdates the
+snapshot: an exported type or constructor of a project module keeps its source name as its
+compiler name (`keepsSourceName`). Nothing else differs.
 
 `Main.ash check <first seed> <last seed>` builds one generated project per seed with both modules
 and compares them:
