@@ -18809,11 +18809,14 @@ public sealed partial class Lowering
             && (type is TypeRef.TList or TypeRef.TTuple
                 || (type is TypeRef.TNamedType named && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)));
 
+    // A head that is a retain the call's argument frame already collected (an alias's owner
+    // retained for the cell) is released after the call, so it does not also go to a slot.
     private void KeepEscapingArenaCellFreshHeadOwned(LoweredValue head)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
+            || CollectsCallArgumentRetain(head.Temp)
             || CopiesFreshScalarListHeadIntoLoopCell(head)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
             || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
