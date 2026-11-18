@@ -272,6 +272,20 @@ public sealed partial class Lowering
             return canonicalInferred;
         }
 
+        if (!suppressDiagnostics && !allowRedundantWritten && _traitImplementationValidationDepth == 0
+            && FirstSuppliedWrittenRequirement(written) is { } supplied)
+        {
+            // A written requirement on known types, or one an implementation head matches, is not
+            // something the binding asks of its users: the implementation supplies it or leaves only
+            // its own requirements. The clause is kept as written so the dictionary ABI, planned
+            // from the same syntax, stays consistent while the error is reported.
+            ReportConstraintBoundaryDiagnostic(
+                span,
+                $"Written requires clause includes unjustified requirement '{FormatTraitConstraint(supplied)}'.",
+                allowRedundantWritten);
+            return TraitConstraint.Canonicalize(written.Select(PruneTraitConstraint));
+        }
+
         IReadOnlyList<TraitConstraint> canonicalWritten = SimplifyAndResolveTraitConstraints(
             written,
             span);
@@ -320,6 +334,24 @@ public sealed partial class Lowering
             _sourceConstraintBoundaryDiagnostics.Add(
                 new DiagnosticEntry(span, message, InvalidTraitDeclarationCode));
         }
+    }
+
+    /// <summary>
+    /// The first written requirement that is on known types or that an implementation head matches,
+    /// in the order written; such a requirement is supplied by an implementation rather than by the
+    /// binding's users.
+    /// </summary>
+    private TraitConstraint? FirstSuppliedWrittenRequirement(IReadOnlyList<TraitConstraint> written)
+    {
+        foreach (TraitConstraint requirement in written)
+        {
+            TraitConstraint pruned = PruneTraitConstraint(requirement);
+            if (IsConcreteTraitConstraint(pruned) || FindTraitInstanceMatches(pruned).Length > 0)
+            {
+                return pruned;
+            }
+        }
+        return null;
     }
 
     private bool SuppressSourceConstraintDiagnostics(string bindingName) =>
