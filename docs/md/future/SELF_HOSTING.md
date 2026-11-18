@@ -428,6 +428,7 @@ What it holds beyond `main`, none of it built by stage 1 yet:
   (`apply(given (x) -> print(x))(3)`), spans resolved against the import-blanked text (every
   stage-1 position after an import header was shifted), parse errors printed with code and
   position, unknown-qualifier wording;
+- the second parity batch: the `semantics` suite's capability-row error (an argument call's result is constrained by the parameter type before its row joins the caller's, as stage 0 does), the `core-copy-plan-view` and `heap-drop-worklist` fixtures, and a signature mismatch reported at the value with the written type first;
 - two of the three type-checking decisions in both compilers: a requirement on an outer variable
   is passed past a local `let` (stage 0 already did), and a trait method that mentions no trait
   parameter is rejected with ASH010 (stage 1 already rejected it; now with stage 0's wording).
@@ -437,11 +438,11 @@ Whole-compiler type check with the standalone inference on the head: `ok`.
 
 | Branch (worktree) | What | State |
 | --- | --- | --- |
-| `fix/parity-bugs-2` (`parity-bugs`) | `semantics` suite capability-row type error; `core-copy-plan-view` and `heap-drop-worklist` fixtures; stage 0 internal ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; stage 1's inference error spans and type order (`Int vs Str` at 4:15 in stage 0) | running |
+| `fix/parity-bugs-3` (`parity-bugs`) | Stage 0 ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; a lambda's capability error on another binding's line in stage 1; stage 0's spurious std diagnostics after a real error; parser recovery; byte vs character columns; the unported diagnostic details; `namespace_old_module_fails` | running (on the head e278744e) |
 | `fix/s2-crash` (`s2-diff-b`) | Stage-2 use-after-free in `loop_predecessor_list_parts_kept_by_accumulator` (only with `ASHES_RC_LEAKCHECK=1`): `IrOptimizer.optimizeIrProgramWithOptions` copies an arena list of `IrFunction` to the heap, treats the copy as owned and frees it at exit while a returned value still points at an element; the linker reuses the block. The IR dump of every `IrOptimizer` function from the stage-1 compile that builds stage 2 is in the integration worktree's `work/round9/ir-opt/` (`opt.lowered.ir`, `opt.final.ir`; git-ignored, regenerate with `ASHES_DIAGNOSTIC_IR_PREFIX` and `ASHES_DIAGNOSTIC_IR_FILTER=IrOptimizer` if lost). Notes in that worktree's `work/PROGRESS.md` | running (on the head 3193fb37) |
 | `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
 
-**Open bugs not yet assigned** (after the running batches):
+**Open bugs not yet assigned** (after the running batches). Usage ran out at 20:50 on 2026-11-18: the two running agents (`fix/parity-bugs-3`, `fix/s2-crash`) were stopped early; resume them from their worktrees' `work/PROGRESS.md`. Checks of batch 2 (`work/r10pre/parity2/summary.txt` in the integration worktree) and round 9's suite runs were still running on the machine:
 - Decision 2, strict imports: not implemented, and it is larger than recorded. Stage 1 is as
   lenient as stage 0 (`ModuleReferenceRewriting` keeps an unresolved unqualified name as written
   and an exported definition's compiler name is its source name; only private definitions fail),
@@ -453,17 +454,9 @@ Whole-compiler type check with the standalone inference on the head: `ok`.
   `map_loop_parameter_annotated_by_shipped_type_name`, tests the leniency itself) and
   `ordered_trait_default_evidence` (`Less`, `Greater`, `Equal`). Trait names in `deriving`,
   `requires` and `implement` would touch about 29 tests and 64 self-hosted files. Waits on the
-  user: do shipped modules follow the rule, and do trait names?
-- Parser recovery after the first error: stage 0 reports more errors (`let y = x +` gives 3
-  diagnostics in stage 0, 1 in stage 1; a second error at 3:1 "found Int" against 3:2 "found
-  EOF").
-- Columns: stage 1 counts bytes, stage 0 counts Unicode characters.
-- Stage 0 prints spurious diagnostics after a real error (`<std:Ashes.Text>` ASH010/ASH036 when
-  the program uses `Ashes.Text`, once `<std:Ashes.Trait>:1:1 ASH002`).
-- Diagnostic details not ported to the inference: the "Expected shape: Some(T)." suffix, the
-  "in if branches" / "in match arm" contexts, stage 0's order of reporting an unjustified
-  requirement before ambiguity, a few internal errors still printed structurally.
-- `namespace_old_module_fails` fails under stage 0 itself.
+  user (2026-11-18, on the recommendation): shipped modules follow the rule; trait names in
+  `deriving`, `requires` and `implement` stay visible without an import, and the reference is to
+  say so. Assigned to the next free slot.
 - The 30 of 95 `ir-program-parity` fixtures that differ from stage 0: decide each from round 9's
   IR-parity run (below) as a stale fixture or a stage-1 bug.
 - Re-check the "Open work recorded at bootstrap36" list above with small programs; fix what still
