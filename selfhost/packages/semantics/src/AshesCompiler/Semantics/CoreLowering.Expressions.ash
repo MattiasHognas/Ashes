@@ -1393,6 +1393,75 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
             | _ -> rejectedConcreteCopy(candidate)(parameters)(state))
 
+// Each name in `names` with the slot of the local of this frame it resolves to, or -1 when no
+// binding holds it; None when one resolves to a capture or a recursive group's own member.
+let recursive definitionScopeOf (names: List(Str)) (bindings: List(CoreBinding)) (resolved: List((Str, Int))) =
+    match names with
+        | [] -> Some(resolved)
+        | name :: rest ->
+            match lookupBinding(name)(bindings) with
+                | None -> definitionScopeOf(rest)(bindings)((name, -1) :: resolved)
+                | Some(CoreBinding { location = CoreLocal(slot) }) -> definitionScopeOf(rest)(bindings)((name, slot) :: resolved)
+                | Some(_binding) -> None
+
+// The scope a candidate whose scheme the standalone inference recorded is lowered in place against:
+// what each name its value reads resolves to where it is defined. None for a recursive value.
+let inPlaceScopeOf name value isRecursive (state: CoreLoweringState) =
+    if isRecursive
+    then None
+    else
+        definitionScopeOf(collectFree(value)([name])([]))(state.bindings)([])
+
+let recursive sameDefinitionScope (scope: List((Str, Int))) (bindings: List(CoreBinding)) =
+    match scope with
+        | [] -> true
+        | (name, slot) :: rest ->
+            match lookupBinding(name)(bindings) with
+                | None -> slot == -1 && sameDefinitionScope(rest)(bindings)
+                | Some(CoreBinding { location = CoreLocal(found) }) -> slot == found && sameDefinitionScope(rest)(bindings)
+                | Some(_binding) -> false
+
+// A call reaches a candidate's definition frame when the candidate's own binding is visible there
+// as the local it was registered from, with the scheme lowering held for it then; every name its
+// value reads must resolve there as at the definition.
+let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
+    match candidate.inPlaceScope with
+        | None -> false
+        | Some(scope) ->
+            if stateConcreteDepth(state) != 0
+            then false
+            else
+                match lookupBinding(candidate.name)(state.bindings) with
+                    | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) -> slot == candidate.bindingSlot && scheme == candidate.bindingScheme && sameDefinitionScope(scope)(state.bindings)
+                    | _ -> false
+
+// A candidate whose copy could not be lowered on its own, because its value reads a binding of its
+// definition frame, is lowered at a call in that frame as a local group of its own, pinned to the
+// call's type before its body is lowered and capturing what it reads, and called there. None when
+// that lowering fails; the caller then lowers the call as before.
+let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) functionType arguments lower (state: CoreLoweringState) =
+    (let name = "__core_concrete_in_place_" + Ashes.Text.fromInt(state.typeSupply.nextId)
+    in
+        match prepareRecursiveGroup([(name, candidate.source)])(state)([]) with
+            | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
+                match bindType(member.semanticType)(functionType)(preparedState) with
+                    | (_failed, Some(_error)) -> None
+                    | (pinned, None) ->
+                        match (prepared with state = pinned) |> lowerPreparedRecursiveGroupWith([(name, candidate.source)])(appendConstrainedArguments(ExprVar(name))(arguments))(lower)(lower)(state.bindings) with
+                            | LoweredCoreValue { error = None } as lowered -> Some(lowered)
+                            | _failed -> None
+            | _ -> None)
+
+// A copy that was declined: lowered in place when the candidate allows it, otherwise left to the
+// caller with the state as the decline left it.
+let declinedConcreteCopy (candidate: CoreConcreteCandidate) functionType arguments lower (declined: CoreLoweringState) (state: CoreLoweringState) =
+    if concreteCopyInPlaceAllowed(candidate)(state)
+    then
+        match lowerConcreteCopyInPlace(candidate)(functionType)(arguments)(lower)(state) with
+            | Some(lowered) -> (state, Some(lowered))
+            | None -> (declined, None)
+    else (declined, None)
+
 let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int) arguments lower state =
     if coreListLength(arguments) != candidate.arity || stateConcreteDepth(state) >= 8
     then (concreteCopyDeclined(state), None)
@@ -1407,8 +1476,12 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                         (state, state
                         |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
                         |> Some)
-                    | Some(None) -> (concreteCopyDeclined(state), None)
-                    | None -> generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state)
+                    | Some(None) ->
+                        declinedConcreteCopy(candidate)(functionType)(arguments)(lower)(concreteCopyDeclined(state))(state)
+                    | None ->
+                        match generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state) with
+                            | (rejected, None) -> declinedConcreteCopy(candidate)(functionType)(arguments)(lower)(rejected)(rejected)
+                            | generated -> generated
 
 // The registry key of a candidate a `let` below top level registered: its name and its slot.
 let nestedConcreteCandidateKey (name: Str) (slot: Int) = name + "#" + Ashes.Text.fromInt(slot)
@@ -2638,12 +2711,12 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
 // concrete call site so the `both` splits in the copy see a concrete result type and fork.
 let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
 
-let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingScheme: TypeScheme) slot isRecursive state =
+let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingScheme: TypeScheme) slot isRecursive inPlaceScope state =
     match lambdaParameterChain(value)([]) with
         | (parameters, _body) ->
             withStateConcreteRegistry(state
             |> stateConcreteRegistry
-            |> registerCoreRecordedConcreteCandidate(name)(value)(scheme)(bindingScheme)(length(parameters))(slot)(isRecursive))(state)
+            |> registerCoreRecordedConcreteCandidate(name)(value)(scheme)(bindingScheme)(length(parameters))(slot)(isRecursive)(inPlaceScope))(state)
 
 // A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
 // over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
@@ -2657,13 +2730,14 @@ let registerConcreteSource name value isRecursive state =
                 let scheme = binding.scheme
                 in
                     if scheme.constraints != []
-                    then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(state)
+                    then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
                     else
                         match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
-                            | Some(recorded) -> registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(state)
+                            | Some(recorded) ->
+                                registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(inPlaceScopeOf(name)(value)(isRecursive)(state))(state)
                             | None ->
                                 if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
-                                then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(state)
+                                then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
                                 else state
             | _ -> state
 
@@ -2690,7 +2764,7 @@ let registerNestedConcreteSource name value (recorded: TypeScheme) (state: CoreL
                     | (parameters, _body) ->
                         withStateConcreteRegistry(state
                         |> stateConcreteRegistry
-                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateKey(name)(slot))(name)(value)(recorded)(scheme)(length(parameters))(slot))(state)
+                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateKey(name)(slot))(name)(value)(recorded)(scheme)(length(parameters))(slot)(inPlaceScopeOf(name)(value)(false)(state)))(state)
             else state
         | _ -> state
 

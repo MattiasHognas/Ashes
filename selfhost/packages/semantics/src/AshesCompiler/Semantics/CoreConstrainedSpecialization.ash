@@ -34,6 +34,11 @@ type CoreConcreteCandidate =
     | arity: Int
     | bindingSlot: Int
     | isRecursive: Bool
+    // For a candidate whose scheme the standalone inference recorded: each name its value reads,
+    // with the slot of the local of its definition frame the name resolves to there, or -1 for a
+    // name no binding of that frame holds. None when a name resolves to anything else, when the
+    // value is recursive, and for every other candidate.
+    | inPlaceScope: Maybe(List((Str, Int)))
 
 // None is a proved rejection, distinct from an absent cache entry. An in-progress
 // copy is never published here: recursive calls must use the generated self binding.
@@ -65,17 +70,17 @@ let registeredOpenSchemes (name: Str) (scheme: TypeScheme) (open: MapTree(Str, M
 
 // The caller admits only top-level sources and keeps the pre-dictionary scheme.
 // A new declaration gets a distinct cache identity even when its spelling repeats.
-let registerCoreRecordedConcreteCandidate name source scheme bindingScheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) =
-    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive)
+let registerCoreRecordedConcreteCandidate name source scheme bindingScheme arity bindingSlot isRecursive inPlaceScope (registry: CoreConcreteRegistry) =
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive, inPlaceScope = inPlaceScope)
     in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates), inferenceBindings = (name, scheme) :: registry.inferenceBindings, openSchemes = registeredOpenSchemes(name)(scheme)(registry.openSchemes))
 
-let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) = registerCoreRecordedConcreteCandidate(name)(source)(scheme)(scheme)(arity)(bindingSlot)(isRecursive)(registry)
+let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) = registerCoreRecordedConcreteCandidate(name)(source)(scheme)(scheme)(arity)(bindingSlot)(isRecursive)(None)(registry)
 
 // A candidate registered from a `let` below top level, under `key` rather than its name: a call
 // reaches it only through the local binding the key names, never by name alone, and its scheme
 // does not join the schemes copies infer their calls against.
-let registerCoreNestedConcreteCandidate key name source scheme bindingScheme arity bindingSlot (registry: CoreConcreteRegistry) =
-    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = false)
+let registerCoreNestedConcreteCandidate key name source scheme bindingScheme arity bindingSlot inPlaceScope (registry: CoreConcreteRegistry) =
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = false, inPlaceScope = inPlaceScope)
     in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(key)(candidate)(registry.candidates))
 
 // The schemes of the current candidates that hold a free type variable, in the order a fold of

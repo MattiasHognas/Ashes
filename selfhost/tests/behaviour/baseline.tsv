@@ -331,6 +331,7 @@ fuse_map_foldleft	live-differs	stage 1 fewer (stage0=24 stage1=1)
 fuse_map_foldleft_declines	live-differs	stage 1 fewer (stage0=5 stage1=1)
 fuse_map_foldleft_shadowed_decline	live-differs	stage 1 fewer (stage0=3 stage1=1)
 general_list_tail_matched_in_tuple_released	same	
+generic_add_binding_reading_top_level_value_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'triple'.
 generic_add_binding_used_at_int_and_str	stage1-compile-fails	ASH002 Type mismatch: Int vs Str. Context: in argument #1 of call to 'add'.
 generic_add_let_below_top_level_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'double'.
 generic_append_map_churn_plateau	same	
