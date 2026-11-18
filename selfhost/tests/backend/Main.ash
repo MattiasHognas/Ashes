@@ -3680,8 +3680,10 @@ let testNativeStrings unit = assertProgramPrintsLines(buildNativeStringModule)("
 let testNativeOutSlots unit = assertProgramPrintsLines(buildNativeOutModule)("selfhostBackendNativeOut")("selfhost_backend_native_out_e2e")(["7 101 none", "9 none 202"])
 
 // The declaration, rather than the runtime's libc table, supplies this import. An unused
-// declaration must not add its nonexistent library to DT_NEEDED.
-let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nAshes.IO.print(nextValue(1.0)(2.0) > 1.0)"
+// declaration must not add its nonexistent library to DT_NEEDED. The call's operands come from the
+// program's argument count (1.0 and 2.0 when run without arguments), so LLVM cannot fold the call
+// to a constant and drop the `nextafter` import the test is about.
+let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nlet recursive countArgs args n =\n    match args with\n        | [] -> n\n        | _ :: rest -> countArgs(rest)(n + 1)\nlet start = Ashes.Number.Math.toFloat(countArgs(Ashes.IO.args)(1))\nAshes.IO.print(nextValue(start)(start + 1.0) > start)"
 
 let testDeclaredLibraryImports unit =
     (let name = "selfhostBackendDeclaredLibrary"
