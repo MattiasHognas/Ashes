@@ -461,7 +461,14 @@ Whole-compiler type check with the standalone inference on the head: `ok`.
   IR-parity run (below) as a stale fixture or a stage-1 bug.
 - Re-check the "Open work recorded at bootstrap36" list above with small programs; fix what still
   fails, drop what no longer applies.
-- Anything new from round 9's suite runs (below).
+- From round 9's suite runs (on `main`'s content, before batch 2; logs in the `suite-debt`
+  worktree's `work/round8/`): `semantics` fails "recursive bindings should remain monomorphic
+  inside their group"; `projects` segfaults (exit 139); `logical-not-inference` fails its
+  argument handling in both modes ("expected no arguments or program/expression path");
+  `stitching-lookup-index` differs from its frozen oracle at seed 4 (scopes);
+  `SelfhostIrParityTests` 24 of 207 fail. Frontend, formatter, cli and backend pass; 94 focused
+  fixture runs pass (core-copy-plan-view and heap-drop-worklist failed there but are fixed by
+  batch 2).
 
 **Round 9's suite runs** (on `main`'s content): results in the `suite-debt` worktree's
 `work/round8/summary.txt` and `work/infer/r1-*/summary.tsv`. Type checks: 71 of 78 `ok`, the
