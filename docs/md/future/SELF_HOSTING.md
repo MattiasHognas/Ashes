@@ -9,11 +9,11 @@ See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broad
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
 for package boundaries and commands.
 
-## Known gaps deferred during Step F
+## Known gaps deferred on the way to the fixpoint
 
-Scope updated on **2026-11-14**. Step F currently targets a complete, fast stage-1-to-stage-2
-compiler build. It is not a claim of full stage-0 feature parity or completion of step E. The
-following known work remains open; keep this list updated when an item is promoted or resolved.
+Recorded while working through steps F to J (2026-11-14), reviewed on **2026-11-18** after the
+fixpoint. None of these blocks the bootstrap. Each is picked up by the step "Start here" assigns it
+to; keep this list updated when an item is promoted or resolved.
 
 | Area | Known limitation and evidence | Deferred work / return condition |
 | --- | --- | --- |
@@ -22,21 +22,22 @@ following known work remains open; keep this list updated when an item is promot
 | Generic arithmetic and bitwise dictionaries | Ordinary generic operator dispatch for `Add`, `Subtract`, `Multiply`, `Divide`, `Modulo`, and bitwise traits is not implemented by the current constrained-binding path. That path admits only `Eq`, `Ord`, and `Not`; other constraints retain the existing primitive/deferred operator lowering and its type-mismatch or unsupported/missing-evidence diagnostics. Concrete primitive arithmetic support does not establish generic dictionary dispatch. | Add operator-to-dictionary lowering, physical evidence forwarding, and ownership checks for these traits when required. Preserve existing diagnostics; do not claim this broader parity from the Eq/Ord/Not bootstrap fix. |
 | Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
 | Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
-| Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E after F with a clean committed-tree census and fresh reproductions. Promote any item that blocks F or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
+| Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E as item 5 of "Start here", with a clean committed-tree census and fresh reproductions. Promote any item that blocks the bootstrap or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
 
 The removed Round11 handoff is preserved locally, with a SHA256 manifest, under the main
 checkout's `.claude/step-f-archive/round2-20261112/artifacts/selfhost-dev/handoff-step-e/`.
 It is intentionally not restored under tracked `artifacts/`. The historical list and measurements
 remain available there; the current tracked pending-goal reproducer is linked above.
 
-### Open work after bootstrap36
+### Open work recorded at bootstrap36 (2026-11-14)
 
-State on **2026-11-14**: stage 1 built with `--debug -O2` finishes the discovery pass of Core
-lowering on its own sources in about 1:45 and fails early in the replay pass with missing `Eq`
-evidence. Reproducers named below live in the worktree that found them, under its ignored `work/`
+Written when stage 1 still failed early in its replay pass on its own sources. That stop was
+resolved on the way to the fixpoint, so nothing here blocks the bootstrap any more. The other
+entries have not been re-checked since and are triaged into the steps under "Start here" as they
+come up. Reproducers named below live in the worktree that found them, under its ignored `work/`
 directory; copy one into `tests/` when its fix lands.
 
-Blocking the next stage 2 attempt:
+Resolved since (kept for the record):
 
 - **Replay-pass evidence failure.** `MissingCoreTraitEvidence("Eq", variable)` raised from
   `lowerConstrainedDictionaryMethods` through `lowerConstrainedCallWithName`, about 7,750 top-level
@@ -337,122 +338,74 @@ operator site, so for it lowering's own diagnostic is printed when lowering word
 
 ## Start here
 
-**Path forward (decided 2026-11-16; supersedes the order below where they differ).** Stage 1
-now compiles the whole compiler, so stage 2 exists; it is not yet correct. The goal is for stage 1
-to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
+**Where things stand (2026-11-18).** The self-hosted compiler bootstraps. Stage 0 (the C# compiler)
+builds stage 1, stage 1 builds stage 2, and stage 2 builds a stage 3 that is byte-for-byte identical
+to stage 2 (first on bootstrap52, again on bootstrap53: 45,765,488 bytes, stage 3 in 11:12 at a
+19 GiB peak). That is step J of the work order. Steps F to J were worked through together on one
+branch, merged as #1156; the table says what each still leaves open.
 
-1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
-   **Reached on 2026-11-18 (bootstrap52):** stage 2 compiles the compiler into a stage 3 that is byte-for-byte identical to stage 2 (45,851,504 bytes; stage 3 built in 11:25 at a 12.5 GiB peak). Stage 1 behaves as stage 0 on every `tests/*.ash` program apart from live-cell counts (973 same, 149 differ only in leaks, 0 crashes, 0 wrong outputs). Stage 2 matches stage 0 on 971; its 6 remaining differences are the next work. A capped run with swap disallowed was killed by the kernel with memory free; run stage 3 with swap allowed.
-   - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
-     builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
-     with stage 2 as the compiler under test, groups the crashes by function with
-     `cluster-crashes.sh`, and fixes the largest group in stage 1 with a reduced regression test.
-     Done when stage 2 compiles the compiler into a stage 3 that is byte-identical to stage 2.
-   - Parity: stage 1 behaves as stage 0 on every `tests/*.ash` (accept/reject, diagnostics,
-     output, exit code), measured by the same check against `selfhost/tests/behaviour/baseline.tsv`.
-     This includes missing features (`async` and `Ashes.Task`, static capability providers,
-     network tasks, vendored bitcode for openlibm, PCRE2 and Mbed TLS) and stage-0 bugs found on
-     the way. Leak counts are not part of this item.
-   - Stage 1 type-checks every program with the standalone inference before lowering and reports
-     its errors with stage 0's codes and wording; lowering does not read its results yet.
-2. **The standalone inference's remaining edge cases:** `deriving` on a recursive generic type, fork
-   outside `async`, the builtin integer argument it generalizes where stage 0 does not, and the
-   diagnostic wordings it cannot produce yet.
-3. **Lowering from the type table.** Finish step 7 of "Type inference before lowering" (typed
-   lowering on by default; generic bodies read through their instantiation; an identity for nodes
-   lowering synthesizes; the last open `Show.show` goals), then step 8 (rewrite the order-dependent
-   ownership rules listed under step 7 as rules over the final type, each with a lifetime test),
-   which retires the discovery and replay passes and body re-lowering. This is where compile
-   time drops.
-4. **Multithreading:** CG-17 parallel code generation and LNK-14 relocatable merge. LLVM is about
-   half of a stage-2 build.
-5. **Memory leaks last:** live-count parity with stage 0 and the leaks stage 1 shows while building
-   stage 2, resumed only after items 1 to 4.
+| Step | State | What it still leaves open |
+| --- | --- | --- |
+| A to D | Landed (#1114 to #1119, `scripts/selfhost-dev/`) | Nothing. |
+| E. Leak work | Paused since 2026-11-09 | Resumed last, item 5 below. |
+| F. Clear the probe's blockers | Done | Nothing; its record stays below as history. |
+| G. Compile the whole tree with stage 1 | Done | Nothing. |
+| H. Make stage 2 run | Stage 2 runs and matches stage 0 on every `tests/*.ash` program but one crash (`loop_predecessor_list_parts_kept_by_accumulator`, only with `ASHES_RC_LEAKCHECK=1`) | That crash; building the self-hosted suites with stage 1 instead of stage 0. |
+| I. Remove nondeterminism | Stage 3 equals stage 2 on two separate rebuilds | The emitter audit BOOT-12 asks for. |
+| J. Fixpoint | Reached 2026-11-18 | The one measurement J asks for afterwards: the four cross-language benchmarks with every escaping allocation on the reference-counted heap. |
+| K to T | Not started, apart from what the order below pulls forward | |
+
+Stage 1 against stage 0 on the 1,159 programs under `tests/` (`selfhost/tests/behaviour/check.sh`):
+975 behave the same, 150 differ only in how many cells stay live at exit (leaks), and none crash,
+print something else or are accepted or rejected differently. Stage 1 type-checks every program
+with the standalone inference before lowering it and reports errors with stage 0's codes and
+wording.
+
+**The order of work now (decided 2026-11-16, mapped to the work order on 2026-11-18).** The goal
+is for stage 1 to replace stage 0, which needs the bootstrap kept clean, parity with stage 0, and a
+compiler fast enough to use. Work goes top to bottom; agents may work ahead on a later item when it
+cannot change what an earlier item measures (for example typed lowering behind its flag).
+
+1. **Close out H, I and J.** The last stage-2 crash, the self-hosted suites built with stage 1, the
+   BOOT-12 emitter audit, and J's reference-counting measurement. Every round rebuilds stage 1,
+   stage 2 and stage 3 and checks that stage 3 still equals stage 2.
+2. **Keep stage 1 at parity with stage 0 (steps N and P).** Stage 1 behaves as stage 0 on every
+   `tests/*.ash` program (accept or reject, diagnostics, output, exit code), measured against
+   `selfhost/tests/behaviour/baseline.tsv`, and every self-hosted test suite builds and passes
+   (`scripts/selfhost-dev/suites.sh`, `--focused` for the fixtures). Much of P is already in:
+   `async` and `Ashes.Task`, static capability providers, network tasks, and the vendored bitcode
+   for openlibm, PCRE2 and Mbed TLS. Leak counts are not part of this item.
+3. **Compile time, part 1: types before lowering (P, performance).** Finish the standalone
+   inference's edge cases, then steps 7 and 8 of "Type inference before lowering": lowering reads
+   types from the table (on by default once the behavioural check is clean with it), then the
+   order-dependent ownership rules become rules over the final type, which retires the discovery
+   and replay passes and body re-lowering. This is where compile time drops.
+4. **Compile time, part 2: multithreading (P, performance).** CG-17 parallel code generation and
+   LNK-14 relocatable merge. LLVM is about half of a stage-2 build.
+5. **Memory leaks (E, then K).** Live-count parity with stage 0 and the leaks stage 1 shows while
+   building stage 2, then fannkuch-redux's footprint.
+
+After that the work order continues with L (split oversized sources), M (language server and debug
+adapter), O (command-line completion) and Q to T.
 
 Work is verified in shared rounds: agents finish a batch, run only cheap checks (format, a
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
-behavioural check for all of them and the stage-2 round above.
+behavioural check for all of them, then stage 2, its behavioural check, and stage 3.
 
 **Known work parked for later items (2026-11-17), so it is not lost:**
 - Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
 - Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
 - Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
 
-The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
-sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
-matching its output instruction for instruction.
-
-**Where things stand (2026-09-20).** Memory no longer has to be what stops the whole-tree build. The
-wall this document used to describe was mostly repeated work rather than retained memory: stage 1
-lowered the body of a function nested *k* lambdas deep 2^k times, and a curried function of *k*
-parameters is *k* nested lambdas. With that fixed, stage 1 compiling the whole self-hosted tree goes
-from being killed at a 40 GB cap after 23 minutes to finishing its lowering in 82 seconds at a
-14.7 GB peak, and what stops it is a stage-1 semantic defect. Two things keep that from being the
-state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit on the branch
-`stage0-rc-general-results`. And that branch changed how stage 0 lowers ownership without the
-matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
-is.
-
-**The next task** is step F, after recording a fresh baseline census. The remaining step-E leak
-work is paused until after F; it is not complete. Steps A to D have landed. Read the
-work order's introduction before anything else. It holds:
-- what was measured;
-- the rule it establishes: a stage-0 ownership change ships with its stage-1 mirror;
-- the definition of leak-free that ends the memory work.
-
-Stage 1 still leaks. Clearing F first broadens the real compiler workloads available for measuring
-stage-1 leaks; it does not make the existing census more accurate. After F, repeat the same census
-and reassess whether to finish E or proceed to G. Advancing to G is not automatic.
-
-The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
-section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
-`sort`, is confined to `HoverTypeInfo` and unblocks nothing else. Everything else the 2026-09-17
-sweep of the semantics package found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles
-CG-20 and CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout
-table's 52-member gap behind `QualifiedShippedReferences`. That sweep read 33 modules compiling, 51
-exhausting a 24 GB cap and 2 stopping with a diagnostic; repeat it once step A has landed, because
-most of those 51 were the repeated work and not their own memory.
-
-OPT-85 keeps the record of the memory work before this: the profiling recipe headed "Profile it; do
-not reason about it", the five sites that paid for the whole program at every query or release, the
-whole-list copy stage 0 makes when a function returns or loops over a list parameter it cannot prove
-is owned, **four approaches already refuted by measurement**, the genericity finding, and the
-quadratic analysis tables (7,313 MB to 3,761 MB). It still stands as what not to retry.
-
-**The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
-that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
-so the last marker names the phase that failed:
-
-```
-loadProject -> stitchProject -> lowerCoreProgramWithSource -> optimizeIrProgram -> codegenProgram
-```
-
-Build it with stage 0 and `--debug`, so it carries symbols, and run it under `gdb -batch -ex run -ex
-bt` when it faults rather than reading the exit code. Its `ashes.json` must list
-`AshesCompiler.Frontend` and `AshesCompiler.Semantics` as devDependencies beside the path overrides,
-or project loading fails with a null reference (SEM-20). Point it at one module at a time and sweep a
-whole package before fixing anything, so what remains is a list you can order rather than a queue you
-discover one failure at a time.
-
-A module imported on its own is a good measure of time and memory and a poor end-to-end test: a
-generic helper whose trait goal only its call sites settle is reported as missing evidence when
-those call sites are not in the program. `IrCodegen.Support` imported alone stops that way in one
-second on any stage 1. The end-to-end measure is stage 1 compiling the whole tree.
-
-**Expect `main` to be slow and hungry until step A lands.** There the probe's own module
-(`TypeResolution`) costs 3,776 MB and 2.56 s through the whole pipeline, a compiler module in the
-middle of the package exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB
-after 10m40s before it had to be killed. Those figures are the repeated lowering: the `IrCodegen`
-probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB with the fix.
-
 **When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
 than marking it done here. Read "How to work on this" below before your first change.
 
 ## Work order
 
-Every step names the checklist identifiers that gate it. Work top to bottom except for the
-2026-11-09 sequencing decision: pause the remaining E work, establish a baseline, complete F, then
-compare measurements and decide whether to resume E or proceed to G. The stretches:
+Every step names the checklist identifiers that gate it. A to D have landed, E is paused, and F to J
+were reached on 2026-11-18 (the fixpoint). What each of them still leaves open, and the order of the
+work now, is in "Start here"; that order pulls parts of N and P forward, ahead of K to M. The
+stretches:
 - A to E land the memory work and restore stage parity.
 - F to J make the compiler compile itself, to a fixpoint.
 - K to M settle what the first two stretches left behind: a benchmark's memory, the size of the
@@ -469,17 +422,14 @@ flowchart TD
     A[A. Land the self-hosted-only fixes] --> B[B. Vet the ownership branch]
     B --> C[C. Port the ownership changes into stage 1, group by group]
     C --> D[D. Keep the tools, clean the workspace]
-    D --> E[E. Leak work: remaining fixes paused]
-    E --> BASE[Record clean-tree baseline census]
-    BASE --> F[F. Clear the blockers the probe reports]
-    F --> REVIEW[Repeat census and reassess remaining leaks]
-    REVIEW --> RESUME[Resume E if needed before G]
-    RESUME --> G[G. Compile the whole self-hosted tree with stage 1]
-    REVIEW --> G
-    G --> H[H. Make stage 2 run]
-    H --> I[I. Remove the sources of nondeterminism]
-    I --> J[J. Establish the fixpoint]
-    J --> K[K. Bring fannkuch-redux back to its memory footprint]
+    D --> E[E. Leak work: paused, resumed after the performance work]
+    E --> F[F. Clear the blockers the probe reports: done]
+    F --> G[G. Compile the whole self-hosted tree with stage 1: done]
+    G --> H[H. Make stage 2 run: one crash left]
+    H --> I[I. Remove the sources of nondeterminism: emitter audit left]
+    I --> J[J. Establish the fixpoint: reached 2026-11-18]
+    J --> NOW[Now: parity and compile time, parts of N and P pulled forward]
+    NOW --> K[K. Bring fannkuch-redux back to its memory footprint]
     K --> L[L. Split the oversized self-hosted source files]
     L --> M[M. Verify the language server and the debug adapter]
     M --> N[N. Full corpus]
@@ -1076,7 +1026,8 @@ E. **Finish the leak work under the mirror rule** (remaining work paused until a
    rule, withdrawn because it corrupted stage 1's heap; stage-1 counterparts for mutual groups'
    result normalization, a loop head binder tuple on a back edge, and a loop exit head under a nested
    pattern.
-F. **Clear the blockers the probe reports.** This is the next active step under the 2026-11-09
+F. **Clear the blockers the probe reports.** **Done** (on the way to the fixpoint, 2026-11-18; the
+   record below is history). It was the next active step under the 2026-11-09
    sequencing decision. Before starting fixes, record a fresh census from a clean, committed tree
    containing the landed round-11 work. Record the source commit, stage-1 binary, census inputs,
    NET/GROWTH, per-class deltas and peak memory. Historical round-11 counts are not this baseline.
@@ -1174,6 +1125,8 @@ G. **Compile the whole self-hosted tree with stage 1.** With step A landed this 
    step F starts from. Prefer a small change to the self-hosted sources over a new stage-1 feature
    wherever both would work, since a source change reaches every stage at once. Expect more stops
    behind the known ones, and keep them as a list. Gates: BOOT-2, OPT-85.
+
+   **Done** (2026-11-16): stage 1 compiles the whole self-hosted tree.
 H. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a different class of
    defect from a stage-1 miscompile. Stage 1 is what compiled it, and the reduction technique that
    works for one does not transfer to the other.
@@ -1185,12 +1138,22 @@ H. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a di
    Then measure stage 2 building stage 3. If it does not fit in memory, count what it allocates before
    assuming a missing release: identical objects in power-of-two multiplicities are repeated work.
    Gates: BOOT-2.
+
+   **State 2026-11-18:** stage 2 runs and matches stage 0 on every `tests/*.ash` program but one
+   crash (`loop_predecessor_list_parts_kept_by_accumulator`, only with `ASHES_RC_LEAKCHECK=1`), and
+   stage 2 builds stage 3. Left: that crash, and the self-hosted suites built with stage 1.
 I. **Remove the sources of nondeterminism.** Hash-ordered iteration, address-derived values,
    traversal-seeded counters, timestamps and absolute paths baked into artifacts. Each produces a
    difference that looks like a miscompile and is not, so audit the emitters before comparing
    anything. Gates: BOOT-12.
+
+   **State 2026-11-18:** stage 3 equals stage 2 byte for byte on two separate rebuilds, so the
+   emitters are deterministic on this input. Left: the emitter audit itself (BOOT-12).
 J. **Establish the fixpoint.** Stage 2 compiles the same sources to a stage 3 byte-identical to
    stage 2. Gates: BOOT-3.
+
+   **Reached 2026-11-18** (bootstrap52, again on bootstrap53: 45,765,488 bytes). Left: the
+   measurement below.
 
    After the fixpoint, one measurement: what the four cross-language benchmarks would cost if every
    allocation that can escape its scope went to the reference-counted heap rather than the arena. It

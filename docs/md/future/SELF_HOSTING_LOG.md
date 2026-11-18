@@ -2777,3 +2777,112 @@ Registry/package commands, LSP, DAP, TestRunner, fuzz-harness parity, bootstrap 
 sets, generic hashing, and a named text builder are not missing Ashes prerequisites. They may become
 separate port or optimization work later, but are outside this capability audit until a concrete
 language/runtime/stdlib blocker is demonstrated.
+
+## Start here, as it read before the fixpoint (2026-09-20 to 2026-11-18)
+
+Moved here from SELF_HOSTING.md on 2026-11-18, when its "Start here" was rewritten for the work after
+the fixpoint. Kept as the record of how the order was decided.
+
+**Path forward (decided 2026-11-16; supersedes the order below where they differ).** Stage 1
+now compiles the whole compiler, so stage 2 exists; it is not yet correct. The goal is for stage 1
+to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
+
+1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
+   **Reached on 2026-11-18 (bootstrap52):** stage 2 compiles the compiler into a stage 3 that is byte-for-byte identical to stage 2 (45,851,504 bytes; stage 3 built in 11:25 at a 12.5 GiB peak). Stage 1 behaves as stage 0 on every `tests/*.ash` program apart from live-cell counts (973 same, 149 differ only in leaks, 0 crashes, 0 wrong outputs). Stage 2 matches stage 0 on 971; its 6 remaining differences are the next work. A capped run with swap disallowed was killed by the kernel with memory free; run stage 3 with swap allowed.
+   - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
+     builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
+     with stage 2 as the compiler under test, groups the crashes by function with
+     `cluster-crashes.sh`, and fixes the largest group in stage 1 with a reduced regression test.
+     Done when stage 2 compiles the compiler into a stage 3 that is byte-identical to stage 2.
+   - Parity: stage 1 behaves as stage 0 on every `tests/*.ash` (accept/reject, diagnostics,
+     output, exit code), measured by the same check against `selfhost/tests/behaviour/baseline.tsv`.
+     This includes missing features (`async` and `Ashes.Task`, static capability providers,
+     network tasks, vendored bitcode for openlibm, PCRE2 and Mbed TLS) and stage-0 bugs found on
+     the way. Leak counts are not part of this item.
+   - Stage 1 type-checks every program with the standalone inference before lowering and reports
+     its errors with stage 0's codes and wording; lowering does not read its results yet.
+2. **The standalone inference's remaining edge cases:** `deriving` on a recursive generic type, fork
+   outside `async`, the builtin integer argument it generalizes where stage 0 does not, and the
+   diagnostic wordings it cannot produce yet.
+3. **Lowering from the type table.** Finish step 7 of "Type inference before lowering" (typed
+   lowering on by default; generic bodies read through their instantiation; an identity for nodes
+   lowering synthesizes; the last open `Show.show` goals), then step 8 (rewrite the order-dependent
+   ownership rules listed under step 7 as rules over the final type, each with a lifetime test),
+   which retires the discovery and replay passes and body re-lowering. This is where compile
+   time drops.
+4. **Multithreading:** CG-17 parallel code generation and LNK-14 relocatable merge. LLVM is about
+   half of a stage-2 build.
+5. **Memory leaks last:** live-count parity with stage 0 and the leaks stage 1 shows while building
+   stage 2, resumed only after items 1 to 4.
+
+Work is verified in shared rounds: agents finish a batch, run only cheap checks (format, a
+whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
+behavioural check for all of them and the stage-2 round above.
+
+The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
+sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
+matching its output instruction for instruction.
+
+**Where things stand (2026-09-20).** Memory no longer has to be what stops the whole-tree build. The
+wall this document used to describe was mostly repeated work rather than retained memory: stage 1
+lowered the body of a function nested *k* lambdas deep 2^k times, and a curried function of *k*
+parameters is *k* nested lambdas. With that fixed, stage 1 compiling the whole self-hosted tree goes
+from being killed at a 40 GB cap after 23 minutes to finishing its lowering in 82 seconds at a
+14.7 GB peak, and what stops it is a stage-1 semantic defect. Two things keep that from being the
+state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit on the branch
+`stage0-rc-general-results`. And that branch changed how stage 0 lowers ownership without the
+matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
+is.
+
+**The next task** is step F, after recording a fresh baseline census. The remaining step-E leak
+work is paused until after F; it is not complete. Steps A to D have landed. Read the
+work order's introduction before anything else. It holds:
+- what was measured;
+- the rule it establishes: a stage-0 ownership change ships with its stage-1 mirror;
+- the definition of leak-free that ends the memory work.
+
+Stage 1 still leaks. Clearing F first broadens the real compiler workloads available for measuring
+stage-1 leaks; it does not make the existing census more accurate. After F, repeat the same census
+and reassess whether to finish E or proceed to G. Advancing to G is not automatic.
+
+The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
+section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
+`sort`, is confined to `HoverTypeInfo` and unblocks nothing else. Everything else the 2026-09-17
+sweep of the semantics package found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles
+CG-20 and CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout
+table's 52-member gap behind `QualifiedShippedReferences`. That sweep read 33 modules compiling, 51
+exhausting a 24 GB cap and 2 stopping with a diagnostic; repeat it once step A has landed, because
+most of those 51 were the repeated work and not their own memory.
+
+OPT-85 keeps the record of the memory work before this: the profiling recipe headed "Profile it; do
+not reason about it", the five sites that paid for the whole program at every query or release, the
+whole-list copy stage 0 makes when a function returns or loops over a list parameter it cannot prove
+is owned, **four approaches already refuted by measurement**, the genericity finding, and the
+quadratic analysis tables (7,313 MB to 3,761 MB). It still stands as what not to retry.
+
+**The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
+that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
+so the last marker names the phase that failed:
+
+```
+loadProject -> stitchProject -> lowerCoreProgramWithSource -> optimizeIrProgram -> codegenProgram
+```
+
+Build it with stage 0 and `--debug`, so it carries symbols, and run it under `gdb -batch -ex run -ex
+bt` when it faults rather than reading the exit code. Its `ashes.json` must list
+`AshesCompiler.Frontend` and `AshesCompiler.Semantics` as devDependencies beside the path overrides,
+or project loading fails with a null reference (SEM-20). Point it at one module at a time and sweep a
+whole package before fixing anything, so what remains is a list you can order rather than a queue you
+discover one failure at a time.
+
+A module imported on its own is a good measure of time and memory and a poor end-to-end test: a
+generic helper whose trait goal only its call sites settle is reported as missing evidence when
+those call sites are not in the program. `IrCodegen.Support` imported alone stops that way in one
+second on any stage 1. The end-to-end measure is stage 1 compiling the whole tree.
+
+**Expect `main` to be slow and hungry until step A lands.** There the probe's own module
+(`TypeResolution`) costs 3,776 MB and 2.56 s through the whole pipeline, a compiler module in the
+middle of the package exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB
+after 10m40s before it had to be killed. Those figures are the repeated lowering: the `IrCodegen`
+probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB with the fix.
+
