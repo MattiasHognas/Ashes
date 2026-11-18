@@ -1440,7 +1440,9 @@ let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLo
 // call's type before its body is lowered and capturing what it reads, and called there. None when
 // that lowering fails; the caller then lowers the call as before.
 let lowerConcreteCopyInPlace (candidate: CoreConcreteCandidate) functionType arguments lower (state: CoreLoweringState) =
-    (let name = "__core_concrete_in_place_" + Ashes.Text.fromInt(state.typeSupply.nextId)
+    (let name =
+        let supply = state.typeSupply
+        in "__core_concrete_in_place_" + Ashes.Text.fromInt(supply.nextId)
     in
         match prepareRecursiveGroup([(name, candidate.source)])(state)([]) with
             | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
@@ -1941,7 +1943,7 @@ let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeSch
             |> clearConsumerRequest
             |> lower(first) with
                 | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = loweredType, error = None } ->
-                    match pinRecordedOperandType(first)(loweredType)(loweredState) with
+                    match pinRecordedOperandType(traitName)(first)(loweredType)(loweredState) with
                         | (operandState, operandType) ->
                             match bindType(parameterType)(operandType)(operandState) with
                                 | (failedState, Some(error)) -> failure(failedState)(error)
