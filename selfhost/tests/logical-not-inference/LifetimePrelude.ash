@@ -55,4 +55,7 @@ let hasActiveTraitEvidence _traitName _operandType state =
 
 let emitCoreTraitUnaryDispatch _traitName _methodName resultType _lower operandTemp _operandType state = success(operandTemp)(resultType)(state)
 
+// Without a type table an open operand stays as lowering has it.
+let recordedNotOperand operandType state = (state, operandType)
+
 let noLower _expression state = success(0)(SemNever)(state)

@@ -1689,8 +1689,24 @@ let shippedTraitMethodReference (qualifier: Str) (methodName: Str) =
             |> Some
         | None -> None
 
+// A result type still open takes the closed type the standalone inference recorded for the call
+// node being lowered, the way a later pass pins a proven goal.
+let pinRecordedResultType (resultType: SemanticType) (state: CoreLoweringState) =
+    match resultType
+    |> resolveType(state)
+    |> freeTypeVariables with
+        | [] -> state
+        | _open ->
+            match recordedClosedNodeType(state) with
+                | Some(recorded) ->
+                    match bindType(resultType)(recorded)(state) with
+                        | (bound, None) -> observeLoweringEvent(0)(bound)
+                        | (_failed, Some(_error)) -> state
+                | None -> state
+
 // `Default.default(Unit)` resolves the instance by its result type rather than by an operand: the
-// type the context expects, or a goal a later pass pins.
+// type the context expects, the type the standalone inference recorded for the call, or a goal a
+// later pass pins.
 let lowerTraitDefaultCall argument lower state =
     match state
     |> clearConsumerRequest
@@ -1703,13 +1719,17 @@ let lowerTraitDefaultCall argument lower state =
                             match bindType(valueType)(expected)(typeState) with
                                 | (failedState, Some(error)) -> failure(failedState)(error)
                                 | (boundState, None) ->
-                                    boundState
-                                    |> withConsumerRequest(state.consumerRequest)
-                                    |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(resolveType(boundState)(valueType))
+                                    let pinned = pinRecordedResultType(valueType)(boundState)
+                                    in
+                                        pinned
+                                        |> withConsumerRequest(state.consumerRequest)
+                                        |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(resolveType(pinned)(valueType))
                         | None ->
-                            typeState
-                            |> withConsumerRequest(state.consumerRequest)
-                            |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(valueType)
+                            let pinned = pinRecordedResultType(valueType)(typeState)
+                            in
+                                pinned
+                                |> withConsumerRequest(state.consumerRequest)
+                                |> emitCoreTraitUnaryDispatch("Default")("default")(valueType)(lower)(unitTemp)(resolveType(pinned)(valueType))
         | failed -> failed
 
 // The unary counterpart of `traitOperatorCall`: `Ashes.Trait.Show.show(x)` and its siblings name a
@@ -1841,18 +1861,20 @@ let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeSch
             |> withTypeSupply(nextSupply)
             |> clearConsumerRequest
             |> lower(first) with
-                | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = operandType, error = None } ->
-                    match bindType(parameterType)(operandType)(loweredState) with
-                        | (failedState, Some(error)) -> failure(failedState)(error)
-                        | (boundState, None) ->
-                            match boundState
-                            |> consumerRequestForDispatch(rest)(state.consumerRequest)
-                            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
-                                | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
-                                    dispatched
-                                    |> withConsumerRequest(state.consumerRequest)
-                                    |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
-                                | failed -> failed
+                | LoweredCoreValue { state = loweredState, temp = operandTemp, semanticType = loweredType, error = None } ->
+                    match pinRecordedOperandType(first)(loweredType)(loweredState) with
+                        | (operandState, operandType) ->
+                            match bindType(parameterType)(operandType)(operandState) with
+                                | (failedState, Some(error)) -> failure(failedState)(error)
+                                | (boundState, None) ->
+                                    match boundState
+                                    |> consumerRequestForDispatch(rest)(state.consumerRequest)
+                                    |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
+                                        | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
+                                            dispatched
+                                            |> withConsumerRequest(state.consumerRequest)
+                                            |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
+                                        | failed -> failed
                 | failed -> failed
         | _ ->
             SemNever

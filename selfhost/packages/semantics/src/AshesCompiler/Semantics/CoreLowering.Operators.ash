@@ -1764,19 +1764,28 @@ let finishCoreBitwiseNot lowered =
 // A later mutual-recursion member's result can still be open at !. Keep the Not goal
 // and its a -> a result until its consumer or a later body settles it, rather than
 // forcing a generic Not requirement to Bool. Pending goals cannot be generalized or
-// emitted: the final pass pins the proved type, or rejects a still-unresolved operand.
+// emitted: the final pass pins the proved type, or rejects a still-unresolved operand. Outside a
+// body carrying `Not` evidence, an operand still open takes the closed operand type the standalone
+// inference recorded for the `!` node, as the final pass pins a proved one.
+let recordedNotOperand (operandType: SemanticType) (state: CoreLoweringState) =
+    if hasActiveTraitEvidence("Not")(operandType)(state)
+    then (state, operandType)
+    else recordedOrderedOperand(operandType)(state)
+
 let finishOrDeferCoreLogicalNot lower lowered =
     match lowered with
         | LoweredCoreValue { state = operandState, temp = operandTemp, semanticType = operandType, error = None } as lowered ->
             match pinProvenTraitGoal("Not")("not")(resolveType(operandState)(operandType))(operandState) with
-                | (pinnedState, pinnedType) ->
-                    if hasActiveTraitEvidence("Not")(pinnedType)(pinnedState)
-                    then emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
-                    else
-                        match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
-                            | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
-                            | (SemNamed(_symbolId, _name, _arguments), _key) -> emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
-                            | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
+                | (provenState, provenType) ->
+                    match recordedNotOperand(provenType)(provenState) with
+                        | (pinnedState, pinnedType) ->
+                            if hasActiveTraitEvidence("Not")(pinnedType)(pinnedState)
+                            then emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
+                            else
+                                match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
+                                    | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
+                                    | (SemNamed(_symbolId, _name, _arguments), _key) -> emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
+                                    | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
         | failed -> failed
 
 let lowerCoreLogicalNot operand lower state =
