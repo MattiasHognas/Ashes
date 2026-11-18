@@ -72,7 +72,15 @@ original goal to the failing dependency. Coherence failures identify both confli
 and source offsets so editor and command-line users can find both declarations.
 
 - `ASH010` — **Invalid trait declaration.** A trait has invalid parameters, methods, supertraits, a
-  malformed or unjustified `requires` clause, or an invalid `deriving` request.
+  malformed or unjustified `requires` clause, or an invalid `deriving` request. A written requirement
+  on known types or one an implementation head matches (`Eq(Int)`, `Eq(List(a))`) is unjustified:
+  `Written requires clause includes unjustified requirement 'Ashes.Trait.Eq(Int)'.` The code also
+  reports an ambiguous requirement (see [language.md section 21.6](language.md#216-constrained-type-schemes-and-inference)):
+  one whose variable does not occur in its binding's type
+  (`Trait requirement 'Ashes.Trait.Add(a)' is ambiguous because its type variable does not occur in the binding type.`),
+  and one still open in the program's trailing expression, where no binding quantifies it and nothing
+  settles it; operators get no numeric default
+  (`Trait requirement 'Ashes.Trait.Add(a)' is ambiguous: its type cannot be determined from context, so no evidence can be supplied for it.`).
 - `ASH011` — **Invalid trait implementation.** An implementation names an unknown trait or method,
   has the wrong arity, omits a required method, has invalid requirements, or deriving cannot produce
   a legal ordinary implementation for a field.

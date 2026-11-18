@@ -317,9 +317,18 @@ Order of work. Each step lands separately and is useful if the later ones are de
    - Record construction and update have no instantiation record.
    - Operators record a trait and an operand type, not whether the instance is primitive, a user
      instance or a dictionary.
-   - Schemes keep requirements at concrete types (`requires Multiply(Int)`), and variables
-     nothing constrains stay variables; both need a decision (drop settled requirements, default
-     unconstrained variables).
+   - Schemes and unconstrained variables, decided on **2026-11-18** by the user. A binding's
+     requirements are reduced through the implementations as stage 0 reduces them: one an
+     implementation supplies leaves nothing (`Multiply(Int)`), one an implementation head matches
+     leaves that implementation's requirements (`Eq(List(a))` becomes `Eq(a)`). A written requirement
+     on known types or one a head matches is rejected as unjustified (`ASH010`), in the standalone
+     inference and in stage 0, which used to fail on both with an internal ABI error. A variable
+     nothing constrains stays open in the table and lowering treats it as any type, never as `Int`;
+     a requirement still open in the trailing expression, where no binding quantifies its variable,
+     is ambiguous (`ASH010`, reference 21.6), with no numeric default for operators. Stage 0 already
+     rejected that shape; the standalone inference now does too, with stage 0's wording for both
+     ambiguity forms. Lowering's own `Int` sealing of a deferred operator is unchanged where the
+     inference does not reject first.
    - `tests/trait_deriving.ash` is rejected before numbering.
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.

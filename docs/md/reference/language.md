@@ -3642,6 +3642,13 @@ every body has been checked. Their canonical constraint order defines stable mod
 deterministic hidden evidence ABI. Written annotations remain optional documentation and an explicit
 contract checked against the inferred requirements.
 
+A binding's inferred requirements are reduced through the implementations before they enter its
+scheme. A requirement an implementation supplies outright (`Multiply(Int)`) leaves nothing; one an
+implementation head matches leaves that implementation's own requirements, reduced in turn, so a body
+comparing `[x] == [x]` requires `Eq(a)`, not `Eq(List(a))`. A written `requires` clause states the
+reduced form: a written requirement on known types, or one an implementation head matches, is
+rejected as unjustified (`ASH010`), because an implementation and not the binding's users supplies it.
+
 Constraints use a deterministic canonical order: fully qualified trait name first, then the canonical
 printed form of each argument from left to right. Exact duplicates are removed and supertraits implied
 by a stronger constraint are omitted. This order is used by diagnostics, formatter output, hover text,
@@ -3663,6 +3670,20 @@ Rejected ambiguous declaration:
 // `a` occurs only in the constraint, so callers cannot choose it.
 let invalid : Bool requires {Default(a)} = true
 ```
+
+The same holds where no binding can generalize a variable. A requirement that still holds a type
+variable once the program's trailing expression is inferred, which no binding quantifies and nothing
+settles, is ambiguous and rejected (`ASH010`); an operator gets no numeric default there either:
+
+```ash
+// `x` is never applied to anything, so `+` has no type to dispatch on.
+Ashes.IO.print(Ashes.Collection.List.length([given (x) -> x + x]))
+```
+
+A later use settles such a variable (`applyToTwo(given (x) -> x + x)` with `applyToTwo` applying its
+argument to `2`), and so does an annotation (`given (x: Int) -> x + x`). A type variable no constraint
+mentions, such as the element type of `length([])`, is not ambiguous: the program means the same at
+every type, and the compiler may represent it uniformly.
 
 ### 21.7 Coherence and package ownership
 
