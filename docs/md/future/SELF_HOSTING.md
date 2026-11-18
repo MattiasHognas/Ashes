@@ -438,8 +438,8 @@ Whole-compiler type check with the standalone inference on the head: `ok`.
 
 | Branch (worktree) | What | State |
 | --- | --- | --- |
-| `fix/parity-bugs-3` (`parity-bugs`) | Stage 0 ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; a lambda's capability error on another binding's line in stage 1; stage 0's spurious std diagnostics after a real error; parser recovery; byte vs character columns; the unported diagnostic details; `namespace_old_module_fails` | running (on the head e278744e) |
-| `fix/s2-crash` (`s2-diff-b`) | Stage-2 use-after-free in `loop_predecessor_list_parts_kept_by_accumulator` (only with `ASHES_RC_LEAKCHECK=1`): `IrOptimizer.optimizeIrProgramWithOptions` copies an arena list of `IrFunction` to the heap, treats the copy as owned and frees it at exit while a returned value still points at an element; the linker reuses the block. The IR dump of every `IrOptimizer` function from the stage-1 compile that builds stage 2 is in the integration worktree's `work/round9/ir-opt/` (`opt.lowered.ir`, `opt.final.ir`; git-ignored, regenerate with `ASHES_DIAGNOSTIC_IR_PREFIX` and `ASHES_DIAGNOSTIC_IR_FILTER=IrOptimizer` if lost). Notes in that worktree's `work/PROGRESS.md` | running (on the head 3193fb37) |
+| `fix/parity-bugs-3` (`parity-bugs`) | Stage 0 ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; a lambda's capability error on another binding's line in stage 1; stage 0's spurious std diagnostics after a real error; parser recovery; byte vs character columns; the unported diagnostic details; `namespace_old_module_fails` | running again after the interruption (on e278744e) |
+| `fix/s2-crash` (`s2-diff-b`) | Stage-2 use-after-free in `loop_predecessor_list_parts_kept_by_accumulator` (only with `ASHES_RC_LEAKCHECK=1`): `IrOptimizer.optimizeIrProgramWithOptions` copies an arena list of `IrFunction` to the heap, treats the copy as owned and frees it at exit while a returned value still points at an element; the linker reuses the block. The IR dump of every `IrOptimizer` function from the stage-1 compile that builds stage 2 is in the integration worktree's `work/round9/ir-opt/` (`opt.lowered.ir`, `opt.final.ir`; git-ignored, regenerate with `ASHES_DIAGNOSTIC_IR_PREFIX` and `ASHES_DIAGNOSTIC_IR_FILTER=IrOptimizer` if lost). Notes in that worktree's `work/PROGRESS.md` | running again after the interruption (on 3193fb37) |
 | `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
 
 **Open bugs not yet assigned** (after the running batches). Usage ran out at 20:50 on 2026-11-18: the two running agents (`fix/parity-bugs-3`, `fix/s2-crash`) were stopped early; resume them from their worktrees' `work/PROGRESS.md`. Checks of batch 2 passed (whole compiler and `semantics` suite type-check, the new tests behave as expected, both fixtures pass with stage 0); round 9's suite runs were still running on the machine:
@@ -463,8 +463,8 @@ Whole-compiler type check with the standalone inference on the head: `ok`.
   fails, drop what no longer applies.
 - From round 9's suite runs (on `main`'s content, before batch 2; logs in the `suite-debt`
   worktree's `work/round8/`): `semantics` fails "recursive bindings should remain monomorphic
-  inside their group"; `projects` segfaults (exit 139); `logical-not-inference` fails its
-  argument handling in both modes ("expected no arguments or program/expression path");
+  inside their group"; `projects` segfaults (exit 139); `logical-not-inference` failed its
+  argument handling (a runner bug, fixed: it runs with no arguments now);
   `stitching-lookup-index` differs from its frozen oracle at seed 4 (scopes);
   `SelfhostIrParityTests` 24 of 207 fail. Frontend, formatter, cli and backend pass; 94 focused
   fixture runs pass (core-copy-plan-view and heap-drop-worklist failed there but are fixed by
