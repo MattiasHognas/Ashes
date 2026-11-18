@@ -1398,15 +1398,16 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
             | _ -> rejectedConcreteCopy(candidate)(parameters)(state))
 
-// Each name in `names` with the slot of the local of this frame it resolves to, or -1 when no
-// binding holds it; None when one resolves to a capture or a recursive group's own member.
-let recursive definitionScopeOf (names: List(Str)) (bindings: List(CoreBinding)) (resolved: List((Str, Int))) =
+// Each name in `names` with what it resolves to in this frame: a local, a capture, or no binding;
+// None when one resolves to a recursive group's own member.
+let recursive definitionScopeOf (names: List(Str)) (bindings: List(CoreBinding)) (resolved: List(CoreDefinitionName)) =
     match names with
         | [] -> Some(resolved)
         | name :: rest ->
             match lookupBinding(name)(bindings) with
-                | None -> definitionScopeOf(rest)(bindings)((name, -1) :: resolved)
-                | Some(CoreBinding { location = CoreLocal(slot) }) -> definitionScopeOf(rest)(bindings)((name, slot) :: resolved)
+                | None -> definitionScopeOf(rest)(bindings)(CoreDefinitionName(name = name, slot = -1, capture = -1, scheme = emptyScheme(SemNever)) :: resolved)
+                | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) -> definitionScopeOf(rest)(bindings)(CoreDefinitionName(name = name, slot = slot, capture = -1, scheme = scheme) :: resolved)
+                | Some(CoreBinding { location = CoreEnvironment(index), scheme = scheme }) -> definitionScopeOf(rest)(bindings)(CoreDefinitionName(name = name, slot = -1, capture = index, scheme = scheme) :: resolved)
                 | Some(_binding) -> None
 
 // The scope a candidate whose scheme the standalone inference recorded is lowered in place against:
@@ -1414,18 +1415,48 @@ let recursive definitionScopeOf (names: List(Str)) (bindings: List(CoreBinding))
 let inPlaceScopeOf name value (state: CoreLoweringState) =
     definitionScopeOf(collectFree(value)([name])([]))(state.bindings)([])
 
-let recursive sameDefinitionScope (scope: List((Str, Int))) (bindings: List(CoreBinding)) =
+let definitionNameUnbound (entry: CoreDefinitionName) = entry.slot == -1 && entry.capture == -1
+
+// In the candidate's definition frame every name resolves to the same local or capture, or to no
+// binding, as at the definition.
+let recursive sameDefinitionScope (scope: List(CoreDefinitionName)) (bindings: List(CoreBinding)) =
     match scope with
         | [] -> true
-        | (name, slot) :: rest ->
-            match lookupBinding(name)(bindings) with
-                | None -> slot == -1 && sameDefinitionScope(rest)(bindings)
-                | Some(CoreBinding { location = CoreLocal(found) }) -> slot == found && sameDefinitionScope(rest)(bindings)
+        | entry :: rest ->
+            match lookupBinding(entry.name)(bindings) with
+                | None -> definitionNameUnbound(entry) && sameDefinitionScope(rest)(bindings)
+                | Some(CoreBinding { location = CoreLocal(found) }) -> entry.slot == found && sameDefinitionScope(rest)(bindings)
+                | Some(CoreBinding { location = CoreEnvironment(found) }) -> entry.capture == found && sameDefinitionScope(rest)(bindings)
+                | Some(_binding) -> false
+
+// In a frame nested in the candidate's definition frame (a function body or lambda that captured
+// the candidate), a name bound at the definition resolves to a capture holding the scheme lowering
+// held for it there, or, outside any binding, to the top-level function of that name and scheme,
+// which is callable by its label from any scope; a name unbound at the definition is unbound here
+// too.
+let recursive capturedDefinitionScope (scope: List(CoreDefinitionName)) (state: CoreLoweringState) =
+    match scope with
+        | [] -> true
+        | entry :: rest ->
+            match lookupBinding(entry.name)(state.bindings) with
+                | None ->
+                    if definitionNameUnbound(entry)
+                    then capturedDefinitionScope(rest)(state)
+                    else
+                        match state
+                        |> stateTopLevelFunctionRefIndex
+                        |> lookupTopLevelFunctionRef(entry.name) with
+                            | Some((_label, scheme)) -> scheme == entry.scheme && capturedDefinitionScope(rest)(state)
+                            | None -> false
+                | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) -> !definitionNameUnbound(entry) && scheme == entry.scheme && capturedDefinitionScope(rest)(state)
                 | Some(_binding) -> false
 
 // A call reaches a candidate's definition frame when the candidate's own binding is visible there
 // as the local it was registered from, with the scheme lowering held for it then; every name its
-// value reads must resolve there as at the definition.
+// value reads must resolve there as at the definition. A call in a frame that captured the
+// candidate reaches it through a capture holding that scheme, which names that binding only when
+// the scheme has variables of its own; every name its value reads must then resolve to what was
+// captured from the definition frame.
 let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
     match candidate.inPlaceScope with
         | None -> false
@@ -1435,6 +1466,7 @@ let concreteCopyInPlaceAllowed (candidate: CoreConcreteCandidate) (state: CoreLo
             else
                 match lookupBinding(candidate.name)(state.bindings) with
                     | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) -> slot == candidate.bindingSlot && scheme == candidate.bindingScheme && sameDefinitionScope(scope)(state.bindings)
+                    | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) -> scheme == candidate.bindingScheme && schemeNamesItsBinding(scheme) && capturedDefinitionScope(scope)(state)
                     | _ -> false
 
 // A candidate whose copy could not be lowered on its own, because its value reads a binding of its
@@ -1550,6 +1582,8 @@ let tryConcreteSourceCall expression lower state =
                         | Some(nested) ->
                             tryConcreteCandidateCall(nested)(callRootNode(expression)(-1))(arguments)(lower)(state)
                         | None ->
+                                        // Lowering's own inference stays the authority: a call that
+                                        // fails against the recorded type is lowered as before.
                             match state
                             |> stateConcreteRegistry
                             |> lookupCoreConcreteCandidate(name) with
@@ -1646,8 +1680,6 @@ let lowerUnconstrainedGeneralCall expression function argument lower state =
                                     | None ->
                                         lowerExpecting(expectedTypeOf(state))(state)
                                     | Some(recorded) ->
-                                        // Lowering's own inference stays the authority: a call that
-                                        // fails against the recorded type is lowered as before.
                                         match state
                                         |> observeLoweringEvent(3)
                                         |> lowerExpecting(Some(recorded)) with

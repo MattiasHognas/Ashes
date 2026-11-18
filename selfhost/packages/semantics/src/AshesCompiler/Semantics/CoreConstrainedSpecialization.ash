@@ -6,6 +6,7 @@ import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import Ashes.Collection.Map.MapTree
 export (
     type CoreConcreteCandidate(..),
+    type CoreDefinitionName(..),
     type CoreConcreteCopy(..),
     type CoreConcreteRegistry(..),
     value emptyCoreConcreteRegistry,
@@ -23,6 +24,15 @@ export (
     value preparePureConcreteScheme,
 )
 
+// What a name a recorded candidate's value reads resolved to where the candidate is defined: a local
+// of that frame (`slot`), one of its captures (`capture`), or no binding (both -1), with the scheme
+// lowering held for it there.
+type CoreDefinitionName =
+    | name: Str
+    | slot: Int
+    | capture: Int
+    | scheme: TypeScheme
+
 type CoreConcreteCandidate =
     | identity: Int
     | name: Str
@@ -35,10 +45,9 @@ type CoreConcreteCandidate =
     | bindingSlot: Int
     | isRecursive: Bool
     // For a candidate whose scheme the standalone inference recorded: each name its value reads,
-    // with the slot of the local of its definition frame the name resolves to there, or -1 for a
-    // name no binding of that frame holds; its own name is left out. None when a name resolves to
-    // anything else, and for every other candidate.
-    | inPlaceScope: Maybe(List((Str, Int)))
+    // other than its own name, with what it resolves to in the candidate's definition frame. None
+    // when a name resolves to a recursive group's own member there, and for every other candidate.
+    | inPlaceScope: Maybe(List(CoreDefinitionName))
 
 // None is a proved rejection, distinct from an absent cache entry. An in-progress
 // copy is never published here: recursive calls must use the generated self binding.
