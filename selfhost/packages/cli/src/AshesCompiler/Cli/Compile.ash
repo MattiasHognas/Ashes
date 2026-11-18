@@ -446,7 +446,7 @@ let wordedLoweringError (lowering: CoreLoweringResult) =
 let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxProject) builtins (result: ProgramInferenceResult) (error: ProgramInferenceError) =
     (let inferenceText = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
     in
-        if inferenceErrorWantsCallSiteWording(error)
+        if inferenceErrorWantsCallSiteWording(stitched.definitionPlacements)(error)
         then
             match stitched.program
             |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))

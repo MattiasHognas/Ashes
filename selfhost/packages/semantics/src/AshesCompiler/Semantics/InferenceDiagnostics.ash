@@ -487,6 +487,42 @@ let unificationDiagnostic (placements: List(StitchedDefinitionPlacement)) (error
         | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type).")
         | TypeArityMismatch(_left, _right) -> None
 
+// Stage 0's context for the argument of a call chain at `ordinal`, counted from 1.
+let callArgumentContext (ordinal: Int) (callee: Maybe(Str)) =
+    match callee with
+        | Some(name) -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of call to '" + name + "'."
+        | None -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of function call."
+
+// A call argument that does not fit its parameter, as stage 0 words the mismatch in the
+// argument's context.
+let callArgumentDiagnostic (placements: List(StitchedDefinitionPlacement)) (mismatch: UnificationError) (ordinal: Int) (callee: Maybe(Str)) =
+    match mismatch with
+        | TypeMismatch(left, right) ->
+            match right
+            |> withSourceNames(placements)
+            |> diagnosticTypePairText(withSourceNames(placements)(left)) with
+                | (leftText, rightText) -> coded(typeMismatchCode)("Type mismatch: " + leftText + " vs " + rightText + "." + callArgumentContext(ordinal)(callee))
+        | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type)." + callArgumentContext(ordinal)(callee))
+        | TypeArityMismatch(_left, _right) -> None
+
+// A call chain passing more arguments than its root takes, as stage 0 words it for a constructor,
+// for a value that is no function, and for a function.
+let callArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
+    (let counts = Ashes.Text.fromInt(expected) + " argument(s) but got " + Ashes.Text.fromInt(provided) + "."
+    in
+        match callee with
+            | Some(name) ->
+                if startsUppercase(name)
+                then uncoded("Constructor '" + sourceNameOf(placements)(name) + "' expects " + counts)
+                else
+                    if expected == 0
+                    then uncoded("Attempted to call '" + name + "' with " + Ashes.Text.fromInt(provided) + " argument(s), but its type is " + typeText(placements)(calleeType) + ", not a function.")
+                    else uncoded("Call to '" + name + "' expects " + counts)
+            | None ->
+                if expected == 0
+                then uncoded("Attempted to call non-function type " + typeText(placements)(calleeType) + ".")
+                else uncoded("Call expects " + counts))
+
 let typeResolutionDiagnostic (error: TypeResolutionError) =
     match error with
         | UnknownTypeName(name) -> uncoded("Unknown type name '" + name + "'.")
@@ -690,6 +726,8 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | ExpectedResultType(leftType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(leftType) + " vs Result<a, b>.")
         | ExpectedTaskType(awaitedType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(awaitedType) + " vs Task<a, b>.")
         | ForkOutsideAsync -> uncoded("Ashes.Task.fork() must be used inside an async task.")
+        | CallArgumentMismatch(mismatch, ordinal, callee) -> callArgumentDiagnostic(placements)(mismatch)(ordinal)(callee)
+        | CallArityMismatch(callee, expected, provided, calleeType) -> callArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
         | _ -> None
 
 let recursive typeDeclarationNamed (items: List(TopLevelItem)) (name: Str) =
@@ -778,19 +816,34 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | ReservedTypeDeclaration(_name) -> uncoded("'Ashes' and built-in runtime types are reserved")
         | _ -> None
 
+// Whether a callee name is a definition stitching renamed (a module's binding under its compiler
+// name): stage 0 names it as the source spells it, which the error no longer knows.
+let renamedDefinition (placements: List(StitchedDefinitionPlacement)) (name: Str) =
+    match definitionNamed(placements)(name) with
+        | Some(definition) -> definition.sourceName != definition.compilerName
+        | None -> false
+
+let renamedCallee (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) =
+    match callee with
+        | Some(name) -> renamedDefinition(placements)(name)
+        | None -> false
+
 // A unification error carries the two types but not the call, argument, constructor or operator
 // it was raised at, which stage 0 words its message after (an argument count, a non-function
 // callee, an operand pair). Lowering knows that site, so its own diagnostic, when it words one, is
 // the closer rendering. A mismatch between two capability rows is the closed-row check, and one
 // between two tuples of different lengths is a pattern's shape against its value's; the inference
-// words both itself.
-let recursive inferenceErrorWantsCallSiteWording (error: ProgramInferenceError) =
+// words both itself. A call's argument mismatch and arity error carry their site and are worded by
+// the inference too, unless the callee is a renamed definition.
+let recursive inferenceErrorWantsCallSiteWording (placements: List(StitchedDefinitionPlacement)) (error: ProgramInferenceError) =
     match error with
-        | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(inner)
-        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(ProgramExpressionError(inner))
+        | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(placements)(inner)
+        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail)))) -> false
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
         | ProgramExpressionError(InferenceUnificationError(_unification)) -> true
+        | ProgramExpressionError(CallArgumentMismatch(_mismatch, _ordinal, callee)) -> renamedCallee(placements)(callee)
+        | ProgramExpressionError(CallArityMismatch(callee, _expected, _provided, _calleeType)) -> renamedCallee(placements)(callee)
         | _ -> false
 
 let maybeText (value: Maybe(Str)) =

@@ -253,6 +253,13 @@ type TypeInferenceError =
     | ConstructorPatternsFromDifferentAdts(List(Str))
     // A call of `Ashes.Task.fork` outside the body of an `async` activation.
     | ForkOutsideAsync
+    // A call argument whose type does not fit its parameter: the mismatch with the parameter's side
+    // first, the argument's position in its call chain counted from 1, and the chain's root callee
+    // when it is a name.
+    | CallArgumentMismatch(UnificationError, Int, Maybe(Str))
+    // A call chain passing more arguments than its root takes: the root callee when it is a name,
+    // the arguments it takes, the arguments passed, and the type the extra argument was applied to.
+    | CallArityMismatch(Maybe(Str), Int, Int, SemanticType)
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     // An error with the span of the innermost located expression it was raised in. Only the
@@ -2528,6 +2535,132 @@ let unifyIn (environment: TypeEnvironment) left right =
     if environment.programInferenceRules
     then unifyFlatRows(left)(right)
     else unify(left)(right)
+
+// The root callee of a call chain `f(a)(b)`: what the innermost call applies.
+let recursive callChainRoot expression =
+    match expression with
+        | ExprAt(_span, inner) -> callChainRoot(inner)
+        | ExprNode(_id, inner) -> callChainRoot(inner)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callChainRoot(function)
+        | other -> other
+
+// The span of a call chain's root callee, when the root is located.
+let recursive callChainRootSpan expression (enclosing: Maybe(TextSpan)) =
+    match expression with
+        | ExprAt(span, inner) -> callChainRootSpan(inner)(Some(span))
+        | ExprNode(_id, inner) -> callChainRootSpan(inner)(enclosing)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callChainRootSpan(function)(None)
+        | _ -> enclosing
+
+// How many arguments `expression`, a callee, has already been applied to in its call chain.
+let recursive callChainLength expression =
+    match expression with
+        | ExprAt(_span, inner) -> callChainLength(inner)
+        | ExprNode(_id, inner) -> callChainLength(inner)
+        | ExprCall(function, _argument, _whitespace, _layout) -> 1 + callChainLength(function)
+        | _ -> 0
+
+let callRootName function =
+    match callChainRoot(function) with
+        | ExprVar(name) -> Some(name)
+        | _ -> None
+
+let startsWithUppercase (name: Str) =
+    (let first = Ashes.Text.substring(name)(0)(1)
+    in first >= "A" && first <= "Z")
+
+let callRootIsConstructor function =
+    match callRootName(function) with
+        | Some(name) -> startsWithUppercase(name)
+        | None -> false
+
+// Whether a failed call is worded at its call site as stage 0 words a call of a user function or a
+// constructor: a chain rooted at a plain name or at an expression that is no name. A root naming
+// a compiler-provided member (`Ashes.Rune.isAsciiDigit`), a capability operation or trait method
+// (`Clock.now`, `Show.show`), or an external function keeps the error it has.
+let callSiteWorded function (environment: TypeEnvironment) =
+    match callChainRoot(function) with
+        | ExprVar(name) ->
+            if Ashes.Text.indexOf(name)(".") >= 0
+            then false
+            else
+                match resolveExternalFunctionBinding(name)(environment) with
+                    | Some(_external) -> false
+                    | None -> true
+        | ExprQualifiedVar(_moduleName, _member) -> false
+        | _ -> true
+
+// A call whose callee is no function: the chain passed more arguments than its root takes. The
+// error is located at the root, as stage 0 locates it.
+let callArityFailure function (calleeType: SemanticType) (failure: TypeInferenceResult) =
+    (let taken = callChainLength(function)
+    in
+        let error =
+            CallArityMismatch(callRootName(function))(taken)(taken + 1)(calleeType)
+        in
+            match callChainRootSpan(function)(None) with
+                | Some(span) ->
+                    failure with error = Some(InferenceErrorAt(span)(error))
+                | None -> failure with error = Some(error))
+
+// A failed call as stage 0 words it at the call site: an argument that does not fit its
+// parameter, with the parameter's side first, or a callee that is no function. A failure of the
+// capability row or of a constructor's argument keeps the error it has.
+let callSiteFailure function functionType argumentType argumentSubstitution (environment: TypeEnvironment) (failure: TypeInferenceResult) =
+    if environment.programInferenceRules && callSiteWorded(function)(environment)
+    then
+        match applySubstitution(argumentSubstitution)(functionType) with
+            | SemFunction(parameter, _result, _row) ->
+                if callRootIsConstructor(function)
+                then failure
+                else
+                    match argumentType
+                    |> applySubstitution(argumentSubstitution)
+                    |> unifyIn(environment)(parameter) with
+                        | UnificationResult { error = Some(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail))) } -> failure
+                        | UnificationResult { error = Some(mismatch) } ->
+                            failure with error = Some(function
+                            |> callRootName
+                            |> CallArgumentMismatch(mismatch)(callChainLength(function) + 1))
+                        | UnificationResult { error = None } -> failure
+            | SemVariable(_id) -> failure
+            | SemNever -> failure
+            | calleeType -> callArityFailure(function)(calleeType)(failure)
+    else failure
+
+let sameCallee (left: Maybe(Str)) (right: Maybe(Str)) =
+    match (left, right) with
+        | (Some(leftName), Some(rightName)) -> leftName == rightName
+        | (None, None) -> true
+        | _ -> false
+
+// A call chain's arity error seen from the call that applies the failed chain, `function`, once
+// more: stage 0 counts every argument of the chain for a callee that takes some, and for a
+// constructor. An error from elsewhere (an argument of a call in the chain) is left as it is; it
+// is told apart by its root and by the count, which is the length of `function`'s chain only for
+// its own chain.
+let recursive countedChainArgument (function: Expr) error =
+    match error with
+        | InferenceErrorAt(span, inner) ->
+            inner
+            |> countedChainArgument(function)
+            |> InferenceErrorAt(span)
+        | CallArityMismatch(callee, expected, provided, calleeType) ->
+            let counts =
+                match callee with
+                    | Some(name) -> expected > 0 || startsWithUppercase(name)
+                    | None -> expected > 0
+            in
+                if counts && provided == callChainLength(function) && sameCallee(callee)(callRootName(function))
+                then CallArityMismatch(callee)(expected)(provided + 1)(calleeType)
+                else error
+        | other -> other
+
+let countedChainFailure (function: Expr) (failure: TypeInferenceResult) =
+    match failure with
+        | TypeInferenceResult { error = Some(error) } ->
+            failure with error = Some(countedChainArgument(function)(error))
+        | _ -> failure
 
 let mergeUnificationIn (environment: TypeEnvironment) currentSubstitution result supply fallbackType =
     match result with
@@ -5064,9 +5197,12 @@ and inferWith expression environment substitution supply ambientRow =
                                                                             callResult
                                                                         )
                                                                     )
-                                                            | failure -> builtinArgumentFailure(function)(argumentType)(failure)
+                                                            | failure ->
+                                                                failure
+                                                                |> builtinArgumentFailure(function)(argumentType)
+                                                                |> callSiteFailure(function)(functionType)(argumentType)(argumentSubstitution)(environment)
                             | failure -> failure
-                    | failure -> failure
+                    | failure -> countedChainFailure(function)(failure)
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
