@@ -430,6 +430,7 @@ What it holds beyond `main`, none of it built by stage 1 yet:
   position, unknown-qualifier wording;
 - the second parity batch: the `semantics` suite's capability-row error (an argument call's result is constrained by the parameter type before its row joins the caller's, as stage 0 does), the `core-copy-plan-view` and `heap-drop-worklist` fixtures, and a signature mismatch reported at the value with the written type first;
 - the stage-2 use-after-free fix: `TcoReset.noteSpineFreedSlot` released a span taken out of a matched `Some` twice (a cons head kept in an owned slot whose retain the call-argument frame already releases); guarded in both compilers, test `matched_option_field_consed_into_call_argument_released_once`. Stage 1 still lacks stage 0's uniqueness check when matching an owned call result (`match f(x) with Some(span)`, `rc_match_field_shared/owned`), which is why it reached that pair: open, not ported;
+- the third parity batch: stage 0 no longer fails on a nested operator-generic `let` used at two types in one lambda (ASH010) or on two `(given (xs) -> xs == [])` at different element types (ASH005, a per-dictionary lowering of the shipped `Eq(List(a))` pinned to one type); stage 1 infers a lambda argument against its parameter type and row; stage 0 drops standard-library cascades after a program error; a retired `Ashes.*` module is an unknown standard-library module (`namespace_old_module_fails` fixed); stage 1 counts columns in Unicode scalars, as stage 0 does;
 - two of the three type-checking decisions in both compilers: a requirement on an outer variable
   is passed past a local `let` (stage 0 already did), and a trait method that mentions no trait
   parameter is rejected with ASH010 (stage 1 already rejected it; now with stage 0's wording).
@@ -439,7 +440,7 @@ Whole-compiler type check with the standalone inference on the head: `ok`. Stage
 
 | Branch (worktree) | What | State |
 | --- | --- | --- |
-| `fix/parity-bugs-3` (`parity-bugs`) | Stage 0 ASH010 on a nested operator-generic `let` used at two types in one lambda; stage 0 ASH005 on two `(given (xs) -> xs == [])` at different element types; a lambda's capability error on another binding's line in stage 1; stage 0's spurious std diagnostics after a real error; parser recovery; byte vs character columns; the unported diagnostic details; `namespace_old_module_fails` | running again after the interruption (on e278744e) |
+| `fix/parity-bugs-4` (`parity-bugs`) | The `semantics` suite's "recursive bindings should remain monomorphic inside their group"; the `projects` suite binary built by stage 0 segfaulting; stage 1 `MissingCoreTraitEvidence("Eq", ...)` on two `xs == []` lambdas; the rest of the unported diagnostic details and stage 1's module list; parser recovery (stage 0's extra errors may be artifacts of its wrapped source) | running (on 5d6c7990) |
 | `fix/strict-imports` (`typecheck-decisions`) | Decision 2, strict imports, in both compilers (shipped modules follow the rule; trait names in `deriving`, `requires`, `implement` stay visible), plus the imports the leniency hid | running (on a4baf21a) |
 | `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
 
