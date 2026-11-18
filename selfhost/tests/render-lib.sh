@@ -96,3 +96,42 @@ extract_range() {
         }
     ' "$source"
 }
+
+# Frozen sources older than the frontend's `ExprNode(Int, Expr)` wrapper have no arm for it. Writes the source with
+# an `ExprNode(_node, inner)` arm before every `ExprAt` arm, which looks through the node as the current
+# production code does: the `ExprAt` arm's own right-hand side when it only recurses into `inner`, otherwise a
+# call of the enclosing function with `inner` in place of its `Expr` parameter.
+add_expr_node_arms() {
+    awk '
+        /^(let( recursive)?|and) [a-z][A-Za-z0-9_]* / {
+            header = $0
+            sub(/^(let( recursive)?|and) /, "", header)
+            name = header
+            sub(/[^A-Za-z0-9_].*$/, "", name)
+            call = name
+            rest = header
+            while (match(rest, /\([a-z][A-Za-z0-9_]*: [^)]*(\([^)]*\))*[^)]*\)/)) {
+                parameter = substr(rest, RSTART + 1, RLENGTH - 2)
+                rest = substr(rest, RSTART + RLENGTH)
+                parameterName = parameter
+                sub(/:.*$/, "", parameterName)
+                parameterType = parameter
+                sub(/^[^:]*: /, "", parameterType)
+                call = call "(" (parameterType == "Expr" ? "inner" : parameterName) ")"
+            }
+        }
+        /^ *\| ExprAt\(/ {
+            indent = $0
+            sub(/\|.*$/, "", indent)
+            arm = $0
+            if (arm ~ /\| ExprAt\(_span, inner\) -> ./) {
+                rhs = arm
+                sub(/^.*\| ExprAt\(_span, inner\) -> /, "", rhs)
+            } else {
+                rhs = call
+            }
+            print indent "| ExprNode(_node, inner) -> " rhs
+        }
+        { print }
+    ' "$1"
+}

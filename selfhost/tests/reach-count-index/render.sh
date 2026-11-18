@@ -8,7 +8,7 @@ mkdir -p "$out"
 path=selfhost/packages/semantics/src/AshesCompiler/Semantics/ResultReachSummaries.ash
 old="$out/ReferenceResultReachSummaries.ash.inc"
 git -C "$root" show "beaa9a30:$path" > "$old"
-prefix_module_exports "$old" Ref ref_ > "$out/ReferenceResultReachSummaries.ash"
+add_expr_node_arms <(prefix_module_exports "$old" Ref ref_) > "$out/ReferenceResultReachSummaries.ash"
 old_names=(lookupCount replaceCount holdsCount setCount capped lookupCountOr namesRepeat sumCountsEntryByEntry summedOntoLeft summedBesideLeft sumCounts maxCountsEntryByEntry maximizedOntoLeft absentFromLeft maxCounts)
 {
     cat "$fixture/CountPrelude.ash"
