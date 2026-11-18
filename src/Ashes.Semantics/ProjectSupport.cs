@@ -1478,7 +1478,9 @@ public static class ProjectSupport
             {
                 var parent = import[..lastDot];
                 var leaf = import[(lastDot + 1)..];
-                if (isResolvableModule(parent))
+                // The reserved root declares no types, so `Ashes.File` is an unknown standard-library
+                // module, reported as one, not a type selector on `Ashes`.
+                if (isResolvableModule(parent) && !string.Equals(parent, "Ashes", StringComparison.Ordinal))
                 {
                     // An uppercase final segment the regex folded into the module path is a type selector
                     // when the full path is not itself a resolvable module but its parent is. For the

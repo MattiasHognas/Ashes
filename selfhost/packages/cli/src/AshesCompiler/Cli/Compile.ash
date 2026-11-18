@@ -852,6 +852,7 @@ let stitchFailureText (source: Str) (error: ShippedStitchError) =
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
                 | None -> "ASH013 Duplicate top-level binding '" + name + "'."
+        | ShippedModuleMissing(_importer, name) -> "Unknown standard library module '" + name + "'."
         | other -> Ashes.Trait.Show.show(other)
 
 // A stitching failure as stage 0 words it: the parse diagnostics of a module the parser rejected,
