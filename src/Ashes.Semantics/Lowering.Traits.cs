@@ -130,11 +130,14 @@ public sealed partial class Lowering
         return true;
     }
 
+    // The goal's type may be settled by a binding that encloses the innermost one: a lambda bound
+    // inside a function body reads the function's parameter, whose type the function's own later
+    // uses decide. Every enclosing binding records its settled type as a hint for the emitting pass.
     private void RequireLateTraitTypeHint()
     {
-        if (_traitConstraintScopes.Count > 0)
+        foreach (TraitConstraintScope scope in _traitConstraintScopes)
         {
-            _traitConstraintScopes.Peek().NeedsLateTypeHint = true;
+            scope.NeedsLateTypeHint = true;
         }
     }
 
