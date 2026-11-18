@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
 import Ashes.Collection.Map.MapTree
 export (
+    type NodeOperatorInstance(..),
     type NodeOperator(..),
     type NodeInstantiation(..),
     type NodeTypeTable(..),
@@ -24,12 +25,22 @@ export (
     value settledInstantiationArguments,
 )
 
-// The trait an operator node maps to and the type of its operands. A concrete operand type names
-// the instance; a variable is one the enclosing binding quantifies, whose requirements carry the
-// dictionary.
+// How an operator's instance is reached at its recorded operand type: a primitive instruction, an
+// implementation the program or a library declares or derives (whose own requirements may still
+// need dictionaries when the operand type holds a variable), or the dictionary a quantified
+// variable's requirement passes in.
+type NodeOperatorInstance =
+    | PrimitiveInstance
+    | DeclaredInstance
+    | DictionaryInstance
+
+// The trait an operator node maps to, the type of its operands and how its instance is reached. A
+// concrete operand type names the instance; a variable is one the enclosing binding quantifies,
+// whose requirements carry the dictionary.
 type NodeOperator =
     | traitName: Str
     | operandType: SemanticType
+    | instance: NodeOperatorInstance
 
 // A reference to a generic binding: the type each quantified variable of the binding's scheme has
 // at this reference, and the scheme's trait requirements at those types. `dictionaries` holds the
@@ -68,6 +79,72 @@ let nodeBindingsAt (node: Int) (table: NodeTypeTable) =
 
 let nodeDeclarationAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.declarations)
 
+let isNumericOperand (operandType: SemanticType) =
+    match operandType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemBigInt -> true
+        | _ -> false
+
+let isIntegralOperand (operandType: SemanticType) =
+    match operandType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | _ -> false
+
+let isTextOperand (operandType: SemanticType) =
+    match operandType with
+        | SemString -> true
+        | _ -> false
+
+let isScalarOperand (operandType: SemanticType) =
+    match operandType with
+        | SemRune -> true
+        | SemBool -> true
+        | _ -> false
+
+let isRuneOperand (operandType: SemanticType) =
+    match operandType with
+        | SemRune -> true
+        | _ -> false
+
+let isBoolOperand (operandType: SemanticType) =
+    match operandType with
+        | SemBool -> true
+        | _ -> false
+
+// Whether lowering emits the operator as a primitive instruction at this operand type, by the
+// same type sets its resolved operator emitters match.
+let primitiveOperatorInstance (traitName: Str) (operandType: SemanticType) =
+    match traitName with
+        | "Add" -> isNumericOperand(operandType) || isTextOperand(operandType)
+        | "Subtract" -> isNumericOperand(operandType)
+        | "Multiply" -> isNumericOperand(operandType)
+        | "Divide" -> isNumericOperand(operandType)
+        | "Negate" -> isNumericOperand(operandType)
+        | "Remainder" ->
+            match operandType with
+                | SemBigInt -> true
+                | other -> isIntegralOperand(other)
+        | "BitAnd" -> isIntegralOperand(operandType)
+        | "BitOr" -> isIntegralOperand(operandType)
+        | "BitXor" -> isIntegralOperand(operandType)
+        | "ShiftLeft" -> isIntegralOperand(operandType)
+        | "ShiftRight" -> isIntegralOperand(operandType)
+        | "Eq" -> isNumericOperand(operandType) || isTextOperand(operandType) || isScalarOperand(operandType)
+        | "Ord" -> isNumericOperand(operandType) || isRuneOperand(operandType)
+        | "Not" -> isBoolOperand(operandType)
+        | _ -> false
+
+let operatorInstanceOf (traitName: Str) (operandType: SemanticType) =
+    match operandType with
+        | SemVariable(_id) -> DictionaryInstance
+        | other ->
+            if primitiveOperatorInstance(traitName)(other)
+            then PrimitiveInstance
+            else DeclaredInstance
+
 let recursive resolveArguments (substitution: MapTree(Int, SemanticType)) (arguments: List((Int, SemanticType))) =
     match arguments with
         | [] -> []
@@ -94,9 +171,11 @@ let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable)
             match Ashes.Collection.Map.getInt(node)(table.operators) with
                 | Some(_younger) -> table
                 | None ->
-                    table with operators = Ashes.Collection.Map.setInt(node)(
-                        NodeOperator(traitName = traitName, operandType = applySubstitutionMap(substitution)(operandType))
-                    )(table.operators)
+                    let resolvedOperand = applySubstitutionMap(substitution)(operandType)
+                    in
+                        table with operators = Ashes.Collection.Map.setInt(node)(
+                            NodeOperator(traitName = traitName, operandType = resolvedOperand, instance = operatorInstanceOf(traitName)(resolvedOperand))
+                        )(table.operators)
         | NodeInstantiationNote(node, arguments, requirements, dictionaries) ->
             match Ashes.Collection.Map.getInt(node)(table.instantiations) with
                 | Some(_younger) -> table
