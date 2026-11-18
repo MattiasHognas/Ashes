@@ -83,6 +83,11 @@ public sealed record ProjectModule(
     /// <summary>For a lifted inline module, where its dedented source sits in the enclosing file;
     /// <see cref="FilePath"/> is then <c>file#Module</c>.</summary>
     public InlineModuleOrigin? InlineOrigin { get; init; }
+
+    /// <summary>The modules the import header imports whole or under an alias, as opposed to a module
+    /// only a value selector names, which <see cref="Imports"/> also holds; null when not recorded, and
+    /// <see cref="Imports"/> stands for it.</summary>
+    public IReadOnlySet<string>? WholeModuleImports { get; init; }
 }
 
 /// <summary>
@@ -1340,6 +1345,7 @@ public static class ProjectSupport
         }
 
         var (imports, source, aliases, selectors) = ParseImports(fullPath);
+        IReadOnlySet<string> wholeImports = CollectWholeModuleImports(imports, selectors);
 
         // Lift inline `module Name = ...` blocks. The entry file's inline modules keep bare names
         // (nothing imports the entry across files); every other file prefixes them with its own
@@ -1354,7 +1360,10 @@ public static class ProjectSupport
             imports, selectors, aliasMap,
             name => IsResolvableProjectModule(name, searchRoots, resolvedByModuleName));
         source = ApplySelectorRenames(source, selectors);
-        var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
+        var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors)
+        {
+            WholeModuleImports = wholeImports,
+        };
         resolvedByPath[fullPath] = module;
         inlineChildrenByPath[fullPath] = children;
         if (!resolvedByModuleName.ContainsKey(moduleName))
@@ -1740,7 +1749,7 @@ public static class ProjectSupport
             importNames.ToList(),
             new Dictionary<string, string>(StringComparer.Ordinal),
             entrySelectors)
-        { PackageId = "standalone" };
+        { PackageId = "standalone", WholeModuleImports = CollectWholeModuleImports(importNames, entrySelectors) };
         orderedModules.Add(entryModule);
 
         if (TryLoadStandardLibraryModule("Ashes.Trait", out ProjectModule traitModule))
@@ -2211,6 +2220,32 @@ public static class ProjectSupport
     }
 
     /// <summary>
+    /// The modules an import header imports whole or under an alias. A value selector
+    /// (<c>import M.name</c>) also lists <c>M</c> among the header's imports, once per selector, so a
+    /// module counts as imported whole only when it is listed more often than selectors name it.
+    /// </summary>
+    private static IReadOnlySet<string> CollectWholeModuleImports(
+        IReadOnlyList<string> imports,
+        IReadOnlyList<ImportSelector> selectors)
+    {
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        foreach (string import in imports)
+        {
+            counts[import] = counts.GetValueOrDefault(import) + 1;
+        }
+
+        foreach (ImportSelector selector in selectors)
+        {
+            if (counts.TryGetValue(selector.ModuleName, out int count))
+            {
+                counts[selector.ModuleName] = count - 1;
+            }
+        }
+
+        return counts.Where(entry => entry.Value > 0).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// Maps each module to the modules whose types and constructors it may name unqualified: the
     /// modules it imports whole, under an alias, or through a type selector, which imports the
     /// module whole. A value selector brings in only its binding.
@@ -2221,7 +2256,7 @@ public static class ProjectSupport
         Dictionary<string, IReadOnlySet<string>> result = new(StringComparer.Ordinal);
         foreach (ProjectModule module in modules)
         {
-            HashSet<string> visible = new(module.Imports, StringComparer.Ordinal);
+            HashSet<string> visible = new(module.WholeModuleImports ?? (IEnumerable<string>)module.Imports, StringComparer.Ordinal);
             visible.UnionWith(module.Aliases.Values);
             foreach (ImportSelector selector in module.Selectors)
             {
@@ -4867,7 +4902,7 @@ public static class ProjectSupport
             parsed.ImportNames,
             parsed.ImportAliases,
             parsed.ImportSelectors)
-        { PackageId = "ashes-core" };
+        { PackageId = "ashes-core", WholeModuleImports = CollectWholeModuleImports(parsed.ImportNames, parsed.ImportSelectors) };
         return true;
     }
 

@@ -819,6 +819,41 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    [Arguments("", true)]
+    [Arguments("import Ashes.Collection.Map\n", false)]
+    [Arguments("import Ashes.Collection.Map.MapTree\n", false)]
+    [Arguments("import Ashes.Collection.Map.size\n", true)]
+    public void StandaloneCompilationLayout_should_require_an_import_for_a_shipped_type_named_unqualified(
+        string imports,
+        bool rejected)
+    {
+        string source = imports + """
+            let size (map: MapTree(Str, Int)) = Ashes.Collection.Map.size(map)
+
+            size(Ashes.Collection.Map.empty)
+            """;
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>",
+            parsed.ImportSelectors);
+
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics, new HashSet<string>(["Ashes.Trait", "Ashes.Collection.Map"], StringComparer.Ordinal));
+        lowering.SetSourceContext(layout);
+        _ = lowering.Lower(program);
+
+        bool reported = diagnostics.StructuredErrors.Any(error =>
+            string.Equals(error.Code, DiagnosticCodes.UnimportedModuleName, StringComparison.Ordinal)
+            && error.Message.Contains(
+                "Type 'MapTree' is declared in module 'Ashes.Collection.Map', which this module does not import.",
+                StringComparison.Ordinal));
+        reported.ShouldBe(rejected);
+    }
+
+    [Test]
     public void StandaloneCompilationLayout_should_keep_mutual_recursive_entry_group_flat_after_standard_traits()
     {
         const string source = """
