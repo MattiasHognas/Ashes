@@ -81,6 +81,26 @@ Function: bumpTimes [lambda_8]
     reuse tokens:         0
     copies:               3
 
+Function: __rc_cdrop_9
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: bumpTimes [lambda_8$env_normalize]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
 Function: bumpTimes
   Operations
     dup:                  0
@@ -91,7 +111,7 @@ Function: bumpTimes
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_10]
+Function: count [lambda_11]
   Operations
     dup:                  4
     drop:                 6
@@ -121,7 +141,7 @@ Function: bumpIf
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_10__scalarenv1]
+Function: count [lambda_11__scalarenv1]
   Operations
     dup:                  4
     drop:                 6

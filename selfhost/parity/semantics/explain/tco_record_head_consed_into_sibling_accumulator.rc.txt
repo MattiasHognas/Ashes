@@ -121,6 +121,26 @@ Function: firstLabels [lambda_12]
     reuse tokens:         0
     copies:               4
 
+Function: __rc_cdrop_13
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: firstLabels [lambda_12$env_normalize]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
 Function: firstLabels
   Operations
     dup:                  0
@@ -131,7 +151,7 @@ Function: firstLabels
     reuse tokens:         0
     copies:               0
 
-Function: reversed [lambda_14]
+Function: reversed [lambda_15]
   Operations
     dup:                  12
     drop:                 11
@@ -151,7 +171,7 @@ Function: reversed
     reuse tokens:         0
     copies:               0
 
-Function: reversed [lambda_14__scalarenv0]
+Function: reversed [lambda_15__scalarenv0]
   Operations
     dup:                  12
     drop:                 11
