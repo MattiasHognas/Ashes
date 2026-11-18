@@ -5,7 +5,7 @@ root=$(cd -- "$fixture/../../.." && pwd)
 source "$root/selfhost/tests/render-lib.sh"
 out="$root/work/generic-tuple-byte-parts-mirror"
 mkdir -p "$out"
-core="$root/selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 {
     cat "$fixture/MirrorPrelude.ash"
     for name in nthElementType definitionOfTemp storedSourcesOf readOutOfOwnedValue isFreshRuntimeTemp isTuplePartOffset emitJumpUnlessTuplePartsRequested borrowedTuplePartSource tuplePartStoreCount borrowedStringDemotion stringPartStoreInterval stringPartIntervalHasLabel stringPartIntervalKeepsOwner borrowedStringSurvivesUntilStore guardStringDemotion preserveRequestedStringDemotion preserveRequestedBorrowedStringParts tuplePartStores; do

@@ -850,10 +850,6 @@ let codegenInstructionKind cx builder kind state =
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(text)
                                             |> emitTextParseInt(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
-                                        | TextParseFloat(target, text, managed) ->
-                                            (bindTemp(target)(tempEnv
-                                            |> lookupTemp(cx)(text)
-                                            |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BytesSingleton(target, byte, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(byte)

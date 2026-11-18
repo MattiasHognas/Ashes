@@ -1,3 +1,4 @@
+import Ashes.Text
 type Json(B, N, F, S) =
     | JsonNull
     | JsonBool(B)

@@ -17,3 +17,18 @@ let resolveType (state: CoreLoweringState) semanticType =
 let coverageEnvironment (state: CoreLoweringState) = state.environment
 
 let stateHeapLayoutFactsByType (state: CoreLoweringState) = state.facts
+
+// The heap query context of core lowering, modelled as an empty cache: every query falls through to
+// the classifier over the injected environment and leaves the state unchanged.
+type CoreHeapQueryFacts =
+    | shallowCopy: Maybe(Bool)
+    | children: Maybe(List(HeapLayoutChild))
+    | childTypes: Maybe(List(SemanticType))
+
+let coreHeapQueryFacts (_semanticType: SemanticType) (_state: CoreLoweringState) = CoreHeapQueryFacts(shallowCopy = None, children = None, childTypes = None)
+
+let stateCoverageTypes (state: CoreLoweringState) = state.environment
+
+let queryCoreShallowCopy (semanticType: SemanticType) (state: CoreLoweringState) = (classifyHeapShallowCopy(semanticType)(state.environment), state)
+
+let queryCoreChildTypes (semanticType: SemanticType) (state: CoreLoweringState) = (classifyHeapChildTypes(semanticType)(state.environment), state)

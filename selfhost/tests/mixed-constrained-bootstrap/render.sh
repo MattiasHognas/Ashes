@@ -4,7 +4,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.."
 source selfhost/tests/render-lib.sh
 out=work/mixed-constrained-bootstrap
 mkdir -p "$out"
-extract_declaration selfhost/packages/semantics/src/AshesCompiler/Semantics/IrOptimizer.ash lookupAssociation > "$out/Lookup.ash"
+cp selfhost/tests/mixed-constrained-bootstrap/Lookup.ash.inc "$out/Lookup.ash"
 for fixture in Main AliasMixedLookup PartialMixedLookup EscapedMixedLookup; do
 awk -v helper="$out/Lookup.ash" '
     /^\/\/ OPTIMIZER_LOOKUP$/ {
@@ -34,6 +34,6 @@ awk '
     { print }
     END { if (injected != 1 || changed != 1) exit 1 }
 ' tests/constrained_loop_lowered_at_caller_types_releases_snapshots.ash > "$out/SnapshotLoop.ash"
-sha256sum selfhost/packages/semantics/src/AshesCompiler/Semantics/IrOptimizer.ash \
+sha256sum selfhost/tests/mixed-constrained-bootstrap/Lookup.ash.inc \
     tests/constrained_loop_lowered_at_caller_types_releases_snapshots.ash \
     selfhost/tests/mixed-constrained-bootstrap/{Main.ash,AliasMixedLookup.ash,PartialMixedLookup.ash,EscapedMixedLookup.ash,InlineEqualityControl.ash,render.sh} > "$out/inputs.sha256"

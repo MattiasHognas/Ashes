@@ -72,6 +72,7 @@ export (
     value resolveWrittenTypeBinding,
     value requirementsLeftToWrite,
     value defaultBuiltinArguments,
+    value openBuiltinPrintArgument,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
@@ -201,6 +202,10 @@ type TypeEnvironment =
     // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
     // program inference does, an environment built for lowering does not.
     | lookupIndex: Maybe(BindingLookupIndex)
+    // Whether the expression being inferred runs in the body of an `async` activation, where
+    // `Ashes.Task.fork` may register a child. A lambda's body is a function of its own and runs
+    // outside it. Set under the program inference rules only.
+    | inAsyncBody: Bool
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -215,12 +220,14 @@ type TypeInferenceError =
     // its qualified name, with the argument's type.
     | BuiltinIntArgumentMismatch(Str, SemanticType)
     | UnknownRecordPatternField(Str, Str)
-    | DuplicateRecordPatternField(Str)
+    // A field named twice in a record pattern: the record type and the field.
+    | DuplicateRecordPatternField(Str, Str)
     | UnknownRecordType(Str)
     | RecordUpdateRequiresRecord(SemanticType)
     | MissingRecordField(Str, Str)
     | UnknownRecordField(Str, Str)
-    | DuplicateRecordField(Str)
+    // A field given twice in a record literal or update: the record type and the field.
+    | DuplicateRecordField(Str, Str)
     // The left operand of a Result-aware pipe is not a Result.
     | ExpectedResultType(SemanticType)
     // The value of a `let?` is not a Result.
@@ -232,6 +239,9 @@ type TypeInferenceError =
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InvalidHandler(Str)
+    // A handler operation arm whose parameter count is not the operation's: the capability, the
+    // operation, the arm's parameters, and the arrows of the operation's signature.
+    | HandlerArmParameterCountMismatch(Str, Str, Int, Int)
     | AmbiguousCapabilitySatisfaction(Str)
     | UnsatisfiedCapability(Str)
     | UnknownCapabilityInRow(Str)
@@ -246,6 +256,15 @@ type TypeInferenceError =
     | NonExhaustiveMatch(Str)
     | UnreachableMatchArm(Str)
     | ConstructorPatternsFromDifferentAdts(List(Str))
+    // A call of `Ashes.Task.fork` outside the body of an `async` activation.
+    | ForkOutsideAsync
+    // A call argument whose type does not fit its parameter: the mismatch with the parameter's side
+    // first, the argument's position in its call chain counted from 1, and the chain's root callee
+    // when it is a name.
+    | CallArgumentMismatch(UnificationError, Int, Maybe(Str))
+    // A call chain passing more arguments than its root takes: the root callee when it is a name,
+    // the arguments it takes, the arguments passed, and the type the extra argument was applied to.
+    | CallChainArityMismatch(Maybe(Str), Int, Int, SemanticType)
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     // An error with the span of the innermost located expression it was raised in. Only the
@@ -342,7 +361,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -1527,6 +1546,12 @@ let recursive coverageLength items (acc: Int) =
         | [] -> acc
         | _ :: rest -> coverageLength(rest)(acc + 1)
 
+// The arrows of a signature, counting through a result that is itself a function.
+let recursive signatureArrowCount (count: Int) (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> signatureArrowCount(count + 1)(result)
+        | _ -> count
+
 // A match arm whose whole pattern is a tuple of another length than the scrutinee's tuple type.
 let tuplePatternArityError (scrutineeType: SemanticType) pattern =
     match (scrutineeType, coverageUnwrap(pattern)) with
@@ -1574,6 +1599,50 @@ let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeI
                 |> BuiltinIntArgumentMismatch(name))
             else failure
         | None -> failure
+
+// Whether a call's argument is the body of an `async` activation: the argument of `async` or of
+// `Ashes.Task.task`.
+let callStartsAsyncBody function =
+    match calledVariableName(function) with
+        | Some(name) -> name == "async" || name == "Ashes.Task.task"
+        | None -> false
+
+// The environment a call's argument is inferred in: inside an `async` body when the call starts
+// one, under the program inference rules.
+let callArgumentEnvironment function (environment: TypeEnvironment) =
+    if environment.programInferenceRules && callStartsAsyncBody(function)
+    then environment with inAsyncBody = true
+    else environment
+
+// The environment a lambda's body is inferred in: a lambda is a function of its own, so its body
+// is outside any enclosing `async` body.
+let lambdaBodyEnvironment (environment: TypeEnvironment) =
+    if environment.inAsyncBody
+    then environment with inAsyncBody = false
+    else environment
+
+// Whether a call is of `Ashes.Task.fork` outside an `async` body, which stage 0 rejects at the
+// call's argument.
+let forkCalledOutsideAsync function (environment: TypeEnvironment) =
+    if environment.programInferenceRules && environment.inAsyncBody == false
+    then
+        match calledVariableName(function) with
+            | Some(name) -> name == "Ashes.Task.fork"
+            | None -> false
+    else false
+
+let recursive expressionSpan expression =
+    match expression with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> expressionSpan(inner)
+        | _ -> None
+
+let forkOutsideAsyncFailure argument substitution supply =
+    (let failure = inferenceFailure(SemNever)(substitution)(supply)(ForkOutsideAsync)
+    in
+        match expressionSpan(argument) with
+            | Some(span) -> locateInferenceError(span)(failure)
+            | None -> failure)
 
 let recursive coverageWildcards (count: Int) acc =
     if count <= 0
@@ -2478,6 +2547,132 @@ let unifyIn (environment: TypeEnvironment) left right =
     then unifyFlatRows(left)(right)
     else unify(left)(right)
 
+// The root callee of a call chain `f(a)(b)`: what the innermost call applies.
+let recursive callChainRoot expression =
+    match expression with
+        | ExprAt(_span, inner) -> callChainRoot(inner)
+        | ExprNode(_id, inner) -> callChainRoot(inner)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callChainRoot(function)
+        | other -> other
+
+// The span of a call chain's root callee, when the root is located.
+let recursive callChainRootSpan expression (enclosing: Maybe(TextSpan)) =
+    match expression with
+        | ExprAt(span, inner) -> callChainRootSpan(inner)(Some(span))
+        | ExprNode(_id, inner) -> callChainRootSpan(inner)(enclosing)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callChainRootSpan(function)(None)
+        | _ -> enclosing
+
+// How many arguments `expression`, a callee, has already been applied to in its call chain.
+let recursive callChainLength expression =
+    match expression with
+        | ExprAt(_span, inner) -> callChainLength(inner)
+        | ExprNode(_id, inner) -> callChainLength(inner)
+        | ExprCall(function, _argument, _whitespace, _layout) -> 1 + callChainLength(function)
+        | _ -> 0
+
+let callRootName function =
+    match callChainRoot(function) with
+        | ExprVar(name) -> Some(name)
+        | _ -> None
+
+let startsWithUppercase (name: Str) =
+    (let first = Ashes.Text.substring(name)(0)(1)
+    in first >= "A" && first <= "Z")
+
+let callRootIsConstructor function =
+    match callRootName(function) with
+        | Some(name) -> startsWithUppercase(name)
+        | None -> false
+
+// Whether a failed call is worded at its call site as stage 0 words a call of a user function or a
+// constructor: a chain rooted at a plain name or at an expression that is no name. A root naming
+// a compiler-provided member (`Ashes.Rune.isAsciiDigit`), a capability operation or trait method
+// (`Clock.now`, `Show.show`), or an external function keeps the error it has.
+let callSiteWorded function (environment: TypeEnvironment) =
+    match callChainRoot(function) with
+        | ExprVar(name) ->
+            if Ashes.Text.indexOf(name)(".") >= 0
+            then false
+            else
+                match resolveExternalFunctionBinding(name)(environment) with
+                    | Some(_external) -> false
+                    | None -> true
+        | ExprQualifiedVar(_moduleName, _member) -> false
+        | _ -> true
+
+// A call whose callee is no function: the chain passed more arguments than its root takes. The
+// error is located at the root, as stage 0 locates it.
+let callArityFailure function (calleeType: SemanticType) (failure: TypeInferenceResult) =
+    (let taken = callChainLength(function)
+    in
+        let error =
+            CallChainArityMismatch(callRootName(function))(taken)(taken + 1)(calleeType)
+        in
+            match callChainRootSpan(function)(None) with
+                | Some(span) ->
+                    failure with error = Some(InferenceErrorAt(span)(error))
+                | None -> failure with error = Some(error))
+
+// A failed call as stage 0 words it at the call site: an argument that does not fit its
+// parameter, with the parameter's side first, or a callee that is no function. A failure of the
+// capability row or of a constructor's argument keeps the error it has.
+let callSiteFailure function functionType argumentType argumentSubstitution (environment: TypeEnvironment) (failure: TypeInferenceResult) =
+    if environment.programInferenceRules && callSiteWorded(function)(environment)
+    then
+        match applySubstitution(argumentSubstitution)(functionType) with
+            | SemFunction(parameter, _result, _row) ->
+                if callRootIsConstructor(function)
+                then failure
+                else
+                    match argumentType
+                    |> applySubstitution(argumentSubstitution)
+                    |> unifyIn(environment)(parameter) with
+                        | UnificationResult { error = Some(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail))) } -> failure
+                        | UnificationResult { error = Some(mismatch) } ->
+                            failure with error = Some(function
+                            |> callRootName
+                            |> CallArgumentMismatch(mismatch)(callChainLength(function) + 1))
+                        | UnificationResult { error = None } -> failure
+            | SemVariable(_id) -> failure
+            | SemNever -> failure
+            | calleeType -> callArityFailure(function)(calleeType)(failure)
+    else failure
+
+let sameCallee (left: Maybe(Str)) (right: Maybe(Str)) =
+    match (left, right) with
+        | (Some(leftName), Some(rightName)) -> leftName == rightName
+        | (None, None) -> true
+        | _ -> false
+
+// A call chain's arity error seen from the call that applies the failed chain, `function`, once
+// more: stage 0 counts every argument of the chain for a callee that takes some, and for a
+// constructor. An error from elsewhere (an argument of a call in the chain) is left as it is; it
+// is told apart by its root and by the count, which is the length of `function`'s chain only for
+// its own chain.
+let recursive countedChainArgument (function: Expr) error =
+    match error with
+        | InferenceErrorAt(span, inner) ->
+            inner
+            |> countedChainArgument(function)
+            |> InferenceErrorAt(span)
+        | CallChainArityMismatch(callee, expected, provided, calleeType) ->
+            let counts =
+                match callee with
+                    | Some(name) -> expected > 0 || startsWithUppercase(name)
+                    | None -> expected > 0
+            in
+                if counts && provided == callChainLength(function) && sameCallee(callee)(callRootName(function))
+                then CallChainArityMismatch(callee)(expected)(provided + 1)(calleeType)
+                else error
+        | other -> other
+
+let countedChainFailure (function: Expr) (failure: TypeInferenceResult) =
+    match failure with
+        | TypeInferenceResult { error = Some(error) } ->
+            failure with error = Some(countedChainArgument(function)(error))
+        | _ -> failure
+
 let mergeUnificationIn (environment: TypeEnvironment) currentSubstitution result supply fallbackType =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
@@ -3021,12 +3216,26 @@ let recursive requirementsNotHeld (environment: TypeEnvironment) (constraints: L
                 | RequirementHolds -> requirementsNotHeld(environment)(tail)
                 | _ -> head :: requirementsNotHeld(environment)(tail)
 
-// Under the program rules a binding's requirements are weighed against the implementations: one
-// that no implementation supplies is an error where it arises, and one an implementation settles
-// is not something the binding's written `requires` has to repeat.
+// The requirements whose types are all known. One that still holds a type variable is passed on
+// to the binding's users with its scheme and is resolved where they settle the variable, whether
+// or not an implementation can fit it here, as stage 0 does.
+let recursive closedRequirements (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | (TraitConstraint { typeArguments = typeArguments } as constraint) :: tail ->
+            match freeTypeVariables(SemTuple(typeArguments)) with
+                | [] -> constraint :: closedRequirements(tail)
+                | _ -> closedRequirements(tail)
+
+// Under the program rules a binding's requirements on known types are weighed against the
+// implementations: one that no implementation supplies is an error where it arises, and one an
+// implementation settles is not something the binding's written `requires` has to repeat.
 let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
     if environment.programInferenceRules
-    then firstFailedRequirement(environment)(constraints)
+    then
+        constraints
+        |> closedRequirements
+        |> firstFailedRequirement(environment)
     else None
 
 // The requirements a binding still has to carry: one that the implementations in scope already
@@ -3090,48 +3299,115 @@ let validateWrittenBindingRequirements inferred written semanticType substitutio
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
 
-// `Ashes.Text.fromInt` and `Ashes.Text.toHex` are typed `Int -> Str` and take an unsigned width
-// only where the argument is already known to be one, so a requirement of theirs on a variable the
-// binding would generalize over settles that variable to `Int` instead.
-let defaultsBuiltinArgumentToInt (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+// The compiler-private argument requirements of `Ashes.Text.fromInt`, `Ashes.Text.toHex`,
+// `Ashes.Number.UInt.toInt` and `Ashes.IO.print` accept several argument types, and stage 0 types
+// the argument at the call when nothing has typed it yet. A requirement of theirs on a variable
+// the binding would generalize over follows that rule: `fromInt` and `toHex` settle it to `Int`,
+// `UInt.toInt` to `u8`, and `print`, which stage 0 rejects for an open argument, is an error.
+let builtinArgumentDefault (traitName: Str) =
+    if traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument"
+    then Some(SemInt)
+    else
+        if traitName == "$UnsignedIntegerArgument"
+        then Some(SemUInt(8))
+        else None
+
+let isBuiltinArgumentTrait (traitName: Str) = traitName == "$TextFromIntArgument" || traitName == "$TextToHexArgument" || traitName == "$UnsignedIntegerArgument" || traitName == "$PrintArgument"
 
 let recursive variableListed (variableId: Int) (variables: List(Int)) =
     match variables with
         | [] -> false
         | head :: tail -> head == variableId || variableListed(variableId)(tail)
 
-let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List(Int)) =
+let recursive builtinArgumentCandidates (constraints: List(TraitConstraint)) substitution (found: List((Int, Str))) =
     match constraints with
         | [] -> found
         | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
-            if defaultsBuiltinArgumentToInt(traitName)
+            if isBuiltinArgumentTrait(traitName)
             then
                 match applySubstitution(substitution)(argument) with
-                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)(variableId :: found)
+                    | SemVariable(variableId) -> builtinArgumentCandidates(rest)(substitution)((variableId, traitName) :: found)
                     | _ -> builtinArgumentCandidates(rest)(substitution)(found)
             else builtinArgumentCandidates(rest)(substitution)(found)
         | _ :: rest -> builtinArgumentCandidates(rest)(substitution)(found)
 
-let recursive bindBuiltinArgumentDefaults (candidates: List(Int)) (environmentVariables: List(Int)) substitution =
+let recursive bindBuiltinArgumentDefaults (candidates: List((Int, Str))) (environmentVariables: List(Int)) (bound: List(Int)) substitution =
     match candidates with
         | [] -> substitution
-        | variableId :: rest ->
-            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(rest)
-            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(substitution)
-            else bindBuiltinArgumentDefaults(rest)(environmentVariables)((variableId, SemInt) :: substitution)
+        | (variableId, traitName) :: rest ->
+            if variableListed(variableId)(environmentVariables) || variableListed(variableId)(bound)
+            then bindBuiltinArgumentDefaults(rest)(environmentVariables)(bound)(substitution)
+            else
+                match builtinArgumentDefault(traitName) with
+                    | Some(defaultType) -> bindBuiltinArgumentDefaults(rest)(environmentVariables)(variableId :: bound)((variableId, defaultType) :: substitution)
+                    | None -> bindBuiltinArgumentDefaults(rest)(environmentVariables)(bound)(substitution)
 
-// The substitution with every such variable bound to `Int`, under the program inference rules
-// only; the environment is scanned only when a candidate exists.
+// A `print` argument the binding would generalize over that no default settled.
+let recursive openPrintArgument (candidates: List((Int, Str))) (environmentVariables: List(Int)) substitution =
+    match candidates with
+        | [] -> None
+        | (variableId, traitName) :: rest ->
+            if traitName == "$PrintArgument" && variableListed(variableId)(environmentVariables) == false
+            then
+                match applySubstitution(substitution)(SemVariable(variableId)) with
+                    | SemVariable(openId) -> Some(SemVariable(openId))
+                    | _ -> openPrintArgument(rest)(environmentVariables)(substitution)
+            else openPrintArgument(rest)(environmentVariables)(substitution)
+
+// The substitution with every such variable settled, and the open `print` argument if one is left.
+// The environment is scanned only when a candidate exists.
+let settleBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    match builtinArgumentCandidates(constraints)(substitution)([]) with
+        | [] -> (substitution, None)
+        | candidates ->
+            let environmentVariables =
+                resolveEnvironmentVariables(substitution)(environment
+                |> inferenceEnvironmentSchemes
+                |> freeEnvironmentVariables)([])
+            in
+                let defaulted = bindBuiltinArgumentDefaults(candidates)(environmentVariables)([])(substitution)
+                in (defaulted, openPrintArgument(candidates)(environmentVariables)(defaulted))
+
+// The substitution with every such variable settled, under the program inference rules only.
 let defaultBuiltinArguments (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
     if environment.programInferenceRules
     then
-        match builtinArgumentCandidates(constraints)(substitution)([]) with
-            | [] -> substitution
-            | candidates ->
-                bindBuiltinArgumentDefaults(candidates)(resolveEnvironmentVariables(substitution)(environment
-                |> inferenceEnvironmentSchemes
-                |> freeEnvironmentVariables)([]))(substitution)
+        match settleBuiltinArguments(environment)(constraints)(substitution) with
+            | (defaulted, _openPrint) -> defaulted
     else substitution
+
+// The `print` argument a binding would generalize over, under the program inference rules only;
+// `substitution` is the one its defaults were settled in.
+let openBuiltinPrintArgument (environment: TypeEnvironment) (constraints: List(TraitConstraint)) substitution =
+    if environment.programInferenceRules
+    then
+        match settleBuiltinArguments(environment)(constraints)(substitution) with
+            | (_defaulted, openPrint) -> openPrint
+    else None
+
+let recursive quantifiedIdListed (variableId: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variableId || quantifiedIdListed(variableId)(rest)
+
+// The builtin argument requirements of a `let` value on a variable its scheme does not quantify.
+// They belong to the enclosing binding, which settles or rejects them when it generalizes, so they
+// are passed on with the `let`'s body also when the bound name is never used (`let _ = print(x)`).
+// Under the program inference rules only.
+let recursive retainedBuiltinArgumentRequirements (environment: TypeEnvironment) (quantified: List((Int, Str))) substitution (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then
+        match constraints with
+            | [] -> []
+            | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as constraint) :: rest ->
+                match (isBuiltinArgumentTrait(traitName), applySubstitution(substitution)(argument)) with
+                    | (true, SemVariable(variableId)) ->
+                        if quantifiedIdListed(variableId)(quantified)
+                        then retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+                        else constraint :: retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+                    | _ -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+            | _ :: rest -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+    else []
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
@@ -3147,12 +3423,19 @@ let validateSettledBindingRequirements requirements inferred written selected se
                 | [] ->
                     if environment.programInferenceRules
                     then
-                        let defaulted = defaultBuiltinArguments(environment)(selected)(substitution)
-                        in
-                            selected
-                            |> applyInferenceConstraints(defaulted)
-                            |> requirementsLeftToWrite(environment)
-                            |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
+                        match settleBuiltinArguments(environment)(selected)(substitution) with
+                            | (_defaulted, Some(openArgument)) ->
+                                inferenceFailure(
+                                    semanticType,
+                                    substitution,
+                                    supply,
+                                    NoTraitImplementation("$PrintArgument")([openArgument])
+                                )
+                            | (defaulted, None) ->
+                                selected
+                                |> applyInferenceConstraints(defaulted)
+                                |> requirementsLeftToWrite(environment)
+                                |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
                     else
                         selected
                         |> requirementsLeftToWrite(environment)
@@ -3412,7 +3695,7 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                     substitution,
                     supply,
                     names,
-                    DuplicateRecordPatternField(fieldName)
+                    DuplicateRecordPatternField(constructorName)(fieldName)
                 )
             else
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
@@ -3479,7 +3762,10 @@ and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultTy
                 )
         | (fieldName, fieldExpression) :: tail ->
             if patternNameExists(fieldName)(seenFields)
-            then inferenceFailure(SemNever)(substitution)(supply)(DuplicateRecordField(fieldName))
+            then
+                fieldName
+                |> DuplicateRecordField(recordName)
+                |> inferenceFailure(SemNever)(substitution)(supply)
             else
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
                     | None ->
@@ -3882,8 +4168,13 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                             ) with
                                 | None ->
                                     HandlerArmInference(substitution = operationSubstitution, supply = operationSupply, constraints = accumulatedConstraints, error = Some(
-                                        InvalidHandler(
-                                            "operation arm parameter count does not match " + capabilityName + "." + operationName
+                                        HandlerArmParameterCountMismatch(
+                                            capabilityName,
+                                            operationName,
+                                            coverageLength(parameters)(0),
+                                            operationType
+                                            |> applySubstitution(operationSubstitution)
+                                            |> signatureArrowCount(0)
                                         )
                                     ))
                                 | Some(HandlerOperationShape { parameters = parameterTypes, resultType = operationResultType }) ->
@@ -4709,7 +5000,9 @@ and inferAgainst expected expression environment substitution supply ambientRow 
                     in
                         match freshTypeVariable(supply) with
                             | (bodyAmbientRow, bodyAmbientSupply) ->
-                                match inferAgainst(expectedResult)(body)(addTypeBinding(name)(parameterScheme)(environment))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
+                                match inferAgainst(expectedResult)(body)(environment
+                                |> lambdaBodyEnvironment
+                                |> addTypeBinding(name)(parameterScheme))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
                                     | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
                                         addConstraints(
                                             bodyConstraints,
@@ -4865,7 +5158,10 @@ and inferWith expression environment substitution supply ambientRow =
                             | TypeInferenceResult { semanticType = checkedParameter, substitution = annotationSubstitution, supply = annotationSupply, constraints = _annotationConstraints, error = None } ->
                                 let parameterScheme = TypeScheme(quantified = [], body = checkedParameter, constraints = [])
                                 in
-                                    let bodyEnvironment = addTypeBinding(name)(parameterScheme)(environment)
+                                    let bodyEnvironment =
+                                        environment
+                                        |> lambdaBodyEnvironment
+                                        |> addTypeBinding(name)(parameterScheme)
                                     in
                                         match freshTypeVariable(annotationSupply) with
                                             | (bodyAmbientRow, bodyAmbientSupply) ->
@@ -4910,54 +5206,60 @@ and inferWith expression environment substitution supply ambientRow =
                                                     | failure -> failure
                             | failure -> failure
         | ExprCall(function, argument, _whitespace, _layout) ->
-            match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
-                | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
-                    match inferWith(argument)(environment)(functionSubstitution)(functionSupply)(ambientRow) with
-                        | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
-                            match freshTypeVariable(argumentSupply) with
-                                | (resultType, resultSupply) ->
-                                    match freshTypeVariable(resultSupply) with
-                                        | (callRow, callRowSupply) ->
-                                            let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
-                                            in
-                                                let unification =
-                                                    unifyIn(environment)(
-                                                        applySubstitution(argumentSubstitution)(functionType),
-                                                        expectedFunction
-                                                    )
+            if forkCalledOutsideAsync(function)(environment)
+            then forkOutsideAsyncFailure(argument)(substitution)(supply)
+            else
+                match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
+                    | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
+                        match inferWith(argument)(callArgumentEnvironment(function)(environment))(functionSubstitution)(functionSupply)(ambientRow) with
+                            | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
+                                match freshTypeVariable(argumentSupply) with
+                                    | (resultType, resultSupply) ->
+                                        match freshTypeVariable(resultSupply) with
+                                            | (callRow, callRowSupply) ->
+                                                let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
                                                 in
-                                                    match mergeUnificationIn(environment)(
-                                                        argumentSubstitution,
-                                                        unification,
-                                                        callRowSupply,
-                                                        resultType
-                                                    ) with
-                                                        | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                            let callResult =
-                                                                subsumeCapabilityRow(
-                                                                    callRow,
-                                                                    environment,
-                                                                    ambientRow,
-                                                                    unifiedSubstitution,
-                                                                    unifiedSupply,
-                                                                    unifiedResultType
-                                                                )
-                                                            in
-                                                                addConstraints(
-                                                                    appendConstraints(
-                                                                        functionConstraints,
-                                                                        argumentConstraints
-                                                                    ),
-                                                                    subsumeUnsignedCapabilityOperation(
-                                                                        function,
+                                                    let unification =
+                                                        unifyIn(environment)(
+                                                            applySubstitution(argumentSubstitution)(functionType),
+                                                            expectedFunction
+                                                        )
+                                                    in
+                                                        match mergeUnificationIn(environment)(
+                                                            argumentSubstitution,
+                                                            unification,
+                                                            callRowSupply,
+                                                            resultType
+                                                        ) with
+                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
+                                                                let callResult =
+                                                                    subsumeCapabilityRow(
+                                                                        callRow,
                                                                         environment,
                                                                         ambientRow,
-                                                                        callResult
+                                                                        unifiedSubstitution,
+                                                                        unifiedSupply,
+                                                                        unifiedResultType
                                                                     )
-                                                                )
-                                                        | failure -> builtinArgumentFailure(function)(argumentType)(failure)
-                        | failure -> failure
-                | failure -> failure
+                                                                in
+                                                                    addConstraints(
+                                                                        appendConstraints(
+                                                                            functionConstraints,
+                                                                            argumentConstraints
+                                                                        ),
+                                                                        subsumeUnsignedCapabilityOperation(
+                                                                            function,
+                                                                            environment,
+                                                                            ambientRow,
+                                                                            callResult
+                                                                        )
+                                                                    )
+                                                            | failure ->
+                                                                failure
+                                                                |> builtinArgumentFailure(function)(argumentType)
+                                                                |> callSiteFailure(function)(functionType)(argumentType)(argumentSubstitution)(environment)
+                            | failure -> failure
+                    | failure -> countedChainFailure(function)(failure)
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
@@ -4985,7 +5287,12 @@ and inferWith expression environment substitution supply ambientRow =
                                 in
                                     let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
                                     in
-                                        inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
+                                        match scheme with
+                                            | TypeScheme { quantified = quantified } ->
+                                                addConstraints(
+                                                    retainedBuiltinArgumentRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
+                                                    inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
+                                                )
                         | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) ->

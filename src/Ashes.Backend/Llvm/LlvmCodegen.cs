@@ -163,8 +163,6 @@ internal static partial class LlvmCodegen
     private const string FileReadInvalidUtf8Message = "Ashes.IO.File.readText() encountered invalid UTF-8";
     private const string TextParseIntInvalidMessage = "Ashes.Text.parseInt() invalid input";
     private const string TextParseIntOverflowMessage = "Ashes.Text.parseInt() overflow";
-    private const string TextParseFloatInvalidMessage = "Ashes.Text.parseFloat() invalid input";
-    private const string TextParseFloatRangeMessage = "Ashes.Text.parseFloat() out of range";
     private const string TcpConnectFailedMessage = "Ashes.Net.Tcp.connect() failed";
     private const string TcpSendFailedMessage = "Ashes.Net.Tcp.send() failed";
     private const string TcpReceiveFailedMessage = "Ashes.Net.Tcp.receive() failed";
@@ -1925,7 +1923,6 @@ internal static partial class LlvmCodegen
             IrInst.EnvironmentDirectory or IrInst.EnvironmentGet => EmitEnvironmentInstruction(state, instruction),
             IrInst.TextUncons or IrInst.TextUnconsText or IrInst.RuneToText or IrInst.RuneFromInt => EmitRuneInstruction(state, instruction),
             IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp), textParseInt.RuntimeManaged)),
-            IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp), textParseFloat.RuntimeManaged)),
             IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(
                 state,
                 LoadTemp(state, textFromInt.ValueTemp),

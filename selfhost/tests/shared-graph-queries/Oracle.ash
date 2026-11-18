@@ -3,6 +3,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeGraphIndex
 import AshesCompiler.Semantics.TypeGraphQueries
 import AshesCompiler.Semantics.HeapLayoutClassification
+import AshesCompiler.Semantics.TypeInference.TypeEnvironment
 export (
     value rootViewsAgree,
 )

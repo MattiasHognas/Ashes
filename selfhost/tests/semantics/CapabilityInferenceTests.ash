@@ -4,6 +4,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.Unification
 let clockDeclaration =
     CapabilityDecl(name = "Clock", typeParameters = [], operations = [CapabilityOperation(name = "now", signature = None
     |> TypeArrow(TypeUnit)(TypeNamed("Int"))([])

@@ -579,7 +579,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 provenTraitGoals = Ashes.Collection.Map.empty,
                 provenSiblingCallResults = Ashes.Collection.Map.empty,
                 typeObservation = None,
-                nodeTypes = None
+                nodeTypes = None,
+                nodeInstantiation = []
             ),
             functionState = CoreFunctionState(
                 admissibilityAnswers = [],

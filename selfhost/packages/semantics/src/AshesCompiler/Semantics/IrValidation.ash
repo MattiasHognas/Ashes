@@ -222,7 +222,6 @@ let instructionTemps (kind: IrInstructionKind) =
         | RuneToText(t1, t2, _) -> [t1, t2]
         | RuneFromInt(t1, t2, _) -> [t1, t2]
         | TextParseInt(t1, t2, _) -> [t1, t2]
-        | TextParseFloat(t1, t2, _) -> [t1, t2]
         | TextFromInt(t1, t2, _) -> [t1, t2]
         | TextFromFloat(t1, t2, _) -> [t1, t2]
         | TextFormatFloat(t1, t2, t3, _) -> [t1, t2, t3]

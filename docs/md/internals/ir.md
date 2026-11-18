@@ -428,7 +428,6 @@ All file operations return `Result` ADTs: `Ok(value)` on success,
 |-------------|--------|-------------|
 | `TextUncons` | `Target`, `TextTemp` | Split front scalar → `Maybe((Str, Str))` |
 | `TextParseInt` | `Target`, `TextTemp` | Parse decimal integer → `Result<Int>` |
-| `TextParseFloat` | `Target`, `TextTemp` | Parse decimal float → `Result<Float>` |
 
 These instructions return the existing `Maybe` and `Result` ADTs.
 

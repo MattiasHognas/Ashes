@@ -73,7 +73,7 @@ let oneRound n =
             let transformed =
                 match preserveRequestedBorrowedStringParts(12)([0])([SemBytes])(forward)([])(state)([]) with
                     | (guarded, borrowed) ->
-                        match tuplePartStores(reverse(guarded.reversedInstructions))(0)([12])([0])([])([])(reverse(guarded.reversedInstructions))(guarded)(borrowed)([])([]) with
+                        match tuplePartStores(reverse(guarded.reversedInstructions))(0)([12])([0])([])([])([])(reverse(guarded.reversedInstructions))(guarded)(borrowed)([])([]) with
                             | ([], (_position, 11) :: []) -> borrowed == [(11, 6)] && guarded.nextTemp == 105 + n && guarded.nextLabelId == 51 && tuplePartStoreCount(12)(0)(guarded.reversedInstructions)(0) == 1
                             | _ -> false
             in

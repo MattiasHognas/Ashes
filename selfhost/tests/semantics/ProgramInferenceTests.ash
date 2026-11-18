@@ -3,6 +3,9 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeResolution
+import AshesCompiler.Semantics.Unification
 let expectProgramType expected program =
     match inferProgram(program) with
         | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->

@@ -1025,40 +1025,6 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
-    private (int, TypeRef) LowerTextParseFloat(
-        Expr textArg,
-        LoweredValueRequest request = default)
-    {
-        using var diagnosticSpan = PushDiagnosticSpan(textArg);
-        var (textTemp, textType) = LowerExpr(textArg);
-        var loweredType = Prune(textType);
-
-        if (loweredType is TypeRef.TNever)
-        {
-            return (textTemp, loweredType);
-        }
-
-        if (loweredType is TypeRef.TVar)
-        {
-            Unify(loweredType, new TypeRef.TStr());
-            loweredType = new TypeRef.TStr();
-        }
-
-        if (loweredType is not TypeRef.TStr)
-        {
-            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.parseFloat() expects Str but got {Pretty(loweredType)}.");
-            return (textTemp, loweredType);
-        }
-
-        var target = NewTemp();
-        Emit(new IrInst.TextParseFloat(
-            target,
-            textTemp,
-            request.EmitsRuntime(
-                LoweredValueRuntimeRepresentation.ScalarAdtResult)));
-        return (target, CreateStringResultType(new TypeRef.TFloat()));
-    }
-
     private (int, TypeRef) LowerTextFromInt(
         Expr valueArg,
         LoweredValueRequest request = default)
@@ -3101,14 +3067,6 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.RegexSubstitute,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TStr()))))
-        );
-    }
-
-    private Binding.Intrinsic CreateTextParseFloatBinding()
-    {
-        return new Binding.Intrinsic(
-            IntrinsicKind.TextParseFloat,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TFloat())))
         );
     }
 

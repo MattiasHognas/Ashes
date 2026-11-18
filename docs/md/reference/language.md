@@ -2214,10 +2214,16 @@ returns `""` for the empty list.
 optional leading `-` followed by decimal digits. Malformed input and overflow
 return `Error(message)`.
 
-`Ashes.Text.parseFloat` has type `Str -> Result(Str, Float)`. It accepts a
-decimal integer part with an optional fractional part and optional exponent
-using `e` or `E`. Malformed input and out-of-range values return
-`Error(message)`.
+`Ashes.Text.parseFloat` has type `Str -> Result(Str, Float)`. It accepts an
+optional leading `-`, a decimal integer part, an optional fractional part (`.`
+followed by at least one digit), and an optional exponent (`e` or `E`, an
+optional `+` or `-`, and at least one digit). The result is the Float nearest
+to the decimal value, with ties rounding to even, so every spelling of a value
+decodes to the same bits as an IEEE-754 conversion. A value whose rounded
+magnitude exceeds the largest finite Float returns
+`Error("Ashes.Text.parseFloat() out of range")`; a value too small to represent
+rounds to a subnormal or to zero, and `-0`-valued input returns `-0.0`.
+Malformed input returns `Error("Ashes.Text.parseFloat() invalid input")`.
 
 `Ashes.Text.fromInt` has type `Int -> Str` and formats decimal integers,
 including negative values. `Ashes.Text.fromFloat` has type `Float -> Str` and

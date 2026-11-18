@@ -79,7 +79,10 @@ type ProgramInferenceError =
     | UnknownTraitImplementationRequirement(Str, Str)
     | TraitImplementationRequirementArityMismatch(Str, Int, Int)
     | TraitImplementationRequirementVariableEscapes(Str, Str)
-    | NonDecreasingTraitImplementationRequirement(Str, Str)
+    // A generic implementation's requirement no smaller than its head: the implemented trait, the
+    // head's types, the required trait, and the requirement's types.
+    | NonDecreasingTraitImplementationRequirement(Str, List(SemanticType), Str, List(SemanticType))
+    // The implemented trait and the cycle among its selected defaults, written `a -> b -> a`.
     | DefaultTraitMethodDependencyCycle(Str, Str)
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
@@ -215,6 +218,7 @@ type TraitHeadOverlapResult =
 
 type DefaultMethodCycleValidation =
     | completed: List(Str)
+    // The cycle found, written as `defaultCycleTrace` writes it.
     | cycle: Maybe(Str)
 
 let recursive syntaxListLength parameters =
@@ -376,7 +380,7 @@ let inferSeededRecursiveBindings groupType pending environment boundaryEnvironme
         | failure -> failure
 
 // The group's substitution with each builtin argument requirement on a variable the group would
-// generalize over settled to `Int`, as a single binding's is.
+// generalize over settled as a single binding's is.
 let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substitution =
     match bindings with
         | [] -> substitution
@@ -384,6 +388,16 @@ let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substit
             substitution
             |> defaultBuiltinArguments(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))
             |> defaultRecursiveBuiltinArguments(tail)(outerEnvironment)
+
+// The `print` argument a member of the group would generalize over, once the group's defaults are
+// settled.
+let recursive recursiveOpenPrintArgument bindings outerEnvironment substitution =
+    match bindings with
+        | [] -> None
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            match openBuiltinPrintArgument(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))(substitution) with
+                | Some(argument) -> Some(argument)
+                | None -> recursiveOpenPrintArgument(tail)(outerEnvironment)(substitution)
 
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
     match bindings with
@@ -429,14 +443,22 @@ let inferRecursiveGroup bindings state =
                                 | None ->
                                     let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
                                     in
-                                        let finalEnvironment =
-                                            generalizeRecursiveBindings(
-                                                resolved,
-                                                outerEnvironment,
-                                                defaultedSubstitution,
-                                                outerEnvironment
-                                            )
-                                        in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                        match recursiveOpenPrintArgument(resolved)(outerEnvironment)(defaultedSubstitution) with
+                                            | Some(argument) ->
+                                                ProgramInferenceState(environment = outerEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
+                                                    [argument]
+                                                    |> NoTraitImplementation("$PrintArgument")
+                                                    |> ProgramExpressionError
+                                                ))
+                                            | None ->
+                                                let finalEnvironment =
+                                                    generalizeRecursiveBindings(
+                                                        resolved,
+                                                        outerEnvironment,
+                                                        defaultedSubstitution,
+                                                        outerEnvironment
+                                                    )
+                                                in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)
@@ -1660,7 +1682,7 @@ let recursive firstNonDecreasingRequirement headSize requirements =
             let requirementSize = 1 + semanticTypesStructuralSize(typeArguments)
             in
                 if requirementSize >= headSize
-                then Some(traitName)
+                then Some((traitName, typeArguments))
                 else firstNonDecreasingRequirement(headSize)(tail)
 
 // Structural decrease is load-bearing only for generic heads. Concrete heads cannot expand through
@@ -1832,6 +1854,13 @@ let recursive findInferenceTraitMethod methodName methods =
                 )
             else findInferenceTraitMethod(methodName)(tail)
 
+// A default-method cycle as stage 0 names it: the methods from the first one visited to the one
+// reached again, joined by arrows. `path` holds the methods visited so far, most recent first.
+let defaultCycleTrace (methodName: Str) (path: List(Str)) =
+    methodName :: path
+    |> reverse
+    |> Ashes.Text.join(" -> ")
+
 let recursive validateDefaultMethodDependencies traitName methodName body remaining activeDefaults methods path completed =
     match remaining with
         | [] -> DefaultMethodCycleValidation(completed = methodName :: completed, cycle = None)
@@ -1874,7 +1903,10 @@ and validateDefaultMethodDependency traitName methodName activeDefaults methods 
     then DefaultMethodCycleValidation(completed = completed, cycle = None)
     else
         if nameExists(methodName)(path)
-        then DefaultMethodCycleValidation(completed = completed, cycle = Some(methodName))
+        then
+            DefaultMethodCycleValidation(completed = completed, cycle = path
+            |> defaultCycleTrace(methodName)
+            |> Some)
         else
             match findInferenceTraitMethod(methodName)(methods) with
                 | None -> DefaultMethodCycleValidation(completed = completed, cycle = None)
@@ -1904,9 +1936,9 @@ let recursive validateDefaultMethodDependencyRoots traitName remaining activeDef
                         methods,
                         nextCompleted
                     )
-                | DefaultMethodCycleValidation { completed = _nextCompleted, cycle = Some(methodName) } ->
+                | DefaultMethodCycleValidation { completed = _nextCompleted, cycle = Some(trace) } ->
                     Some(
-                        methodName
+                        trace
                     )
 
 let validateDefaultMethodDependencyCycles traitName methods bindings =
@@ -2182,11 +2214,9 @@ let registerTraitImplementation (offset: Maybe(Int)) declaration state =
                                                             resolvedTypeArguments,
                                                             resolvedRequirements
                                                         ) with
-                                                            | Some(requirementTraitName) ->
-                                                                ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = requirementTraitName
-                                                                |> NonDecreasingTraitImplementationRequirement(
-                                                                    traitName
-                                                                )
+                                                            | Some((requirementTraitName, requirementTypes)) ->
+                                                                ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = requirementTypes
+                                                                |> NonDecreasingTraitImplementationRequirement(traitName)(resolvedTypeArguments)(requirementTraitName)
                                                                 |> Some)
                                                             | None ->
                                                                 if implementationSatisfiesOrphanRule(
@@ -2265,8 +2295,8 @@ let registerTraitImplementation (offset: Maybe(Int)) declaration state =
                                                                                                             traitMethods,
                                                                                                             bindings
                                                                                                         ) with
-                                                                                                            | Some(methodName) ->
-                                                                                                                ProgramInferenceState(environment = environment, substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = methodName
+                                                                                                            | Some(trace) ->
+                                                                                                                ProgramInferenceState(environment = environment, substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = trace
                                                                                                                 |> DefaultTraitMethodDependencyCycle(
                                                                                                                     traitName
                                                                                                                 )

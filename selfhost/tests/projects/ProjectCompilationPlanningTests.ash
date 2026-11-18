@@ -2,6 +2,7 @@ import Ashes.Test as test
 import Ashes.IO.Path
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.ModulePlan
+import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery

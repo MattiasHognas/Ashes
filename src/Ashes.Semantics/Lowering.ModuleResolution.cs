@@ -378,7 +378,6 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerQualifiedBuiltinFunctionReference(name, CreateRegexCapturesBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerQualifiedBuiltinFunctionReference(name, CreateRegexSubstituteBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerQualifiedBuiltinFunctionReference(name, CreateTextParseIntBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerQualifiedBuiltinFunctionReference(name, CreateTextParseFloatBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerQualifiedBuiltinFunctionReference(name, CreateTextFromIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerQualifiedBuiltinFunctionReference(name, CreateTextFromFloatBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerQualifiedBuiltinFunctionReference(name, CreateTextFormatFloatBinding().S.Body),

@@ -26,6 +26,7 @@ import AshesCompiler.Semantics.CoreLowering.Aggregates
 export (
     value keepLoopResultFieldCellHeadDuplicateOwned,
     value retainEscapingArgumentRead,
+    value constructorArgumentRequest,
     value handsFreshChildrenToOwnedSlots,
     value handFreshChildToOwnedSlot,
     value lowerConstructor,

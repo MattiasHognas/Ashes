@@ -427,7 +427,7 @@ let emitArenaResultAdt context function_ builder i64 i8 ptrType (arena: ArenaRun
         |> (given (_) -> address))
 
 // A builtin's one-field `Result` placed by its instruction's flag, as stage 0's `EmitResultOk`/
-// `EmitResultError` take `runtimeManaged` for `Text.parseInt`, `Text.parseFloat`,
+// `EmitResultError` take `runtimeManaged` for `Text.parseInt`,
 // `BigInt.toInt` and `BigInt.parse`: a reference-counted cell when the result escapes, otherwise
 // the arena cell every other builtin result is.
 let emitPlacedResultAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) tag fieldValue name =

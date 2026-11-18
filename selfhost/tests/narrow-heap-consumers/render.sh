@@ -11,6 +11,7 @@ reference="$out/ReferenceHeapLayoutClassification.ash.inc"
 git -C "$root" show "b19daa03:$source_path/HeapLayoutClassification.ash" > "$reference"
 prefix_module_exports "$reference" Ref ref_ > "$out/ReferenceHeapLayoutClassification.ash"
 git -C "$root" show "b19daa03:$source_path/CoreLowering.ash" > "$out/baseline-core.txt"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 extract_declaration "$out/baseline-core.txt" canNormalizeClosureCapture |
     sed -e 's/let canNormalizeClosureCapture/let oldCanNormalizeClosureCapture/g' \
         -e 's/recordAdtSupported(heapFactsOf(named)(state))/oldFact(named)(state)(0)/g' \
@@ -21,7 +22,7 @@ extract_declaration "$out/baseline-core.txt" canNormalizeClosureCapture |
     cat "$fixture/Environment.ash"
     for name in scalarCaptureText classifyClosureCaptureLayout heapClosureCaptureLayoutOf canNormalizeClosureCapture ownedChildrenDroppable; do
         printf '\n'
-        extract_declaration "$root/$source_path/CoreLowering.ash" "$name"
+        extract_declaration "$core" "$name"
     done
     printf '\n'
     awk -v capture="$out/old-capture.txt" '

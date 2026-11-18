@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
-source_file=selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash
+source selfhost/tests/render-lib.sh
 tests=selfhost/tests/unused-lambda-references/Tests.ash
 out=work/unused-lambda-references
 mkdir -p "$out"
+source_file=$(core_lowering_source "$out/core-lowering-source.txt")
 extract_declaration() {
     awk -v name="$1" '
         $0 ~ "^(let( recursive)?|type) " name "([ (]|$)" { found = 1; first = 1 }

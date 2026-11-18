@@ -3483,9 +3483,10 @@ let buildBytesRangeOpsModule name context = codegenOptimizedRealSource("let join
 
 let testRunStaticExecutableForBytesRangeOpsModule unit = assertProgramPrints(buildBytesRangeOpsModule)("selfhostBackendRunBytesRangeOps")("selfhost_backend_bytes_range_ops_e2e")("772|4660|0xff|9|1")
 
-let buildTextParseFloatModule name context = codegenOptimizedRealSource("Ashes.IO.print((match Ashes.Text.parseFloat(\"1.5e2\") with | Ok(v) -> (if v == 150.0 then \"ok\" else \"bad\") | Error(m) -> m) + \"|\" + (match Ashes.Text.parseFloat(\"x\") with | Ok(_v2) -> \"no\" | Error(m2) -> m2) + \"|\" + (match Ashes.Text.parseFloat(\"1e400\") with | Ok(_v3) -> \"no\" | Error(m3) -> m3))")(name)(context)
+let buildTextParseFloatModule shipped name context = codegenShippedSource(shipped)("import Ashes.Text\n\nAshes.IO.print((match Ashes.Text.parseFloat(\"1.5e2\") with | Ok(v) -> (if v == 150.0 then \"ok\" else \"bad\") | Error(m) -> m) + \"|\" + (match Ashes.Text.parseFloat(\"x\") with | Ok(_v2) -> \"no\" | Error(m2) -> m2) + \"|\" + (match Ashes.Text.parseFloat(\"1e400\") with | Ok(_v3) -> \"no\" | Error(m3) -> m3))")(name)(context)
 
-let testRunStaticExecutableForTextParseFloatModule unit = assertProgramPrints(buildTextParseFloatModule)("selfhostBackendRunTextParseFloat")("selfhost_backend_text_parse_float_e2e")("ok|Ashes.Text.parseFloat() invalid input|Ashes.Text.parseFloat() out of range")
+let testRunStaticExecutableForTextParseFloatModule shipped unit =
+    assertProgramPrints(buildTextParseFloatModule(shipped))("selfhostBackendRunTextParseFloat")("selfhost_backend_text_parse_float_e2e")("ok|Ashes.Text.parseFloat() invalid input|Ashes.Text.parseFloat() out of range")
 
 let testRunStaticExecutableForTextUnconsTextModule unit = assertProgramPrints(buildTextUnconsTextModule)("selfhostBackendRunTextUnconsText")("selfhost_backend_text_uncons_text_e2e")("h|ello<empty>")
 
@@ -3679,8 +3680,10 @@ let testNativeStrings unit = assertProgramPrintsLines(buildNativeStringModule)("
 let testNativeOutSlots unit = assertProgramPrintsLines(buildNativeOutModule)("selfhostBackendNativeOut")("selfhost_backend_native_out_e2e")(["7 101 none", "9 none 202"])
 
 // The declaration, rather than the runtime's libc table, supplies this import. An unused
-// declaration must not add its nonexistent library to DT_NEEDED.
-let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nAshes.IO.print(nextValue(1.0)(2.0) > 1.0)"
+// declaration must not add its nonexistent library to DT_NEEDED. The call's operands come from the
+// program's argument count (1.0 and 2.0 when run without arguments), so LLVM cannot fold the call
+// to a constant and drop the `nextafter` import the test is about.
+let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nlet recursive countArgs args n =\n    match args with\n        | [] -> n\n        | _ :: rest -> countArgs(rest)(n + 1)\nlet start = Ashes.Number.Math.toFloat(countArgs(Ashes.IO.args)(1))\nAshes.IO.print(nextValue(start)(start + 1.0) > start)"
 
 let testDeclaredLibraryImports unit =
     (let name = "selfhostBackendDeclaredLibrary"
@@ -5976,7 +5979,7 @@ let run shipped =
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
     |> testRunStaticExecutableForBytesRangeOpsModule
-    |> testRunStaticExecutableForTextParseFloatModule
+    |> testRunStaticExecutableForTextParseFloatModule(shipped)
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> testArenaRestoreReusesCursor

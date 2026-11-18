@@ -4996,8 +4996,7 @@ public sealed partial class Lowering
 
         string module = ResolveModuleAlias(qualified.Module);
         return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
-                && (string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
-                    || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal))
+                && string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
             || string.Equals(module, "Ashes.Number.BigInt", StringComparison.Ordinal)
                 && string.Equals(qualified.Name, "toInt", StringComparison.Ordinal);
     }
@@ -13637,7 +13636,6 @@ public sealed partial class Lowering
             IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
             IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
             IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0], request),
-            IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0], request),
             IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0], request),
             IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0], request),
             IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1], request),
@@ -13881,7 +13879,6 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
             BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
             BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0], request),
-            BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1], request),

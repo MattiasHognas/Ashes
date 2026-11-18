@@ -7,6 +7,7 @@ import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.LoweringDiagnostics
+import AshesCompiler.Semantics.DiagnosticTypeText
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 export (

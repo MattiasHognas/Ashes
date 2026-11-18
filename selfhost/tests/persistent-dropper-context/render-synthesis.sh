@@ -8,6 +8,9 @@ for flavor in baseline candidate; do
     mkdir -p "$out"
     if [[ $flavor == baseline ]]; then
         git -C "$root" show "5804df05:$path" > "$out/ProbeDroppers.ash"
+        # IrFunctionOrigin has since moved to its own module; the frozen copy imports it there.
+        awk '{ lines[NR] = $0; if ($0 ~ /^import /) last = NR } END { for (i = 1; i <= NR; i++) { print lines[i]; if (i == last) print "import AshesCompiler.Semantics.IrOrigins" } }' "$out/ProbeDroppers.ash" > "$out/ProbeDroppers.ash.tmp"
+        mv "$out/ProbeDroppers.ash.tmp" "$out/ProbeDroppers.ash"
     else
         cp "$root/$path" "$out/ProbeDroppers.ash"
     fi

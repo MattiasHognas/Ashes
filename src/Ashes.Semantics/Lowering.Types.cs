@@ -647,7 +647,6 @@ public sealed partial class Lowering
         RuneIsAsciiDigit,
         RuneIsAsciiWhiteSpace,
         TextParseInt,
-        TextParseFloat,
         TextFromInt,
         TextFromFloat,
         TextFormatFloat,

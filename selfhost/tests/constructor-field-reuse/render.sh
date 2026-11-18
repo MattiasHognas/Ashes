@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
-core=selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash
 out=work/constructor-field-reuse
 mkdir -p "$out"
+source selfhost/tests/render-lib.sh
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 extract() {
     awk -v name="$1" '
         $0 ~ "^(let( recursive)?|type) " name "([ (]|$)" { found=1; first=1 }
@@ -12,7 +13,7 @@ extract() {
         END { if (!found) exit 1 }
     ' "$core"
 }
-awk '/^type CoreConstructorLayout =/ {copying=1} copying && /^type CoreBindingLocation =/ {exit} copying {print}' "$core" > "$out/index.ash.inc"
+extract_range "$core" '^type CoreConstructorLayout =' '^type CoreBindingLocation =' > "$out/index.ash.inc"
 {
     for name in resolveType splitConstructorType constructorResultName layoutFieldTypes lookupTypeVariablePair replaceTypeVariables constructorResultNameIs typeVariablePairs namedTypeConstructorFieldTypes namedTypeInstantiatedFieldTypes stateConstructorsOfType stateStableConstructorFields namedTypeFieldTypesAs namedTypeDeclaredFields; do
         extract "$name"

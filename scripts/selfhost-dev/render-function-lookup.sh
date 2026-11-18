@@ -2,16 +2,19 @@
 # Extract production lookup helpers for focused equivalence and lifetime checks.
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-core="$repo/selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash"
 out="$repo/work/function-lookup-index"
+mkdir -p "$out"
+source "$repo/selfhost/tests/render-lib.sh"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 [[ $(rg -F -c '// Prepared function lookup indexes:' "$core") == 1 ]]
 [[ $(rg -F -c '// End prepared function lookup indexes.' "$core") == 1 ]]
-mkdir -p "$out"
 cat > "$out/Main.ash" <<'ASH'
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ReuseFunctionSpecialization.specializationArity
+import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 ASH
 awk '/^\/\/ Prepared function lookup indexes:/ {copying=1} copying {print} /^\/\/ End prepared function lookup indexes\./ {exit}' "$core" >> "$out/Main.ash"
 cat >> "$out/Main.ash" <<'ASH'
@@ -21,11 +24,17 @@ type CoreProgramState =
     | specializationCandidateByName: MapTree(Str, CoreSpecializationCandidate)
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
     | topLevelFunctionRefByName: MapTree(Str, CoreTopLevelFunctionReference)
+    | coverageTypes: TypeEnvironment
+    | coverageEnvironmentVersion: Int
+    | topLevelInferenceBindings: List((Str, TypeScheme, Bool))
+    | topLevelInferenceOpen: List((Str, TypeScheme))
+    | topLevelInferenceOpenShadowed: Bool
+    | topLevelInferenceEnvironment: Maybe((Int, List((Str, TypeScheme))))
 type CoreLoweringState =
     | programState: CoreProgramState
 ASH
-awk '/^let stateTopLevelFunctionRefIndex / {copying=1} copying && /^let stateInlinableHelpers / {exit} copying {print}' "$core" >> "$out/Main.ash"
-awk '/^let stateSpecializationCandidates / {copying=1} copying && /^let stateGeneralRcOwnedResultLabels / {exit} copying {print}' "$core" >> "$out/Main.ash"
+extract_range "$core" '^let stateTopLevelFunctionRefIndex ' '^let stateInlinableHelpers ' >> "$out/Main.ash"
+extract_range "$core" '^let stateSpecializationCandidates ' '^let stateGeneralRcOwnedResultLabels ' >> "$out/Main.ash"
 cat "$repo/selfhost/tests/function-lookup-index/Assertions.ash.inc" >> "$out/Main.ash"
 cat > "$out/ashes.json" <<'JSON'
 {"name":"function-lookup-index","entry":"Main.ash","sourceRoots":["."],"outDir":"out","devDependencies":{"semantics":{"path":"../../selfhost/packages/semantics"}},"overrides":{"AshesCompiler.Frontend":{"path":"../../selfhost/packages/frontend"}}}

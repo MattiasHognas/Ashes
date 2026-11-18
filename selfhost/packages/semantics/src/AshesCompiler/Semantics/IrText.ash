@@ -1198,15 +1198,6 @@ let describeInstruction instruction =
                     boolOperand("RuntimeManaged")(runtimeManaged)
                 ]
             )
-        | TextParseFloat(target, textTemp, runtimeManaged) ->
-            IrInstructionDescription(
-                opcode = "TextParseFloat",
-                operands = [
-                    optionalIntOperand("Target")(target),
-                    optionalIntOperand("TextTemp")(textTemp),
-                    boolOperand("RuntimeManaged")(runtimeManaged)
-                ]
-            )
         | TextFromInt(target, valueTemp, runtimeManaged) ->
             IrInstructionDescription(
                 opcode = "TextFromInt",

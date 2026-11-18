@@ -487,6 +487,42 @@ let unificationDiagnostic (placements: List(StitchedDefinitionPlacement)) (error
         | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type).")
         | TypeArityMismatch(_left, _right) -> None
 
+// Stage 0's context for the argument of a call chain at `ordinal`, counted from 1.
+let callArgumentContext (ordinal: Int) (callee: Maybe(Str)) =
+    match callee with
+        | Some(name) -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of call to '" + name + "'."
+        | None -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of function call."
+
+// A call argument that does not fit its parameter, as stage 0 words the mismatch in the
+// argument's context.
+let callArgumentDiagnostic (placements: List(StitchedDefinitionPlacement)) (mismatch: UnificationError) (ordinal: Int) (callee: Maybe(Str)) =
+    match mismatch with
+        | TypeMismatch(left, right) ->
+            match right
+            |> withSourceNames(placements)
+            |> diagnosticTypePairText(withSourceNames(placements)(left)) with
+                | (leftText, rightText) -> coded(typeMismatchCode)("Type mismatch: " + leftText + " vs " + rightText + "." + callArgumentContext(ordinal)(callee))
+        | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type)." + callArgumentContext(ordinal)(callee))
+        | TypeArityMismatch(_left, _right) -> None
+
+// A call chain passing more arguments than its root takes, as stage 0 words it for a constructor,
+// for a value that is no function, and for a function.
+let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
+    (let counts = Ashes.Text.fromInt(expected) + " argument(s) but got " + Ashes.Text.fromInt(provided) + "."
+    in
+        match callee with
+            | Some(name) ->
+                if startsUppercase(name)
+                then uncoded("Constructor '" + sourceNameOf(placements)(name) + "' expects " + counts)
+                else
+                    if expected == 0
+                    then uncoded("Attempted to call '" + name + "' with " + Ashes.Text.fromInt(provided) + " argument(s), but its type is " + typeText(placements)(calleeType) + ", not a function.")
+                    else uncoded("Call to '" + name + "' expects " + counts)
+            | None ->
+                if expected == 0
+                then uncoded("Attempted to call non-function type " + typeText(placements)(calleeType) + ".")
+                else uncoded("Call expects " + counts))
+
 let typeResolutionDiagnostic (error: TypeResolutionError) =
     match error with
         | UnknownTypeName(name) -> uncoded("Unknown type name '" + name + "'.")
@@ -531,7 +567,10 @@ let handlerDiagnostic (placements: List(StitchedDefinitionPlacement)) (text: Str
                 else
                     if text == "the return arm takes exactly one parameter"
                     then coded(invalidHandlerCode)("The 'return' arm takes exactly one parameter.")
-                    else None
+                    else
+                        if text == "a handler needs at least one operation arm"
+                        then coded(invalidHandlerCode)("A handler must have at least one operation arm.")
+                        else None
 
 let recursive quotedNames (names: List(Str)) (reversed: List(Str)) =
     match names with
@@ -689,6 +728,13 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | LetResultBodyRequiresResult(bodyType) -> uncoded("let? body must produce a Result(E, A) expression. Got " + typeText(placements)(bodyType) + ".")
         | ExpectedResultType(leftType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(leftType) + " vs Result<a, b>.")
         | ExpectedTaskType(awaitedType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(awaitedType) + " vs Task<a, b>.")
+        | ForkOutsideAsync -> uncoded("Ashes.Task.fork() must be used inside an async task.")
+        | DuplicateRecordPatternField(typeName, field) -> uncoded("Duplicate field '" + field + "' in record pattern for '" + sourceNameOf(placements)(typeName) + "'.")
+        | DuplicateRecordField(typeName, field) -> uncoded("Field '" + field + "' is provided more than once in record literal for '" + sourceNameOf(placements)(typeName) + "'.")
+        | UnsignedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability operation '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' needs an explicit signature to be used as a value.")
+        | HandlerArmParameterCountMismatch(capabilityName, operation, armParameters, operationArity) -> coded(invalidHandlerCode)("Handler arm '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' has " + Ashes.Text.fromInt(armParameters) + " parameter(s) but the operation takes " + Ashes.Text.fromInt(operationArity) + ".")
+        | CallArgumentMismatch(mismatch, ordinal, callee) -> callArgumentDiagnostic(placements)(mismatch)(ordinal)(callee)
+        | CallChainArityMismatch(callee, expected, provided, calleeType) -> callChainArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
         | _ -> None
 
 let recursive typeDeclarationNamed (items: List(TopLevelItem)) (name: Str) =
@@ -753,6 +799,9 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | DuplicateCapabilityProvider(instance) -> coded(duplicateProviderCode)("Duplicate provider for '" + typeText(placements)(instance) + "'.")
         | UnknownProviderOperation(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability '" + sourceNameOf(placements)(capabilityName) + "' has no operation '" + operation + "'.")
         | MissingProviderOperation(capabilityName, operation) -> coded(duplicateProviderCode)("Provider for '" + sourceNameOf(placements)(capabilityName) + "' is missing operation '" + operation + "'.")
+        | DuplicateProviderOperation(capabilityName, operation) -> coded(duplicateProviderCode)("Provider for '" + sourceNameOf(placements)(capabilityName) + "' supplies operation '" + operation + "' more than once.")
+        | UnknownProviderCapability(capabilityName) -> coded(unknownCapabilityCode)("'provide' refers to unknown capability '" + capabilityName + "'.")
+        | ParameterizedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Operation '" + operation + "' of parameterized capability '" + sourceNameOf(placements)(capabilityName) + "' requires an explicit signature.")
         | DuplicateTraitDeclaration(name) -> coded(invalidTraitDeclarationCode)("Duplicate trait name '" + name + "'.")
         | TraitRequiresTypeParameter(name) -> coded(invalidTraitDeclarationCode)("Trait '" + name + "' must declare at least one type parameter.")
         | DuplicateTraitTypeParameter(traitName, parameter) -> coded(invalidTraitDeclarationCode)("Duplicate type parameter '" + parameter + "' in trait '" + traitName + "'.")
@@ -770,6 +819,8 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | MissingTraitImplementationMethod(traitName, method) -> coded(invalidTraitImplementationCode)("Implementation of '" + traitName + "' is missing required method '" + method + "'.")
         | OrphanTraitImplementation(traitName, head, packageId) -> coded(traitCoherenceCode)("Orphan implementation '" + requirementText(placements)(traitName)(head) + "' is illegal: package '" + packageId + "' owns neither the trait nor an outer nominal head type.")
         | OverlappingTraitImplementations(traitName, first, conflicting) -> overlapDiagnostic(placements)(traitName)(first)(conflicting)
+        | NonDecreasingTraitImplementationRequirement(traitName, headTypes, requirementTrait, requirementTypes) -> coded(traitCycleCode)("Implementation requirement '" + requirementText(placements)(requirementTrait)(requirementTypes) + "' must be structurally smaller than head '" + requirementText(placements)(traitName)(headTypes) + "'.")
+        | DefaultTraitMethodDependencyCycle(traitName, trace) -> coded(traitCycleCode)("Default-method dependency cycle in implementation of '" + sourceNameOf(placements)(traitName) + "': " + trace + ".")
         | ProgramDerivingExpansionError(expansion) -> derivingDiagnostic(placements)(items)(expansion)
         | ProgramExternalTypingError(name, typing) -> externalTypingDiagnostic(items)(name)(typing)
         | ProgramExternalAbiError(abi) -> externalAbiDiagnostic(abi)
@@ -777,19 +828,34 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
         | ReservedTypeDeclaration(_name) -> uncoded("'Ashes' and built-in runtime types are reserved")
         | _ -> None
 
+// Whether a callee name is a definition stitching renamed (a module's binding under its compiler
+// name): stage 0 names it as the source spells it, which the error no longer knows.
+let renamedDefinition (placements: List(StitchedDefinitionPlacement)) (name: Str) =
+    match definitionNamed(placements)(name) with
+        | Some(definition) -> definition.sourceName != definition.compilerName
+        | None -> false
+
+let renamedCallee (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) =
+    match callee with
+        | Some(name) -> renamedDefinition(placements)(name)
+        | None -> false
+
 // A unification error carries the two types but not the call, argument, constructor or operator
 // it was raised at, which stage 0 words its message after (an argument count, a non-function
 // callee, an operand pair). Lowering knows that site, so its own diagnostic, when it words one, is
 // the closer rendering. A mismatch between two capability rows is the closed-row check, and one
 // between two tuples of different lengths is a pattern's shape against its value's; the inference
-// words both itself.
-let recursive inferenceErrorWantsCallSiteWording (error: ProgramInferenceError) =
+// words both itself. A call's argument mismatch and arity error carry their site and are worded by
+// the inference too, unless the callee is a renamed definition.
+let recursive inferenceErrorWantsCallSiteWording (placements: List(StitchedDefinitionPlacement)) (error: ProgramInferenceError) =
     match error with
-        | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(inner)
-        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(ProgramExpressionError(inner))
+        | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(placements)(inner)
+        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail)))) -> false
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
         | ProgramExpressionError(InferenceUnificationError(_unification)) -> true
+        | ProgramExpressionError(CallArgumentMismatch(_mismatch, _ordinal, callee)) -> renamedCallee(placements)(callee)
+        | ProgramExpressionError(CallChainArityMismatch(callee, _expected, _provided, _calleeType)) -> renamedCallee(placements)(callee)
         | _ -> false
 
 let maybeText (value: Maybe(Str)) =
@@ -824,6 +890,18 @@ let codePrefix (code: Maybe(Str)) =
         | Some(text) -> text + " "
         | None -> ""
 
+// Stage 0 names the entry module `Main` and qualifies nothing declared there: a trait of the entry
+// module reads by its bare name, where stitching qualified it by the entry file's module name.
+let recursive withEntryQualifiedNames (entryModule: Str) (placements: List(StitchedDefinitionPlacement)) =
+    match placements with
+        | [] -> []
+        | StitchedDefinitionPlacement { definition = definition, combinedItemIndex = index } :: rest ->
+            let named =
+                if definition.moduleName == entryModule
+                then definition with qualifiedName = definition.sourceName
+                else definition
+            in StitchedDefinitionPlacement(definition = named, combinedItemIndex = index) :: withEntryQualifiedNames(entryModule)(rest)
+
 // The rejected program's diagnostic line: `path:line:column CODE message` as stage 0 prints it, or
 // the error's structural form with its location when stage 0 has no wording for it.
 let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironment) (entryPath: Str) (entrySource: Str) (result: ProgramInferenceResult) =
@@ -832,6 +910,6 @@ let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironm
         | Some(error) ->
             let prefix = locationPrefix(entryPath)(entrySource)(result.errorLocation)
             in
-                match inferenceErrorDiagnostic(stitched.definitionPlacements)(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
+                match inferenceErrorDiagnostic(withEntryQualifiedNames(stitched.entryModuleName)(stitched.definitionPlacements))(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
                     | Some((code, message)) -> prefix + codePrefix(code) + message
                     | None -> prefix + "Type inference failed: " + Ashes.Trait.Show.show(error)

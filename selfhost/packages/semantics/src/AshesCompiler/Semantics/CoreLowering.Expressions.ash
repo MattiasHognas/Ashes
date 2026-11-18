@@ -44,6 +44,8 @@ import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
@@ -1336,7 +1338,17 @@ let rejectedConcreteCopy candidate parameters state =
     |> concreteCopyDeclined
     |> recordConcreteCopy(candidate)(parameters)(None), None)
 
-let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionType arguments lower (state: CoreLoweringState) =
+// The identity of the innermost numbered node around a call's root, the callee reference the
+// inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
+// unnumbered tree.
+let recursive callRootNode (expression: Expr) (enclosing: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> callRootNode(inner)(enclosing)
+        | ExprNode(node, inner) -> callRootNode(inner)(node)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callRootNode(function)(-1)
+        | _ -> enclosing
+
+let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) parameters functionType arguments lower (state: CoreLoweringState) =
     (let isolated =
         (state with bindings = [], reuseTokens = [])
         |> withStateActiveTraitMethods([])
@@ -1344,6 +1356,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionT
         |> withStateSpecializationFreshInputs(None)
         |> withStateSpecializingReuseLabel(None)
         |> withStateConcreteDepth(stateConcreteDepth(state) + 1)
+        |> withStateNodeInstantiation(recordedCopyInstantiation(reference)(nodeIdentityOf(candidate.source))(functionType)(state))
     in
         match prepareRecursiveGroup([(candidate.name, candidate.source)])(isolated)([]) with
             | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
@@ -1366,7 +1379,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionT
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
             | _ -> rejectedConcreteCopy(candidate)(parameters)(state))
 
-let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) arguments lower state =
+let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int) arguments lower state =
     if coreListLength(arguments) != candidate.arity || stateConcreteDepth(state) >= 8
     then (concreteCopyDeclined(state), None)
     else
@@ -1381,7 +1394,7 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) arguments lower 
                         |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) -> (concreteCopyDeclined(state), None)
-                    | None -> generateConcreteCopy(candidate)(parameters)(functionType)(arguments)(lower)(state)
+                    | None -> generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state)
 
 let tryConcreteSourceCall expression lower state =
     match collectCallSpine(expression) with
@@ -1393,7 +1406,8 @@ let tryConcreteSourceCall expression lower state =
                     |> lookupCoreConcreteCandidate(name) with
                         | Some(candidate) ->
                             if concreteCandidateBindingMatches(candidate)(state)
-                            then tryConcreteCandidateCall(candidate)(arguments)(lower)(state)
+                            then
+                                tryConcreteCandidateCall(candidate)(callRootNode(expression)(-1))(arguments)(lower)(state)
                             else (state, None)
                         | None -> (state, None)
                 | _ -> (state, None)
@@ -2536,6 +2550,16 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
 // concrete call site so the `both` splits in the copy see a concrete result type and fork.
 let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
 
+let registerConcreteCandidateScheme name value (scheme: TypeScheme) slot isRecursive state =
+    match lambdaParameterChain(value)([]) with
+        | (parameters, _body) ->
+            withStateConcreteRegistry(state
+            |> stateConcreteRegistry
+            |> registerCoreConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive))(state)
+
+// A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
+// over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
+// at a concrete type then gets its own copy, as lowering's own constrained schemes do.
 let registerConcreteSource name value isRecursive state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
@@ -2544,14 +2568,15 @@ let registerConcreteSource name value isRecursive state =
             | (Some(_parts), Some(CoreBinding { location = CoreLocal(slot) } as binding)) ->
                 let scheme = binding.scheme
                 in
-                    let registry = stateConcreteRegistry(state)
-                    in
-                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
-                        then
-                            match lambdaParameterChain(value)([]) with
-                                | (parameters, _body) ->
-                                    withStateConcreteRegistry(registerCoreConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive)(registry))(state)
-                        else state
+                    if scheme.constraints != []
+                    then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                    else
+                        match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
+                            | Some(recorded) -> registerConcreteCandidateScheme(name)(value)(recorded)(slot)(isRecursive)(state)
+                            | None ->
+                                if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
+                                then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                                else state
             | _ -> state
 
 // These mapped operators already have typed active-evidence dispatch in Core.

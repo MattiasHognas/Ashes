@@ -394,8 +394,6 @@ let mapInstructionTemps f (kind: IrInstructionKind) =
             RuneFromInt(f(T0))(f(T1))(b0)
         | TextParseInt(T0, T1, b0) ->
             TextParseInt(f(T0))(f(T1))(b0)
-        | TextParseFloat(T0, T1, b0) ->
-            TextParseFloat(f(T0))(f(T1))(b0)
         | TextFromInt(T0, T1, b0) ->
             TextFromInt(f(T0))(f(T1))(b0)
         | TextFromFloat(T0, T1, b0) ->

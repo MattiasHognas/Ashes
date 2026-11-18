@@ -4,6 +4,7 @@ import AshesCompiler.Frontend.ModulePlan
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectDiscovery
+import AshesCompiler.Semantics.ProjectLockFile
 let requireUnit (name: Str) result =
     match result with
         | Ok(Unit) -> Unit

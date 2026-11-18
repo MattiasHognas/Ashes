@@ -4,14 +4,19 @@
 // - Lowering names every type it registers by its stitched name and gives every named type the
 //   symbol id 0; the inference numbers its named types itself. A recorded named type is read by
 //   its name, which both sides take from the same stitched declaration, and given id 0.
-// - A name lowering does not know, a type parameter, and a capability or row outside a function
-//   type are not read: the translation names what it could not map.
+// - A name lowering does not know, a type parameter outside the generic implementation method being
+//   lowered, and a capability or row outside a function type are not read: the translation names
+//   what it could not map.
 // - A function type's capability row is dropped; lowering keeps no rows in the types it unifies.
 // - Type variables are kept as they are; a caller that needs a closed type checks for them.
+// - Inside a generic body lowered at a concrete instance, a recorded type is read through that
+//   instance's instantiation: the body's quantified variables take their types there first. A head
+//   parameter of a generic implementation is read as the variable lowering pinned it to.
 
 import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
+import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -23,6 +28,8 @@ export (
     value untranslatableRecordedTypes,
     value recordedClosedTypeAt,
     value recordedDictionariesAt,
+    value recordedCopyInstantiation,
+    value recordedOperatorGenericScheme,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -72,11 +79,21 @@ let recordedTypeNameKnown (name: Str) (state: CoreLoweringState) =
                     |> stateConstructorLayouts
                     |> anyLayoutNamed(name)
 
+// The type a generic implementation's head parameter has while one of its methods is lowered: the
+// variable lowering pinned it to, by the parameter's name.
+let recursive activeTypeParameterNamed (name: Str) (parameters: List((Str, SemanticType))) =
+    match parameters with
+        | [] -> None
+        | (candidate, semanticType) :: rest ->
+            if candidate == name
+            then Some(semanticType)
+            else activeTypeParameterNamed(name)(rest)
+
 // The recorded type as lowering writes it, or what could not be mapped.
-let recursive translateRecordedType (state: CoreLoweringState) (semanticType: SemanticType) =
+let recursive translateRecordedTypeAsIs (state: CoreLoweringState) (semanticType: SemanticType) =
     match semanticType with
         | SemList(element) ->
-            match translateRecordedType(state)(element) with
+            match translateRecordedTypeAsIs(state)(element) with
                 | Ok(translated) -> Ok(SemList(translated))
                 | failed -> failed
         | SemTuple(elements) ->
@@ -84,7 +101,7 @@ let recursive translateRecordedType (state: CoreLoweringState) (semanticType: Se
                 | Ok(translated) -> Ok(SemTuple(translated))
                 | Error(message) -> Error(message)
         | SemFunction(parameter, result, _row) ->
-            match (translateRecordedType(state)(parameter), translateRecordedType(state)(result)) with
+            match (translateRecordedTypeAsIs(state)(parameter), translateRecordedTypeAsIs(state)(result)) with
                 | (Ok(translatedParameter), Ok(translatedResult)) ->
                     None
                     |> SemFunction(translatedParameter)(translatedResult)
@@ -102,10 +119,15 @@ let recursive translateRecordedType (state: CoreLoweringState) (semanticType: Se
                     | Error(message) -> Error(message)
             else Error("named type unknown to lowering: " + name)
         | SemPointer(target) ->
-            match translateRecordedType(state)(target) with
+            match translateRecordedTypeAsIs(state)(target) with
                 | Ok(translated) -> Ok(SemPointer(translated))
                 | failed -> failed
-        | SemParameter(_id, name) -> Error("type parameter: " + name)
+        | SemParameter(_id, name) ->
+            match state
+            |> stateActiveTypeParameters
+            |> activeTypeParameterNamed(name) with
+                | Some(variable) -> Ok(variable)
+                | None -> Error("type parameter: " + name)
         | SemCapability(name, _arguments) -> Error("capability outside a row: " + name)
         | SemRow(_entries, _tail) -> Error("row outside a function type")
         | other -> Ok(other)
@@ -116,9 +138,23 @@ and translateRecordedTypes (state: CoreLoweringState) (semanticTypes: List(Seman
             |> reverse
             |> Ok
         | head :: rest ->
-            match translateRecordedType(state)(head) with
+            match translateRecordedTypeAsIs(state)(head) with
                 | Ok(translated) -> translateRecordedTypes(state)(rest)(translated :: reversed)
                 | Error(message) -> Error(message)
+
+// A recorded type read where it is lowered: inside a generic body lowered at a concrete instance,
+// the body's quantified variables take their types at that instance first.
+let instantiatedRecordedType (state: CoreLoweringState) (semanticType: SemanticType) =
+    match stateNodeInstantiation(state) with
+        | [] -> semanticType
+        | instantiation -> applySubstitution(instantiation)(semanticType)
+
+// The recorded type as lowering writes it, read through the instantiation of the body being
+// lowered, or what could not be mapped.
+let translateRecordedType (state: CoreLoweringState) (semanticType: SemanticType) =
+    semanticType
+    |> instantiatedRecordedType(state)
+    |> translateRecordedTypeAsIs(state)
 
 // The type recorded for the node being lowered, as lowering writes it, when one is recorded and maps.
 let recordedNodeType (state: CoreLoweringState) =
@@ -187,3 +223,96 @@ let recordedDictionariesAt (node: Int) (state: CoreLoweringState) =
                 | Some(NodeInstantiation { dictionaries = dictionaries }) -> closedRecordedRequirements(dictionaries)(state)
                 | None -> []
         | None -> []
+
+let recursive instantiatedArguments (state: CoreLoweringState) (arguments: List((Int, SemanticType))) =
+    match arguments with
+        | [] -> []
+        | (variable, semanticType) :: rest -> (variable, instantiatedRecordedType(state)(semanticType)) :: instantiatedArguments(state)(rest)
+
+// The instantiation a generic body is lowered at for a call whose callee reference has the identity
+// `reference`: the arguments recorded at the reference, read through the instantiation of the body
+// being lowered. Empty unless the recorded type of the body's root node `source`, read through it,
+// is closed and is `functionType`, the type lowering pinned the copy to.
+let recordedCopyInstantiation (reference: Int) (source: Int) (functionType: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> []
+        | Some(table) ->
+            match (nodeInstantiationAt(reference)(table), nodeTypeAt(source)(table)) with
+                | (Some(NodeInstantiation { arguments = arguments }), Some(recorded)) ->
+                    let instantiation = instantiatedArguments(state)(arguments)
+                    in
+                        match (recorded
+                        |> applySubstitution(instantiation)
+                        |> translateRecordedTypeAsIs(state), translateRecordedTypeAsIs(state)(functionType)) with
+                            | (Ok(instantiated), Ok(pinned)) ->
+                                if freeTypeVariables(instantiated) == [] && instantiated == pinned
+                                then instantiation
+                                else []
+                            | _ -> []
+                | _ -> []
+
+// The operator traits whose operators lowering holds monomorphic: it emits their integer form over
+// open operands and settles it once the type is known, so it gives a binding using them no
+// requirement and no dictionary.
+let isMonomorphicOperatorTrait (name: Str) =
+    match name with
+        | "Add" -> true
+        | "Subtract" -> true
+        | "Multiply" -> true
+        | "Divide" -> true
+        | "Remainder" -> true
+        | "Negate" -> true
+        | "BitAnd" -> true
+        | "BitOr" -> true
+        | "BitXor" -> true
+        | "ShiftLeft" -> true
+        | "ShiftRight" -> true
+        | "BitwiseNot" -> true
+        | _ -> false
+
+let recursive quantifiedVariableListed (variable: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variable || quantifiedVariableListed(variable)(rest)
+
+let recursive mentionsQuantifiedVariable (quantified: List((Int, Str))) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | variable :: rest -> quantifiedVariableListed(variable)(quantified) || mentionsQuantifiedVariable(quantified)(rest)
+
+let recursive hasQuantifiedOperatorRequirement (quantified: List((Int, Str))) (requirements: List(TraitConstraint)) =
+    match requirements with
+        | [] -> false
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            isMonomorphicOperatorTrait(traitName) && mentionsQuantifiedVariable(quantified)(freeTypeVariables(SemTuple(arguments))) || hasQuantifiedOperatorRequirement(quantified)(rest)
+
+let recursive translateRecordedRequirements (state: CoreLoweringState) (requirements: List(TraitConstraint)) (reversed: List(TraitConstraint)) =
+    match requirements with
+        | [] ->
+            reversed
+            |> reverse
+            |> Ok
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            match translateRecordedTypes(state)(arguments)([]) with
+                | Ok(translated) -> translateRecordedRequirements(state)(rest)(TraitConstraint(traitName = traitName, typeArguments = translated) :: reversed)
+                | Error(message) -> Error(message)
+
+// The scheme the standalone inference recorded for the top-level binding whose value has the
+// identity `node`, as lowering writes it, when it quantifies every variable it holds and requires
+// an operator trait lowering holds monomorphic at a quantified variable: a binding the inference
+// generalizes where lowering's own inference does not.
+let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((_name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
+                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                        | (Ok(translatedBody), Ok(translatedConstraints)) ->
+                            let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
+                            in
+                                if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
+                                then Some(scheme)
+                                else None
+                        | _ -> None
+                | None -> None

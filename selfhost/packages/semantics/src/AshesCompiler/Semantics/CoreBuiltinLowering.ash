@@ -71,7 +71,6 @@ type CoreBuiltinKind =
     | CoreRuneIsAsciiDigit
     | CoreRuneIsAsciiWhiteSpace
     | CoreTextParseInt
-    | CoreTextParseFloat
     | CoreTextFromInt
     | CoreTextFromFloat
     | CoreTextFormatFloat
@@ -282,7 +281,6 @@ let textBuiltinKind memberName =
         | "uncons" -> Some(CoreTextUncons(false))
         | "unconsText" -> Some(CoreTextUncons(true))
         | "parseInt" -> Some(CoreTextParseInt)
-        | "parseFloat" -> Some(CoreTextParseFloat)
         | "fromInt" -> Some(CoreTextFromInt)
         | "fromFloat" -> Some(CoreTextFromFloat)
         | "formatFloat" -> Some(CoreTextFormatFloat)
@@ -960,13 +958,6 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
-        standardBuiltinLayout("Ashes.Text")("parseFloat")(
-            TypeScheme(
-                quantified = [],
-                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemFloat]))(None),
-                constraints = []
-            )
-        ),
         standardBuiltinLayout("Ashes.Byte")("singleton")(
             TypeScheme(quantified = [], body = SemFunction(SemUInt(8))(SemBytes)(None), constraints = [])
         ),
@@ -1430,7 +1421,6 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreRuneIsAsciiDigit, rune :: [], _types) -> runeRange(start)(rune)(48)(57)
         | (CoreRuneIsAsciiWhiteSpace, rune :: [], _types) -> runeAsciiWhiteSpace(start)(rune)
         | (CoreTextParseInt, text :: [], _types) -> managedTarget1(start)(text)(TextParseInt)
-        | (CoreTextParseFloat, text :: [], _types) -> managedTarget1(start)(text)(TextParseFloat)
         | (CoreTextFromInt, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextFromInt)
         | (CoreTextFromFloat, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextFromFloat)
         | (CoreTextFormatFloat, value :: precision :: [], _types) -> textFormatFloat(start)(value)(precision)(runtimeManaged)

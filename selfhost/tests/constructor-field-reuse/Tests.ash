@@ -5,6 +5,7 @@ import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
 import Ashes.Collection.Map.MapTree
+import AshesCompiler.Semantics.TaglessAdtLayout
 // PRODUCTION_INDEX
 // The actual field helpers only inspect these state fields. Complete Core module
 // validation remains separate from this focused relation and lifetime fixture.

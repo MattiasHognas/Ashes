@@ -6,6 +6,7 @@ import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.DerivingExpansion
+import AshesCompiler.Semantics.TypeInference
 let constructor name fields = TypeConstructor(name = name, parameters = fields, fieldNames = [])
 
 let ordinaryType name parameters constructors derivingTraits = TypeDecl(name = name, typeParameters = parameters, constructors = constructors, isRecord = false, derivingTraits = derivingTraits)

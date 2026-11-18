@@ -73,7 +73,7 @@ public sealed class BuiltinModuleRegistryTests
         module.Name.ShouldBe("Ashes.Text");
         module.Members.ContainsKey("uncons").ShouldBeTrue();
         module.Members.ContainsKey("parseInt").ShouldBeTrue();
-        module.Members.ContainsKey("parseFloat").ShouldBeTrue();
+        module.Members.ContainsKey("parseFloat").ShouldBeFalse();
         module.Members.ContainsKey("fromInt").ShouldBeTrue();
         module.Members.ContainsKey("fromFloat").ShouldBeTrue();
         module.Members.ContainsKey("formatFloat").ShouldBeTrue();

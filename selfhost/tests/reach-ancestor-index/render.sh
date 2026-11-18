@@ -8,7 +8,7 @@ mkdir -p "$out"
 path=selfhost/packages/semantics/src/AshesCompiler/Semantics/ResultReachSummaries.ash
 old="$out/ReferenceResultReachSummaries.ash.inc"
 git -C "$root" show "ac493aa2:$path" > "$old"
-prefix_module_exports "$old" Ref ref_ > "$out/ReferenceResultReachSummaries.ash"
+add_expr_node_arms <(prefix_module_exports "$old" Ref ref_) > "$out/ReferenceResultReachSummaries.ash"
 {
     cat "$fixture/PairPrelude.ash"
     for name in indexReachNames hasPathSuffix hasIndexedPathAncestor anyIndexedPathAncestor hasPathAncestorPair; do

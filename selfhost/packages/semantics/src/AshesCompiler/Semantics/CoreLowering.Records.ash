@@ -485,14 +485,17 @@ let handUpdatedFieldToOwnedSlot (expression: Expr) (fieldType: SemanticType) (ha
             else lowered
         | _ -> lowered
 
-// A cons written as an updated field's value of a record successor is a record field cell.
-let lowerUpdatedFieldValue (fieldCells: Bool) (expression: Expr) lower (state: CoreLoweringState) =
-    if fieldCells && isConsValue(expression)
-    then
-        state
-        |> withConsumerRequest((emptyConsumerRequest with recordFieldCell = true))
-        |> lower(expression)
-    else lower(expression)(state)
+// Stage 0's `BuildRecordUpdateFieldTemps`: an updated field is a constructor argument of the
+// rebuilt cell, so it is lowered under the request a constructor hands its arguments, built from
+// the update's own request for an arena cell (no runtime-managed parent). The transfer the update
+// was asked for reaches the field's value that way: a binding read stored inside it (a pattern
+// binding aliasing a match scrutinee's owner, wrapped in `Some(...)`) is retained for the cell
+// before the owner's release, and a cons written as the value of a record successor's field is a
+// record field cell.
+let lowerUpdatedFieldValue (updateRequest: ConsumerRequest) (fieldType: SemanticType) (expression: Expr) lower (state: CoreLoweringState) =
+    state
+    |> withConsumerRequest(constructorArgumentRequest(updateRequest)(false)(expression)(fieldType)(state))
+    |> lower(expression)
 
 let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver (runtimeManaged: Bool) (updateRequest: ConsumerRequest) lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
@@ -513,7 +516,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         )
                     | Some(expression) ->
                         state
-                        |> lowerUpdatedFieldValue(updateRequest.recordFieldCells)(expression)(lower)
+                        |> lowerUpdatedFieldValue(updateRequest)(fieldType)(expression)(lower)
                         |> keepLoopResultFieldCellHeadDuplicateOwned(updateRequest)(runtimeManaged)(expression)
                         |> retainEscapingArgumentRead(updateRequest)(false)(expression)
                         |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
