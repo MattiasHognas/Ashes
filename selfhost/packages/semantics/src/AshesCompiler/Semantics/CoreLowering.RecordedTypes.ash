@@ -16,6 +16,7 @@
 import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
+import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -28,6 +29,7 @@ export (
     value recordedClosedTypeAt,
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
+    value recordedOperatorGenericScheme,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -248,3 +250,69 @@ let recordedCopyInstantiation (reference: Int) (source: Int) (functionType: Sema
                                 else []
                             | _ -> []
                 | _ -> []
+
+// The operator traits whose operators lowering holds monomorphic: it emits their integer form over
+// open operands and settles it once the type is known, so it gives a binding using them no
+// requirement and no dictionary.
+let isMonomorphicOperatorTrait (name: Str) =
+    match name with
+        | "Add" -> true
+        | "Subtract" -> true
+        | "Multiply" -> true
+        | "Divide" -> true
+        | "Remainder" -> true
+        | "Negate" -> true
+        | "BitAnd" -> true
+        | "BitOr" -> true
+        | "BitXor" -> true
+        | "ShiftLeft" -> true
+        | "ShiftRight" -> true
+        | "BitwiseNot" -> true
+        | _ -> false
+
+let recursive quantifiedVariableListed (variable: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variable || quantifiedVariableListed(variable)(rest)
+
+let recursive mentionsQuantifiedVariable (quantified: List((Int, Str))) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | variable :: rest -> quantifiedVariableListed(variable)(quantified) || mentionsQuantifiedVariable(quantified)(rest)
+
+let recursive hasQuantifiedOperatorRequirement (quantified: List((Int, Str))) (requirements: List(TraitConstraint)) =
+    match requirements with
+        | [] -> false
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            isMonomorphicOperatorTrait(traitName) && mentionsQuantifiedVariable(quantified)(freeTypeVariables(SemTuple(arguments))) || hasQuantifiedOperatorRequirement(quantified)(rest)
+
+let recursive translateRecordedRequirements (state: CoreLoweringState) (requirements: List(TraitConstraint)) (reversed: List(TraitConstraint)) =
+    match requirements with
+        | [] ->
+            reversed
+            |> reverse
+            |> Ok
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            match translateRecordedTypes(state)(arguments)([]) with
+                | Ok(translated) -> translateRecordedRequirements(state)(rest)(TraitConstraint(traitName = traitName, typeArguments = translated) :: reversed)
+                | Error(message) -> Error(message)
+
+// The scheme the standalone inference recorded for the top-level binding whose value has the
+// identity `node`, as lowering writes it, when it quantifies every variable it holds and requires
+// an operator trait lowering holds monomorphic at a quantified variable: a binding the inference
+// generalizes where lowering's own inference does not.
+let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((_name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
+                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                        | (Ok(translatedBody), Ok(translatedConstraints)) ->
+                            let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
+                            in
+                                if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
+                                then Some(scheme)
+                                else None
+                        | _ -> None
+                | None -> None

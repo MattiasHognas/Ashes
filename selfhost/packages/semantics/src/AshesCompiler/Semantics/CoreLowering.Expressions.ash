@@ -45,6 +45,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
@@ -2549,6 +2550,16 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
 // concrete call site so the `both` splits in the copy see a concrete result type and fork.
 let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
 
+let registerConcreteCandidateScheme name value (scheme: TypeScheme) slot isRecursive state =
+    match lambdaParameterChain(value)([]) with
+        | (parameters, _body) ->
+            withStateConcreteRegistry(state
+            |> stateConcreteRegistry
+            |> registerCoreConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive))(state)
+
+// A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
+// over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
+// at a concrete type then gets its own copy, as lowering's own constrained schemes do.
 let registerConcreteSource name value isRecursive state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
@@ -2557,14 +2568,15 @@ let registerConcreteSource name value isRecursive state =
             | (Some(_parts), Some(CoreBinding { location = CoreLocal(slot) } as binding)) ->
                 let scheme = binding.scheme
                 in
-                    let registry = stateConcreteRegistry(state)
-                    in
-                        if scheme.constraints != [] || concreteSourceMentionsCandidate(collectFree(value)([name])([]))(registry) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
-                        then
-                            match lambdaParameterChain(value)([]) with
-                                | (parameters, _body) ->
-                                    withStateConcreteRegistry(registerCoreConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive)(registry))(state)
-                        else state
+                    if scheme.constraints != []
+                    then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                    else
+                        match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
+                            | Some(recorded) -> registerConcreteCandidateScheme(name)(value)(recorded)(slot)(isRecursive)(state)
+                            | None ->
+                                if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
+                                then registerConcreteCandidateScheme(name)(value)(scheme)(slot)(isRecursive)(state)
+                                else state
             | _ -> state
 
 // These mapped operators already have typed active-evidence dispatch in Core.

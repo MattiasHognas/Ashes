@@ -331,6 +331,7 @@ fuse_map_foldleft	live-differs	stage 1 fewer (stage0=24 stage1=1)
 fuse_map_foldleft_declines	live-differs	stage 1 fewer (stage0=5 stage1=1)
 fuse_map_foldleft_shadowed_decline	live-differs	stage 1 fewer (stage0=3 stage1=1)
 general_list_tail_matched_in_tuple_released	same	
+generic_add_binding_used_at_int_and_str	stage1-compile-fails	ASH002 Type mismatch: Int vs Str. Context: in argument #1 of call to 'add'.
 generic_append_map_churn_plateau	same	
 generic_append_map_churn_unannotated_plateau	same	
 generic_append_of_generic_map_results_releases_after_copy	same	
@@ -339,6 +340,7 @@ generic_equality_no_imports_resolves_dictionary	live-differs	stage 1 fewer (stag
 generic_lookup_key_reference_released	live-differs	stage 1 more (stage0=1 stage1=169)
 generic_map_passed_as_value_keeps_closure_results	same	
 generic_map_string_churn_plateau	same	
+generic_multiply_binding_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'square'.
 generic_parameter_adt_argument_not_copied_to_space	same	
 generic_parameter_list_argument_handed_over_not_copied	same	
 generic_result_beside_owned_record_releases_the_record	same	
