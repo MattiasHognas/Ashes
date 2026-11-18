@@ -4,12 +4,14 @@
 // - Lowering names every type it registers by its stitched name and gives every named type the
 //   symbol id 0; the inference numbers its named types itself. A recorded named type is read by
 //   its name, which both sides take from the same stitched declaration, and given id 0.
-// - A name lowering does not know, a type parameter, and a capability or row outside a function
-//   type are not read: the translation names what it could not map.
+// - A name lowering does not know, a type parameter outside the generic implementation method being
+//   lowered, and a capability or row outside a function type are not read: the translation names
+//   what it could not map.
 // - A function type's capability row is dropped; lowering keeps no rows in the types it unifies.
 // - Type variables are kept as they are; a caller that needs a closed type checks for them.
 // - Inside a generic body lowered at a concrete instance, a recorded type is read through that
-//   instance's instantiation: the body's quantified variables take their types there first.
+//   instance's instantiation: the body's quantified variables take their types there first. A head
+//   parameter of a generic implementation is read as the variable lowering pinned it to.
 
 import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.Types
@@ -75,6 +77,16 @@ let recordedTypeNameKnown (name: Str) (state: CoreLoweringState) =
                     |> stateConstructorLayouts
                     |> anyLayoutNamed(name)
 
+// The type a generic implementation's head parameter has while one of its methods is lowered: the
+// variable lowering pinned it to, by the parameter's name.
+let recursive activeTypeParameterNamed (name: Str) (parameters: List((Str, SemanticType))) =
+    match parameters with
+        | [] -> None
+        | (candidate, semanticType) :: rest ->
+            if candidate == name
+            then Some(semanticType)
+            else activeTypeParameterNamed(name)(rest)
+
 // The recorded type as lowering writes it, or what could not be mapped.
 let recursive translateRecordedTypeAsIs (state: CoreLoweringState) (semanticType: SemanticType) =
     match semanticType with
@@ -108,7 +120,12 @@ let recursive translateRecordedTypeAsIs (state: CoreLoweringState) (semanticType
             match translateRecordedTypeAsIs(state)(target) with
                 | Ok(translated) -> Ok(SemPointer(translated))
                 | failed -> failed
-        | SemParameter(_id, name) -> Error("type parameter: " + name)
+        | SemParameter(_id, name) ->
+            match state
+            |> stateActiveTypeParameters
+            |> activeTypeParameterNamed(name) with
+                | Some(variable) -> Ok(variable)
+                | None -> Error("type parameter: " + name)
         | SemCapability(name, _arguments) -> Error("capability outside a row: " + name)
         | SemRow(_entries, _tail) -> Error("row outside a function type")
         | other -> Ok(other)
