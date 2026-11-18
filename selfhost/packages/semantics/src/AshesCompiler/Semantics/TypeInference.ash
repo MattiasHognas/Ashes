@@ -3216,12 +3216,26 @@ let recursive requirementsNotHeld (environment: TypeEnvironment) (constraints: L
                 | RequirementHolds -> requirementsNotHeld(environment)(tail)
                 | _ -> head :: requirementsNotHeld(environment)(tail)
 
-// Under the program rules a binding's requirements are weighed against the implementations: one
-// that no implementation supplies is an error where it arises, and one an implementation settles
-// is not something the binding's written `requires` has to repeat.
+// The requirements whose types are all known. One that still holds a type variable is passed on
+// to the binding's users with its scheme and is resolved where they settle the variable, whether
+// or not an implementation can fit it here, as stage 0 does.
+let recursive closedRequirements (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | (TraitConstraint { typeArguments = typeArguments } as constraint) :: tail ->
+            match freeTypeVariables(SemTuple(typeArguments)) with
+                | [] -> constraint :: closedRequirements(tail)
+                | _ -> closedRequirements(tail)
+
+// Under the program rules a binding's requirements on known types are weighed against the
+// implementations: one that no implementation supplies is an error where it arises, and one an
+// implementation settles is not something the binding's written `requires` has to repeat.
 let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
     if environment.programInferenceRules
-    then firstFailedRequirement(environment)(constraints)
+    then
+        constraints
+        |> closedRequirements
+        |> firstFailedRequirement(environment)
     else None
 
 // The requirements a binding still has to carry: one that the implementations in scope already
