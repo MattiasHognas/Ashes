@@ -2937,6 +2937,29 @@ let subsumeCapabilityRow capabilityRow environment ambientRow substitution suppl
                             resultType
                         ))
 
+// The parameter type of a callee whose type is already a function.
+let expectedParameterOf (functionType: SemanticType) =
+    match functionType with
+        | SemFunction(parameter, _result, _row) -> Some(parameter)
+        | _ -> None
+
+// A call's result unified with the type its context expects, when that unification succeeds; the
+// result as it is otherwise.
+let preconstrainedCallResult (expected: Maybe(SemanticType)) (environment: TypeEnvironment) resultType substitution supply =
+    match expected with
+        | None -> inferenceSuccess(resultType)(substitution)(supply)
+        | Some(expectedType) ->
+            match mergeUnificationIn(environment)(
+                substitution,
+                expectedType
+                |> applySubstitution(substitution)
+                |> unifyIn(environment)(applySubstitution(substitution)(resultType)),
+                supply,
+                resultType
+            ) with
+                | TypeInferenceResult { error = None } as constrained -> constrained
+                | _ -> inferenceSuccess(resultType)(substitution)(supply)
+
 let recursive capabilityOperationCallRoot expression sawArgument =
     match expression with
         | ExprAt(_span, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
@@ -4996,6 +5019,89 @@ and inferHandler body arms environment substitution supply ambientRow =
                                                                         )
                                                                     | failure -> failure
                                                             | failure -> failure
+// One application `function(argument)`. `expected` is the type the context gives the call's
+// result, which a call written as another call's argument has: it is unified with the result
+// before the applied arrow's capability row joins the ambient row, as stage 0 constrains a call's
+// result before applying it, so an arrow row the expected type closes adds nothing to the
+// ambient row. A result the expected type does not fit is left to the context's own unification.
+and inferCallApplication function argument (expected: Maybe(SemanticType)) environment substitution supply ambientRow =
+    if forkCalledOutsideAsync(function)(environment)
+    then forkOutsideAsyncFailure(argument)(substitution)(supply)
+    else
+        match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
+            | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
+                match inferCallArgument(argument)(functionType
+                |> applySubstitution(functionSubstitution)
+                |> expectedParameterOf)(callArgumentEnvironment(function)(environment))(functionSubstitution)(functionSupply)(ambientRow) with
+                    | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
+                        match freshTypeVariable(argumentSupply) with
+                            | (resultType, resultSupply) ->
+                                match freshTypeVariable(resultSupply) with
+                                    | (callRow, callRowSupply) ->
+                                        let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
+                                        in
+                                            let unification =
+                                                unifyIn(environment)(
+                                                    applySubstitution(argumentSubstitution)(functionType),
+                                                    expectedFunction
+                                                )
+                                            in
+                                                match mergeUnificationIn(environment)(
+                                                    argumentSubstitution,
+                                                    unification,
+                                                    callRowSupply,
+                                                    resultType
+                                                ) with
+                                                    | TypeInferenceResult { semanticType = unifiedResultType, substitution = mergedSubstitution, supply = mergedSupply, constraints = _unificationConstraints, error = None } ->
+                                                        match preconstrainedCallResult(expected)(environment)(unifiedResultType)(mergedSubstitution)(mergedSupply) with
+                                                            | TypeInferenceResult { semanticType = constrainedResultType, substitution = unifiedSubstitution, supply = unifiedSupply } ->
+                                                                let callResult =
+                                                                    subsumeCapabilityRow(
+                                                                        callRow,
+                                                                        environment,
+                                                                        ambientRow,
+                                                                        unifiedSubstitution,
+                                                                        unifiedSupply,
+                                                                        constrainedResultType
+                                                                    )
+                                                                in
+                                                                    addConstraints(
+                                                                        appendConstraints(
+                                                                            functionConstraints,
+                                                                            argumentConstraints
+                                                                        ),
+                                                                        subsumeUnsignedCapabilityOperation(
+                                                                            function,
+                                                                            environment,
+                                                                            ambientRow,
+                                                                            callResult
+                                                                        )
+                                                                    )
+                                                    | failure ->
+                                                        failure
+                                                        |> builtinArgumentFailure(function)(argumentType)
+                                                        |> callSiteFailure(function)(functionType)(argumentType)(argumentSubstitution)(environment)
+                    | failure -> failure
+            | failure -> countedChainFailure(function)(failure)
+// A call's argument: a call written there is inferred with the callee's parameter type as the
+// type expected of its result; anything else is inferred as it is.
+and inferCallArgument argument (expected: Maybe(SemanticType)) environment substitution supply ambientRow =
+    match (expected, argument) with
+        | (None, _) -> inferWith(argument)(environment)(substitution)(supply)(ambientRow)
+        | (Some(_expectedType), ExprAt(span, inner)) ->
+            locateInferenceError(
+                span,
+                inferCallArgument(inner)(expected)(environment)(substitution)(supply)(ambientRow)
+            )
+        | (Some(_expectedType), ExprNode(node, inner)) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferCallArgument(inner)(expected)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferCallArgument(inner)(expected)(environment)(substitution)(supply)(ambientRow)
+        | (Some(_expectedType), ExprCall(function, callArgument, _whitespace, _layout)) -> inferCallApplication(function)(callArgument)(expected)(environment)(substitution)(supply)(ambientRow)
+        | _ -> inferWith(argument)(environment)(substitution)(supply)(ambientRow)
 and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
         | ExprAt(span, inner) ->
@@ -5302,61 +5408,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                                     )
                                                     | failure -> failure
                             | failure -> failure
-        | ExprCall(function, argument, _whitespace, _layout) ->
-            if forkCalledOutsideAsync(function)(environment)
-            then forkOutsideAsyncFailure(argument)(substitution)(supply)
-            else
-                match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
-                    | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
-                        match inferWith(argument)(callArgumentEnvironment(function)(environment))(functionSubstitution)(functionSupply)(ambientRow) with
-                            | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
-                                match freshTypeVariable(argumentSupply) with
-                                    | (resultType, resultSupply) ->
-                                        match freshTypeVariable(resultSupply) with
-                                            | (callRow, callRowSupply) ->
-                                                let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
-                                                in
-                                                    let unification =
-                                                        unifyIn(environment)(
-                                                            applySubstitution(argumentSubstitution)(functionType),
-                                                            expectedFunction
-                                                        )
-                                                    in
-                                                        match mergeUnificationIn(environment)(
-                                                            argumentSubstitution,
-                                                            unification,
-                                                            callRowSupply,
-                                                            resultType
-                                                        ) with
-                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                                let callResult =
-                                                                    subsumeCapabilityRow(
-                                                                        callRow,
-                                                                        environment,
-                                                                        ambientRow,
-                                                                        unifiedSubstitution,
-                                                                        unifiedSupply,
-                                                                        unifiedResultType
-                                                                    )
-                                                                in
-                                                                    addConstraints(
-                                                                        appendConstraints(
-                                                                            functionConstraints,
-                                                                            argumentConstraints
-                                                                        ),
-                                                                        subsumeUnsignedCapabilityOperation(
-                                                                            function,
-                                                                            environment,
-                                                                            ambientRow,
-                                                                            callResult
-                                                                        )
-                                                                    )
-                                                            | failure ->
-                                                                failure
-                                                                |> builtinArgumentFailure(function)(argumentType)
-                                                                |> callSiteFailure(function)(functionType)(argumentType)(argumentSubstitution)(environment)
-                            | failure -> failure
-                    | failure -> countedChainFailure(function)(failure)
+        | ExprCall(function, argument, _whitespace, _layout) -> inferCallApplication(function)(argument)(None)(environment)(substitution)(supply)(ambientRow)
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
