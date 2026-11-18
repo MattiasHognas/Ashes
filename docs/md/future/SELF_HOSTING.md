@@ -399,78 +399,117 @@ Work is verified in shared rounds: agents finish a batch, run only cheap checks 
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
 behavioural check for all of them, then stage 2, its behavioural check, and stage 3.
 
-### Current round: round 10 (state 2026-11-18, evening)
+### Current round: round 10 (paused 2026-11-18, 23:15)
 
 This section is the handoff: a session that starts fresh reads it first. Keep it current with each
 integration, and replace it when round 10 has run.
 
 **Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
 unless one blocks something. The inference content for round 10 is complete; all agent effort goes
-to the bugs below until then.
+to the bugs below until then. Work was paused by the user at 23:15 on 2026-11-18; nothing is
+running except, possibly, the check in "Checks in flight" below.
 
-**Integration branch:** `selfhost/round10` (from `main` after #1159), pushed after every commit.
+**How work is done.** One coordinator session integrates and runs every load job (builds, suites,
+sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
+integration head, and hand back a `BATCH READY` batch with the load work they need listed in their
+worktree's `work/PROGRESS.md`. The coordinator pushes each agent branch and the integration branch
+after every commit, cherry-picks batches onto the integration branch, and updates this section. The
+agent rules are in the `step-f-round3` worktree's `work/coord/rules.md` (machine-local).
+
+**Integration branch:** `selfhost/round10` (from `main` after #1159), worktree `step-f-round3`.
 What it holds beyond `main`, none of it built by stage 1 yet:
-- typed lowering (all behind `ASHES_TYPED_LOWERING=1`, flag-off IR expected byte-identical):
-  the typed-nodes batch (node identities, the two `Show.show` goals, operator instance kinds,
-  top-level schemes by node, handler-arm types, requirement reduction, no numeric defaulting,
-  written-requirement diagnostics in both compilers), the typed-replay batch (operator-generic
-  copies inside functions, below top level and in place; `!`, `Default` and user trait method
-  goals from the table), and the step-7 leftovers with step-8 rules (a) and (b) (non-tail
-  recursive copies, in-place copies inside functions and through inner lambdas, partly open
-  operators, `Default` and dictionary goals settled at the site);
-- the entry-module trait naming fix in stage 0;
-- the first parity batch: entry module loaded by path, call parameters typed from argument forms
-  (`apply(given (x) -> print(x))(3)`), spans resolved against the import-blanked text (every
-  stage-1 position after an import header was shifted), parse errors printed with code and
-  position, unknown-qualifier wording;
-- the second parity batch: the `semantics` suite's capability-row error (an argument call's result is constrained by the parameter type before its row joins the caller's, as stage 0 does), the `core-copy-plan-view` and `heap-drop-worklist` fixtures, and a signature mismatch reported at the value with the written type first;
-- the stage-2 use-after-free fix: `TcoReset.noteSpineFreedSlot` released a span taken out of a matched `Some` twice (a cons head kept in an owned slot whose retain the call-argument frame already releases); guarded in both compilers, test `matched_option_field_consed_into_call_argument_released_once`. Stage 1 still lacks stage 0's uniqueness check when matching an owned call result (`match f(x) with Some(span)`, `rc_match_field_shared/owned`), which is why it reached that pair: open, not ported;
-- the third parity batch: stage 0 no longer fails on a nested operator-generic `let` used at two types in one lambda (ASH010) or on two `(given (xs) -> xs == [])` at different element types (ASH005, a per-dictionary lowering of the shipped `Eq(List(a))` pinned to one type); stage 1 infers a lambda argument against its parameter type and row; stage 0 drops standard-library cascades after a program error; a retired `Ashes.*` module is an unknown standard-library module (`namespace_old_module_fails` fixed); stage 1 counts columns in Unicode scalars, as stage 0 does;
-- strict imports (decision 2) in both compilers: a type or constructor is visible unqualified only in its module and modules that import it (ASH048); shipped modules included, trait names exempt; a value selector does not count as an import; 11 tests gained the import the leniency hid;
-- two of the three type-checking decisions in both compilers: a requirement on an outer variable
-  is passed past a local `let` (stage 0 already did), and a trait method that mentions no trait
-  parameter is rejected with ASH010 (stage 1 already rejected it; now with stage 0's wording).
-Whole-compiler type check with the standalone inference on the head: `ok`. Stage 0 from the head (after the crash fix): `dotnet build` and format clean, `OwnershipTests` green, `LinuxBackendCoverageTests` only the 10 leak tests that fail on `main`, `ashes test tests` 1,261 passed and 0 failed. After the third parity batch: the full C# suite fails the same 39 tests as `main` (10 leak, 29 assigned above), LSP 88 of 88, `ashes test tests` 1,263 passed and 0 failed.
+- typed lowering, all behind `ASHES_TYPED_LOWERING=1` (flag-off IR expected byte-identical):
+  node identities, the two `Show.show` goals, operator instance kinds, top-level schemes by node,
+  handler-arm types, requirement reduction, no numeric defaulting; operator-generic copies inside
+  functions, below top level, in place and through inner lambdas, non-tail recursive copies; `!`,
+  `Default`, user trait method and dictionary goals settled from the table; step-8 rules (a) and
+  (b). Expected with the flag on: 0 pending trait goals and no replay pass on the whole compiler.
+- three type-checking decisions in both compilers: a requirement on an outer variable is passed
+  past a local `let`; a trait method that mentions no trait parameter is rejected (ASH010); strict
+  imports (ASH048: a type or constructor is visible unqualified only in its module and modules that
+  import it; shipped `Ashes.*` modules included; trait names in `deriving`, `requires` and
+  `implement` exempt; a value selector does not count); written-requirement diagnostics.
+- stage-1 parity fixes: entry module loaded by path; call parameters typed from argument forms;
+  spans resolved against the import-blanked text (positions after an import header were shifted);
+  parse errors printed with code and position; unknown-qualifier wording; an argument call's
+  result constrained before its row joins the caller's (the `semantics` suite's capability-row
+  error); a lambda argument inferred against its parameter type and row; signature mismatches at
+  the value with the written type first; columns in Unicode scalars.
+- stage-0 fixes: entry-module trait naming; ASH010 on a nested operator-generic `let` used at two
+  types in one lambda; ASH005 on two `(given (xs) -> xs == [])` at different element types; no
+  standard-library cascade after a program error; a retired `Ashes.*` module reported as an
+  unknown standard-library module.
+- the stage-2 use-after-free: `TcoReset.noteSpineFreedSlot` released a span twice (a cons head kept
+  in an owned slot whose retain the call-argument frame already releases); guarded in both
+  compilers.
+- fixtures: `core-copy-plan-view`, `heap-drop-worklist`, the `logical-not-inference` runner entry.
 
-**In flight** (agent branches are pushed to origin when the agent hands back):
+Checks on the head (5f1e591e, after strict imports): `dotnet build` and format clean; the full C#
+suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 being fixed on
+`fix/csharp-red-tests`); LSP 88 of 88; `ashes test tests` with a stage 0 from the head 1,273
+passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
+items).
 
-| Branch (worktree) | What | State |
-| --- | --- | --- |
-| `fix/parity-bugs-4` (`parity-bugs`) | The `semantics` suite's "recursive bindings should remain monomorphic inside their group"; `logical-not-inference` failing "recursive discovery placeholder escaped"; `stitching-lookup-index` differing from its frozen oracle at seed 4 (scopes); the `projects` suite binary built by stage 0 segfaulting; stage 1 `MissingCoreTraitEvidence("Eq", ...)` on two `xs == []` lambdas; the rest of the unported diagnostic details and stage 1's module list; parser recovery (stage 0's extra errors may be artifacts of its wrapped source) | running (on 5d6c7990) |
-| `fix/csharp-red-tests` (`typecheck-decisions`) | The 29 non-leak C# tests that fail on `main` and on the head alike (22 shared lowered-IR and 2 explain fixtures, 3 snapshot pipeline tests, the `derived_show_imported_constructor` project fixture, a ToSpace specialization test; list in the integration worktree's `work/r10pre/csharp-red-29.txt`): stale fixture or compiler bug, each | running (on 1a1fbefb) |
-| `fix/parallel-codegen` (`parallel-codegen`) | CG-17 and LNK-14 | paused by the user for the bugs; design notes are in the CG-17 checklist entry |
+**Checks in flight:** stage 0 compiling the self-hosted compiler under strict imports, started
+23:10, about 21 minutes. Its log is `work/r10pre/strict/summary.txt` (and `s1.log`) in the
+integration worktree. If it reports an ASH048 in the self-hosted sources, a missing import there is
+the fix.
 
-**Open bugs not yet assigned** (after the running batches). Stage 1's missing uniqueness check on matching an owned call result (see the crash fix above) is one. Usage ran out at 20:50 on 2026-11-18: the two running agents (`fix/parity-bugs-3`, `fix/s2-crash`) were stopped early; resume them from their worktrees' `work/PROGRESS.md`. Checks of batch 2 passed (whole compiler and `semantics` suite type-check, the new tests behave as expected, both fixtures pass with stage 0); round 9's suite runs were still running on the machine:
-- `examples/restful_api` does not compile with stage 0 (ASH010 ambiguous `Eq(a)` at Main.ash
-  1:1 and 18:1, ASH002 at Api.ash:25:13); broken before this week.
-- Left by the strict-imports batch: stage 1 cannot stitch a type selector import of a shipped
-  module (`import Ashes.Collection.Map.MapTree`, reproducer `shipped_type_selector_import.ash`);
-  stage 0 does not check alias names (`type X = Y`) for visibility; ASH048 names an inline module
-  `file#Inner` in stage 1 where stage 0 says `File.Inner`; a user trait of an unimported module in
-  `requires`/`implement` is rejected by stage 1 although the reference now says trait names
-  resolve without an import.
-- The 30 of 95 `ir-program-parity` fixtures that differ from stage 0: decide each from round 9's
-  IR-parity run (below) as a stale fixture or a stage-1 bug.
-- Re-check the "Open work recorded at bootstrap36" list above with small programs; fix what still
-  fails, drop what no longer applies.
-- From round 9's suite runs (on `main`'s content, before batch 2; logs in the `suite-debt`
-  worktree's `work/round8/`): `semantics` fails "recursive bindings should remain monomorphic
-  inside their group"; `projects` segfaults (exit 139); `logical-not-inference` failed its
-  argument handling (a runner bug, fixed: it runs with no arguments now);
-  `stitching-lookup-index` differs from its frozen oracle at seed 4 (scopes);
-  `SelfhostIrParityTests` 24 of 207 fail. Frontend, formatter, cli and backend pass; 94 focused
-  fixture runs pass (core-copy-plan-view and heap-drop-worklist failed there but are fixed by
-  batch 2).
+**Branches waiting to be integrated** (pushed, clean, each with `PAUSED:` and its load work at the
+top of its worktree's `work/PROGRESS.md`):
 
-**Round 9's suite runs** (on `main`'s content): results in the `suite-debt` worktree's
-`work/round8/summary.txt` and `work/infer/r1-*/summary.tsv`. Type checks: 71 of 78 `ok`, the
-three ambiguous-`Main` suites (fixed since), `semantics` and the two fixtures above. The six
-suites, the focused fixtures and the IR-parity runs were still running at the time of writing.
+| Branch (worktree) | Commits | What | Load work before or after integrating |
+| --- | --- | --- | --- |
+| `fix/parity-bugs-4` (`parity-bugs`) | ada43aa6, 3d4ff885, d641e842, e91443e7 | The `projects` suite segfault was a stage-0 miscompile since b42: a self call in a cons tail was not counted as a loop edge, so a grown accumulator looked loop-invariant and its arena cells were reset; fixed in both compilers, test `tmc_dedup_with_grown_seen_accumulator`. The `semantics` recursive-group expectation and the `stitching-lookup-index` oracle were stale (updated). Stage 1 prints stage 0's list of known modules. | Changes code for every tail-modulo-cons loop in both compilers: the full C# suite and `ashes test tests` with a stage 0 from the branch, then the shared stage-1 build |
+| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 | 27 of the 29 red C# tests, all stale: snapshot ELF hashes (LLVM 23 bitcode), the project-fixture harness lowered without the layout's source context, a ToSpace test whose decline reason changed, and 22 lowered-IR plus 2 explain fixtures regenerated after proving each difference is one of three intended stage-0 switches (`GRC_NO_CLOSURECAPTURECOPY`, `GRC_NO_GENERICVARIANTLOOPRC`, `GRC_NO_SHAREDMATCHFIELD`) | The full C# suite: expected only the 10 leak tests and the 2 open fixtures below to fail. Note: its update mode also overwrote the copies under `bin/`; rebuild `src/Ashes.Tests` before a normal run |
+
+Integrate both by cherry-picking onto `selfhost/round10` (run the checks above first or right
+after), then push.
+
+**Open bugs, not assigned** (the gate):
+1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
+   matches only with five more switches off (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`,
+   `GRC_NO_EXITPARAMOWNFIELDS`, `GRC_NO_ARENACURRYBORROW`, `GRC_NO_BOUNDGENERICCALLTYPES`,
+   `GRC_NO_UNREACHEDGENERICLOOPRC`): narrow to one, review the IR, regenerate.
+   `tco_generic_curried_helper_result_passed_to_self_call` differs with all eight off: cause unknown.
+2. `logical-not-inference` fails "recursive discovery placeholder escaped":
+   `lowerCoreExpression("let recursive invert x = !x in invert")` now returns no error where the
+   fixture expects one. Suspects by date: 1bb37dff (answer open `Not` goals from the table) and
+   d64aa0a4/cc9b0862, although all claim to be typed-lowering only. Next step: a diagnostic run
+   printing the actual `CoreLoweringResult` in `checkRecursiveExpressionBoundary` (recipe in
+   `parity-bugs/work/PROGRESS.md`).
+3. Stage 1 on two `(given (xs) -> xs == [])` at different element types
+   (`parity-bugs/work/q/s5b.ash`): `MissingCoreTraitEvidence("Eq", ...)`. Stage 1 keys a proven
+   goal per span, trait and method, as stage 0 did before 3b54ac0d; the port is a per-lowering
+   ordinal and counter in `CoreLoweringState` (unconfirmed as the cause).
+4. Stage 1 lacks stage 0's uniqueness check when matching an owned call result
+   (`match f(x) with Some(span)`, `rc_match_field_shared/owned`), which let it reach the stage-2
+   double release.
+5. Diagnostic details not ported to the inference: the "Expected shape: Some(T)." suffix, the
+   "in if branches" / "in match arm" contexts, stage 0's order of an unjustified requirement before
+   ambiguity (with its semantics-suite expectation).
+6. Parser recovery: stage 0's later errors after the first come from its wrapped combined source
+   ("found RParen" at EOF is the wrapping parenthesis): decided to make stage 0 stop reporting
+   those, not to imitate them; not implemented. Genuine difference: for `let y = (1\n1` stage 0
+   reports "found Int" at 3:1, stage 1 applies `1 1` across the newline and reports "found EOF".
+7. Left by strict imports: stage 1 cannot stitch `import Ashes.Collection.Map.MapTree`
+   (`shipped_type_selector_import.ash`); stage 0 does not check alias names (`type X = Y`); ASH048
+   names an inline module `file#Inner` in stage 1 and `File.Inner` in stage 0; a user trait of an
+   unimported module in `requires`/`implement` is rejected by stage 1 though trait names resolve
+   without an import.
+8. `examples/restful_api` does not compile with stage 0 (ASH010 ambiguous `Eq(a)` at Main.ash 1:1
+   and 18:1, ASH002 at Api.ash:25:13); broken before this week.
+9. The 30 of 95 `ir-program-parity` fixtures (stage 1 against the shared fixtures): decide each
+   after `fix/csharp-red-tests` regenerated the stage-0 side.
+10. Re-check the "Open work recorded at bootstrap36" list above with small programs.
+Leaks stay out: 150 leak-only rows and the 10 leak C# tests.
+
+**Paused, not a bug:** `fix/parallel-codegen` (CG-17, LNK-14), paused by the user for the bug
+work; design notes in the CG-17 checklist entry.
 
 **Round 10, once the gate is met** (one shared round, run by the coordinator):
-1. Stage 0 from the head: `dotnet build Ashes.slnx`, `dotnet format --verify-no-changes`, the C#
-   filters the batches name (trait classes, the decisions batch's binding and module classes),
-   and `ashes test tests` against the previous stage 0.
+1. Stage 0 from the head: `dotnet build Ashes.slnx`, `dotnet format --verify-no-changes`, the full
+   C# suite and the LSP suite against `main`'s failures, `ashes test tests`.
 2. Stage 1 (`--debug -O2`, `ASHES_RC_LEAKCHECK=1`), stage 2 with a link map, the behavioural
    check of both against stage 0, stage 3 and the byte comparison (stage 3 needs swap allowed).
 3. The same behavioural check of stage 1 with `ASHES_TYPED_LOWERING=1`, and the lowered-IR identity
