@@ -12,6 +12,8 @@ done
 cat "$fixture/Prelude.ash.inc" > "$out/Main.ash"
 extract_range "$core" '^let heapFactsOf ' '^let heapShallowCopyOf ' >> "$out/Main.ash"
 cat "$fixture/OldPlan.ash.inc" >> "$out/Main.ash"
+extract_declaration "$core" cachedCoreCopyPlan >> "$out/Main.ash"
+extract_declaration "$core" cachedCoreChildren >> "$out/Main.ash"
 extract_range "$core" '^let heapCopyPlanFactsOf ' '^let argumentCopyPlanOf ' >> "$out/Main.ash"
 extract_range "$core" '^let heapChildrenOfNamed ' '^let heapChildTypesOfNamed ' >> "$out/Main.ash"
 cat "$fixture/Normalizer.ash.inc" >> "$out/Main.ash"

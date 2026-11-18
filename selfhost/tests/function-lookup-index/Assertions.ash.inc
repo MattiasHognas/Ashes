@@ -48,7 +48,7 @@ let matchesCandidate name candidates index =
 
 let scheme semanticType = TypeScheme(quantified = [], body = semanticType, constraints = [])
 
-let emptyState unit = CoreLoweringState(programState = CoreProgramState(specializationCandidates = [], specializationCandidateByName = Ashes.Collection.Map.empty, topLevelFunctionRefs = [], topLevelFunctionRefByName = Ashes.Collection.Map.empty))
+let emptyState unit = CoreLoweringState(programState = CoreProgramState(specializationCandidates = [], specializationCandidateByName = Ashes.Collection.Map.empty, topLevelFunctionRefs = [], topLevelFunctionRefByName = Ashes.Collection.Map.empty, coverageTypes = emptyTypeEnvironment(Unit), coverageEnvironmentVersion = 0, topLevelInferenceBindings = [], topLevelInferenceOpen = [], topLevelInferenceOpenShadowed = false, topLevelInferenceEnvironment = None))
 
 let stateChecks name =
     (let candidates = [(name, [name], ExprInt(1)), (name, [], ExprInt(2))]

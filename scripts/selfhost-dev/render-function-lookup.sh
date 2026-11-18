@@ -13,6 +13,8 @@ import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ReuseFunctionSpecialization.specializationArity
+import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 ASH
 awk '/^\/\/ Prepared function lookup indexes:/ {copying=1} copying {print} /^\/\/ End prepared function lookup indexes\./ {exit}' "$core" >> "$out/Main.ash"
 cat >> "$out/Main.ash" <<'ASH'
@@ -22,6 +24,12 @@ type CoreProgramState =
     | specializationCandidateByName: MapTree(Str, CoreSpecializationCandidate)
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
     | topLevelFunctionRefByName: MapTree(Str, CoreTopLevelFunctionReference)
+    | coverageTypes: TypeEnvironment
+    | coverageEnvironmentVersion: Int
+    | topLevelInferenceBindings: List((Str, TypeScheme, Bool))
+    | topLevelInferenceOpen: List((Str, TypeScheme))
+    | topLevelInferenceOpenShadowed: Bool
+    | topLevelInferenceEnvironment: Maybe((Int, List((Str, TypeScheme))))
 type CoreLoweringState =
     | programState: CoreProgramState
 ASH

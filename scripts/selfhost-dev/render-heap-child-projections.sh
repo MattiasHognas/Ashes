@@ -11,6 +11,7 @@ for marker in 'let heapFactsOf ' 'let heapShallowCopyOf ' 'let heapChildrenOfNam
 done
 cat "$fixture/Prelude.ash.inc" > "$out/Main.ash"
 extract_range "$core" '^let heapFactsOf ' '^let heapShallowCopyOf ' >> "$out/Main.ash"
+extract_declaration "$core" cachedCoreChildren >> "$out/Main.ash"
 extract_range "$core" '^let heapChildrenOfNamed ' '^let inlineAdtCopyPlanOf ' >> "$out/Main.ash"
 cat "$fixture/Assertions.ash.inc" >> "$out/Main.ash"
 cat > "$out/ashes.json" <<'JSON'

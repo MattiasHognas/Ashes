@@ -16,6 +16,7 @@ import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.append
 import Ashes.Collection.Map.MapTree
+import AshesCompiler.Semantics.TaglessAdtLayout
 ASH
 extract_range "$core" '^type CoreConstructorLayout =' '^type CoreBindingLocation =' >> "$out/Main.ash"
 extract_range "$core" '^let recursive splitConstructorType ' '^let instantiateConstructor ' >> "$out/Main.ash"
