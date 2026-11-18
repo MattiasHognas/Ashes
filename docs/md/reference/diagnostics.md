@@ -56,6 +56,7 @@ Current codes:
 | `ASH045` | Invalid FFI out-parameter contract                         |
 | `ASH046` | Invalid native FFI string contract                         |
 | `ASH047` | Invalid root package override                              |
+| `ASH048` | Type or constructor of a module the referencing module does not import |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -132,6 +133,16 @@ and the binding/type import selectors. See
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
+
+- `ASH048` — **Type or constructor of a module that is not imported.** A type in an annotation (or
+  in a type declaration's field, a trait signature, or an `implement` head), a constructor in an
+  expression or pattern, or a record literal names, unqualified, a declaration of a module the
+  referencing module does not import, though the program reaches that module through another
+  import or a qualified reference. Standard-library modules follow the same rule; only `Unit`,
+  `Maybe`, `Result` and their constructors are built in. Import the declaring module (whole, under an
+  alias, or through a type selector). See [language.md section 13.1](language.md#131-accessing-standard-library).
+  Messages: `Type 'Shape' is declared in module 'Shapes', which this module does not import.` and
+  `Constructor 'Circle' is declared in module 'Shapes', which this module does not import.`
 
 ## Capability diagnostics
 

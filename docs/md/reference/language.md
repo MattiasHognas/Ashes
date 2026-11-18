@@ -1890,6 +1890,28 @@ qualified reference on its own never brings `length` or `List.length` into scope
 This rule covers the standard library only. A user module is reachable only once it is imported,
 because a project's module graph is exactly its declared imports.
 
+Types and constructors follow the same rule, for user and standard-library modules alike: a type
+named in an annotation (or in a type declaration's field, a trait signature, or an `implement`
+head), a constructor in an expression or pattern, and a record literal or record pattern resolve
+unqualified only in the module that declares them and in the modules that import that module
+(whole, under an alias, or through a type selector, which imports the module whole; a value
+selector brings in only its binding). Naming one anywhere else is an error (`ASH048`), even when the
+program reaches the declaring module through another import:
+
+```ash
+// Shapes declares `type Shape = | Circle(Int) | Square(Int)`; Geometry imports Shapes.
+import Geometry
+
+let describe (shape: Shape) = 1 // ASH048: Shape is declared in Shapes, which this file does not import
+```
+
+A standard-library type is no exception: `MapTree(Str, Int)` needs `import Ashes.Collection.Map`
+(or `import Ashes.Collection.Map.MapTree`), and the `Ordering` constructors `Less`, `Equal` and
+`Greater` need `import Ashes.Trait`. Only the built-in types of §13.3, `Unit`, `Maybe` and `Result`,
+with their constructors, are visible everywhere. Trait names are not covered by this rule: a trait
+named in a `deriving` clause, a `requires` clause or an `implement` declaration resolves without an
+import (§21.5).
+
 #### Import and use unqualified names
 
 ```ash
@@ -3601,7 +3623,9 @@ declare `show` without conflict. Constructors remain in the existing constructor
 
 Traits are exported declarations and follow the same sequential module visibility and selector-import
 rules as types. Importing a trait makes the trait name available; it does not import its methods as
-unqualified values. Implementations are different: every legal implementation in the resolved package graph is
+unqualified values. Unlike a type, a trait named in a `deriving` clause, a `requires` clause or an
+`implement` declaration resolves without an import of its declaring module: `deriving {Eq, Show}`,
+`requires {Ord(a)}` and `implement Show(Point)` need no `import Ashes.Trait`. Implementations are different: every legal implementation in the resolved package graph is
 visible to resolution whether or not its defining module was imported explicitly. This global rule is
 what makes implementation selection coherent.
 
