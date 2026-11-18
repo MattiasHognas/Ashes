@@ -264,7 +264,7 @@ type TypeInferenceError =
     | CallArgumentMismatch(UnificationError, Int, Maybe(Str))
     // A call chain passing more arguments than its root takes: the root callee when it is a name,
     // the arguments it takes, the arguments passed, and the type the extra argument was applied to.
-    | CallArityMismatch(Maybe(Str), Int, Int, SemanticType)
+    | CallChainArityMismatch(Maybe(Str), Int, Int, SemanticType)
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     // An error with the span of the innermost located expression it was raised in. Only the
@@ -2607,7 +2607,7 @@ let callArityFailure function (calleeType: SemanticType) (failure: TypeInference
     (let taken = callChainLength(function)
     in
         let error =
-            CallArityMismatch(callRootName(function))(taken)(taken + 1)(calleeType)
+            CallChainArityMismatch(callRootName(function))(taken)(taken + 1)(calleeType)
         in
             match callChainRootSpan(function)(None) with
                 | Some(span) ->
@@ -2656,14 +2656,14 @@ let recursive countedChainArgument (function: Expr) error =
             inner
             |> countedChainArgument(function)
             |> InferenceErrorAt(span)
-        | CallArityMismatch(callee, expected, provided, calleeType) ->
+        | CallChainArityMismatch(callee, expected, provided, calleeType) ->
             let counts =
                 match callee with
                     | Some(name) -> expected > 0 || startsWithUppercase(name)
                     | None -> expected > 0
             in
                 if counts && provided == callChainLength(function) && sameCallee(callee)(callRootName(function))
-                then CallArityMismatch(callee)(expected)(provided + 1)(calleeType)
+                then CallChainArityMismatch(callee)(expected)(provided + 1)(calleeType)
                 else error
         | other -> other
 
@@ -3384,6 +3384,30 @@ let openBuiltinPrintArgument (environment: TypeEnvironment) (constraints: List(T
         match settleBuiltinArguments(environment)(constraints)(substitution) with
             | (_defaulted, openPrint) -> openPrint
     else None
+
+let recursive quantifiedIdListed (variableId: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variableId || quantifiedIdListed(variableId)(rest)
+
+// The builtin argument requirements of a `let` value on a variable its scheme does not quantify.
+// They belong to the enclosing binding, which settles or rejects them when it generalizes, so they
+// are passed on with the `let`'s body also when the bound name is never used (`let _ = print(x)`).
+// Under the program inference rules only.
+let recursive retainedBuiltinArgumentRequirements (environment: TypeEnvironment) (quantified: List((Int, Str))) substitution (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then
+        match constraints with
+            | [] -> []
+            | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as constraint) :: rest ->
+                match (isBuiltinArgumentTrait(traitName), applySubstitution(substitution)(argument)) with
+                    | (true, SemVariable(variableId)) ->
+                        if quantifiedIdListed(variableId)(quantified)
+                        then retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+                        else constraint :: retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+                    | _ -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+            | _ :: rest -> retainedBuiltinArgumentRequirements(environment)(quantified)(substitution)(rest)
+    else []
 
 let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
@@ -5263,7 +5287,12 @@ and inferWith expression environment substitution supply ambientRow =
                                 in
                                     let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
                                     in
-                                        inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
+                                        match scheme with
+                                            | TypeScheme { quantified = quantified } ->
+                                                addConstraints(
+                                                    retainedBuiltinArgumentRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
+                                                    inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
+                                                )
                         | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) ->

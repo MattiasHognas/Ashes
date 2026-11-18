@@ -507,7 +507,7 @@ let callArgumentDiagnostic (placements: List(StitchedDefinitionPlacement)) (mism
 
 // A call chain passing more arguments than its root takes, as stage 0 words it for a constructor,
 // for a value that is no function, and for a function.
-let callArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
+let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
     (let counts = Ashes.Text.fromInt(expected) + " argument(s) but got " + Ashes.Text.fromInt(provided) + "."
     in
         match callee with
@@ -734,7 +734,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | UnsignedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability operation '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' needs an explicit signature to be used as a value.")
         | HandlerArmParameterCountMismatch(capabilityName, operation, armParameters, operationArity) -> coded(invalidHandlerCode)("Handler arm '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' has " + Ashes.Text.fromInt(armParameters) + " parameter(s) but the operation takes " + Ashes.Text.fromInt(operationArity) + ".")
         | CallArgumentMismatch(mismatch, ordinal, callee) -> callArgumentDiagnostic(placements)(mismatch)(ordinal)(callee)
-        | CallArityMismatch(callee, expected, provided, calleeType) -> callArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
+        | CallChainArityMismatch(callee, expected, provided, calleeType) -> callChainArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
         | _ -> None
 
 let recursive typeDeclarationNamed (items: List(TopLevelItem)) (name: Str) =
@@ -855,7 +855,7 @@ let recursive inferenceErrorWantsCallSiteWording (placements: List(StitchedDefin
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
         | ProgramExpressionError(InferenceUnificationError(_unification)) -> true
         | ProgramExpressionError(CallArgumentMismatch(_mismatch, _ordinal, callee)) -> renamedCallee(placements)(callee)
-        | ProgramExpressionError(CallArityMismatch(callee, _expected, _provided, _calleeType)) -> renamedCallee(placements)(callee)
+        | ProgramExpressionError(CallChainArityMismatch(callee, _expected, _provided, _calleeType)) -> renamedCallee(placements)(callee)
         | _ -> false
 
 let maybeText (value: Maybe(Str)) =
