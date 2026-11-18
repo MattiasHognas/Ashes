@@ -44,6 +44,7 @@ import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
@@ -1336,7 +1337,17 @@ let rejectedConcreteCopy candidate parameters state =
     |> concreteCopyDeclined
     |> recordConcreteCopy(candidate)(parameters)(None), None)
 
-let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionType arguments lower (state: CoreLoweringState) =
+// The identity of the innermost numbered node around a call's root, the callee reference the
+// inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
+// unnumbered tree.
+let recursive callRootNode (expression: Expr) (enclosing: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> callRootNode(inner)(enclosing)
+        | ExprNode(node, inner) -> callRootNode(inner)(node)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callRootNode(function)(-1)
+        | _ -> enclosing
+
+let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) parameters functionType arguments lower (state: CoreLoweringState) =
     (let isolated =
         (state with bindings = [], reuseTokens = [])
         |> withStateActiveTraitMethods([])
@@ -1344,6 +1355,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionT
         |> withStateSpecializationFreshInputs(None)
         |> withStateSpecializingReuseLabel(None)
         |> withStateConcreteDepth(stateConcreteDepth(state) + 1)
+        |> withStateNodeInstantiation(recordedCopyInstantiation(reference)(nodeIdentityOf(candidate.source))(functionType)(state))
     in
         match prepareRecursiveGroup([(candidate.name, candidate.source)])(isolated)([]) with
             | PreparedCoreRecursiveGroup { state = preparedState, members = member :: [], error = None } as prepared ->
@@ -1366,7 +1378,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) parameters functionT
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
             | _ -> rejectedConcreteCopy(candidate)(parameters)(state))
 
-let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) arguments lower state =
+let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int) arguments lower state =
     if coreListLength(arguments) != candidate.arity || stateConcreteDepth(state) >= 8
     then (concreteCopyDeclined(state), None)
     else
@@ -1381,7 +1393,7 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) arguments lower 
                         |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) -> (concreteCopyDeclined(state), None)
-                    | None -> generateConcreteCopy(candidate)(parameters)(functionType)(arguments)(lower)(state)
+                    | None -> generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state)
 
 let tryConcreteSourceCall expression lower state =
     match collectCallSpine(expression) with
@@ -1393,7 +1405,8 @@ let tryConcreteSourceCall expression lower state =
                     |> lookupCoreConcreteCandidate(name) with
                         | Some(candidate) ->
                             if concreteCandidateBindingMatches(candidate)(state)
-                            then tryConcreteCandidateCall(candidate)(arguments)(lower)(state)
+                            then
+                                tryConcreteCandidateCall(candidate)(callRootNode(expression)(-1))(arguments)(lower)(state)
                             else (state, None)
                         | None -> (state, None)
                 | _ -> (state, None)

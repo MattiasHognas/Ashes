@@ -71,6 +71,8 @@ export (
     value stateTypeObservation,
     value withNodeTypes,
     value stateNodeTypes,
+    value stateNodeInstantiation,
+    value withStateNodeInstantiation,
     value observeLoweringEvent,
     value carryTypeObservation,
     value stateConstructorLayouts,
@@ -976,6 +978,10 @@ type CoreProgramState =
     // The types the standalone inference recorded against the numbered program, when lowering was
     // given one.
     | nodeTypes: Maybe(NodeTypeTable)
+    // The instantiation of the generic body being lowered at a concrete instance: each quantified
+    // variable of the body's recorded scheme, by the inference's id, with its recorded type at that
+    // instance. Empty outside such a body.
+    | nodeInstantiation: List((Int, SemanticType))
 
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
@@ -1393,6 +1399,14 @@ let withNodeTypes (table: NodeTypeTable) (state: CoreLoweringState) =
 let stateNodeTypes (state: CoreLoweringState) =
     (let group = state.programState
     in group.nodeTypes)
+
+let stateNodeInstantiation (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.nodeInstantiation)
+
+let withStateNodeInstantiation (instantiation: List((Int, SemanticType))) (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with nodeInstantiation = instantiation))
 
 // Both observations leave the state as it is unless the lowering was asked to observe.
 let observeTopLevelScope (state: CoreLoweringState) =
