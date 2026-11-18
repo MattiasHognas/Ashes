@@ -1483,15 +1483,21 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                             | (rejected, None) -> declinedConcreteCopy(candidate)(functionType)(arguments)(lower)(rejected)(rejected)
                             | generated -> generated
 
-// The registry key of a candidate a `let` below top level registered: its name and its slot.
+// The registry key of a candidate a `let` below top level registered: its name and its slot. The
+// latest such candidate of a name is also kept under the name's marker key, so a call through a
+// name no such `let` registered is answered without looking its binding up.
 let nestedConcreteCandidateKey (name: Str) (slot: Int) = name + "#" + Ashes.Text.fromInt(slot)
+
+let nestedConcreteCandidateMarker (name: Str) = "#" + name
 
 // The candidate a `let` below top level registered for the local binding `name` resolves to, when
 // that binding still holds the scheme lowering gave it at registration.
 let nestedConcreteCandidate (name: Str) (state: CoreLoweringState) =
-    match stateNodeTypes(state) with
+    match state
+    |> stateConcreteRegistry
+    |> lookupCoreConcreteCandidate(nestedConcreteCandidateMarker(name)) with
         | None -> None
-        | Some(_table) ->
+        | Some(_latest) ->
             match lookupBinding(name)(state.bindings) with
                 | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
                     match state
@@ -2760,11 +2766,12 @@ let registerNestedConcreteSource name value (recorded: TypeScheme) (state: CoreL
         | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
             if scheme.constraints == [] && schemeNamesItsBinding(scheme)
             then
-                match lambdaParameterChain(value)([]) with
-                    | (parameters, _body) ->
+                match (lambdaParameterChain(value)([]), inPlaceScopeOf(name)(value)(false)(state)) with
+                    | ((parameters, _body), inPlaceScope) ->
                         withStateConcreteRegistry(state
                         |> stateConcreteRegistry
-                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateKey(name)(slot))(name)(value)(recorded)(scheme)(length(parameters))(slot)(inPlaceScopeOf(name)(value)(false)(state)))(state)
+                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateKey(name)(slot))(name)(value)(recorded)(scheme)(length(parameters))(slot)(inPlaceScope)
+                        |> registerCoreNestedConcreteCandidate(nestedConcreteCandidateMarker(name))(name)(value)(recorded)(scheme)(length(parameters))(slot)(inPlaceScope))(state)
             else state
         | _ -> state
 
