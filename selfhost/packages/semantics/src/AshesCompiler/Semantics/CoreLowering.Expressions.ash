@@ -1085,6 +1085,16 @@ and appendRecorded (left: List((Str, SemanticType))) (right: List((Str, Semantic
         | [] -> right
         | head :: rest -> head :: appendRecorded(rest)(right)
 
+// The identity of the innermost numbered node around a call's root, the callee reference the
+// inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
+// unnumbered tree.
+let recursive callRootNode (expression: Expr) (enclosing: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> callRootNode(inner)(enclosing)
+        | ExprNode(node, inner) -> callRootNode(inner)(node)
+        | ExprCall(function, _argument, _whitespace, _layout) -> callRootNode(function)(-1)
+        | _ -> enclosing
+
 let lowerConstrainedCallWithName expression name privateName (binding: CoreBinding) lower (state: CoreLoweringState) =
     match instantiatePreservingConstraintOrder(binding.scheme)(state.typeSupply) with
         | InstantiationResult { semanticType = sourceType, constraints = constraints, supply = supply } ->
@@ -1112,7 +1122,7 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                 | (bound, None) ->
                                                     match bound
                                                     |> pinConstrainedGoals(0)(constraints)
-                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(nodeIdentityOf(inferenceSpine.root))(bound)) with
+                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(callRootNode(expression)(-1))(bound)) with
                                                         | settled ->
                                                             let goals =
                                                                 map((given (constraint: TraitConstraint) ->
@@ -1338,16 +1348,6 @@ let rejectedConcreteCopy candidate parameters state =
     (state
     |> concreteCopyDeclined
     |> recordConcreteCopy(candidate)(parameters)(None), None)
-
-// The identity of the innermost numbered node around a call's root, the callee reference the
-// inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
-// unnumbered tree.
-let recursive callRootNode (expression: Expr) (enclosing: Int) =
-    match expression with
-        | ExprAt(_span, inner) -> callRootNode(inner)(enclosing)
-        | ExprNode(node, inner) -> callRootNode(inner)(node)
-        | ExprCall(function, _argument, _whitespace, _layout) -> callRootNode(function)(-1)
-        | _ -> enclosing
 
 let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) parameters functionType arguments lower (state: CoreLoweringState) =
     (let isolated =
