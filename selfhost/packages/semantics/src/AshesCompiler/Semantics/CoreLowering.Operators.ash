@@ -1427,6 +1427,30 @@ let pinProvenEqualityGoal operator (operandType: SemanticType) (state: CoreLower
 
 let withCoreBinaryState (state: CoreLoweringState) (binary: LoweredCoreBinary) = binary with state = state
 
+// The operators lowering emits a speculative integer form for when both operands are still open.
+let operatorChoosesFormByOperandType operator =
+    match operator with
+        | CoreAddOperator -> true
+        | CoreSubtractOperator -> true
+        | CoreMultiplyOperator -> true
+        | CoreEqualOperator -> true
+        | CoreNotEqualOperator -> true
+        | _ -> false
+
+// Such an operator whose operands are not both bare variables but still hold one (`xs == []`
+// before anything settles the element type) takes its form from the closed operand type the
+// standalone inference recorded for the operator node, read through the instantiation of the body
+// being lowered: the final type rather than the operands lowering has met so far. None when no
+// closed type is recorded there or the operands do not unify with it; lowering then unifies the
+// operands with each other and decides as before.
+let recordedPartlyOpenOperands operator (leftType: SemanticType) (rightType: SemanticType) (state: CoreLoweringState) =
+    if operatorChoosesFormByOperandType(operator) && (freeTypeVariables(leftType) != [] || freeTypeVariables(rightType) != [])
+    then
+        match recordedOperandType(state) with
+            | Some(recorded) -> bindRecordedOperands(recorded)([leftType, rightType])(state)
+            | None -> None
+    else None
+
 let emitPreparedCoreBinary operator lower binary =
     match (coreOrderedOperatorName(operator), binary) with
         | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
@@ -1461,11 +1485,19 @@ let emitPreparedCoreBinary operator lower binary =
                                         binary
                                         |> withCoreBinaryState(observeLoweringEvent(1)(state))
                                         |> emitDeferred
-                | _ ->
-                    binary
-                    |> unifyEqualityOperands(operator)
-                    |> resolvedCoreBinary
-                    |> emitResolvedCoreBinary(operator)(lower)
+                | (_emitter, resolvedLeft, resolvedRight) ->
+                    match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with
+                        | Some(recordedState) ->
+                            binary
+                            |> withCoreBinaryState(observeLoweringEvent(0)(recordedState))
+                            |> unifyEqualityOperands(operator)
+                            |> resolvedCoreBinary
+                            |> emitResolvedCoreBinary(operator)(lower)
+                        | None ->
+                            binary
+                            |> unifyEqualityOperands(operator)
+                            |> resolvedCoreBinary
+                            |> emitResolvedCoreBinary(operator)(lower)
         | (None, LoweredCoreBinary { state = failedState, error = Some(error) }) -> failure(failedState)(error)
 
 // The instructions a speculative operator becomes once its operand type is final, with the
