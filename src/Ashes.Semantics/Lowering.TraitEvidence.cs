@@ -114,24 +114,64 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TraitConstraint> _provenAmbiguousTraitGoalTypes =
         new(StringComparer.Ordinal);
 
+    // How often the emitting pass has asked for each site's proven type: the ordinal of the lowering
+    // a site proven per lowering is pinned for.
+    private readonly Dictionary<string, int> _pinnedAmbiguousTraitGoalOccurrences =
+        new(StringComparer.Ordinal);
+
     /// <summary>
     /// The goals recorded during this pass whose type the pass's own substitution has since resolved to a
-    /// concrete one. Read off the discovery pass once it has lowered everything.
+    /// concrete one. Read off the discovery pass once it has lowered everything. A site lowered more
+    /// than once that resolved to different types (a shipped implementation's body, lowered once per
+    /// dictionary it is built for) is proven per lowering instead, under the site's key and the
+    /// lowering's ordinal (<see cref="AmbiguousTraitGoalOccurrenceKey"/>): the emitting pass lowers
+    /// the site in the same order, and one type pinned for every lowering would force it on the
+    /// others.
     /// </summary>
     private Dictionary<string, TraitConstraint> ResolveProvenAmbiguousTraitGoals()
     {
         var proven = new Dictionary<string, TraitConstraint>(StringComparer.Ordinal);
+        var byOccurrence = new Dictionary<string, TraitConstraint>(StringComparer.Ordinal);
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        var conflicting = new HashSet<string>(StringComparer.Ordinal);
         foreach ((string key, TraitConstraint constraint) in _pendingAmbiguousTraitGoals)
         {
+            int occurrence = occurrences.GetValueOrDefault(key);
+            occurrences[key] = occurrence + 1;
             TraitConstraint resolved = PruneTraitConstraint(constraint);
-            if (resolved.TypeArgs.All(argument => !ContainsFreeTypeVariable(argument)))
+            if (!resolved.TypeArgs.All(argument => !ContainsFreeTypeVariable(argument)))
             {
-                proven[key] = resolved;
+                continue;
+            }
+
+            byOccurrence[AmbiguousTraitGoalOccurrenceKey(key, occurrence)] = resolved;
+            if (proven.TryGetValue(key, out TraitConstraint? earlier)
+                && !earlier.TypeArgs.Zip(resolved.TypeArgs).All(pair => TypesStructurallyEqual(pair.First, pair.Second)))
+            {
+                conflicting.Add(key);
+            }
+
+            proven[key] = resolved;
+        }
+
+        foreach (string key in conflicting)
+        {
+            proven.Remove(key);
+        }
+
+        foreach ((string occurrenceKey, TraitConstraint resolved) in byOccurrence)
+        {
+            string key = occurrenceKey[..occurrenceKey.LastIndexOf('#')];
+            if (conflicting.Contains(key))
+            {
+                proven[occurrenceKey] = resolved;
             }
         }
 
         return proven;
     }
+
+    private static string AmbiguousTraitGoalOccurrenceKey(string key, int occurrence) => $"{key}#{occurrence}";
 
     private static bool ContainsFreeTypeVariable(TypeRef type) => type switch
     {

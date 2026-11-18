@@ -115,8 +115,11 @@ public sealed partial class Lowering
     /// </summary>
     private bool PinProvenAmbiguousTraitGoal(TraitConstraint constraint, TextSpan span, string method)
     {
-        if (!_provenAmbiguousTraitGoalTypes.TryGetValue(
-                AmbiguousTraitGoalKey(constraint, span, method), out TraitConstraint? proven)
+        string key = AmbiguousTraitGoalKey(constraint, span, method);
+        int occurrence = _pinnedAmbiguousTraitGoalOccurrences.GetValueOrDefault(key);
+        _pinnedAmbiguousTraitGoalOccurrences[key] = occurrence + 1;
+        if (!(_provenAmbiguousTraitGoalTypes.TryGetValue(key, out TraitConstraint? proven)
+                || _provenAmbiguousTraitGoalTypes.TryGetValue(AmbiguousTraitGoalOccurrenceKey(key, occurrence), out proven))
             || proven.TypeArgs.Count != constraint.TypeArgs.Count)
         {
             return false;
