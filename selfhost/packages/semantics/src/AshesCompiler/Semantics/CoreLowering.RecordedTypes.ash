@@ -32,6 +32,7 @@ export (
     value recordedOperatorGenericScheme,
     value recordedSettledType,
     value recordedSettledTypeAt,
+    value recordedDeclarationAt,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -341,5 +342,20 @@ let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
         | Some(table) ->
             match nodeTypeAt(node)(table) with
                 | Some(recorded) -> recordedSettledType(recorded)(state)
+                | None -> None
+        | None -> None
+
+// The name and scheme the standalone inference gave the top-level binding whose value is the node
+// with this identity, as lowering writes it. The scheme keeps the inference's quantified variable
+// ids, so a reader instantiates it before unifying it with lowering's own types. None when nothing
+// is recorded there or a type in the scheme does not map.
+let recordedDeclarationAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
+                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                        | (Ok(translatedBody), Ok(translatedConstraints)) -> Some((name, TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)))
+                        | _ -> None
                 | None -> None
         | None -> None
