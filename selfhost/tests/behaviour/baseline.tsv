@@ -335,6 +335,7 @@ generic_add_binding_reading_top_level_value_returns_list_at_int_and_float	stage1
 generic_add_binding_reading_top_level_value_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'triple'.
 generic_add_binding_reading_top_level_value_used_at_two_types_inside_a_function	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'triple'.
 generic_add_binding_used_at_int_and_str	stage1-compile-fails	ASH002 Type mismatch: Int vs Str. Context: in argument #1 of call to 'add'.
+generic_add_let_below_top_level_captured_by_inner_lambda	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'double'.
 generic_add_let_below_top_level_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'double'.
 generic_add_non_tail_recursive_binding_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'sumWith'.
 generic_append_map_churn_plateau	same	

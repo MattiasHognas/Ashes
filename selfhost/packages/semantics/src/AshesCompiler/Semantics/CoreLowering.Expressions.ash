@@ -1554,13 +1554,15 @@ let nestedConcreteCandidateKey (name: Str) (slot: Int) = name + "#" + Ashes.Text
 let nestedConcreteCandidateMarker (name: Str) = "#" + name
 
 // The candidate a `let` below top level registered for the local binding `name` resolves to, when
-// that binding still holds the scheme lowering gave it at registration.
+// that binding still holds the scheme lowering gave it at registration. In a lambda that captured
+// the binding, the capture holds that scheme, which names the binding only when it has variables
+// of its own; there the latest candidate registered under the name is the one tried.
 let nestedConcreteCandidate (name: Str) (state: CoreLoweringState) =
     match state
     |> stateConcreteRegistry
     |> lookupCoreConcreteCandidate(nestedConcreteCandidateMarker(name)) with
         | None -> None
-        | Some(_latest) ->
+        | Some(CoreConcreteCandidate { bindingSlot = latestSlot }) ->
             match lookupBinding(name)(state.bindings) with
                 | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
                     match state
@@ -1568,6 +1570,15 @@ let nestedConcreteCandidate (name: Str) (state: CoreLoweringState) =
                     |> lookupCoreConcreteCandidate(nestedConcreteCandidateKey(name)(slot)) with
                         | Some(CoreConcreteCandidate { bindingScheme = bindingScheme } as candidate) ->
                             if scheme == bindingScheme
+                            then Some(candidate)
+                            else None
+                        | None -> None
+                | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) ->
+                    match state
+                    |> stateConcreteRegistry
+                    |> lookupCoreConcreteCandidate(nestedConcreteCandidateKey(name)(latestSlot)) with
+                        | Some(CoreConcreteCandidate { bindingScheme = bindingScheme } as candidate) ->
+                            if scheme == bindingScheme && schemeNamesItsBinding(scheme)
                             then Some(candidate)
                             else None
                         | None -> None
