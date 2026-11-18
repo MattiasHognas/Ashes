@@ -3208,13 +3208,42 @@ let recursive firstFailedRequirement (environment: TypeEnvironment) (constraints
                 | RequirementFails -> Some(head)
                 | _ -> firstFailedRequirement(environment)(tail)
 
-let recursive requirementsNotHeld (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+// Stage 0's context reduction (`SimplifyAndResolveTraitConstraints`): a requirement an
+// implementation head matches exactly stands for that implementation's own requirements at the
+// matched types, reduced in turn, so `Eq(List(a))` leaves `Eq(a)` for the binding's users to supply.
+// A requirement no head matches exactly, such as one on a bare variable, stays as it is.
+let recursive reduceRequirement (fuel: Int) (environment: TypeEnvironment) (constraint: TraitConstraint) =
+    if fuel <= 0
+    then [constraint]
+    else
+        match resolveTraitBinding(constraint.traitName)(environment) with
+            | None -> [constraint]
+            | Some(_) ->
+                environment
+                |> resolveTraitImplementations(constraint.traitName)
+                |> reduceRequirementBy(fuel)(environment)(constraint)
+and reduceRequirementBy (fuel: Int) (environment: TypeEnvironment) (constraint: TraitConstraint) (implementations: List(TraitImplementationInferenceDefinition)) =
+    match implementations with
+        | [] -> [constraint]
+        | implementation :: tail ->
+            match implementationHeadsFit(implementation.typeArguments)(constraint.typeArguments)([])(false) with
+                | HeadFits(bindings) ->
+                    implementation.requirements
+                    |> requirementsWithHeadParameters(bindings)
+                    |> reduceRequirements(fuel - 1)(environment)
+                | _ -> reduceRequirementBy(fuel)(environment)(constraint)(tail)
+and reduceRequirements (fuel: Int) (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
     match constraints with
         | [] -> []
         | head :: tail ->
-            match requirementStanding(16)(environment)(head) with
-                | RequirementHolds -> requirementsNotHeld(environment)(tail)
-                | _ -> head :: requirementsNotHeld(environment)(tail)
+            tail
+            |> reduceRequirements(fuel)(environment)
+            |> heldOrReduced(fuel)(environment)(head)
+and heldOrReduced (fuel: Int) (environment: TypeEnvironment) (constraint: TraitConstraint) (rest: List(TraitConstraint)) =
+    match requirementStanding(fuel)(environment)(constraint) with
+        | RequirementHolds -> rest
+        | _ ->
+            appendConstraints(reduceRequirement(fuel)(environment)(constraint))(rest)
 
 // The requirements whose types are all known. One that still holds a type variable is passed on
 // to the binding's users with its scheme and is resolved where they settle the variable, whether
@@ -3240,10 +3269,38 @@ let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(T
 
 // The requirements a binding still has to carry: one that the implementations in scope already
 // supply names an instance, so a scheme that kept it would pass it on to every binding that uses
-// this one. Only the program inference rules drop them; lowering's own inference keeps them all.
+// this one, and one an implementation head matches leaves only that implementation's own
+// requirements. Only the program inference rules reduce them; lowering's own inference keeps them
+// all.
 let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
     if environment.programInferenceRules
-    then requirementsNotHeld(environment)(constraints)
+    then
+        constraints
+        |> reduceRequirements(16)(environment)
+        |> canonicalizeTraitConstraints
+    else constraints
+
+// A written `requires` reduced as an inferred one is, so `requires {Eq(a)}` states what a body
+// needing `Eq(List(a))` asks of its users. A written requirement on known types is kept as written,
+// so one an implementation already supplies is still reported as unjustified. Under the program
+// inference rules only.
+let recursive reduceOpenRequirements (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | (TraitConstraint { typeArguments = typeArguments } as constraint) :: tail ->
+            match freeTypeVariables(SemTuple(typeArguments)) with
+                | [] -> constraint :: reduceOpenRequirements(environment)(tail)
+                | _ ->
+                    tail
+                    |> reduceOpenRequirements(environment)
+                    |> appendConstraints(reduceRequirement(16)(environment)(constraint))
+
+let writtenRequirementsReduced (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then
+        constraints
+        |> reduceOpenRequirements(environment)
+        |> canonicalizeTraitConstraints
     else constraints
 
 // A requirement no implementation can fit, on a type that is still partly unknown, is reported as
@@ -3441,7 +3498,7 @@ let validateSettledBindingRequirements requirements inferred written selected se
                         |> requirementsLeftToWrite(environment)
                         |> bindingSignatureSuccess(semanticType)(substitution)(supply)
                 | _ ->
-                    validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
+                    validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(writtenRequirementsReduced(environment)(written))(semanticType)(substitution)(supply)
 
 let validateBindingRequirementSet requirements inferred written semanticType environment substitution supply =
     (let selected =
