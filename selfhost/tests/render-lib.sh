@@ -61,3 +61,38 @@ prefix_module_exports() {
         END { for (name in replacements) print name, replacements[name] }
     ' "$source") "$source"
 }
+
+# Core lowering is one module split over `CoreLowering.ash` and its `CoreLowering.*.ash` parts. Writes all of
+# their declarations as one text to the given file, without the parts' import lines and export lists, so the
+# renderers extract a declaration by name or a range of declarations whichever part holds it. Each part starts
+# with a `// Core lowering part: <file>` line. Prints the path.
+core_lowering_source() {
+    local target=$1
+    local directory
+    directory="$(cd "$(dirname "${BASH_SOURCE[0]}")/../packages/semantics/src/AshesCompiler/Semantics" && pwd)"
+    awk '
+        FNR == 1 { exporting = 0; part = FILENAME; sub(/^.*\//, "", part); print "// Core lowering part: " part }
+        /^import / { next }
+        /^export \($/ { exporting = 1; next }
+        exporting { if ($0 == ")") exporting = 0; next }
+        { print }
+    ' "$directory/CoreLowering.ash" "$directory"/CoreLowering.*.ash > "$target"
+    printf '%s\n' "$target"
+}
+
+# Prints the lines of a source from the first line matching the start pattern up to, not including, the first
+# later line matching the end pattern. Fails when the start is missing, or when the range would run past the
+# end of the part of the combined core lowering source that holds the start.
+extract_range() {
+    local source=$1 start=$2 end=$3
+    awk -v start="$start" -v end="$end" '
+        !copying && $0 ~ start { copying = 1; found = 1; print; next }
+        copying && $0 ~ end { closed = 1; exit }
+        copying && /^\/\/ Core lowering part: / { exit }
+        copying { print }
+        END {
+            if (!found) { print "Missing range start: " start > "/dev/stderr"; exit 1 }
+            if (!closed) { print "Missing range end: " end " after " start > "/dev/stderr"; exit 1 }
+        }
+    ' "$source"
+}

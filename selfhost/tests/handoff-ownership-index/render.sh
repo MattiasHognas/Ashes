@@ -5,7 +5,7 @@ root=$(cd -- "$fixture/../../.." && pwd)
 source "$root/selfhost/tests/render-lib.sh"
 out="$root/work/handoff-ownership-index"
 mkdir -p "$out"
-core="$root/selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 ownership="$root/selfhost/packages/semantics/src/AshesCompiler/Semantics/OwnershipInference.ash"
 git -C "$root" show ce3fbd27:selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash > "$out/baseline-source.txt"
 {

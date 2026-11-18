@@ -6,7 +6,8 @@ Bootstrap32's first discovery failed in the real optimizer: argument 1 of
 evidence. The source helper must remain polymorphic; separate typed source
 helpers are not an acceptance fix.
 
-`render.sh` inserts the exact current optimizer helper into these fixtures:
+`render.sh` inserts that optimizer helper into these fixtures. The optimizer no longer has it (its
+tables became typed maps), so `Lookup.ash.inc` keeps its last production text unchanged:
 
 - `Main.ash`: mixed Int/Str keys, different value types, and
   recursive forwarding through a list of tables. Keys and retained strings vary

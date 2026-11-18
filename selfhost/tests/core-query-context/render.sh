@@ -5,7 +5,7 @@ root=$(cd -- "$fixture/../../.." && pwd)
 source "$root/selfhost/tests/render-lib.sh"
 out="$root/work/core-query-context"
 mkdir -p "$out"
-core="$root/selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 {
     cat "$fixture/Prelude.imports"
     for name in CoreHeapQueryFacts CoreHeapQueryContext emptyCoreHeapQueryFacts emptyCoreHeapQueryContext CoreConstructorLayout; do

@@ -2,11 +2,12 @@
 # Extract production lookup helpers for focused equivalence and lifetime checks.
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-core="$repo/selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash"
 out="$repo/work/function-lookup-index"
+mkdir -p "$out"
+source "$repo/selfhost/tests/render-lib.sh"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 [[ $(rg -F -c '// Prepared function lookup indexes:' "$core") == 1 ]]
 [[ $(rg -F -c '// End prepared function lookup indexes.' "$core") == 1 ]]
-mkdir -p "$out"
 cat > "$out/Main.ash" <<'ASH'
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax
@@ -24,8 +25,8 @@ type CoreProgramState =
 type CoreLoweringState =
     | programState: CoreProgramState
 ASH
-awk '/^let stateTopLevelFunctionRefIndex / {copying=1} copying && /^let stateInlinableHelpers / {exit} copying {print}' "$core" >> "$out/Main.ash"
-awk '/^let stateSpecializationCandidates / {copying=1} copying && /^let stateGeneralRcOwnedResultLabels / {exit} copying {print}' "$core" >> "$out/Main.ash"
+extract_range "$core" '^let stateTopLevelFunctionRefIndex ' '^let stateInlinableHelpers ' >> "$out/Main.ash"
+extract_range "$core" '^let stateSpecializationCandidates ' '^let stateGeneralRcOwnedResultLabels ' >> "$out/Main.ash"
 cat "$repo/selfhost/tests/function-lookup-index/Assertions.ash.inc" >> "$out/Main.ash"
 cat > "$out/ashes.json" <<'JSON'
 {"name":"function-lookup-index","entry":"Main.ash","sourceRoots":["."],"outDir":"out","devDependencies":{"semantics":{"path":"../../selfhost/packages/semantics"}},"overrides":{"AshesCompiler.Frontend":{"path":"../../selfhost/packages/frontend"}}}

@@ -4,8 +4,8 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.."
 source selfhost/tests/render-lib.sh
 out=work/logical-not-lifetime
 fixture=selfhost/tests/logical-not-inference
-core=selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash
 mkdir -p "$out"
+core=$(core_lowering_source "$out/core-lowering-source.txt")
 {
     cat "$fixture/LifetimePrelude.ash"
     for name in clearAdmissibilityAnswers withSubstitution resolveType failure bindType statePendingTraitGoals withStatePendingTraitGoals stateProvenTraitGoals withStateProvenTraitGoals stateTraitGoalsPinned withStateTraitGoalsPinned traitGoalKey pinProvenTraitGoal unprovenTraitGoalKey deferTraitGoal reserveCoreTemps finishCoreLogicalNot finishOrDeferCoreLogicalNot resolvedTraitGoals traitGoalMap; do
