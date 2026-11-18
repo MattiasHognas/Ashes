@@ -308,6 +308,58 @@ let checkAmbiguousPlanning root =
             | Error(_) -> test.fail("unexpected ambiguous-module error")
             | Ok(_) -> test.fail("ambiguous module should fail planning"))
 
+// Another source root holds a file of the entry's module name; the entry still loads from the
+// entry path, and only imports resolve by name.
+let prepareSharedEntryNameFixture root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale shared entry name fixture")
+    |> (given (_) ->
+        "src"
+        |> join(Unix)(root)
+        |> Ashes.IO.Directory.createAll
+        |> requireUnit("create entry source root"))
+    |> (given (_) ->
+        "vendor"
+        |> join(Unix)(root)
+        |> Ashes.IO.Directory.createAll
+        |> requireUnit("create vendor source root"))
+    |> (given (_) -> writeFile(root)("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\",\"vendor\"]}"))
+    |> (given (_) -> writeFile(root)("src/Main.ash")("import Util\nUtil.value"))
+    |> (given (_) -> writeFile(root)("vendor/Util.ash")("let value = 1"))
+    |> (given (_) -> writeFile(root)("vendor/Main.ash")("let = vendor"))
+
+let recursive plannedMainSource modules =
+    match modules with
+        | [] -> None
+        | PlannedModule { name = "Main", source = source } :: _rest -> Some(source)
+        | _module :: rest -> plannedMainSource(rest)
+
+let expectSharedEntryNamePlan root (result: Result(ProjectCompilationError, ProjectCompilationPlan)) =
+    match result with
+        | Error(error) -> test.fail("shared entry name planning should succeed: " + Ashes.Trait.Show.show(error))
+        | Ok(ProjectCompilationPlan { sourceFiles = _sourceFiles, modules = modules }) ->
+            modules
+            |> plannedNames
+            |> test.assertEqual(["Util", "Main"])
+            |> (given (_) ->
+                modules
+                |> plannedMainSource
+                |> test.assertEqual("src/Main.ash"
+                |> join(Unix)(root)
+                |> ProjectModuleSource
+                |> Some))
+
+let checkSharedEntryNamePlanning root =
+    "ashes.json"
+    |> join(Unix)(root)
+    |> loadProject(Unix)
+    |> (given (loaded) ->
+        match loaded with
+            | Error(_error) -> test.fail("shared entry name project should load")
+            | Ok(layout) -> buildProjectCompilationPlan(Unix)(layout))
+    |> expectSharedEntryNamePlan(root)
+
 let prepareDiagnosticFixture root =
     root
     |> Ashes.IO.Directory.removeTree
@@ -412,6 +464,14 @@ let runProjectCompilationPlanningTests unit =
     |> (given (root) ->
         root
         |> checkAmbiguousPlanning
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> prepareSharedEntryNameFixture
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> checkSharedEntryNamePlanning
         |> (given (_) -> root))
     |> (given (root) ->
         root

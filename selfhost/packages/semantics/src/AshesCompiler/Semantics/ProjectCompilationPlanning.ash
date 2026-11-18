@@ -651,7 +651,7 @@ let loadShippedModule (name: Str) (shipped: List(ShippedModuleText)) (sources: L
                 |> ProjectCompilationMissingModule(name)
                 |> Error
 
-let loadNamedModule entryModuleName shipped (name: Str) (sources: List(IndexedProjectSource)) =
+let loadImportedModule entryModuleName shipped (name: Str) (sources: List(IndexedProjectSource)) =
     if Ashes.Text.startsWith(name)("Ashes.")
     then loadShippedModule(name)(shipped)(sources)
     else
@@ -667,12 +667,20 @@ let loadNamedModule entryModuleName shipped (name: Str) (sources: List(IndexedPr
                 |> ProjectCompilationAmbiguousModule(name)
                 |> Error
 
+// The entry module loads from the entry path, as stage 0 loads it: another source root may hold
+// a file of the same module name, and the by-name ambiguity check applies to imports only.
+let loadNamedModule entryModuleName (entryPath: Str) shipped (name: Str) (sources: List(IndexedProjectSource)) =
+    if name == entryModuleName
+    then
+        readIndexedModule(entryModuleName)(shipped)(name)(deepCopy(entryPath))(sources)
+    else loadImportedModule(entryModuleName)(shipped)(name)(sources)
+
 let loadTargetName (name: Str) (shipped: List(ShippedModuleText)) =
     if Ashes.Text.startsWith(name)("Ashes.")
     then shippedLoadTarget(name)(shipped)
     else name
 
-let recursive loadReachableModules entryModuleName shipped pending loaded reversedUnits reversedPrograms reversedDiagnosticSources sources =
+let recursive loadReachableModules entryModuleName entryPath shipped pending loaded reversedUnits reversedPrograms reversedDiagnosticSources sources =
     match pending with
         | [] ->
             Ok(ReachableModuleSet(
@@ -688,6 +696,7 @@ let recursive loadReachableModules entryModuleName shipped pending loaded revers
                 then
                     loadReachableModules(
                         entryModuleName,
+                        entryPath,
                         shipped,
                         rest,
                         loaded,
@@ -697,11 +706,12 @@ let recursive loadReachableModules entryModuleName shipped pending loaded revers
                         sources
                     )
                 else
-                    match loadNamedModule(deepCopy(entryModuleName))(shipped)(name)(sources) with
+                    match loadNamedModule(deepCopy(entryModuleName))(entryPath)(shipped)(name)(sources) with
                         | Error(error) -> Error(error)
                         | Ok(LoadedProjectModule { units = units, programs = programs, dependencies = dependencies, names = names, diagnosticSources = diagnosticSources }) ->
                             loadReachableModules(
                                 entryModuleName,
+                                entryPath,
                                 shipped,
                                 appendList(deepCopy(dependencies))(rest),
                                 appendList(deepCopy(names))(loaded),
@@ -759,6 +769,7 @@ let planIndexedSources (layout: ProjectLayout) shipped (dependencies: List(Resol
     in
         match loadReachableModules(
             projectEntryModuleName(loadLayout),
+            projectEntryPath(loadLayout),
             shipped,
             projectEntryModuleName(layout) :: standardTraitSeed(shipped),
             [],
