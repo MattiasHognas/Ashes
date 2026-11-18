@@ -1379,16 +1379,13 @@ public sealed partial class Lowering
         };
     }
 
-    private void RegisterTraitDeclaration(TraitDecl declaration)
+    // The trait's methods by name, the first declaration of a name winning; a method whose
+    // signature mentions none of the trait's type parameters is reported at the declaration.
+    private Dictionary<string, TraitMethodSymbol> RegisterTraitMethods(
+        TraitDecl declaration,
+        TypeParameterSymbol[] typeParameters,
+        string qualifiedName)
     {
-        TraitDeclarationProvenance provenance = ResolveDeclarationProvenance(GetSpan(declaration));
-        TypeParameterSymbol[] typeParameters = declaration.TypeParameters
-            .Select(parameter => new TypeParameterSymbol(parameter.Name))
-            .ToArray();
-        string qualifiedName = string.Equals(provenance.ModuleName, "Main", StringComparison.Ordinal)
-            ? declaration.Name
-            : $"{provenance.ModuleName}.{declaration.Name}";
-
         Dictionary<string, TraitMethodSymbol> methods = new(StringComparer.Ordinal);
         foreach (TraitMethodDecl method in declaration.Methods)
         {
@@ -1410,6 +1407,21 @@ public sealed partial class Lowering
                 method.DefaultImplementation,
                 GetSpan(method));
         }
+
+        return methods;
+    }
+
+    private void RegisterTraitDeclaration(TraitDecl declaration)
+    {
+        TraitDeclarationProvenance provenance = ResolveDeclarationProvenance(GetSpan(declaration));
+        TypeParameterSymbol[] typeParameters = declaration.TypeParameters
+            .Select(parameter => new TypeParameterSymbol(parameter.Name))
+            .ToArray();
+        string qualifiedName = string.Equals(provenance.ModuleName, "Main", StringComparison.Ordinal)
+            ? declaration.Name
+            : $"{provenance.ModuleName}.{declaration.Name}";
+
+        Dictionary<string, TraitMethodSymbol> methods = RegisterTraitMethods(declaration, typeParameters, qualifiedName);
 
         List<TraitConstraint> supertraits = [];
         foreach (TraitConstraintSyntax syntax in declaration.Supertraits)
