@@ -407,8 +407,9 @@ integration, and replace it when round 10 has run.
 **Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
 unless one blocks something. The inference content for round 10 is complete; all agent effort goes
 to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
-and matched origin at `a5eef21e`. Opus workers use the installed Claude CLI (`--model opus`);
-the built-in agent tool does not offer Opus. No model substitution is needed.
+and matched origin at `a5eef21e`. The installed Claude CLI supports Opus, but both worker attempts
+stopped on the account's weekly usage limit (reset reported November 22 at 11:00 Stockholm time).
+The coordinator has asked whether GPT-6.2 Astra may substitute; no answer is recorded yet.
 
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
@@ -446,8 +447,8 @@ Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works
 | Worktree | Branch | Use |
 | --- | --- | --- |
 | `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
-| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Opus worker started 2026-11-21: repair held TMC change; then investigate IR fixtures. |
-| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Opus worker started 2026-11-21: imports (7), parser recovery (6), diagnostics (5). |
+| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Prepared for held TMC repair, then IR fixtures; Opus attempt hit usage limit without edits. |
+| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Prepared for imports (7), parser recovery (6), diagnostics (5); Opus attempt hit usage limit without edits. |
 | `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
 | `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
 | `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
@@ -513,7 +514,8 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** none. Pre-integration checks finished; logs are under each waiting branch's
+**Checks in flight:** integrated-head build, format, C# and LSP checks are next, under
+`work/r10pre/resume-integrated/`. Pre-integration checks finished; logs are under each waiting branch's
 `work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
 the 10 known leak tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
 57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
@@ -535,14 +537,14 @@ There is no ASH048 result to act on. Whole-compiler compilation remains pending 
 
 The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 
-**Active workers:** two Opus CLI workers started from integration `a5bf718f`, each with a
-self-contained `work/BRIEF.md`, a 50-minute batch budget, no load work and no pushes. Their
-`work/agent.jsonl` / `work/agent.stderr` capture the sessions; `work/PROGRESS.md` is the handback.
-The TMC worker also has the held fix cherry-picked as `7f3d3e00` (pushed). Both branches are on
-origin. No additional worker may start until one hands back.
+**Active workers:** none. Two Opus CLI workers were attempted from integration `a5bf718f`, each
+with a self-contained `work/BRIEF.md`, a 50-minute budget, no load work and no pushes. Both exited
+without implementation on `usage_limit_reached` (HTTP 429); `work/agent.jsonl` captures the failures.
+The TMC worktree has the held fix cherry-picked as `7f3d3e00` (pushed). Both branches are on origin.
+Resume these briefs when Opus is available or the user authorizes another model.
 
-**Open bugs** (the gate; 0 and optionally 1 assigned to TMC worker, 7/6/5 to imports worker;
-2/3/4/8/9/10 unassigned):
+**Open bugs** (the gate; prepared briefs cover 0 and optionally 1 in the TMC worktree, 7/6/5 in
+the imports worktree; no worker is running):
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
    qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
