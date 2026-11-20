@@ -407,8 +407,8 @@ integration, and replace it when round 10 has run.
 **Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
 unless one blocks something. The inference content for round 10 is complete; all agent effort goes
 to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
-and matched origin at `a5eef21e`. No implementation agents have started; Opus is unavailable in
-the current agent tool and the coordinator has asked whether GPT-6.2 Astra may substitute.
+and matched origin at `a5eef21e`. Opus workers use the installed Claude CLI (`--model opus`);
+the built-in agent tool does not offer Opus. No model substitution is needed.
 
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
@@ -437,7 +437,7 @@ Branches on `origin`:
 | --- | --- |
 | `main` | Last merge: #1159 (`f6e28970`). |
 | `selfhost/round10` | The integration branch; everything below is cherry-picked onto it. |
-| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Finished batches waiting to be integrated (table below). |
+| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Validated on 2026-11-21; all except the TMC fix integrated (table below). |
 | `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
 | `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
 
@@ -511,24 +511,31 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** coordinator pre-integration validation of the two waiting branches below;
-logs will be under each branch's `work/r10-resume/`. The old strict-import compile has no recorded
+**Checks in flight:** none. Pre-integration checks finished; logs are under each waiting branch's
+`work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
+the 10 known leak tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
+57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
+list its 18 additional failures are 12 IR/explain mismatches, five plateau failures, and a crash
+in `Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau` (exit 245).
+That one test passes on the saved main baseline (`work/r10pre/baseline-qualified-callee.log`).
+The TMC fix is held for rework; do not count it as integrated or its regression as leak-only.
+The old strict-import compile has no recorded
 completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
 `artifacts/selfhost-dev/s1-pre10-debug` is absent, and no compiler job was running on resumption.
 There is no ASH048 result to act on. Whole-compiler compilation remains pending behind the gate.
 
-**Branches waiting to be integrated** (pushed, clean, each with `PAUSED:` and its load work at the
-top of its worktree's `work/PROGRESS.md`):
+**Batch integration on 2026-11-21** (every cherry-pick pushed immediately):
 
 | Branch (worktree) | Commits | What | Load work before or after integrating |
 | --- | --- | --- | --- |
-| `fix/parity-bugs-4` (`parity-bugs`) | ada43aa6, 3d4ff885, d641e842, e91443e7 | The `projects` suite segfault was a stage-0 miscompile since b42: a self call in a cons tail was not counted as a loop edge, so a grown accumulator looked loop-invariant and its arena cells were reset; fixed in both compilers, test `tmc_dedup_with_grown_seen_accumulator`. The `semantics` recursive-group expectation and the `stitching-lookup-index` oracle were stale (updated). Stage 1 prints stage 0's list of known modules. | Changes code for every tail-modulo-cons loop in both compilers: the full C# suite and `ashes test tests` with a stage 0 from the branch, then the shared stage-1 build |
-| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 | 27 of the 29 red C# tests, all stale: snapshot ELF hashes (LLVM 23 bitcode), the project-fixture harness lowered without the layout's source context, a ToSpace test whose decline reason changed, and 22 lowered-IR plus 2 explain fixtures regenerated after proving each difference is one of three intended stage-0 switches (`GRC_NO_CLOSURECAPTURECOPY`, `GRC_NO_GENERICVARIANTLOOPRC`, `GRC_NO_SHAREDMATCHFIELD`) | The full C# suite: expected only the 10 leak tests and the 2 open fixtures below to fail. Note: its update mode also overwrote the copies under `bin/`; rebuild `src/Ashes.Tests` before a normal run |
+| `fix/parity-bugs-4` (`parity-bugs`) | 3d4ff885 held; ada43aa6, d641e842, e91443e7 integrated as 7d866873, bed9e5ab, 7bff6f17 | The TMC fix resolves the projects crash but introduces the qualified-callee crash above; it needs rework in both compilers. The independent suite expectations and known-module diagnostic are integrated. | C# and e2e completed; shared stage-1 validation pending. Review the 12 additional IR/explain mismatches after fixing the crash. |
+| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed; the two IR fixtures below remain open. | Full C# validation matched expectations; integrated-head checks and shared stage-1 validation pending. |
 
-Integrate both by cherry-picking onto `selfhost/round10` (run the checks above first or right
-after), then push.
+The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 
 **Open bugs, not assigned** (the gate):
+0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
+   qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
    matches only with five more switches off (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`,
    `GRC_NO_EXITPARAMOWNFIELDS`, `GRC_NO_ARENACURRYBORROW`, `GRC_NO_BOUNDGENERICCALLTYPES`,
