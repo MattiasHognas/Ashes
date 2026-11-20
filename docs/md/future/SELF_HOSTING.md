@@ -446,6 +446,8 @@ Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works
 | Worktree | Branch | Use |
 | --- | --- | --- |
 | `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
+| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Opus worker started 2026-11-21: repair held TMC change; then investigate IR fixtures. |
+| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Opus worker started 2026-11-21: imports (7), parser recovery (6), diagnostics (5). |
 | `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
 | `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
 | `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
@@ -533,7 +535,14 @@ There is no ASH048 result to act on. Whole-compiler compilation remains pending 
 
 The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 
-**Open bugs, not assigned** (the gate):
+**Active workers:** two Opus CLI workers started from integration `a5bf718f`, each with a
+self-contained `work/BRIEF.md`, a 50-minute batch budget, no load work and no pushes. Their
+`work/agent.jsonl` / `work/agent.stderr` capture the sessions; `work/PROGRESS.md` is the handback.
+The TMC worker also has the held fix cherry-picked as `7f3d3e00` (pushed). Both branches are on
+origin. No additional worker may start until one hands back.
+
+**Open bugs** (the gate; 0 and optionally 1 assigned to TMC worker, 7/6/5 to imports worker;
+2/3/4/8/9/10 unassigned):
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
    qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
