@@ -399,15 +399,16 @@ Work is verified in shared rounds: agents finish a batch, run only cheap checks 
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
 behavioural check for all of them, then stage 2, its behavioural check, and stage 3.
 
-### Current round: round 10 (paused 2026-11-18, 23:15)
+### Current round: round 10 (resumed 2026-11-21)
 
 This section is the handoff: a session that starts fresh reads it first. Keep it current with each
 integration, and replace it when round 10 has run.
 
 **Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
 unless one blocks something. The inference content for round 10 is complete; all agent effort goes
-to the bugs below until then. Work was paused by the user at 23:15 on 2026-11-18; nothing is
-running except, possibly, the check in "Checks in flight" below.
+to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
+and matched origin at `a5eef21e`. No implementation agents have started; Opus is unavailable in
+the current agent tool and the coordinator has asked whether GPT-6.2 Astra may substitute.
 
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
@@ -510,10 +511,11 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** stage 0 compiling the self-hosted compiler under strict imports, started
-23:10, about 21 minutes. Its log is `work/r10pre/strict/summary.txt` (and `s1.log`) in the
-integration worktree. If it reports an ASH048 in the self-hosted sources, a missing import there is
-the fix.
+**Checks in flight:** coordinator pre-integration validation of the two waiting branches below;
+logs will be under each branch's `work/r10-resume/`. The old strict-import compile has no recorded
+completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
+`artifacts/selfhost-dev/s1-pre10-debug` is absent, and no compiler job was running on resumption.
+There is no ASH048 result to act on. Whole-compiler compilation remains pending behind the gate.
 
 **Branches waiting to be integrated** (pushed, clean, each with `PAUSED:` and its load work at the
 top of its worktree's `work/PROGRESS.md`):
