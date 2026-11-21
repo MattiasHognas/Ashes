@@ -80,6 +80,16 @@ let rewrittenReference target reference evidence =
         | EvidenceFor(_name) -> applyEvidence(reference)(evidence)
         | ReplaceReference(_name, value) -> value
 
+let recursive replacesReference target expression =
+    match expression with
+        | ExprAt(_, inner) -> replacesReference(target)(inner)
+        | ExprNode(_, inner) -> replacesReference(target)(inner)
+        | ExprVar(name) ->
+            match target with
+                | ReplaceReference(replaced, _) -> replaced == name
+                | _ -> false
+        | _ -> false
+
 let recursive rewriteExpressions self evidence blocked expressions =
     match expressions with
         | [] -> Some([])
@@ -182,7 +192,10 @@ and rewrite self evidence blocked expression =
         | ExprAt(span, inner) ->
             rewriteUnary(self)(evidence)(blocked)(given (next) -> ExprAt(span)(next))(inner)
         | ExprNode(node, inner) ->
-            rewriteUnary(self)(evidence)(blocked)(given (next) -> ExprNode(node)(next))(inner)
+            if replacesReference(self)(inner)
+            then rewrite(self)(evidence)(blocked)(inner)
+            else
+                rewriteUnary(self)(evidence)(blocked)(given (next) -> ExprNode(node)(next))(inner)
         | ExprInt(_value) -> Some(expression)
         | ExprBigInt(_value) -> Some(expression)
         | ExprUInt(_value, _bits, _raw) -> Some(expression)

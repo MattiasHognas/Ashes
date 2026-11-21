@@ -2665,7 +2665,7 @@ let lowerOrdinaryCallExpression expression function argument lower state =
 let awaitHelper task lower (state: CoreLoweringState) =
     match state
     |> clearConsumerRequest
-    |> lower(task) with
+    |> lowerSynthesized(lower)(task) with
         | LoweredCoreValue { state = failed, error = Some(error) } -> failure(failed)(error)
         | LoweredCoreValue { state = built, semanticType = taskType, temp = ptr, error = None } ->
             match freshType(built) with
