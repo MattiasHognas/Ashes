@@ -2998,12 +2998,6 @@ let nameCarriesOperatorConstraint (state: CoreLoweringState) (name: Str) =
 // Stitching rewrites the standard trait qualifiers before lowering chooses a dictionary ABI.
 let mentionsStandardMethod value = exprReadsName("Ashes_Trait_Show")(value) || exprReadsName("Ashes_Trait_Hash")(value) || exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Hash")(value) || exprReadsName("Ashes.Trait.Hash")(value)
 
-let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraintSyntax)) (state: CoreLoweringState) =
-    match requirements with
-        | [] ->
-            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false && mentionsUserDeclaredTrait(value)(programTraitDefinitions(state))(state) == false && !mentionsStandardMethod(value)
-        | _ -> false
-
 let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
     match requirements with
         | [] -> false
@@ -3019,22 +3013,24 @@ let visibleCalleeScheme name (state: CoreLoweringState) =
                 | Some((_label, scheme)) -> Some(scheme)
                 | None -> None
 
-// A wrapper's result can forward the dictionary ABI of its callee even when no trait
-// method occurs in the wrapper itself. The binding's own inference selects which
-// requirements survive application to its arguments.
-let recursive forwardsCalleeRequirements value parameters state =
-    match lambdaParts(value) with
-        | Some((parameter, body, _annotation)) -> forwardsCalleeRequirements(body)(parameter :: parameters)(state)
-        | None ->
-            match callSpineRootOf(value)(0) with
-                | Some((name, supplied)) ->
-                    if supplied == 0 || containsName(name)(parameters)
-                    then false
-                    else
-                        match visibleCalleeScheme(name)(state) with
-                            | Some(TypeScheme { constraints = _first :: _rest }) -> true
-                            | _ -> false
-                | None -> false
+// A lambda may need evidence from its environment while evaluating an argument or a local
+// initializer as well as at its tail call. Inference decides which of the referenced
+// requirements from these schemes remain open on this particular binding.
+let recursive referencesConstrainedName names state =
+    match names with
+        | [] -> false
+        | name :: rest ->
+            match visibleCalleeScheme(name)(state) with
+                | Some(TypeScheme { constraints = _first :: _rest }) -> true
+                | _ -> referencesConstrainedName(rest)(state)
+
+let forwardsRequirementsOf value state =
+    mentionsStandardMethod(value) || referencesConstrainedName(collectFree(value)([])([]))(state)
+
+let canOriginateRequirement value state =
+    mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) || mentionsUserDeclaredTrait(value)(programTraitDefinitions(state))(state)
+
+let constrainedPlanCannotApply value requirements state = !writtenRequirements(requirements) && !canOriginateRequirement(value)(state) && !forwardsRequirementsOf(value)(state)
 
 // A direct partial application of a constrained binding can generalize requirements
 // on its remaining arguments even when its right-hand side is not itself a lambda.
@@ -3057,8 +3053,8 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
                 in
-                    let forwards = written || mentionsStandardMethod(value) || forwardsCalleeRequirements(value)([])(state)
-                    in (forwards || !constrainedPlanCannotApply(value)(requirements)(state), forwards)
+                    let forwards = written || forwardsRequirementsOf(value)(state)
+                    in (forwards || canOriginateRequirement(value)(state), forwards)
             | None ->
                 let partial = !isRecursive && constrainedPartialApplication(value)(state)
                 in (partial, partial)
