@@ -9,6 +9,7 @@ import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.Types
 export (
     value runCoreProgramLoweringTests,
 )
@@ -876,6 +877,14 @@ let expectHelperNodeProvenance unit =
                                                 given (_expr) -> seen || node == id)(false)(rewritten)
                                 in test.assertEqual(true)(!has(1) && has(2) && has(3) && has(4)))
 
+let expectUnusedHelperParameterChecked unit =
+    (let source = "let job n = async(let recursive loop ignored k = if k <= 0 then 0 else match await Ashes.Task.sleep(1) with | Ok(_) -> loop(\"wrong\")(k - 1) | Error(_) -> 0 in loop(7)(n))\njob"
+    in
+        match loweringErrorFor(source) with
+            | CoreCallTypeMismatch(TypeMismatch(SemInt, SemString), _site) -> Unit
+            | CoreCallTypeMismatch(TypeMismatch(SemString, SemInt), _site) -> Unit
+            | other -> test.fail("expected the unused helper argument to disagree with its initial call: " + Ashes.Trait.Show.show(other)))
+
 let expectRecursiveAwaitingHelperSuspends unit =
     (let source = "let job n = async(let recursive loop k total = if k <= 0 then total else match await Ashes.Task.sleep(1) with | Ok(_tick) -> loop(k - 1)(total + 1) | Error(_e) -> total in loop(n)(0))\njob"
     in
@@ -894,6 +903,7 @@ let runCoreProgramLoweringTests unit =
     unit
     |> expectHelperNodeProvenance
     |> expectHelperSocketBorrowBoundaries
+    |> expectUnusedHelperParameterChecked
     |> expectRecursiveAwaitingHelperSuspends
     |> expectSocketsReleasedOnlyByOwningFrames
     |> expectBytesUpdatesReuseFreshBuffers

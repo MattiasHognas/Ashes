@@ -246,7 +246,7 @@ let recursive memberDeclarationSpan (name: Str) (starts: List((Str, Int, Int))) 
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
-        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType, resultType = resultType } ->
+        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, semanticType = memberType, parameterType = parameterType, resultType = resultType } ->
             match withStateLetLambdaLabels(state
             |> stateLetLambdaLabels
             |> Ashes.Collection.Map.setStr(name)(label))(state) with
@@ -255,6 +255,10 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                     |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(labeled))
                     |> (given (origin) ->
                         labeled
+                        |> (given (frame) ->
+                            if Ashes.Text.startsWith(name)("$async_helper_")
+                            then withHelperFactoryType(Some(memberType))(frame)
+                            else frame)
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> noteLetBoundFunction(label)(origin)

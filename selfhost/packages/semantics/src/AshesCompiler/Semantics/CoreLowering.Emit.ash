@@ -592,6 +592,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 pendingStackClosure = false,
                 coroutineBody = false,
                 pendingCoroutineBody = false,
+                helperFactoryType = None,
                 completedTaskFrameDropper = None,
                 runtimeAdtRequested = false,
                 pendingOperatorDefaults = [],

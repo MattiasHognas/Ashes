@@ -159,41 +159,59 @@ let destination restart name = "$slot" + restart + name
 
 let unusedDestination restart name = destination(restart)(name) + "#unused"
 
-let recursive bindArguments restart params used lower (state: CoreLoweringState) =
+// A restart is a source call even when a parameter has no runtime slot in the closure.
+// Walk the factory's own arrow so its call sites and its backedges constrain the same type.
+let splitFactoryArrow remaining state =
+    match resolveType(state)(remaining) with
+        | SemFunction(param, result, _row) -> (state, param, result, None)
+        | _ ->
+            match freshFunctionType(state) with
+                | FreshFunctionType { state = fresh, semanticType = arrow, parameterType = param, resultType = result } ->
+                    match bindType(remaining)(arrow)(fresh) with
+                        | (bound, error) -> (bound, param, result, error)
+
+let recursive bindArguments restart params used remaining lower (state: CoreLoweringState) =
     match params with
         | [] -> (state, None)
         | ExprString(name) :: rest ->
-            if containsName(name)(used)
-            then
-                match state
-                |> clearConsumerRequest
-                |> lower(ExprVar(name)) with
-                    | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, Some(error))
-                    | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
-                        match freshLocal(read) with
-                            | FreshLocal { state = allocated, local = slot } ->
-                                allocated
-                                |> addBinding(name)(emptyScheme(ty))(CoreLocal(slot))
-                                |> addBinding(destination(restart)(name))(emptyScheme(ty))(CoreLocal(slot))
-                                |> emit(StoreLocal(slot)(temp))
-                                |> bindArguments(restart)(rest)(used)(lower)
-            else
-                match freshType(state) with
-                    | FreshType { state = typed, semanticType = ty } ->
-                        match freshLocal(typed) with
+            match splitFactoryArrow(remaining)(state) with
+                | (split, _formal, _result, Some(error)) -> (split, Some(error))
+                | (split, formal, result, None) ->
+                    if containsName(name)(used)
+                    then
+                        match split
+                        |> clearConsumerRequest
+                        |> lower(ExprVar(name)) with
+                            | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, Some(error))
+                            | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
+                                match bindType(formal)(ty)(read) with
+                                    | (failed, Some(error)) -> (failed, Some(error))
+                                    | (bound, None) ->
+                                        match freshLocal(bound) with
+                                            | FreshLocal { state = allocated, local = slot } ->
+                                                allocated
+                                                |> addBinding(name)(emptyScheme(ty))(CoreLocal(slot))
+                                                |> addBinding(destination(restart)(name))(emptyScheme(ty))(CoreLocal(slot))
+                                                |> emit(StoreLocal(slot)(temp))
+                                                |> bindArguments(restart)(rest)(used)(result)(lower)
+                    else
+                        match freshLocal(split) with
                             | FreshLocal { state = allocated, local = scratch } ->
                                 allocated
-                                |> addBinding(unusedDestination(restart)(name))(emptyScheme(ty))(CoreLocal(scratch))
-                                |> bindArguments(restart)(rest)(used)(lower)
+                                |> addBinding(unusedDestination(restart)(name))(emptyScheme(formal))(CoreLocal(scratch))
+                                |> bindArguments(restart)(rest)(used)(result)(lower)
         | _ -> (state, Some(UnsupportedCoreLoweringExpression("coroutine loop parameter")))
 
 let enterHelperLoop restart params body lower (state: CoreLoweringState) =
-    match bindArguments(restart)(params)(collectFree(body)([])([]))(lower)(state) with
-        | (entered, None) ->
-            entered
-            |> emit(Label(restart))
-            |> lower(body)
-        | (failed, Some(error)) -> failure(failed)(error)
+    match stateHelperFactoryType(state) with
+        | None -> failure(state)(UnsupportedCoreLoweringExpression("coroutine loop outside helper factory"))
+        | Some(factoryType) ->
+            match bindArguments(restart)(params)(collectFree(body)([])([]))(factoryType)(lower)(state) with
+                | (entered, None) ->
+                    entered
+                    |> emit(Label(restart))
+                    |> lower(body)
+                | (failed, Some(error)) -> failure(failed)(error)
 
 let successorBinding restart name (state: CoreLoweringState) =
     match lookupBinding(destination(restart)(name))(state.bindings) with

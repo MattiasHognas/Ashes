@@ -198,6 +198,8 @@ export (
     value stateCoroutineBody,
     value withStateCoroutineBody,
     value statePendingCoroutineBody,
+    value stateHelperFactoryType,
+    value withHelperFactoryType,
     value stateCompletedTaskFrameDropper,
     value withStatePendingCoroutineBody,
     value withCompletedTaskFrameDropper,
@@ -1020,6 +1022,7 @@ type CoreFunctionState =
     // whether the next lambda entered is one.
     | coroutineBody: Bool
     | pendingCoroutineBody: Bool
+    | helperFactoryType: Maybe(SemanticType)
     | completedTaskFrameDropper: Maybe(Str)
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
@@ -2093,6 +2096,14 @@ let stateCoroutineBody (state: CoreLoweringState) =
 let withStateCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with coroutineBody = value))
+
+let stateHelperFactoryType (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.helperFactoryType)
+
+let withHelperFactoryType value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with helperFactoryType = value))
 
 let statePendingCoroutineBody (state: CoreLoweringState) =
     (let group = state.functionState
