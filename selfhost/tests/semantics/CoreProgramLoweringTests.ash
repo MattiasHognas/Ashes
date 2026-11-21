@@ -799,8 +799,35 @@ let expectBytesUpdatesReuseFreshBuffers unit =
             |> countLinesContaining("BytesSetU32Le")("ReuseInput=true")
             |> test.assertEqual(0)))
 
+let hasFrameDropper source =
+    (let lines = dumpSource(source)
+    in
+        Ashes.Text.contains(Ashes.Text.join("\n")(lines))("FrameDropperLabel="))
+
+let expectSocketsReleasedOnlyByOwningFrames unit =
+    (let owned = "let job socket = async(match await Ashes.Net.Tcp.close(socket) with | Ok(_u) -> 1 | Error(_e) -> 0)\njob"
+    in
+        let returned = "let job socket = async(match await Ashes.Net.Tcp.send(socket)(\"x\") with | Ok(_u) -> socket | Error(_e) -> socket)\njob"
+        in
+            let scalar = "let job n = async(match await Ashes.Task.sleep(1) with | Ok(_u) -> n + 1 | Error(_e) -> n)\njob"
+            in
+                let _ =
+                    owned
+                    |> hasFrameDropper
+                    |> test.assertEqual(true)
+                in
+                    let _ =
+                        returned
+                        |> hasFrameDropper
+                        |> test.assertEqual(false)
+                    in
+                        scalar
+                        |> hasFrameDropper
+                        |> test.assertEqual(false))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectSocketsReleasedOnlyByOwningFrames
     |> expectBytesUpdatesReuseFreshBuffers
     |> expectLongTrailingChainUnderOwnedLetLowers
     |> expectEqualityPinnedLaterInTheBodyComparesStrings

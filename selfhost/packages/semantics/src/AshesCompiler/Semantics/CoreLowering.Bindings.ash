@@ -19,6 +19,8 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.CoroutineSocketFrame
+import AshesCompiler.Semantics.TaskStructLayout.taskStructLayout
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -926,6 +928,31 @@ let copyEscapingCapture (stackAllocate: Bool) (binding: CoreBinding) (captureTem
                         then (state, captureTemp)
                         else emitLocatedDeepCopy(captureTemp)(captureType)(state)
 
+// Survivor order is the final closure environment order after pruning. A capture
+// borrowed from an enclosing frame has no new obligation in this one.
+let recursive localSocketOffsets captures body offset (outer: CoreLoweringState) (finished: CoreLoweringState) =
+    match captures with
+        | [] -> []
+        | CoreBinding { name = name, location = CoreLocal(slot), scheme = scheme, ownedRead = owned } :: rest ->
+            let following = localSocketOffsets(rest)(body)(offset + 8)(outer)(finished)
+            in
+                if (owned || slot == 1) && resourceTypeNameOf(resolveType(finished)(scheme.body))(finished) == Some("Socket") && resourceStateOf(slot)(outer) == None && socketStaysInTask(name)(body)
+                then offset :: following
+                else following
+        | _ :: rest -> localSocketOffsets(rest)(body)(offset + 8)(outer)(finished)
+
+let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
+    if outer.functionState.pendingCoroutineBody
+    then
+        match localSocketOffsets(survivors)(body)(taskStructLayout.headerSize)(outer)(finished) with
+            | [] -> value with state = withCompletedTaskFrameDropper(None)(value.state)
+            | offsets ->
+                let dropper = makeSocketFrameDropper(label)(offsets)
+                in
+                    let state = value.state
+                    in value with state = withCompletedTaskFrameDropper(Some(dropper.label))((state with functions = dropper :: state.functions))
+    else value
+
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
@@ -961,6 +988,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         |> markCapturedResourcesMoved(survivors)
                                         |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
                                         |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                        |> registerTaskFrameDropper(label)(survivors)(body)(typedOuter)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus

@@ -2300,7 +2300,8 @@ let lowerCoroutineTask body lower (state: CoreLoweringState) =
                                                     match freshTemp(ownedState) with
                                                         | FreshTemp { state = tempState, temp = taskTemp } ->
                                                             tempState
-                                                            |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(None)(false))
+                                                            |> withCompletedTaskFrameDropper(None)
+                                                            |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(typedState.functionState.completedTaskFrameDropper)(false))
                                                             |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
                     | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
 

@@ -1,0 +1,27 @@
+import Ashes.IO
+import Ashes.Net.Tcp
+import Ashes.Net.Tcp.Server
+import Ashes.Task
+external duplicate(Int) -> Int = "dup@libc.so.6"
+external release(Int) -> Int = "close@libc.so.6"
+let hold shouldClose socket =
+    async(let nested u = async(await Ashes.Net.Tcp.close(socket))
+    in if shouldClose
+        then match await nested(Unit) with
+            | Ok(Ok(_u)) -> duplicate(1)
+            | _ -> 0
+        else match await Ashes.Task.sleep(1) with
+            | Ok(_u) -> duplicate(1)
+            | Error(_e) -> 0)
+let run shouldClose =
+    match Ashes.Task.run(Ashes.Net.Tcp.Server.listen(0)) with
+        | Ok(socket) ->
+            match Ashes.Task.run(hold(shouldClose)(socket)) with
+                | Ok(replacement) ->
+                    let next = duplicate(1)
+                    in let _ = release(next)
+                    in Ashes.IO.print(release(replacement) == 0 && (shouldClose || next < replacement))
+                | Error(e) -> Ashes.IO.print(e)
+        | Error(e) -> Ashes.IO.print(e)
+let _ = run(true)
+run(false)

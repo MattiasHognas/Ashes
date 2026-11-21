@@ -195,6 +195,7 @@ export (
     value stateCoroutineBody,
     value withStateCoroutineBody,
     value withStatePendingCoroutineBody,
+    value withCompletedTaskFrameDropper,
     value enterPendingCoroutineBody,
     value stateRuntimeAdtRequested,
     value withStateRuntimeAdtRequested,
@@ -1005,6 +1006,7 @@ type CoreFunctionState =
     // whether the next lambda entered is one.
     | coroutineBody: Bool
     | pendingCoroutineBody: Bool
+    | completedTaskFrameDropper: Maybe(Str)
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     // The bindings the function being lowered was created among, the environment its scheme is
@@ -2077,6 +2079,10 @@ let stateCoroutineBody (state: CoreLoweringState) =
 let withStateCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with coroutineBody = value))
+
+let withCompletedTaskFrameDropper value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with completedTaskFrameDropper = value))
 
 let withStatePendingCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState

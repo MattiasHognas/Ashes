@@ -3831,6 +3831,17 @@ let sharedTestSource path =
 let buildSharedTestModule shipped path name context =
     codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
 
+// Both programs bind port zero to obtain a private listener. dup(1) reuses the
+// lowest open descriptor slot, exposing a second close of a transferred socket.
+let testSocketCaptureTeardown shipped unit =
+    (let imports = [("dup", "libc.so.6"), ("close", "libc.so.6")]
+    in
+        let run name lines =
+            assertProgramPrintsLinesWithImports(imports)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/" + name + ".ash.source"))(name)("selfhost_backend_" + name + "_e2e")(lines)
+        in
+            let _ = run("socket_capture_close")(["true", "true"])
+            in run("socket_capture_cancel")(["true"]))
+
 let annotatedCallbackSource rounds =
     (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
     in
@@ -6153,6 +6164,7 @@ let run shipped =
     |> testRcReleaseInstrumentation
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
+    |> testSocketCaptureTeardown(shipped)
     |> testRcDupDrop
     |> testIsReferenceCounted
     |> testImmortalNullary
