@@ -2228,6 +2228,18 @@ public sealed partial class Lowering
                 ConstrainKnownExpressionType(item, element);
             }
         }
+        else if (TryDescribeConstructorExpression(expression, out ConstructorSymbol? constructor,
+            out List<Expr>? arguments, out TypeRef.TNamedType? constructed)
+            && constructor is not null && arguments is not null && constructed is not null)
+        {
+            Unify(pruned, constructed);
+            for (int index = 0; index < arguments.Count; index++)
+            {
+                ConstrainKnownExpressionType(
+                    arguments[index],
+                    InstantiateConstructorParameterType(constructor, index, constructed));
+            }
+        }
     }
 
     private TypeRef? TryGetKnownExpressionType(Expr expression)

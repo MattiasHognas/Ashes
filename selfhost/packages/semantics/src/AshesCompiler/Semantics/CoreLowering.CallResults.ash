@@ -20,6 +20,8 @@ import AshesCompiler.Semantics.ResultReachSummaries.recordReachOf
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.TypeSchemes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -1534,12 +1536,37 @@ let recursive preconstrainKnownArgumentTypes functionType (arguments: List(Expr)
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { error = Some(_error) } -> state
                 | FunctionTypeResolution { state = functionState, argumentType = argumentType, resultType = resultType, error = None } ->
-                    match knownArgumentType(argument)(functionState) with
-                        | None -> preconstrainKnownArgumentTypes(resultType)(rest)(functionState)
+                    match match recordedClosedTypeAt(nodeIdentityOf(argument))(functionState) with
+                        | Some(recorded) -> Some(recorded)
+                        | None -> knownArgumentType(argument)(functionState) with
+                        | None ->
+                            functionState
+                            |> preconstrainConstructorArgument(argument)(argumentType)
+                            |> preconstrainKnownArgumentTypes(resultType)(rest)
                         | Some(known) ->
                             match bindType(argumentType)(known)(functionState) with
                                 | (constrained, None) -> preconstrainKnownArgumentTypes(resultType)(rest)(constrained)
                                 | (_failed, Some(_error)) -> preconstrainKnownArgumentTypes(resultType)(rest)(functionState)
+and preconstrainConstructorArgument argument expected state =
+    match ownFieldSpine(argument)([]) with
+        | (ExprVar(name), fields) ->
+            match constructorLayout(name)(state) with
+                | Some(layout) ->
+                    if length(fields) == constructorArity(layout)
+                    then
+                        match instantiate(layout.scheme)(state.typeSupply) with
+                            | InstantiationResult { semanticType = arrow, supply = supply } ->
+                                let constrained =
+                                    state
+                                    |> withTypeSupply(supply)
+                                    |> preconstrainKnownArgumentTypes(arrow)(fields)
+                                in
+                                    match preconstrainCallResultType(arrow)(length(fields))(expected)(constrained) with
+                                        | (typed, None) -> typed
+                                        | _ -> state
+                    else state
+                | None -> state
+        | _ -> state
 
 let preconstrainKnownArguments (context: CoreCallContext) loweredCallee =
     match loweredCallee with
