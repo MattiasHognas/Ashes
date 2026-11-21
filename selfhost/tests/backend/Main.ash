@@ -21,6 +21,13 @@ import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ProjectSyntaxStitching
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ShippedModuleStitching
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
@@ -3824,11 +3831,11 @@ let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assert
 
 // `codegenShippedSource` with `IrOptimizer` run in between, as the real compile pipeline does for
 // a program using the standard library.
-let codegenOptimizedShippedSourceWithDump dumpPath shipped source name context =
+let codegenOptimizedShippedSourceUsing lower dumpPath shipped source name context =
     match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
         | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
-        | Ok(StitchedSyntaxProject { program = program }) ->
-            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+        | Ok(stitched) ->
+            match lower(name + ".ash")(source)(stitched) with
                 | CoreLoweringResult { program = Some(lowered), error = None } ->
                     let _ =
                         match dumpPath with
@@ -3843,6 +3850,20 @@ let codegenOptimizedShippedSourceWithDump dumpPath shipped source name context =
                         |> codegenProgram(name)(context)
                 | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
                 | _ -> test.fail("lowering produced no program")
+
+let lowerRawFixture path source (stitched: StitchedSyntaxProject) = lowerCoreProgramWithSource(path)(source)(stitched.program)
+
+let lowerNumberedFixture path source stitched =
+    (let identified = identifyStitchedProject(stitched)
+    in
+        match inferIdentifiedStitchedProjectFrom("standalone"
+        |> emptyTypeEnvironmentForPackage
+        |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+            | ProgramInferenceResult { error = Some(error) } -> test.fail("numbered fixture inference failed: " + Ashes.Trait.Show.show(error))
+            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))(table))
+
+let codegenOptimizedShippedSourceWithDump dumpPath shipped source name context = codegenOptimizedShippedSourceUsing(lowerRawFixture)(dumpPath)(shipped)(source)(name)(context)
 
 let codegenOptimizedShippedSource shipped source name context = codegenOptimizedShippedSourceWithDump(None)(shipped)(source)(name)(context)
 
@@ -3869,6 +3890,15 @@ let testRunLaterSiblingBesideFreshTupleArm shipped unit = assertSharedProgramPri
 let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgramPrintsExactly(shipped)("constrained_partial_uses_declared_arithmetic_methods")("-1 17")
 
 let testListEqualityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
+
+let testNumberedListEqualityUsesAmbientElementDictionary shipped unit =
+    (let fixture = "list_equality_uses_ambient_element_dictionary"
+    in
+        let build =
+            "tests/" + fixture + ".ash"
+            |> sharedTestSource
+            |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
+        in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)("yes no"))
 
 let testMutualTreeRewriteChecksEmptyAliases shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursive_tree_rewrite_checks_empty_aliases")("prefixx x")
 
@@ -6309,6 +6339,7 @@ let run shipped =
     |> testRunConstrainedPartialDeclaredArithmetic(shipped)
     |> testRunMutualShowDictionariesAtCalls(shipped)
     |> testListEqualityUsesAmbientElementDictionary(shipped)
+    |> testNumberedListEqualityUsesAmbientElementDictionary(shipped)
     |> testMutualTreeRewriteChecksEmptyAliases(shipped)
     |> testRunForwardedPartialPrefix(shipped)
     |> testRunAmbientEvidenceInPartialPrefix(shipped)
