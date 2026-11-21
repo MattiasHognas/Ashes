@@ -1,4 +1,4 @@
-let seed n = CoreLoweringState(substitution = Ashes.Collection.Map.setInt(n)(SemVariable(n + 1))(Ashes.Collection.Map.empty), functionState = CoreFunctionState(admissibilityAnswers = [(SemVariable(n), false)], pendingTraitGoals = [], traitGoalsPinned = false, active = false), programState = CoreProgramState(provenTraitGoals = Ashes.Collection.Map.empty), currentSpan = Some(TextSpan(start = n, end = n + 1)), nextTemp = 8)
+let seed n = CoreLoweringState(substitution = Ashes.Collection.Map.setInt(n)(SemVariable(n + 1))(Ashes.Collection.Map.empty), functionState = CoreFunctionState(admissibilityAnswers = [(SemVariable(n), false)], pendingTraitGoals = [], traitGoalsPinned = false, active = false, activeTraitMethods = []), programState = CoreProgramState(provenTraitGoals = Ashes.Collection.Map.empty), currentSpan = Some(TextSpan(start = n, end = n + 1)), nextTemp = 8)
 
 let input semanticType state = LoweredCoreValue(state = state, temp = 7, semanticType = semanticType, error = None)
 
@@ -43,7 +43,7 @@ let checkOrderedProofs unit =
         match traitGoalKey("Eq")("equal")(entered) with
             | None -> Ashes.IO.panic("test site has no span")
             | Some(key) ->
-                match traitGoalMap(resolvedTraitGoals([(key, SemString), (key, SemVariable(42)), (key, SemInt)])(entered)(Ashes.Collection.Map.empty))([]) with
+                match traitGoalMap(resolvedTraitGoals([(key, SemString, []), (key, SemVariable(42), []), (key, SemInt, [])])(entered)(Ashes.Collection.Map.empty))([]) with
                     | (proofs, true) ->
                         match entered
                         |> withStateProvenTraitGoals(proofs)
@@ -57,6 +57,35 @@ let checkOrderedProofs unit =
                                     | _ -> Ashes.IO.panic("unsettled occurrence borrowed another proof")
                             | _ -> Ashes.IO.panic("first occurrence lost its proof")
                     | _ -> Ashes.IO.panic("conflicting proofs were shared"))
+
+// The same source site is visited in two frames. Only the first visit settled
+// against a lexical method; replay has fresh type variables for that frame.
+let checkAmbientProof unit =
+    (let discovery = seed(10)
+    in
+        match traitGoalKey("Seed")("first")(discovery) with
+            | None -> Ashes.IO.panic("missing ambient goal site")
+            | Some(key) ->
+                let pending = [(key, SemVariable(42), []), (key, SemVariable(10), [("dictionary", SemVariable(11))])]
+                in
+                    match traitGoalMap(resolvedTraitGoals(pending)(discovery)(Ashes.Collection.Map.empty))([]) with
+                        | (proofs, true) ->
+                            let frame = discovery.functionState
+                            in
+                                let replay = discovery with functionState = (frame with activeTraitMethods = [("Seed", SemVariable(80), "first", "dictionary")])
+                                in
+                                    match replay
+                                    |> withStateProvenTraitGoals(proofs)
+                                    |> pinProvenTraitGoal("Seed")("first")(SemVariable(81)) with
+                                        | (first, SemVariable(_id)) ->
+                                            if resolveType(first)(SemVariable(81)) != resolveType(first)(SemVariable(80))
+                                            then Ashes.IO.panic("ambient proof lost replay dictionary")
+                                            else
+                                                match pinProvenTraitGoal("Seed")("first")(SemVariable(82))(first) with
+                                                    | (_unchanged, SemVariable(82)) -> Unit
+                                                    | _ -> Ashes.IO.panic("an unresolved neighbor borrowed an ambient proof")
+                                        | _ -> Ashes.IO.panic("ambient proof became concrete")
+                        | _ -> Ashes.IO.panic("ambient proof did not keep visit order"))
 
 let checkSpecial unit =
     (let entered =
@@ -94,6 +123,7 @@ let recursive rounds n =
 Unit
 |> checkSpecial
 |> checkOrderedProofs
+|> checkAmbientProof
 |> (given (_) ->
     match Ashes.IO.args with
         | "1000" :: [] -> rounds(1000)

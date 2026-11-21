@@ -1064,6 +1064,26 @@ let bindTraitGoalProof operandType proof (state: CoreLoweringState) =
                 | (pinned, None) -> (pinned, resolveType(pinned)(operandType))
                 | (_failed, Some(_error)) -> (state, operandType)
 
+// A discovery proof can name the lexical dictionary whose type matched after
+// the rest of the function was inferred. Resolve that binding in the replay frame:
+// type-variable ids from a different lowering pass are not interchangeable.
+let recursive activeOperandForBinding binding entries =
+    match entries with
+        | [] -> None
+        | (_trait, operand, _method, name) :: rest ->
+            if name == binding
+            then Some(operand)
+            else activeOperandForBinding(binding)(rest)
+
+let bindGoalAnswer operand answer state =
+    match answer with
+        | Some(ProvenOperandType(proven)) -> bindTraitGoalProof(operand)(Some(proven))(state)
+        | Some(ProvenAmbientMethod(binding)) ->
+            bindTraitGoalProof(operand)(state
+            |> stateActiveTraitMethods
+            |> activeOperandForBinding(binding))(state)
+        | None -> (state, operand)
+
 let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
     match (freeTypeVariables(operandType), traitGoalKey(traitName)(methodName)(state)) with
         | ([], _key) -> (state, operandType)
@@ -1072,11 +1092,11 @@ let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: Semantic
             let proofs = stateProvenTraitGoals(state)
             in
                 match Ashes.Collection.Map.getStr(key)(proofs) with
-                    | Some(SharedTraitGoalProof(proven)) -> bindTraitGoalProof(operandType)(Some(proven))(state)
+                    | Some(SharedTraitGoalProof(proven)) -> bindGoalAnswer(operandType)(Some(proven))(state)
                     | Some(OrderedTraitGoalProofs(proof :: remaining)) ->
                         state
                         |> withStateProvenTraitGoals(Ashes.Collection.Map.setStr(key)(OrderedTraitGoalProofs(remaining))(proofs))
-                        |> bindTraitGoalProof(operandType)(proof)
+                        |> bindGoalAnswer(operandType)(proof)
                     | _ -> (state, operandType)
 
 // Whether a plan's evidence is a hidden parameter of a generic body this body does not carry.
@@ -1100,16 +1120,33 @@ let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: Semant
 // The value lowered at a deferred site: the goal joins the pass's record, and the site gets a
 // constant of the method's own result type. A deferring pass exists to resolve types, and its
 // instructions are discarded, so the constant is never run.
-let deferTraitGoal (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+let deferTraitGoalWithMethods candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
     (let recorded =
         state
-        |> withStatePendingTraitGoals((key, operandType) :: statePendingTraitGoals(state))
+        |> withStatePendingTraitGoals((key, operandType, candidates) :: statePendingTraitGoals(state))
         |> observePendingGoal(false)(key)(operandType)
     in
         match resultType with
             | SemString -> lowerString("")(recorded)
             | _ ->
                 lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(recorded))
+
+let deferTraitGoal key operand result state = deferTraitGoalWithMethods([])(key)(operand)(result)(state)
+
+let recursive matchingMethodCandidates traitName methodName methods =
+    match methods with
+        | [] -> []
+        | (candidateTrait, operand, candidateMethod, binding) :: rest ->
+            let tail = matchingMethodCandidates(traitName)(methodName)(rest)
+            in
+                if candidateTrait == traitName && candidateMethod == methodName
+                then (binding, operand) :: tail
+                else tail
+
+let deferMethodGoal traitName methodName key operand result state =
+    deferTraitGoalWithMethods(state
+    |> stateActiveTraitMethods
+    |> matchingMethodCandidates(traitName)(methodName))(key)(operand)(result)(state)
 
 // `Ashes.Trait.Show.show(x)` and its unary siblings, the counterpart of the mapped binary operators:
 // resolve the trait's evidence for the operand's own type, build the method's closure for that plan,
@@ -1125,14 +1162,14 @@ let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: S
             |> resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [pinnedType])) with
                 | TraitEvidenceResolution { plan = Some(plan) } ->
                     match (traitPlanLacksActiveEvidence(plan)(methodName)(pinnedState), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState)) with
-                        | (true, Some(key)) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
                         | _resolvable ->
                             match buildTraitMethodClosure(plan)(methodName)(lower)(pinnedState) with
                                 | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
                                 | failed -> failed
                 | TraitEvidenceResolution { plan = None } ->
                     match unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState) with
-                        | Some(key) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | Some(key) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
                         | None ->
                             pinnedType
                             |> MissingCoreTraitEvidence(traitName)

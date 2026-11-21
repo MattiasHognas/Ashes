@@ -1265,7 +1265,7 @@ let recursive sealedOperatorTypes sealed acc =
 let recursive pendingTraitGoalTypes goals acc =
     match goals with
         | [] -> acc
-        | (_key, semanticType) :: rest -> pendingTraitGoalTypes(rest)(semanticType :: acc)
+        | (_key, semanticType, _methods) :: rest -> pendingTraitGoalTypes(rest)(semanticType :: acc)
 
 // The types a generalization must hold back, in the environment position that keeps them out of
 // the quantifier: a deferred operator's operand, and the operand of a trait goal this pass could

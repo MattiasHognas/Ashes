@@ -2199,11 +2199,15 @@ let lowerLet name value body lower state =
 
 // `lowerLet` for a value its annotation gives a closed type: the value, once lowered, is bound to
 // that type before the body is lowered against it.
-let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) lower state =
+let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) forwardAnnotation lower state =
     (let lowerValue =
         given (valueExpression) ->
             given (valueState) ->
                 valueState
+                |> (given (current: CoreLoweringState) ->
+                    if forwardAnnotation
+                    then withConsumerRequest((current.consumerRequest with expectedType = annotationType))(current)
+                    else current)
                 |> lower(valueExpression)
                 |> bindLoweredAnnotation(annotationType)
     in

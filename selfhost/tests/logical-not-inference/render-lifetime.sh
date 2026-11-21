@@ -8,7 +8,7 @@ mkdir -p "$out"
 core=$(core_lowering_source "$out/core-lowering-source.txt")
 {
     cat "$fixture/LifetimePrelude.ash"
-    for name in clearAdmissibilityAnswers withSubstitution resolveType failure bindType statePendingTraitGoals withStatePendingTraitGoals stateProvenTraitGoals withStateProvenTraitGoals stateTraitGoalsPinned withStateTraitGoalsPinned traitGoalKey bindTraitGoalProof pinProvenTraitGoal unprovenTraitGoalKey deferTraitGoal reserveCoreTemps finishCoreLogicalNot finishOrDeferCoreLogicalNot resolvedTraitGoals traitGoalProofForSite traitGoalMap; do
+    for name in clearAdmissibilityAnswers withSubstitution resolveType failure bindType stateActiveTraitMethods statePendingTraitGoals withStatePendingTraitGoals stateProvenTraitGoals withStateProvenTraitGoals stateTraitGoalsPinned withStateTraitGoalsPinned traitGoalKey bindTraitGoalProof activeOperandForBinding bindGoalAnswer pinProvenTraitGoal unprovenTraitGoalKey deferTraitGoalWithMethods deferTraitGoal reserveCoreTemps finishCoreLogicalNot finishOrDeferCoreLogicalNot resolvedAmbientAnswer resolvedTraitGoals traitGoalProofForSite traitGoalMap; do
         extract_declaration "$core" "$name"
     done
     cat "$fixture/LifetimeAssertions.ash"

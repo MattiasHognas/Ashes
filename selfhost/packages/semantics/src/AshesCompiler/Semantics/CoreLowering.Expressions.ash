@@ -1042,7 +1042,7 @@ let recursive deferConstrainedGoals (goals: List((Str, SemanticType))) (resultTy
         | (key, goalType) :: [] -> deferTraitGoal(key)(goalType)(resultType)(state)
         | (key, goalType) :: rest ->
             state
-            |> withStatePendingTraitGoals((key, goalType) :: statePendingTraitGoals(state))
+            |> withStatePendingTraitGoals((key, goalType, []) :: statePendingTraitGoals(state))
             |> observePendingGoal(false)(key)(goalType)
             |> deferConstrainedGoals(rest)(resultType)
 
@@ -1979,19 +1979,27 @@ let isUserDeclaredTrait (traitName: Str) (state: CoreLoweringState) =
                 | Some(_declared) -> true
                 | None -> false
 
-// The trait and the method scheme `qualifier.methodName` names, when the qualifier is a trait the
-// program declares and the name one of its methods.
-let userTraitMethodScheme (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
+// The method scheme is also the fallback for direct references to an unstitched
+// standard trait. A module qualifier other than the trait itself is not an alias.
+let declaredMethodScheme (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
     (let traitName = standardTraitName(qualifier)
     in
-        if isShippedTraitQualifier(qualifier) || isUserDeclaredTrait(traitName)(state) == false
-        then None
-        else
+        if qualifier == traitName || isShippedTraitQualifier(qualifier) || qualifier == "Ashes.Trait." + traitName || isUserDeclaredTrait(traitName)(state)
+        then
             match state
             |> stateTraitEnvironment
             |> resolveTraitMethod(traitName)(methodName) with
                 | Some(TraitMethodInferenceDefinition { scheme = scheme }) -> Some((traitName, scheme))
-                | None -> None)
+                | None -> None
+        else None)
+
+let hasQualifiedMethodHead expression state =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(qualifier, method) } ->
+            match declaredMethodScheme(qualifier)(method)(state) with
+                | Some(_scheme) -> true
+                | None -> false
+        | _ -> false
 
 let recursive userTraitMethodArity (semanticType: SemanticType) =
     match semanticType with
@@ -2001,7 +2009,7 @@ let recursive userTraitMethodArity (semanticType: SemanticType) =
 // Stage 0's `LowerBareTraitMethodReference` for a user-declared trait: the method as a value is
 // the lambda applying it, whose saturated call takes the dispatch route.
 let userTraitMethodReference (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
-    match userTraitMethodScheme(qualifier)(methodName)(state) with
+    match declaredMethodScheme(qualifier)(methodName)(state) with
         | Some((_traitName, TypeScheme { body = body })) ->
             let arity = userTraitMethodArity(body)
             in
@@ -2038,6 +2046,17 @@ let consumerRequestForDispatch (rest: List(Expr)) (request: ConsumerRequest) (st
 // scheme is instantiated, its first parameter typed by the first argument, and the method
 // dispatched through the evidence for the trait's type argument (an active requirement inside a
 // constrained body, the registered implementation otherwise); later arguments apply to the result.
+let bindMethodResultContext traitName arguments resultType outer state =
+    match arguments with
+        | [] ->
+            match expectedTypeOf(outer) with
+                | Some(expected) ->
+                    match bindType(resultType)(expected)(state) with
+                        | (bound, None) -> (pinRecordedResultType(traitName)(resultType)(bound), None)
+                        | failed -> failed
+                | None -> (pinRecordedResultType(traitName)(resultType)(state), None)
+        | _ -> (state, None)
+
 let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeScheme) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     match (arguments, instantiate(scheme)(state.typeSupply)) with
         | (first :: rest, InstantiationResult { semanticType = SemFunction(parameterType, resultType, _row), constraints = TraitConstraint { typeArguments = typeArgument :: [] } :: [], supply = nextSupply }) ->
@@ -2050,15 +2069,18 @@ let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeSch
                         | (operandState, operandType) ->
                             match bindType(parameterType)(operandType)(operandState) with
                                 | (failedState, Some(error)) -> failure(failedState)(error)
-                                | (boundState, None) ->
-                                    match boundState
-                                    |> consumerRequestForDispatch(rest)(state.consumerRequest)
-                                    |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
-                                        | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
-                                            dispatched
-                                            |> withConsumerRequest(state.consumerRequest)
-                                            |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
-                                        | failed -> failed
+                                | (parameterState, None) ->
+                                    match bindMethodResultContext(traitName)(rest)(resultType)(state)(parameterState) with
+                                        | (failedState, Some(error)) -> failure(failedState)(error)
+                                        | (boundState, None) ->
+                                            match boundState
+                                            |> consumerRequestForDispatch(rest)(state.consumerRequest)
+                                            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
+                                                | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
+                                                    dispatched
+                                                    |> withConsumerRequest(state.consumerRequest)
+                                                    |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
+                                                | failed -> failed
                 | failed -> failed
         | _ ->
             SemNever
@@ -2071,7 +2093,7 @@ let userTraitMethodCall (expression: Expr) (state: CoreLoweringState) =
         | CoreCallSpine { root = root, arguments = arguments } ->
             match stripExprAt(root) with
                 | ExprQualifiedVar(qualifier, methodName) ->
-                    match userTraitMethodScheme(qualifier)(methodName)(state) with
+                    match declaredMethodScheme(qualifier)(methodName)(state) with
                         | Some((traitName, scheme)) -> Some((traitName, methodName, scheme, arguments))
                         | None -> None
                 | _ -> None
@@ -3527,7 +3549,8 @@ let lowerScheduledConstrainedLet name value body annotation requirements lower (
                         given (entered) -> lowerConstrainedBindingValue(name)(plan)(source)(lower)(entered))(state.bindings)(state)
                 | None ->
                     match annotatedValueType(annotation)(value)(state) with
-                        | Some(annotationType) -> lowerAnnotatedLet(name)(value)(body)(Some(annotationType))(lower)(state)
+                        | Some(annotationType) ->
+                            lowerAnnotatedLet(name)(value)(body)(Some(annotationType))(hasQualifiedMethodHead(value)(state))(lower)(state)
                         | None ->
                             let lambdaValue = bindingLambdaValue(annotation)(value)(state)
                             in
@@ -3899,6 +3922,10 @@ let constrainedReference (expression: Expr) (state: CoreLoweringState) =
                         | Some((_label, TypeScheme { constraints = [] })) -> false
                         | Some(_constrained) -> true
                         | None -> false
+        | ExprQualifiedVar(qualifier, method) ->
+            match declaredMethodScheme(qualifier)(method)(state) with
+                | Some(_scheme) -> true
+                | None -> false
         | _ -> false
 
 let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) (state: CoreLoweringState) (dispatched: ConsumerRequest) =

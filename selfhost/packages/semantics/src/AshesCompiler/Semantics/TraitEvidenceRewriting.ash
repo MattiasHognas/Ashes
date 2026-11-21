@@ -472,11 +472,13 @@ let recursive prependCoreDictionaryParameters shapes body =
         | TraitDictionaryAbiShape { parameterIndex = index } :: rest ->
             ExprLambda(traitEvidenceParameterName(index))(prependCoreDictionaryParameters(rest)(body))(None)
 
+// Core lowers qualified method calls using their operand and expected result types.
+// Leave the source references intact: a method name may also occur at concrete
+// instances in the same body as the constrained type.
 let rewriteCoreConstrainedValue value constraints environment =
     (let shapes = planTraitEvidenceAbi(constraints)(environment)
     in
         value
-        |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
         |> destructureCoreLambdaBody(shapes)
         |> prependCoreDictionaryParameters(shapes))
 

@@ -55,6 +55,7 @@ export (
     type ObservedPendingGoal(..),
     value withPendingGoalObservation,
     value observePendingGoal,
+    type CoreTraitGoalAnswer(..),
     type CoreTraitGoalProof(..),
     type CoreProgramState(..),
     type CoreFunctionState(..),
@@ -857,9 +858,14 @@ type CoreTypeObservation =
     // How many calls lowered against a recorded expected type failed and were lowered again without it.
     | tableFallbacks: Int
 
+type CoreTraitGoalAnswer =
+    | ProvenOperandType(SemanticType)
+    | ProvenAmbientMethod(Str)
+    deriving {Eq}
+
 type CoreTraitGoalProof =
-    | SharedTraitGoalProof(SemanticType)
-    | OrderedTraitGoalProofs(List(Maybe(SemanticType)))
+    | SharedTraitGoalProof(CoreTraitGoalAnswer)
+    | OrderedTraitGoalProofs(List(Maybe(CoreTraitGoalAnswer)))
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -1068,7 +1074,7 @@ type CoreFunctionState =
     // variable at the site dispatching on it, keyed by that site. Inference can learn the type
     // AFTER the site — a top-level binding whose parameter only a later use pins — so a pass
     // reaching the site cannot tell a genuinely ambiguous operand from one not determined yet.
-    | pendingTraitGoals: List((Str, SemanticType))
+    | pendingTraitGoals: List((Str, SemanticType, List((Str, SemanticType))))
     // The `==` and `!=` sites lowered as a speculative integer comparison because both operand
     // types were still variables there, keyed as a trait goal is, with the shared operand type.
     | pendingEqualityGoals: List((Str, SemanticType))

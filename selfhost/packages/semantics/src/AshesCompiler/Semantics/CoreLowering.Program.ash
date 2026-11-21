@@ -1967,16 +1967,24 @@ let registeredProgramState items state =
 
 // Pending goals are stored newest first. Prepending each resolved occurrence leaves
 // each site's list in lowering order, including holes for occurrences that stayed open.
-let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: CoreLoweringState) (sites: MapTree(Str, List(Maybe(SemanticType)))) =
+let recursive resolvedAmbientAnswer operand candidates state =
+    match candidates with
+        | [] -> None
+        | (binding, candidate) :: rest ->
+            if resolveType(state)(candidate) == operand
+            then Some(ProvenAmbientMethod(binding))
+            else resolvedAmbientAnswer(operand)(rest)(state)
+
+let recursive resolvedTraitGoals (pending: List((Str, SemanticType, List((Str, SemanticType))))) (state: CoreLoweringState) (sites: MapTree(Str, List(Maybe(CoreTraitGoalAnswer)))) =
     match pending with
         | [] -> sites
-        | (key, goalType) :: rest ->
+        | (key, goalType, candidates) :: rest ->
             let resolved = resolveType(state)(goalType)
             in
                 let proof =
                     match freeTypeVariables(resolved) with
-                        | [] -> Some(resolved)
-                        | _ -> None
+                        | [] -> Some(ProvenOperandType(resolved))
+                        | _ -> resolvedAmbientAnswer(resolved)(candidates)(state)
                 in
                     let later =
                         match Ashes.Collection.Map.getStr(key)(sites) with
@@ -1990,9 +1998,12 @@ let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: Co
 // A site that proved just one type uses it on every visit. Only sites that actually
 // proved different types consume one entry per visit, as in a shared implementation
 // body lowered for several different dictionaries.
+// A lexical dictionary belongs to its original visit, even when neighboring
+// visits at the same span did not prove a dictionary.
 let recursive traitGoalProofForSite entries first all =
     match (entries, first) with
         | ([], None) -> None
+        | ([], Some(ProvenAmbientMethod(_binding))) -> Some(OrderedTraitGoalProofs(all))
         | ([], Some(proven)) -> Some(SharedTraitGoalProof(proven))
         | (None :: rest, _) -> traitGoalProofForSite(rest)(first)(all)
         | (Some(proven) :: rest, None) -> traitGoalProofForSite(rest)(Some(proven))(all)
@@ -2006,7 +2017,7 @@ let traitGoalMap sites equalityGoals =
         Ashes.Collection.List.foldLeft(given (proofs) ->
             given (entry) ->
                 match entry with
-                    | (key, value) -> Ashes.Collection.Map.setStr(key)(SharedTraitGoalProof(value))(proofs))(Ashes.Collection.Map.empty)(equalityGoals)
+                    | (key, value) -> Ashes.Collection.Map.setStr(key)(SharedTraitGoalProof(ProvenOperandType(value)))(proofs))(Ashes.Collection.Map.empty)(equalityGoals)
     in
         Ashes.Collection.Map.foldLeft(given (acc) ->
             given (key) ->
@@ -2223,7 +2234,7 @@ let refuseUnansweredGoals (lowered: LoweredCoreValue) =
         | LoweredCoreValue { state = state, error = None } ->
             match statePendingTraitGoals(state) with
                 | [] -> lowered
-                | (key, goalType) :: _rest ->
+                | (key, goalType, _candidates) :: _rest ->
                     goalType
                     |> resolveType(state)
                     |> MissingCoreTraitEvidence(traitOfGoalKey(key))
@@ -2325,6 +2336,11 @@ let measuredGoalDetails pending equalityGoals state =
             measuredSites(sites)(indexGoalKeys(pending)(Ashes.Collection.Map.empty))(indexGoalKeys(equalityGoals)(Ashes.Collection.Map.empty))(state)
         | _ -> []
 
+let pendingGoalPairs goals =
+    Ashes.Collection.List.map(given (goal) ->
+        match goal with
+            | (key, operand, _candidates) -> (key, operand))(goals)
+
 let lowerScheduledProgramPassesMeasured replayStarting clock items trailingBody environment (seed: CoreLoweringState) =
     (let started = clock(Unit)
     in
@@ -2344,7 +2360,9 @@ let lowerScheduledProgramPassesMeasured replayStarting clock items trailingBody 
                                         match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
                                             | (retained, replayed) ->
                                                 let elapsed = beforeProgress - firstDone + clock(Unit) - afterProgress
-                                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = elapsed, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending), equalityGoalKeys = goalKeysOf(equalityGoals), retainedRelowerings = retained, goalDetails = measuredGoalDetails(pending)(equalityGoals)(firstState)))
+                                                in
+                                                    let goalPairs = pendingGoalPairs(pending)
+                                                    in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = elapsed, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalPairs |> goalKeysOf, equalityGoalKeys = goalKeysOf(equalityGoals), retainedRelowerings = retained, goalDetails = measuredGoalDetails(goalPairs)(equalityGoals)(firstState)))
 
 let lowerProgramPassesMeasuredWithProgress replayStarting clock items trailing environment seed =
     match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with

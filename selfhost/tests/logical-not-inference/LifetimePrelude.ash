@@ -5,13 +5,19 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Frontend.Token
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
-    | pendingTraitGoals: List((Str, SemanticType))
+    | pendingTraitGoals: List((Str, SemanticType, List((Str, SemanticType))))
     | traitGoalsPinned: Bool
     | active: Bool
+    | activeTraitMethods: List((Str, SemanticType, Str, Str))
+
+type CoreTraitGoalAnswer =
+    | ProvenOperandType(SemanticType)
+    | ProvenAmbientMethod(Str)
+    deriving {Eq}
 
 type CoreTraitGoalProof =
-    | SharedTraitGoalProof(SemanticType)
-    | OrderedTraitGoalProofs(List(Maybe(SemanticType)))
+    | SharedTraitGoalProof(CoreTraitGoalAnswer)
+    | OrderedTraitGoalProofs(List(Maybe(CoreTraitGoalAnswer)))
 
 type CoreProgramState =
     | provenTraitGoals: MapTree(Str, CoreTraitGoalProof)
@@ -64,3 +70,5 @@ let emitCoreTraitUnaryDispatch _traitName _methodName resultType _lower operandT
 let recordedNotOperand operandType state = (state, operandType)
 
 let noLower _expression state = success(0)(SemNever)(state)
+
+let observePendingGoal _structural _key _operand state = state
