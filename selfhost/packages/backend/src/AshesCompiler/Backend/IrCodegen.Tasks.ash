@@ -5729,7 +5729,16 @@ let defineTlsLeafSteps module_ (sc: SchedulerContext) connectStep =
                                 )
                             in (steps, Some(HttpTlsSteps(httpHandshakeFn = handshakeFn, httpHandshakeType = handshakeType, httpTlsTransport = transport))))
 
-let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (server: Maybe(ServerRuntime)) (usesTls: Bool) (hasFrameDroppers: Bool) closureFnType =
+let emitForkWorkersStep (sc: SchedulerContext) forkFn forkType stepFn task =
+    (let count = schedWord(sc)(task)(offsetIoArgument1)("requested_workers")
+    in
+        let index = buildCall(sc.schedBuilder)(forkType)(forkFn)([count])(1u32)("worker_index")
+        in
+            "fork_workers_ok"
+            |> schedOk(sc)(stepFn)(index)
+            |> schedCompleteLeaf(sc)(task))
+
+let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (server: Maybe(ServerRuntime)) workers (usesTls: Bool) (hasFrameDroppers: Bool) closureFnType =
     (let globals =
         SchedulerGlobals(
             readyQueueHead = addZeroWordGlobal(module_)(i64)("__ashes_ready_head"),
@@ -5801,41 +5810,49 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                                                                             match step with
                                                                                 | (stepFn, stepType) -> (taskStateCode(kind), stepFn, stepType)
                                                                 in
-                                                                    let socketLeafSteps =
-                                                                        Ashes.Collection.List.append([
-                                                                            leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
-                                                                            false
-                                                                            |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_get")
-                                                                            |> leafStep(HttpGetTaskState),
-                                                                            true
-                                                                            |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_post")
-                                                                            |> leafStep(HttpPostTaskState),
-                                                                            leafStep(TcpSendTaskState)((stepTcpSendFn, stepTcpSendType)),
-                                                                            leafStep(TcpReceiveTaskState)((stepTcpReceiveFn, stepTcpReceiveType)),
-                                                                            leafStep(TcpCloseTaskState)((stepTcpCloseFn, stepTcpCloseType)),
-                                                                            sc
-                                                                            |> emitStepTcpListen
-                                                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
-                                                                            |> leafStep(TcpListenTaskState),
-                                                                            sc
-                                                                            |> emitStepTcpAccept
-                                                                            |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
-                                                                            |> leafStep(TcpAcceptTaskState)
-                                                                        ])(tlsLeafSteps)
+                                                                    let workerSteps =
+                                                                        match workers with
+                                                                            | None -> tlsLeafSteps
+                                                                            | Some((forkFn, forkType)) ->
+                                                                                leafStep(ForkWorkersTaskState)(forkType
+                                                                                |> emitForkWorkersStep(sc)(forkFn)
+                                                                                |> defineLeafStep(module_)(sc)("__ashes_step_fork_workers")) :: tlsLeafSteps
                                                                     in
-                                                                        closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
-                                                                            stepCompositeFn = stepCompositeFn,
-                                                                            stepCompositeType = stepCompositeType,
-                                                                            waitParkedFn = waitParkedFn,
-                                                                            waitParkedType = waitParkedType,
-                                                                            cancelFn = cancelFn,
-                                                                            cancelType = cancelType,
-                                                                            dequeueFn = dequeueFn,
-                                                                            dequeueType = dequeueType,
-                                                                            forkScopedFn = forkScopedFn,
-                                                                            forkScopedType = forkScopedType,
-                                                                            socketLeafSteps = socketLeafSteps
-                                                                        )))
+                                                                        let socketLeafSteps =
+                                                                            Ashes.Collection.List.append([
+                                                                                leafStep(TcpConnectTaskState)((stepTcpConnectFn, stepTcpConnectType)),
+                                                                                false
+                                                                                |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_get")
+                                                                                |> leafStep(HttpGetTaskState),
+                                                                                true
+                                                                                |> defineStepHttp(module_)(sc)(httpChildren)("__ashes_step_http_post")
+                                                                                |> leafStep(HttpPostTaskState),
+                                                                                leafStep(TcpSendTaskState)((stepTcpSendFn, stepTcpSendType)),
+                                                                                leafStep(TcpReceiveTaskState)((stepTcpReceiveFn, stepTcpReceiveType)),
+                                                                                leafStep(TcpCloseTaskState)((stepTcpCloseFn, stepTcpCloseType)),
+                                                                                sc
+                                                                                |> emitStepTcpListen
+                                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_listen")
+                                                                                |> leafStep(TcpListenTaskState),
+                                                                                sc
+                                                                                |> emitStepTcpAccept
+                                                                                |> defineLeafStep(module_)(sc)("__ashes_step_tcp_accept")
+                                                                                |> leafStep(TcpAcceptTaskState)
+                                                                            ])(workerSteps)
+                                                                        in
+                                                                            closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
+                                                                                stepCompositeFn = stepCompositeFn,
+                                                                                stepCompositeType = stepCompositeType,
+                                                                                waitParkedFn = waitParkedFn,
+                                                                                waitParkedType = waitParkedType,
+                                                                                cancelFn = cancelFn,
+                                                                                cancelType = cancelType,
+                                                                                dequeueFn = dequeueFn,
+                                                                                dequeueType = dequeueType,
+                                                                                forkScopedFn = forkScopedFn,
+                                                                                forkScopedType = forkScopedType,
+                                                                                socketLeafSteps = socketLeafSteps
+                                                                            )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
 // to the start of a fresh 4 MiB chunk that becomes its private arena, the copy is its own arena

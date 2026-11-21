@@ -1721,103 +1721,108 @@ let codegenInstructionKind cx builder kind state =
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CreateTcpCloseTask(target, first) ->
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | SetDrainTimeout(target, milliseconds) ->
+                                        | RequestServerStop(target) ->
                                             match cx.serverRuntime with
                                                 | Some(server) ->
+                                                    (bindTemp(target)(emitRequestServerStop(builder)(i64)(server))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: missing server stop state")
+                                                | SetDrainTimeout(target, milliseconds) ->
+                                                    match cx.serverRuntime with
+                                                        | Some(server) ->
                                     // The entry also maps the arena's first chunk before any
                                     // instruction can allocate.
-                                                    let _ =
-                                                        buildStore(builder)(lookupTemp(cx)(milliseconds)(tempEnv))(server.serverTimeout)
-                                                    in
-                                                        (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
-                                                | None -> Ashes.IO.panic("codegen: missing drain timeout global")
-                                        | CreateTcpListenTask(target, first) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateForkWorkersTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(ForkWorkersTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTcpAcceptTask(target, first) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpAcceptTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateHttpGetTask(target, first) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpGetTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateHttpPostTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpPostTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsConnectTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsHandshakeTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsServerHandshakeTask(target, first, second, third) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsServerHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(third)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsSendTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsReceiveTask(target, first, second) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | CreateTlsCloseTask(target, first) ->
-                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                        | AsyncSleep(target, milliseconds) ->
-                                            let taskRef =
-                                                emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))
-                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
-                                        | AsyncAll(target, tasks) ->
-                                            let taskRef =
-                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(AllCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
-                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
-                                        | AsyncRace(target, tasks) ->
-                                            let taskRef =
-                                                emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(RaceCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
-                                            in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                                            let _ =
+                                                                buildStore(builder)(lookupTemp(cx)(milliseconds)(tempEnv))(server.serverTimeout)
+                                                            in
+                                                                (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
+                                                        | None -> Ashes.IO.panic("codegen: missing drain timeout global")
+                                                | CreateTcpListenTask(target, first) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateForkWorkersTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(ForkWorkersTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTcpAcceptTask(target, first) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpAcceptTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateHttpGetTask(target, first) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpGetTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateHttpPostTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpPostTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsConnectTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsHandshakeTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsServerHandshakeTask(target, first, second, third) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsServerHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(third)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsSendTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsReceiveTask(target, first, second) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | CreateTlsCloseTask(target, first) ->
+                                                    (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                | AsyncSleep(target, milliseconds) ->
+                                                    let taskRef =
+                                                        emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                                | AsyncAll(target, tasks) ->
+                                                    let taskRef =
+                                                        emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(AllCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    in (bindTemp(target)(taskRef)(tempEnv), terminated)
+                                                | AsyncRace(target, tasks) ->
+                                                    let taskRef =
+                                                        emitCompositeTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(RaceCompositeTaskState)(lookupTemp(cx)(tasks)(tempEnv))("t" + Ashes.Text.fromInt(target))
+                                                    in (bindTemp(target)(taskRef)(tempEnv), terminated)
                         // `Ashes.Task.Parallel`: fork, join and cleanup of `both`'s right thunk, and the
                         // `withWorkers` override, over the module's parallel runtime.
-                                        | ParallelFork(descTarget, rightClosureTemp) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
-                                                    (bindTemp(descTarget)(emitParallelFork(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(closureFunctionType)(runtime)(lookupTemp(cx)(rightClosureTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
-                                                | None -> Ashes.IO.panic("codegen: ParallelFork without the parallel runtime")
-                                        | ParallelJoin(resultTarget, descTemp) ->
-                                            (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
-                                        | ParallelCleanup(descTemp) ->
-                                            let _ =
-                                                emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
-                                            in (tempEnv, terminated)
-                                        | LoadParallelWorkerOverride(target) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
-                                                    (bindTemp(target)(emitLoadParallelWorkerOverride(builder)(i64)(runtime)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
-                                                | None -> Ashes.IO.panic("codegen: LoadParallelWorkerOverride without the parallel runtime")
-                                        | StoreParallelWorkerOverride(source) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
+                                                | ParallelFork(descTarget, rightClosureTemp) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
+                                                            (bindTemp(descTarget)(emitParallelFork(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(closureFunctionType)(runtime)(lookupTemp(cx)(rightClosureTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                        | None -> Ashes.IO.panic("codegen: ParallelFork without the parallel runtime")
+                                                | ParallelJoin(resultTarget, descTemp) ->
+                                                    (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                                | ParallelCleanup(descTemp) ->
                                                     let _ =
-                                                        tempEnv
-                                                        |> lookupTemp(cx)(source)
-                                                        |> emitStoreParallelWorkerOverride(builder)(runtime)
+                                                        emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
                                                     in (tempEnv, terminated)
-                                                | None -> Ashes.IO.panic("codegen: StoreParallelWorkerOverride without the parallel runtime")
-                                        | ParallelQueueStart(descTarget, mapperTemp, combineTemp, listTemp) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
-                                                    (bindTemp(descTarget)(emitParallelQueueStart(builder)(runtime)(lookupTemp(cx)(mapperTemp)(tempEnv))(lookupTemp(cx)(combineTemp)(tempEnv))(lookupTemp(cx)(listTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
-                                                | None -> Ashes.IO.panic("codegen: ParallelQueueStart without the parallel runtime")
-                                        | ParallelQueueAwait(resultTarget, descTemp) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
-                                                    (bindTemp(resultTarget)(emitParallelQueueAwait(builder)(runtime)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
-                                                | None -> Ashes.IO.panic("codegen: ParallelQueueAwait without the parallel runtime")
-                                        | ParallelQueueCleanup(descTemp) ->
-                                            match parallelRuntime with
-                                                | Some(runtime) ->
+                                                | LoadParallelWorkerOverride(target) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
+                                                            (bindTemp(target)(emitLoadParallelWorkerOverride(builder)(i64)(runtime)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                                        | None -> Ashes.IO.panic("codegen: LoadParallelWorkerOverride without the parallel runtime")
+                                                | StoreParallelWorkerOverride(source) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
+                                                            let _ =
+                                                                tempEnv
+                                                                |> lookupTemp(cx)(source)
+                                                                |> emitStoreParallelWorkerOverride(builder)(runtime)
+                                                            in (tempEnv, terminated)
+                                                        | None -> Ashes.IO.panic("codegen: StoreParallelWorkerOverride without the parallel runtime")
+                                                | ParallelQueueStart(descTarget, mapperTemp, combineTemp, listTemp) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
+                                                            (bindTemp(descTarget)(emitParallelQueueStart(builder)(runtime)(lookupTemp(cx)(mapperTemp)(tempEnv))(lookupTemp(cx)(combineTemp)(tempEnv))(lookupTemp(cx)(listTemp)(tempEnv))("t" + Ashes.Text.fromInt(descTarget)))(tempEnv), terminated)
+                                                        | None -> Ashes.IO.panic("codegen: ParallelQueueStart without the parallel runtime")
+                                                | ParallelQueueAwait(resultTarget, descTemp) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
+                                                            (bindTemp(resultTarget)(emitParallelQueueAwait(builder)(runtime)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
+                                                        | None -> Ashes.IO.panic("codegen: ParallelQueueAwait without the parallel runtime")
+                                                | ParallelQueueCleanup(descTemp) ->
+                                                    match parallelRuntime with
+                                                        | Some(runtime) ->
                                         // Every argument string and cons cell comes out of the
                                         // arena, so the walk follows the first chunk's mapping.
-                                                    let _ =
-                                                        tempEnv
-                                                        |> lookupTemp(cx)(descTemp)
-                                                        |> emitParallelQueueCleanup(builder)(runtime)
-                                                    in (tempEnv, terminated)
-                                                | None -> Ashes.IO.panic("codegen: ParallelQueueCleanup without the parallel runtime")
+                                                            let _ =
+                                                                tempEnv
+                                                                |> lookupTemp(cx)(descTemp)
+                                                                |> emitParallelQueueCleanup(builder)(runtime)
+                                                            in (tempEnv, terminated)
+                                                        | None -> Ashes.IO.panic("codegen: ParallelQueueCleanup without the parallel runtime")
                         // The state-machine transform's own frame stores and loads carry a suspend and a
                         // resume; the markers themselves emit nothing.
-                                        | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
-                                        | Resume(_stateStruct, _result, _restores) -> (tempEnv, terminated)
-                                        | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
+                                                | Suspend(_stateStruct, _nextState, _awaitedTask, _saves) -> (tempEnv, terminated)
+                                                | Resume(_stateStruct, _result, _restores) -> (tempEnv, terminated)
+                                                | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
 // bookkeeping. `musttail` is a hard guarantee that the callee may reuse the caller's frame
@@ -2278,6 +2283,17 @@ let recursive functionsHaveFrameDroppers functions =
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsHaveFrameDroppers(instructions) || functionsHaveFrameDroppers(rest)
 
+let recursive instructionsForkWorkers instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CreateForkWorkersTask(_, _, _) } :: _ -> true
+        | _ :: rest -> instructionsForkWorkers(rest)
+
+let recursive functionsForkWorkers functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsForkWorkers(instructions) || functionsForkWorkers(rest)
+
 let recursive instructionsUseServer instructions =
     match instructions with
         | [] -> false
@@ -2493,64 +2509,80 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                 |> Some
                                                                             else None
                                                                         in
-                                                                            let mc =
-                                                                                ModuleCodegen(
-                                                                                    moduleRef = module_,
-                                                                                    moduleContext = context,
-                                                                                    moduleTypes = types,
-                                                                                    moduleExternals = externals,
-                                                                                    moduleStringLiteralGlobals = stringLiteralGlobals,
-                                                                                    moduleLiftedFunctions = liftedFunctions,
-                                                                                    moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
-                                                                                    moduleClosureFunctionType = closureFnType,
-                                                                                    moduleEnvpGlobal = envpGlobal,
-                                                                                    moduleProgramArgsGlobal = programArgsGlobal,
-                                                                                    moduleServerRuntime = server,
-                                                                                    moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
-                                                                                    moduleExternalSymbols = []
-                                                                                    |> collectExternalSymbols(entryFunction :: functions)
-                                                                                    |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
-                                                                                    moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
-                                                                                    |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
-                                                                                    |> indexIntEntries,
-                                                                                    moduleNullaryCellGlobals = []
-                                                                                    |> collectNullaryCellTags(entryFunction :: functions)
-                                                                                    |> defineNullaryCellGlobals(module_)(types.i64)
-                                                                                    |> indexIntEntries,
-                                                                                    moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                                                                    moduleArenaRuntime = arena,
-                                                                                    moduleCopyRuntime = if usesCopy
-                                                                                    then
-                                                                                        arena
-                                                                                        |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
-                                                                                        |> Some
-                                                                                    else None,
-                                                                                    moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
-                                                                                    then
-                                                                                        types.ptrType
-                                                                                        |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
-                                                                                        |> Some
-                                                                                    else None,
-                                                                                    moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
-                                                                                    then
-                                                                                        closureFnType
-                                                                                        |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(server)(functionsUseTls(entryFunction :: functions))(functionsHaveFrameDroppers(entryFunction :: functions))
-                                                                                        |> Some
-                                                                                    else None,
-                                                                                    moduleParallelRuntime = if functionsUseParallel(entryFunction :: functions)
+                                                                            let needsForkWorkers = functionsForkWorkers(entryFunction :: functions)
+                                                                            in
+                                                                                let parallel =
+                                                                                    if needsForkWorkers || functionsUseParallel(entryFunction :: functions)
                                                                                     then
                                                                                         entryFunction :: functions
                                                                                         |> functionsForkParallel
-                                                                                        |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)
+                                                                                        |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)(needsForkWorkers)
                                                                                         |> Some
-                                                                                    else None,
-                                                                                    moduleBuilder = builder
-                                                                                )
-                                                                            in
-                                                                                let _ = codegenLiftedFunctions(mc)(functions)
+                                                                                    else None
                                                                                 in
-                                                                                    let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                                                    in (module_, mc.moduleBuilder))
+                                                                                    let workers =
+                                                                                        if needsForkWorkers
+                                                                                        then
+                                                                                            match (server, parallel) with
+                                                                                                | (Some(runtime), Some(cap)) ->
+                                                                                                    cap
+                                                                                                    |> defineForkWorkers(module_)(context)(builder)(types.i64)(runtime)
+                                                                                                    |> Some
+                                                                                                | _ -> Ashes.IO.panic("codegen: missing fork worker state")
+                                                                                        else None
+                                                                                    in
+                                                                                        let mc =
+                                                                                            ModuleCodegen(
+                                                                                                moduleRef = module_,
+                                                                                                moduleContext = context,
+                                                                                                moduleTypes = types,
+                                                                                                moduleExternals = externals,
+                                                                                                moduleStringLiteralGlobals = stringLiteralGlobals,
+                                                                                                moduleLiftedFunctions = liftedFunctions,
+                                                                                                moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
+                                                                                                moduleClosureFunctionType = closureFnType,
+                                                                                                moduleEnvpGlobal = envpGlobal,
+                                                                                                moduleProgramArgsGlobal = programArgsGlobal,
+                                                                                                moduleServerRuntime = server,
+                                                                                                moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
+                                                                                                moduleExternalSymbols = []
+                                                                                                |> collectExternalSymbols(entryFunction :: functions)
+                                                                                                |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
+                                                                                                moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
+                                                                                                |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
+                                                                                                |> indexIntEntries,
+                                                                                                moduleNullaryCellGlobals = []
+                                                                                                |> collectNullaryCellTags(entryFunction :: functions)
+                                                                                                |> defineNullaryCellGlobals(module_)(types.i64)
+                                                                                                |> indexIntEntries,
+                                                                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                                                                moduleArenaRuntime = arena,
+                                                                                                moduleCopyRuntime = if usesCopy
+                                                                                                then
+                                                                                                    arena
+                                                                                                    |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
+                                                                                                then
+                                                                                                    types.ptrType
+                                                                                                    |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
+                                                                                                then
+                                                                                                    closureFnType
+                                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(server)(workers)(functionsUseTls(entryFunction :: functions))(functionsHaveFrameDroppers(entryFunction :: functions))
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleParallelRuntime = parallel,
+                                                                                                moduleBuilder = builder
+                                                                                            )
+                                                                                        in
+                                                                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                                                                            in
+                                                                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                                                                in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)
