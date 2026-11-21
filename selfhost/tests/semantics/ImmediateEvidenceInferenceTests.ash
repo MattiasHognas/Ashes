@@ -210,6 +210,17 @@ let checkRecursiveEvidence unit =
                         |> infer
                         |> expectImmediate))
 
+// A member with no constraints of its own still forwards the other member's callback use.
+// Returning the callback leaves both of its original dictionary demands on the saved value.
+let checkReturnedPeerStages unit =
+    match stagedSource + "let recursive relay f = helper(f) and helper f = f\nlet delayed = relay(pick)\ntrue"
+    |> parsed
+    |> identifyProgram(0) with
+        | (program, _count) ->
+            match infer(program) with
+                | ProgramInferenceResult { error = None, nodeTypes = table } -> checkProfile(program)(table)("delayed")([2, 1])
+                | result -> expectSuccess(result)
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -226,8 +237,17 @@ let runImmediateEvidenceInferenceTests unit =
                 "local_eager_seed_uses_evidence_of_its_enclosing_function"
                 |> inferFixture(shipped)
                 |> expectSuccess)
+            |> (given (_) ->
+                "recursive_peer_returns_callback_without_invoking_it"
+                |> inferFixture(shipped)
+                |> expectSuccess)
+            |> (given (_) ->
+                "recursive_peer_invokes_callback_during_binding"
+                |> inferFixture(shipped)
+                |> expectImmediate)
             |> checkStages
             |> checkLocalBindings)
     |> checkHigherOrderEvidence
     |> checkAggregateEvidence
     |> checkRecursiveEvidence
+    |> checkReturnedPeerStages
