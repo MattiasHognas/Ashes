@@ -3816,3 +3816,35 @@ Removed worktrees (relative to `.claude/worktrees/`):
 | `step-f-typed-program-docs` | `446d40faa4ac795e60dad3dd3a23f2c93a82d8ca` |
 
 The remaining remote branches and unattached local branches were checked for patch inclusion; branches with unmatched patches were retained. Among artifact-bearing worktrees, branch inclusion alone does not justify deleting tools or evidence. Further cleanup requires preserving their local content and checking current script dependencies. Full before/after refs, worktree inventories, patch-inclusion results and protected-ref comparisons are in integration `work/coord/cleanup-20261121/`.
+
+## Single-branch consolidation and draft PR 1160 (2026-11-21)
+
+The user requested relevance review of the twelve dirty older worktrees, deletion of obsolete
+branches, one development branch for a PR, updated restart documentation, and no development
+Git tags. No tags were created. Compiler jobs and agents remain paused.
+
+- Integrated `d30df401` as `fa0a1247` and `36d8dbe1` as `a898abc2`, pushing each commit. Both
+  cherry-picks completed without conflicts. Prior worker checks remain recorded; no new native,
+  compiler, suite, performance or leak acceptance was run.
+- Archived 85 remote branch file trees and 12 dirty worktree file trees in
+  `docs/selfhost-archive/2026-11-21/source-snapshots.tar.gz`. Every patch reconstructs its original
+  tree from a base on integration, verified using temporary indexes. Original indexes and source
+  files were preserved. The obsolete generated ELF `stage1-post-guards/shape2` was excluded.
+  The manifest, relevance review and retained investigation notes are committed alongside it.
+- Pushed the archive and updated handoff as `96816de1` before deleting any additional branches.
+- Atomically deleted 85 remote branches using expected-head leases, then deleted 97 local branch
+  names. Retained artifact worktrees are detached at their unchanged commits. Only `main`,
+  `release/*` and `selfhost/round10` remain on origin. Protected local and remote refs compare
+  byte-for-byte with the pre-consolidation inventory.
+- Removed eight obsolete older worktrees after verifying their archived source again. Their
+  ignored `work/` evidence directories were moved into the integration audit directory. Four
+  older worktrees retain useful leak/ownership work; see the source archive's review table.
+- Opened [draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160), targeting main from
+  selfhost/round10. It explicitly records REST capability errors, recursive summary growth,
+  missing S2/S3 byte identity and the need to validate the newly consolidated source.
+
+Exact before/after refs, retirement logs, source checks and the verified full-history local Git
+bundle are in `work/coord/consolidation-20261121/`. Remote-backed patches preserve source states;
+the local bundle additionally preserves original histories. This consolidation follows the
+initial 6-remote / 21-local / 7-worktree cleanup above. The current-round handoff and fresh-agent
+prompt supersede historical references to retired branch names or pending cherry-picks.

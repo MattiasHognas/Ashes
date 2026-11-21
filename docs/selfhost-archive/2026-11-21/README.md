@@ -1,6 +1,6 @@
 # Self-hosting source archive and consolidation
 
-The active development branch is `selfhost/round10`. No development tags were created.
+The active development branch is `selfhost/round10`, with [draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160). No development tags were created.
 This archive preserves retired development states for reference; its patches are not accepted
 compiler changes and must not be applied wholesale to the integration branch.
 
@@ -43,7 +43,7 @@ or recursive evidence-summary growth.
 | `step-f-shared-graph-consumers` | Superseded: the current heap classifier includes the indexed consumer changes, plus an explicit inference import and cached source/resolved identity. |
 | `step-f-shared-graph-queries` | Superseded: current queries include child-node caching, and current tests add a genuinely frozen oracle, full-view checks and expected assertions. |
 
-The last eight worktrees in the retirement list are `step-f-graph-stage1-tests`,
+The eight removed worktrees are `step-f-graph-stage1-tests`,
 `step-f-inference-fields`, `step-f-map-successor-tests`, `step-f-mixed-evidence32`,
 `step-f-reach-constructor-index`, `step-f-roadmap`, `step-f-shared-graph-consumers`, and
 `step-f-shared-graph-queries`. Their existing `work/` directories are retained machine-locally at

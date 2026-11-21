@@ -2,6 +2,8 @@
 
 The goal is **paused, not completed**. The user revised the stop threshold to 98% weekly usage (2% remaining). It was reached; every running job was stopped and all agents had handed back. Resume when the user requests it and usage is available. Check the new session's current usage before starting loads; the old snapshot is not current account state.
 
+[Draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160) tracks the consolidated `selfhost/round10` branch. Cleanup is complete: 85 additional remote branches, 97 local branches and eight obsolete worktrees were retired, with verified source snapshots committed on that branch. Remote `main` and all `release/*` branches are unchanged. No development tags were created.
+
 Copy this prompt into a new agent session:
 
 ```text
