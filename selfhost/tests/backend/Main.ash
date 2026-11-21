@@ -3898,6 +3898,28 @@ let assertNumberedFixturePrints shipped fixture expected =
         |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
     in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)(expected))
 
+let testOriginalTmcAccumulators shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("tmc_dedup_with_grown_seen_accumulator")("p1,p2,p3")
+    in assertSharedProgramPrintsExactly(shipped)("qualified_module_call_fresh_list_argument_released")("21"))
+
+let testOriginalOperatorEvidence shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("logical_not_inferred_predicates")("true|true|1")
+    in assertSharedProgramPrintsExactly(shipped)("empty_list_equality_lambdas_at_two_element_types")("no no yes"))
+
+let testOriginalMatchedFieldOwnership shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("matched_option_field_consed_into_call_argument_released_once")("1-2 10-11 1-2")
+    in assertSharedProgramPrintsExactly(shipped)("match_shared_constructor_keeps_field_references")("left1:right1/left1:right1/left2:right2"))
+
+let testOriginalCapturedDictionaries shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("escaping_constrained_partial_keeps_its_captured_evidence")("passed")
+    in
+        let _ = assertSharedProgramPrintsExactly(shipped)("constrained_partial_forwards_show_evidence")("n=42 n=true")
+        in assertSharedProgramPrintsExactly(shipped)("constrained_function_uses_helper_from_its_definition")("first"))
+
+let testReturnedAssociationListElement shipped unit = assertSharedProgramPrintsExactly(shipped)("as_pattern_element_returned_from_consumed_list")("0:2/0 1:2/1 2:2/2")
+
+let testNumberedGenericAddReadingTopLevelValue shipped unit = assertNumberedFixturePrints(shipped)("generic_add_binding_reading_top_level_value_used_at_int_and_float")("12 4.5")
+
 let testNumberedListEqualityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
 
 let testListInequalityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
@@ -6340,6 +6362,12 @@ let run shipped =
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
     |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
     |> testRunGenericAddReadingTopLevelValue(shipped)
+    |> testOriginalTmcAccumulators(shipped)
+    |> testOriginalOperatorEvidence(shipped)
+    |> testOriginalMatchedFieldOwnership(shipped)
+    |> testOriginalCapturedDictionaries(shipped)
+    |> testReturnedAssociationListElement(shipped)
+    |> testNumberedGenericAddReadingTopLevelValue(shipped)
     |> testRunTraitGoalsSettledAtBinding(shipped)
     |> testRunLaterSiblingBesideFreshTupleArm(shipped)
     |> testRunConstrainedPartialDeclaredArithmetic(shipped)
