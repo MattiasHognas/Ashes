@@ -3655,22 +3655,13 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        bool stablePatternTransfer = _loweringTcoBackEdgeArguments
-            && b is Binding.Local patternLocal
-            && _tcoCtx?.TryGetPatternBindingOwnership(
-                patternLocal.Slot,
-                out PatternBindingOwnershipFact? patternOwnership) == true
-            && patternOwnership?.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
-            && patternOwnership.RootParameterOrdinal >= 0
-            && patternOwnership.RootParameterOrdinal < _tcoCtx.ParamSlots.Count
-            && _tcoCtx.IsRuntimeManagedSlot(
-                _tcoCtx.ParamSlots[patternOwnership.RootParameterOrdinal]);
         bool runtimeManagedResult = ownerInfo is { RuntimeManaged: true }
-            || stablePatternTransfer
+            || IsStableRuntimePatternTransfer(b)
             || b is Binding.Local runtimeLocal && IsRuntimeManagedTcoParamSlot(runtimeLocal);
         if (runtimeManagedResult)
         {
-            MarkRuntimeManagedTemp(result.Temp);
+            MarkRuntimeManagedTemp(result.Temp, ownership: b is Binding.Scheme && !_tempOwnershipFacts.ContainsKey(result.Temp)
+                ? LoweredTempOwnershipKind.Borrowed : null);
         }
         if (ownerInfo is not null && !ownerInfo.IsDropped)
         {
@@ -3685,6 +3676,20 @@ public sealed partial class Lowering
         }
 
         return result;
+    }
+
+    private bool IsStableRuntimePatternTransfer(Binding binding)
+    {
+        return _loweringTcoBackEdgeArguments
+            && binding is Binding.Local patternLocal
+            && _tcoCtx?.TryGetPatternBindingOwnership(
+                patternLocal.Slot,
+                out PatternBindingOwnershipFact? patternOwnership) == true
+            && patternOwnership?.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
+            && patternOwnership.RootParameterOrdinal >= 0
+            && patternOwnership.RootParameterOrdinal < _tcoCtx.ParamSlots.Count
+            && _tcoCtx.IsRuntimeManagedSlot(
+                _tcoCtx.ParamSlots[patternOwnership.RootParameterOrdinal]);
     }
 
     private (int, TypeRef) LowerVarUnbound(
@@ -3820,7 +3825,7 @@ public sealed partial class Lowering
 
             case Binding.Scheme sch:
                 result = (temp, Instantiate(sch.S));
-                LoadLocalWithBytesProvenance(temp, sch.Slot, result.Type, v);
+                LoadLocalWithBytesProvenance(temp, sch.Slot, result.Type, v, recordPlainBorrow: false);
                 break;
 
             default:
@@ -3875,7 +3880,7 @@ public sealed partial class Lowering
         || function.ReturnType is FfiType.NativeString
         || function.ParameterTypes.Any(type => type is FfiType.Buffer or FfiType.Out);
 
-    private void LoadLocalWithBytesProvenance(int temp, int slot, TypeRef type, Expr.Var variable)
+    private void LoadLocalWithBytesProvenance(int temp, int slot, TypeRef type, Expr.Var variable, bool recordPlainBorrow = true)
     {
         Emit(new IrInst.LoadLocal(temp, slot));
         if (TryStampAffineAppendLoad(temp, slot))
@@ -3883,13 +3888,16 @@ public sealed partial class Lowering
             return;
         }
 
+        bool hasProvenance = _localBytesProvenance.TryGetValue(slot, out BuiltinRegistry.BytesOwnershipProvenance provenance);
+        if (!recordPlainBorrow && !hasProvenance)
+        {
+            return;
+        }
         RecordUnknownBorrowedTemp(
             temp,
             ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
             type);
-        if (_localBytesProvenance.TryGetValue(
-                slot,
-                out BuiltinRegistry.BytesOwnershipProvenance provenance))
+        if (hasProvenance)
         {
             RefineTempBytesProvenance(temp, provenance);
         }
