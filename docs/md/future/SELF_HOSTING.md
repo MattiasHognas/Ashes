@@ -417,6 +417,8 @@ The measurement tool `7e61aa4c` is integrated as `4a478e9f`, awaiting its main-o
 
 Backend attempt `work/r10pre/backend-native3/` stopped before compilation at ASH038: the generated wrapper put its export after declarations. The renderer now puts the export before the first declaration; the retry uses `backend-native3-fixed/`. External fixture repair `9e7e5508` is integrated: the synthetic `openCounted` signature incorrectly returned `Unit`, removing its cleanup obligation. The fixture now uses its real source declarations and production ABI registration, preserving all program bodies and assertions. A single native-3 probe with real declarations emitted exactly one `CleanupResource` for `Counted` with `closeCounted`; full group rerun remains pending. The external worker now reviews the new Socket and poison paths while the backend run proceeds.
 
+The backend retry reads frozen `da068c5e`; external repair maps to `aebb362c`. Native-3 audit refresh found 31 of the 32 actual IR files byte-identical to native 2. The changed `non_tail_self_call_list_result` now equals the reference under the stricter `keep-reads.awk` comparison, without deleting its former identity borrow separately. Recomputed guard data still has 122 guards, 51 slots and 29 fixtures, all value 1 with resolved targets. Evidence is `work/r10pre/named-native3/{guard-cfg.tsv,audit/}`. This updates the static comparison, not generated-code runtime acceptance. The main-owned measurement script is `r10-fixture-candidates/work/typed-measurement-checks.sh`; its build and both measurements remain pending.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
