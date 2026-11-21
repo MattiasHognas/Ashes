@@ -86,15 +86,7 @@ public sealed partial class Lowering
         List<TraitConstraint> retained = [];
         foreach (TraitConstraint constraint in scheme.Constraints)
         {
-            int earliest = int.MaxValue;
-            for (int index = first; index < _traitDemands.Count; index++)
-            {
-                TraitDemand use = _traitDemands[index];
-                if (TraitResolutionConstraintsEqual(PruneTraitConstraint(use.Constraint), PruneTraitConstraint(constraint)))
-                {
-                    earliest = Math.Min(earliest, use.Depth - _lambdaDepth);
-                }
-            }
+            int earliest = EarliestDemandStage(constraint, first);
             if (earliest == int.MaxValue)
             {
                 retained.Add(constraint);
@@ -127,6 +119,21 @@ public sealed partial class Lowering
             _schemeDemands[scheme] = summary;
         }
         return scheme;
+    }
+
+    private int EarliestDemandStage(TraitConstraint constraint, int first)
+    {
+        int earliest = int.MaxValue;
+        TraitConstraint pruned = PruneTraitConstraint(constraint);
+        for (int index = first; index < _traitDemands.Count; index++)
+        {
+            TraitDemand use = _traitDemands[index];
+            if (TraitResolutionConstraintsEqual(PruneTraitConstraint(use.Constraint), pruned))
+            {
+                earliest = Math.Min(earliest, use.Depth - _lambdaDepth);
+            }
+        }
+        return earliest;
     }
 
     private static IReadOnlySet<int> DemandVariables(TraitConstraint constraint) =>
