@@ -124,7 +124,8 @@ public sealed partial class Lowering
                 prefix = CopyLambdaSpans(parameters[index], parameters[index] with { Body = prefix });
             int id = _next++;
             return new StrictStage($"$partial_prefix_{id}", $"$partial_resume_{id}", parameters.Count,
-                prefix, new Expr.Var(callee.Resume)) { Forwarded = callee };
+                prefix, new Expr.Var(callee.Resume))
+            { Forwarded = callee };
         }
 
         private Expr RewritePartial(string name, Expr value, ImmutableDictionary<string, StrictStage> visible)
