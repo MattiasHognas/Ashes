@@ -1474,8 +1474,17 @@ public sealed partial class Lowering
         {
             return null;
         }
-        return LowerExpr(new Expr.Var(
-            TraitMethodParameterName(active.Metadata.Shape, method.Name))).AsPair();
+        string methodName = TraitMethodParameterName(active.Metadata.Shape, method.Name);
+        if (Lookup(methodName) is null && Lookup(active.ParameterName) is not null)
+        {
+            // A nested instance can use a different method than the operator in the
+            // enclosing source (list inequality uses element equality). The packed
+            // dictionary has the complete interface even if the closure did not capture
+            // the local alias for this particular method.
+            return SelectTraitDictionaryMethod(
+                LowerExpr(new Expr.Var(active.ParameterName)).AsPair(), constraint.Trait, method);
+        }
+        return LowerExpr(new Expr.Var(methodName)).AsPair();
     }
 
     /// <summary>
@@ -3135,17 +3144,17 @@ public sealed partial class Lowering
         return captures;
     }
 
-    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCaptures(Expr expression)
+    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCaptures(Expr expression, bool includeDictionary = false)
     {
         if (_activeTraitDictionaryParameters.Count == 0)
         {
             return [];
         }
 
-        return CollectActiveTraitDictionaryOperatorCapturesCore(expression);
+        return CollectActiveTraitDictionaryOperatorCapturesCore(expression, includeDictionary);
     }
 
-    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCapturesCore(Expr expression)
+    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCapturesCore(Expr expression, bool includeDictionary)
     {
         HashSet<string> captures = new(StringComparer.Ordinal);
         void Visit(Expr current)
@@ -3178,21 +3187,7 @@ public sealed partial class Lowering
                     };
             if (mapped is { } operation)
             {
-                foreach ((string qualifiedName, List<ActiveTraitDictionaryParameter> parameters) in
-                         _activeTraitDictionaryParameters)
-                {
-                    if (!string.Equals(qualifiedName, operation.Trait, StringComparison.Ordinal)
-                        && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-                    foreach (ActiveTraitDictionaryParameter parameter in parameters)
-                    {
-                        captures.Add(TraitMethodParameterName(
-                            parameter.Metadata.Shape,
-                            operation.Method));
-                    }
-                }
+                AddTraitOperatorCaptures(operation, includeDictionary, captures);
             }
             _ = MapChildExpressions(current, child =>
             {
@@ -3202,6 +3197,26 @@ public sealed partial class Lowering
         }
         Visit(expression);
         return captures;
+    }
+
+    private void AddTraitOperatorCaptures((string Trait, string Method) operation, bool includeDictionary, HashSet<string> captures)
+    {
+        foreach ((string qualifiedName, List<ActiveTraitDictionaryParameter> parameters) in _activeTraitDictionaryParameters)
+        {
+            if (!string.Equals(qualifiedName, operation.Trait, StringComparison.Ordinal)
+                && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            foreach (ActiveTraitDictionaryParameter parameter in parameters)
+            {
+                captures.Add(TraitMethodParameterName(parameter.Metadata.Shape, operation.Method));
+                if (includeDictionary)
+                {
+                    captures.Add(parameter.ParameterName);
+                }
+            }
+        }
     }
 
     private (int Temp, TypeRef Type) PackTraitDictionaryFields(

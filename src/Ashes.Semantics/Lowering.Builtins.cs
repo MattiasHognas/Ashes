@@ -2247,7 +2247,7 @@ public sealed partial class Lowering
         // constructors and builtins resolve inside the coroutine without capture (registry / by-label).
         var freeNames = FreeVars(valueArg, new HashSet<string>(StringComparer.Ordinal));
         freeNames.UnionWith(CollectActiveTraitMethodCaptures(valueArg));
-        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(valueArg));
+        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(valueArg, includeDictionary: true));
         List<(string Name, int HelperArity)> captureNames = [];
         var captureTemps = new List<int>();
         var captureTypes = new List<TypeRef>();
@@ -2479,6 +2479,8 @@ public sealed partial class Lowering
     {
         var body = info.Body;
         var freeNames = FreeVars(body, new HashSet<string>(StringComparer.Ordinal));
+        freeNames.UnionWith(CollectActiveTraitMethodCaptures(body));
+        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(body, includeDictionary: true));
         List<(string Name, int HelperArity)> captureNames = [];
         var captureTemps = new List<int>();
         var captureTypes = new List<TypeRef>();
