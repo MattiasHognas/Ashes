@@ -147,6 +147,40 @@ let checkHigherOrderEvidence unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("wrong missing-instance error for a constrained reference: " + Ashes.Trait.Show.show(error))
                         | _ -> Ashes.IO.panic("a function reference lost its concrete typing constraint")))
 
+let checkAggregateEvidence unit =
+    (let invoke = "let invoke pair = match pair with | (action, arg) -> action(arg)\n"
+    in
+        let ignore = "let ignore : ((Unit -> a -> Bool), Unit) -> a -> Bool = given pair -> given value -> true\n"
+        in
+            let boxes = "type Callbacks(a) = | first: Unit -> a -> Bool | second: Unit -> a -> Bool\nlet callFirst (box: Callbacks(a)) = box.first(Unit)\n"
+            in
+                let holder = "let holder = Callbacks(first = pick, second = given u -> given v -> true)\n"
+                in
+                    stagedSource + invoke + "let check = invoke((pick, Unit))\ntrue"
+                    |> parsed
+                    |> infer
+                    |> expectImmediate
+                    |> (given (_) ->
+                        stagedSource + invoke + "let stored = (pick, Unit)\nlet check = invoke(stored)\ntrue"
+                        |> parsed
+                        |> infer
+                        |> expectImmediate)
+                    |> (given (_) ->
+                        stagedSource + ignore + "let check = ignore((pick, Unit))\n(check(1), check(true))"
+                        |> parsed
+                        |> infer
+                        |> expectSuccess)
+                    |> (given (_) ->
+                        stagedSource + boxes + holder + "let check = callFirst(holder)\ntrue"
+                        |> parsed
+                        |> infer
+                        |> expectImmediate)
+                    |> (given (_) ->
+                        stagedSource + boxes + holder + "let check = holder.second(Unit)\n(check(1), check(true))"
+                        |> parsed
+                        |> infer
+                        |> expectSuccess))
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -164,4 +198,6 @@ let runImmediateEvidenceInferenceTests unit =
                 |> inferFixture(shipped)
                 |> expectSuccess)
             |> checkStages
-            |> checkLocalBindings) |> checkHigherOrderEvidence
+            |> checkLocalBindings)
+    |> checkHigherOrderEvidence
+    |> checkAggregateEvidence

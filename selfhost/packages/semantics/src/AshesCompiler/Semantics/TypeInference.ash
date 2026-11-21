@@ -441,7 +441,8 @@ let addParameterTypeBinding node name scheme environment =
     (let bound = addTypeBinding(name)(scheme)(environment)
     in
         if bound.programInferenceRules && node >= 0
-        then bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(FormalEvidenceParameter(node))(bound.evidenceFlows)
+        then
+            bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(FormalEvidenceParameter(node)([]))(bound.evidenceFlows)
         else bound)
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
@@ -1126,12 +1127,15 @@ let recursive instantiateDemandRequirements arguments constraints =
         | [] -> []
         | TraitConstraint { traitName = name, typeArguments = types } :: rest -> TraitConstraint(traitName = name, typeArguments = instantiatedTypes(arguments)(types)) :: instantiateDemandRequirements(arguments)(rest)
 
-let noteCallFlow name node (environment: TypeEnvironment) (supply: TypeVariableSupply) =
+let noteCallFlow name node arguments (environment: TypeEnvironment) (supply: TypeVariableSupply) =
     match Ashes.Collection.Map.getStr(name)(environment.evidenceFlows) with
-        | Some(flow) -> supply with evidenceFlowSites = (node, flow) :: supply.evidenceFlowSites
+        | Some(flow) -> supply with evidenceFlowSites = (node, renameEvidenceFlow(arguments)(flow)) :: supply.evidenceFlowSites
         | None ->
             match resolveConstructorBinding(name)(environment) with
-                | Some(_constructor) -> supply with evidenceFlowSites = (node, SourceEvidenceFlow([])([])) :: supply.evidenceFlowSites
+                | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = constructorType } }) ->
+                    supply with evidenceFlowSites = (node, constructorType
+                    |> functionArgumentCount
+                    |> ConstructorEvidenceFlow) :: supply.evidenceFlowSites
                 | None -> supply
 
 let noteReferenceAt name (environment: TypeEnvironment) node (scheme: TypeScheme) (before: TypeVariableSupply) requirements (after: TypeVariableSupply) =
@@ -1155,7 +1159,7 @@ let noteReferenceAt name (environment: TypeEnvironment) node (scheme: TypeScheme
                 let noted =
                     after
                     |> withEvidenceSite(node)(demands)
-                    |> noteCallFlow(name)(node)(environment)
+                    |> noteCallFlow(name)(node)(arguments)(environment)
                 in
                     match scheme.quantified with
                         | [] -> noted
@@ -3416,9 +3420,19 @@ let recursive capturesCallbackAt root sites =
             then false
             else
                 match flow with
-                    | FormalEvidenceParameter(_id) -> true
+                    | FormalEvidenceParameter(_id, _path) -> true
+                    | MemberEvidenceFlow(_requirements, _flow) -> true
+                    | AggregateEvidenceFlow(_fields) -> true
+                    | AlternativeEvidenceFlow(_flows) -> true
                     | SourceEvidenceFlow(_parameters, _first :: _tail) -> true
                     | _ -> capturesCallbackAt(root)(rest)
+
+let canStoreCallback semanticType =
+    match semanticType with
+        | SemTuple(_parts) -> true
+        | SemNamed(_symbol, _name, _args) -> true
+        | SemList(_element) -> true
+        | _ -> false
 
 let mayBeFunction semanticType =
     match semanticType with
@@ -3429,10 +3443,10 @@ let mayBeFunction semanticType =
 let analyzeEvidenceBinding (base: TypeEnvironment) value semanticType selected (supply: TypeVariableSupply) substitution =
     if base.programInferenceRules && identifiedNode(value) >= 0
     then
-        if selected != [] || acceptsCallback(semanticType) || mayBeFunction(semanticType) && capturesCallbackAt(identifiedNode(value))(supply.evidenceFlowSites)
+        if selected != [] || acceptsCallback(semanticType) || (mayBeFunction(semanticType) || canStoreCallback(semanticType)) && capturesCallbackAt(identifiedNode(value))(supply.evidenceFlowSites)
         then
             match evidenceFlowForValue(identifiedNode(value))(value)(supply.evidenceSites)(supply.evidenceFlowSites) with
-                | (demands, flow) -> (resolvedDemands(base)(substitution)(demands), flow)
+                | (demands, flow) -> (resolvedDemands(base)(substitution)(demands), renameEvidenceFlow(substitution)(flow))
         else
             if mayBeFunction(semanticType)
             then ([], SourceEvidenceFlow([])([]))
@@ -3924,6 +3938,30 @@ let inferTraitMethodReference (methodScheme: TypeScheme) (environment: TypeEnvir
                         noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                     )
                 ))
+
+let recursive bindEvidencePatternFlows names entries (scope: TypeEnvironment) =
+    match entries with
+        | [] -> scope
+        | (name, flow) :: rest ->
+            if stringExists(name)(names)
+            then
+                scope
+                |> setSourceCallFlow(name)(flow)
+                |> bindEvidencePatternFlows(names)(rest)
+            else bindEvidencePatternFlows(names)(rest)(scope)
+
+let patternFlowScope pattern names flow scope =
+    match flow with
+        | UnknownEvidenceFlow -> scope
+        | _ ->
+            bindEvidencePatternFlows(names)(evidenceFlowOfPattern(pattern)(flow)([]))(scope)
+
+let projectReceiverField field node (result: TypeInferenceResult) =
+    (let supply = result.supply
+    in
+        match supply.evidenceFlowSites with
+            | (id, flow) :: rest when id == node -> result with supply = (supply with evidenceFlowSites = (node, projectEvidenceField(field)(flow)) :: rest)
+            | _ -> result)
 
 let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
@@ -4929,7 +4967,7 @@ and inferPattern pattern environment substitution supply names =
                 names,
                 UnsupportedInferencePattern("pattern case is not implemented yet")
             )
-and inferMatchCases cases armIndex scrutineeType resultType environment substitution supply ambientRow accumulatedConstraints =
+and inferMatchCases cases armIndex scrutineeFlow scrutineeType resultType environment substitution supply ambientRow accumulatedConstraints =
     match cases with
         | [] ->
             addConstraints(
@@ -4959,10 +4997,11 @@ and inferMatchCases cases armIndex scrutineeType resultType environment substitu
                                         body,
                                         tail,
                                         armIndex,
+                                        scrutineeFlow,
                                         scrutineeType,
                                         resultType,
                                         environment,
-                                        matchedEnvironment,
+                                        patternFlowScope(pattern)(patternNames)(scrutineeFlow)(matchedEnvironment),
                                         matchedSubstitution,
                                         noteMatchBindings(environment)(guard)(body)(patternNames)(matchedEnvironment)(matchedSupply),
                                         ambientRow,
@@ -4982,13 +5021,14 @@ and inferMatchCases cases armIndex scrutineeType resultType environment substitu
                                 failedSupply,
                                 error
                             )
-and inferMatchGuard guard body tail armIndex scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
+and inferMatchGuard guard body tail armIndex scrutineeFlow scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match guard with
         | None ->
             inferMatchBody(
                 body,
                 tail,
                 armIndex,
+                scrutineeFlow,
                 scrutineeType,
                 resultType,
                 environment,
@@ -5012,6 +5052,7 @@ and inferMatchGuard guard body tail armIndex scrutineeType resultType environmen
                                 body,
                                 tail,
                                 armIndex,
+                                scrutineeFlow,
                                 scrutineeType,
                                 resultType,
                                 environment,
@@ -5023,7 +5064,7 @@ and inferMatchGuard guard body tail armIndex scrutineeType resultType environmen
                             )
                         | failure -> failure
                 | failure -> failure
-and inferMatchBody body tail armIndex scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
+and inferMatchBody body tail armIndex scrutineeFlow scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match inferWith(body)(patternEnvironment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
             match mergeUnificationIn(environment)(
@@ -5038,6 +5079,7 @@ and inferMatchBody body tail armIndex scrutineeType resultType environment patte
                     inferMatchCases(
                         tail,
                         armIndex + 1,
+                        scrutineeFlow,
                         scrutineeType,
                         resultType,
                         environment,
@@ -5416,7 +5458,10 @@ and inferQualifiedValue moduleName name environment substitution supply ambientR
                             | None -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
                     | Some(_receiver) ->
                         match inferWith(ExprVar(moduleName))(environment)(substitution)(supply)(ambientRow) with
-                            | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } -> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)(receiverConstraints)
+                            | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } ->
+                                receiverConstraints
+                                |> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)
+                                |> projectReceiverField(name)(currentNodeOf(supply))
                             | failed -> failed)
 // A value inferred against the type its binding's signature writes: a lambda takes its parameter
 // type from the signature instead of a fresh variable, so what its body does with the parameter
@@ -5925,6 +5970,7 @@ and inferWith expression environment substitution supply ambientRow =
                                 inferMatchCases(
                                     cases,
                                     1,
+                                    evidenceFlowForScrutinee(scrutinee)(scrutineeSupply),
                                     scrutineeType,
                                     resultType,
                                     environment,

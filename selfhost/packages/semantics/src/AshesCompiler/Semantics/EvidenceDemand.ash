@@ -3,8 +3,13 @@
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.Map.MapTree
+import Ashes.Collection.List.append
 export (
     value evidenceFlowForValue,
+    value projectEvidenceField,
+    value evidenceFlowOfPattern,
+    value evidenceFlowForScrutinee,
+    value renameEvidenceFlow,
     value zipEvidenceStages,
     value functionArgumentCount,
 )
@@ -60,6 +65,106 @@ let siteFlow (sites: DemandSites) value =
         | Some(flow) -> flow
         | None -> UnknownEvidenceFlow
 
+let recursive memberNamed name fields =
+    match fields with
+        | [] -> UnknownEvidenceFlow
+        | (candidate, flow) :: rest ->
+            if candidate == name
+            then flow
+            else memberNamed(name)(rest)
+
+let recursive projectEvidenceField field flow =
+    match flow with
+        | FormalEvidenceParameter(id, path) ->
+            [field]
+            |> append(path)
+            |> FormalEvidenceParameter(id)
+        | AggregateEvidenceFlow(fields) -> memberNamed(field)(fields)
+        | AlternativeEvidenceFlow(flows) ->
+            flows
+            |> Ashes.Collection.List.map(projectEvidenceField(field))
+            |> AlternativeEvidenceFlow
+        | MemberEvidenceFlow(_demands, inner) -> projectEvidenceField(field)(inner)
+        | _ -> UnknownEvidenceFlow
+
+let recursive callableFlow flow =
+    match flow with
+        | MemberEvidenceFlow(_demands, inner) -> callableFlow(inner)
+        | other -> other
+
+let recursive flowAtPath path flow =
+    match path with
+        | [] -> flow
+        | field :: rest ->
+            flow
+            |> projectEvidenceField(field)
+            |> flowAtPath(rest)
+
+let recursive renameEvidenceFlow arguments flow =
+    match flow with
+        | AggregateEvidenceFlow(fields) ->
+            fields
+            |> renameMembers(arguments)
+            |> AggregateEvidenceFlow
+        | AlternativeEvidenceFlow(flows) ->
+            flows
+            |> Ashes.Collection.List.map(renameEvidenceFlow(arguments))
+            |> AlternativeEvidenceFlow
+        | MemberEvidenceFlow(demands, inner) ->
+            inner
+            |> renameEvidenceFlow(arguments)
+            |> MemberEvidenceFlow(renameDemands(arguments)(demands))
+        | other -> other
+and renameMembers arguments fields =
+    match fields with
+        | [] -> []
+        | (name, flow) :: rest -> (name, renameEvidenceFlow(arguments)(flow)) :: renameMembers(arguments)(rest)
+and renameDemands arguments demands =
+    match demands with
+        | [] -> []
+        | (TraitConstraint { traitName = name, typeArguments = types }, stage) :: rest ->
+            (TraitConstraint(traitName = name, typeArguments = Ashes.Collection.List.map(applySubstitution(arguments))(types)), stage) :: renameDemands(arguments)(rest)
+
+let recursive evidenceFlowOfPattern pattern flow bound =
+    match pattern with
+        | PatternAt(_span, inner) -> evidenceFlowOfPattern(inner)(flow)(bound)
+        | PatternVar(name) -> (name, flow) :: bound
+        | PatternAs(inner, name) -> evidenceFlowOfPattern(inner)(flow)((name, flow) :: bound)
+        | PatternTuple(patterns) -> numberedPatternFlows(patterns)(0)(flow)(bound)
+        | PatternConstructor(_name, patterns) -> numberedPatternFlows(patterns)(0)(flow)(bound)
+        | PatternRecord(_name, fields) -> namedPatternFlows(fields)(flow)(bound)
+        | PatternCons(head, tail) -> numberedPatternFlows([head, tail])(0)(flow)(bound)
+        | PatternOr(alternatives) -> alternativePatternFlows(alternatives)(flow)(bound)
+        | _ -> bound
+and numberedPatternFlows patterns index flow bound =
+    match patterns with
+        | [] -> bound
+        | pattern :: rest ->
+            bound
+            |> evidenceFlowOfPattern(pattern)(projectEvidenceField(Ashes.Text.fromInt(index))(flow))
+            |> numberedPatternFlows(rest)(index + 1)(flow)
+and namedPatternFlows fields flow bound =
+    match fields with
+        | [] -> bound
+        | (name, pattern) :: rest ->
+            bound
+            |> evidenceFlowOfPattern(pattern)(projectEvidenceField(name)(flow))
+            |> namedPatternFlows(rest)(flow)
+and alternativePatternFlows alternatives flow bound =
+    match alternatives with
+        | [] -> bound
+        | first :: rest ->
+            let firstBindings = evidenceFlowOfPattern(first)(flow)([])
+            in
+                let others =
+                    Ashes.Collection.List.map(given (arm) -> evidenceFlowOfPattern(arm)(flow)([]))(rest)
+                in
+                    Ashes.Collection.List.foldLeft(given (acc) ->
+                        given (entry) ->
+                            match entry with
+                                | (name, firstFlow) ->
+                                    (name, AlternativeEvidenceFlow(firstFlow :: Ashes.Collection.List.map(memberNamed(name))(others))) :: acc)(bound)(firstBindings)
+
 let recursive containsUse use existing =
     match existing with
         | [] -> false
@@ -99,9 +204,9 @@ let recursive projectCapturedUses uses applied depth escapes (found: EvidenceWal
 let addFormalUse flow applied depth escapes (found: EvidenceWalk) =
     match flow with
         | Some(SourceEvidenceFlow(_parameters, captures)) -> projectCapturedUses(captures)(applied)(depth)(escapes)(found)
-        | Some(FormalEvidenceParameter(id)) ->
+        | Some(FormalEvidenceParameter(id, path)) ->
             if applied != 0 || escapes
-            then addUse(EvidenceParameterUse(parameter = id, applied = applied, stage = depth, returned = escapes))(found)
+            then addUse(EvidenceParameterUse(parameter = id, path = path, applied = applied, stage = depth, returned = escapes))(found)
             else found
         | _ -> found
 
@@ -120,6 +225,60 @@ let recursive projectSites sites applied depth escapes (found: EvidenceWalk) =
 
 // A callee consumes an argument stage. Evaluating the argument, condition or discarded
 // binding only demands its immediate operations. A branch can return a still-latent value.
+let recursive useFlow flow applied depth escapes found =
+    match flow with
+        | MemberEvidenceFlow(demands, inner) ->
+            found
+            |> projectSites(demands)(applied)(depth)(escapes)
+            |> useFlow(inner)(applied)(depth)(escapes)
+        | AlternativeEvidenceFlow(flows) ->
+            Ashes.Collection.List.foldLeft(given (acc) ->
+                given (item) -> useFlow(item)(applied)(depth)(escapes)(acc))(found)(flows)
+        | other -> addFormalUse(Some(other))(applied)(depth)(escapes)(found)
+
+let recursive sourceArguments expression arguments =
+    match bare(expression) with
+        | ExprCall(callee, argument, _space, _layout) -> sourceArguments(callee)(argument :: arguments)
+        | _ -> (expression, arguments)
+
+let recursive fieldsByIndex values index =
+    match values with
+        | [] -> []
+        | value :: rest -> (Ashes.Text.fromInt(index), value) :: fieldsByIndex(rest)(index + 1)
+
+let recursive expressionField key fields =
+    match fields with
+        | [] -> None
+        | (name, value) :: rest ->
+            if key == name
+            then Some(value)
+            else expressionField(key)(rest)
+
+let aggregateFields value sites =
+    match bare(value) with
+        | ExprTuple(values) ->
+            0
+            |> fieldsByIndex(values)
+            |> Some
+        | ExprRecord(_name, fields, _multiline) -> Some(fields)
+        | ExprCons(head, tail) -> Some([("0", head), ("1", tail)])
+        | ExprList(first :: rest, layout) -> Some([("0", first), ("1", ExprList(rest)(layout))])
+        | ExprCall(_callee, _arg, _space, _layout) ->
+            match sourceArguments(value)([]) with
+                | (root, arguments) ->
+                    match root
+                    |> siteFlow(sites)
+                    |> callableFlow with
+                        | ConstructorEvidenceFlow(arity) ->
+                            if Ashes.Collection.List.length(arguments) == arity
+                            then
+                                0
+                                |> fieldsByIndex(arguments)
+                                |> Some
+                            else None
+                        | _ -> None
+        | _ -> None
+
 let recursive sourceParameterIds value ordinal found =
     match bare(value) with
         | ExprLambda(_parameter, body, _annotation) -> sourceParameterIds(body)(ordinal + 1)((expressionId(value), ordinal) :: found)
@@ -167,7 +326,7 @@ let recursive walk (expression: Expr) (applied: Int) (depth: Int) (escapes: Bool
                     | None -> found
             in
                 withDirect
-                |> addFormalUse(Ashes.Collection.Map.getInt(id)(sites.flows))(applied)(depth)(escapes)
+                |> useFlow(siteFlow(sites)(expression))(applied)(depth)(escapes)
                 |> walk(inner)(applied)(depth)(escapes)(sites)
         | ExprLambda(_name, body, _annotation) ->
             if applied != 0
@@ -254,7 +413,10 @@ and walkCallArgument callee arg applied depth escapes sites found =
         | (root, ordinal) ->
             let total = moreArguments(applied)(ordinal + 1)
             in
-                match siteFlow(sites)(root) with
+                match root
+                |> siteFlow(sites)
+                |> callableFlow with
+                    | ConstructorEvidenceFlow(_arity) -> walk(arg)(0)(depth)(false)(sites)(found)
                     | SourceEvidenceFlow(uses, _captures) ->
                         found
                         |> walk(arg)(0)(depth)(false)(sites)
@@ -271,7 +433,7 @@ and walkCallArgument callee arg applied depth escapes sites found =
 and walkScheduledUses uses ordinal arg total depth escapes sites found =
     match uses with
         | [] -> found
-        | EvidenceParameterUse { parameter = parameter, applied = passed, stage = stage, returned = returned } :: rest ->
+        | EvidenceParameterUse { parameter = parameter, path = path, applied = passed, stage = stage, returned = returned } :: rest ->
             if parameter != ordinal || total >= 0 && total < stage && escapes == false
             then walkScheduledUses(rest)(ordinal)(arg)(total)(depth)(escapes)(sites)(found)
             else
@@ -289,8 +451,31 @@ and walkScheduledUses uses ordinal arg total depth escapes sites found =
                         else 0
                     in
                         found
-                        |> walk(arg)(moreArguments(passed)(extra))(depth + delayed)(returned && escapes)(sites)
+                        |> walkProjection(path)(arg)(moreArguments(passed)(extra))(depth + delayed)(returned && escapes)(sites)
                         |> walkScheduledUses(rest)(ordinal)(arg)(total)(depth)(escapes)(sites)
+and walkProjection path value applied depth escapes sites found =
+    match path with
+        | [] -> walk(value)(applied)(depth)(escapes)(sites)(found)
+        | field :: rest ->
+            match bare(value) with
+                | ExprIf(_condition, yes, no) ->
+                    found
+                    |> walkProjection(path)(yes)(applied)(depth)(escapes)(sites)
+                    |> walkProjection(path)(no)(applied)(depth)(escapes)(sites)
+                | ExprRecordUpdate(base, fields) ->
+                    match expressionField(field)(fields) with
+                        | Some(member) -> walkProjection(rest)(member)(applied)(depth)(escapes)(sites)(found)
+                        | None -> walkProjection(path)(base)(applied)(depth)(escapes)(sites)(found)
+                | _ ->
+                    match aggregateFields(value)(sites) with
+                        | Some(fields) ->
+                            match expressionField(field)(fields) with
+                                | Some(member) -> walkProjection(rest)(member)(applied)(depth)(escapes)(sites)(found)
+                                | None -> found
+                        | None ->
+                            useFlow(value
+                            |> siteFlow(sites)
+                            |> flowAtPath(path))(applied)(depth)(escapes)(found)
 and walkValues values depth sites found =
     match values with
         | [] -> found
@@ -376,23 +561,91 @@ let recursive inheritedFlow value sites =
         | ExprLet(_name, _rhs, body, _params, _anno, _reqs) -> inheritedFlow(body)(sites)
         | _ -> UnknownEvidenceFlow
 
-let evidenceFlowForValue root value requirements flows =
-    (let sites = DemandSites(requirements = indexSites(root)(requirements)(Ashes.Collection.Map.empty), flows = indexSites(root)(flows)(Ashes.Collection.Map.empty))
+let recursive latentDemands demands =
+    match demands with
+        | [] -> []
+        | (constraint, stage) :: rest ->
+            if stage > 0
+            then (constraint, stage) :: latentDemands(rest)
+            else latentDemands(rest)
+
+let recursive valueEvidence value sites =
+    (let found = walk(value)(0)(0)(true)(sites)(emptyWalk)
     in
-        let found = walk(value)(0)(0)(true)(sites)(emptyWalk)
-        in
-            let ids = sourceParameterIds(value)(0)([])
-            in
-                let captures = captureUses(ids)(found.uses)
-                in
-                    let flow =
-                        match ids with
-                            | [] ->
-                                match inheritedFlow(value)(sites) with
-                                    | SourceEvidenceFlow(uses, _captured) -> SourceEvidenceFlow(uses)(captures)
-                                    | other -> other
+        match aggregateFields(value)(sites) with
+            | Some(fields) ->
+                match fieldEvidence(fields)(sites) with
+                    | [] -> (found.requirements, UnknownEvidenceFlow)
+                    | members -> (found.requirements, AggregateEvidenceFlow(members))
+            | None ->
+                match bare(value) with
+                    | ExprRecordUpdate(base, fields) ->
+                        match valueEvidence(base)(sites) with
+                            | (_requirements, AggregateEvidenceFlow(original)) ->
+                                (found.requirements, original
+                                |> append(fieldEvidence(fields)(sites))
+                                |> AggregateEvidenceFlow)
                             | _ ->
-                                // An opaque higher-order callee may invoke its callback during
-                                // this application. A source-proven ignored argument has no use.
-                                SourceEvidenceFlow(publishUses(ids)(found.uses))(captures)
-                    in (found.requirements, flow))
+                                (found.requirements, sites
+                                |> fieldEvidence(fields)
+                                |> AggregateEvidenceFlow)
+                    | _ ->
+                        let ids = sourceParameterIds(value)(0)([])
+                        in
+                            let captures = captureUses(ids)(found.uses)
+                            in
+                                let flow =
+                                    match ids with
+                                        | [] ->
+                                            match inheritedFlow(value)(sites) with
+                                                | SourceEvidenceFlow(uses, _captured) -> SourceEvidenceFlow(uses)(captures)
+                                                | other -> other
+                                        | _ ->
+                                            SourceEvidenceFlow(publishUses(ids)(found.uses))(captures)
+                                in (found.requirements, flow))
+and fieldEvidence fields sites =
+    match fields with
+        | [] -> []
+        | (name, value) :: rest ->
+            match valueEvidence(value)(sites) with
+                | (demands, flow) ->
+                    let stored =
+                        match latentDemands(demands) with
+                            | [] -> flow
+                            | latent -> MemberEvidenceFlow(latent)(flow)
+                    in
+                        match stored with
+                            | UnknownEvidenceFlow -> fieldEvidence(rest)(sites)
+                            | _ -> (name, stored) :: fieldEvidence(rest)(sites)
+
+let evidenceFlowForValue root value requirements flows = valueEvidence(value)(DemandSites(requirements = indexSites(root)(requirements)(Ashes.Collection.Map.empty), flows = indexSites(root)(flows)(Ashes.Collection.Map.empty)))
+
+let recursive notedFlow node flows =
+    match flows with
+        | [] -> UnknownEvidenceFlow
+        | (id, flow) :: rest ->
+            if id == node
+            then flow
+            else
+                if id < node
+                then UnknownEvidenceFlow
+                else notedFlow(node)(rest)
+
+let evidenceFlowForScrutinee value (supply: TypeVariableSupply) =
+    (let node = expressionId(value)
+    in
+        if node < 0
+        then UnknownEvidenceFlow
+        else
+            match bare(value) with
+                | ExprVar(_name) -> notedFlow(node)(supply.evidenceFlowSites)
+                | ExprQualifiedVar(_owner, _name) -> notedFlow(node)(supply.evidenceFlowSites)
+                | _ ->
+                    match (supply.evidenceSites, supply.evidenceFlowSites) with
+                        | ((id, _) :: _, _) when id >= node ->
+                            match evidenceFlowForValue(node)(value)(supply.evidenceSites)(supply.evidenceFlowSites) with
+                                | (_requirements, flow) -> flow
+                        | (_, (id, _) :: _) when id >= node ->
+                            match evidenceFlowForValue(node)(value)(supply.evidenceSites)(supply.evidenceFlowSites) with
+                                | (_requirements, flow) -> flow
+                        | _ -> UnknownEvidenceFlow)

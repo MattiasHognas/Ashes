@@ -97,6 +97,7 @@ type NodeTypeNote =
 // are numbered lambda nodes; in a published source profile they are zero-based argument slots.
 type EvidenceParameterUse =
     | parameter: Int
+    | path: List(Str)
     | applied: Int
     | stage: Int
     | returned: Bool
@@ -104,7 +105,11 @@ type EvidenceParameterUse =
 
 type EvidenceCallFlow =
     | SourceEvidenceFlow(List(EvidenceParameterUse), List(EvidenceParameterUse))
-    | FormalEvidenceParameter(Int)
+    | FormalEvidenceParameter(Int, List(Str))
+    | AggregateEvidenceFlow(List((Str, EvidenceCallFlow)))
+    | ConstructorEvidenceFlow(Int)
+    | AlternativeEvidenceFlow(List(EvidenceCallFlow))
+    | MemberEvidenceFlow(List((TraitConstraint, Int)), EvidenceCallFlow)
     | UnknownEvidenceFlow
     deriving {Eq, Show}
 
