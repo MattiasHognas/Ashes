@@ -532,6 +532,10 @@ public sealed partial class Lowering
 
     private void ReportAmbiguousTraitRequirement(TraitConstraint constraint, TextSpan span)
     {
+        if (string.Equals(Environment.GetEnvironmentVariable("ASHES_TRACE_AMBIGUOUS_TRAIT"), constraint.Trait.Name, StringComparison.Ordinal))
+        {
+            TraceAmbiguousTrait(constraint, span);
+        }
         ReportTraitResolutionFailure(
             TraitConstraint.StableKey(constraint),
             span,
