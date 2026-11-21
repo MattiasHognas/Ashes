@@ -130,6 +130,7 @@ let primitiveOperatorInstance (traitName: Str) (operandType: SemanticType) =
         | "BitAnd" -> isIntegralOperand(operandType)
         | "BitOr" -> isIntegralOperand(operandType)
         | "BitXor" -> isIntegralOperand(operandType)
+        | "BitwiseNot" -> isIntegralOperand(operandType)
         | "ShiftLeft" -> isIntegralOperand(operandType)
         | "ShiftRight" -> isIntegralOperand(operandType)
         | "Eq" -> isNumericOperand(operandType) || isTextOperand(operandType) || isScalarOperand(operandType)

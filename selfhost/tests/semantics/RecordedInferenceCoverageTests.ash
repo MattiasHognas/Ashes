@@ -4,6 +4,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeIdentity
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 export (
     value runRecordedInferenceCoverageTests,
 )
@@ -42,4 +43,31 @@ let checkHandlerBindings unit =
                             | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("handler inference failed: " + Ashes.Trait.Show.show(error))
             | _ -> Ashes.IO.panic("handler inference fixture did not parse"))
 
-let runRecordedInferenceCoverageTests unit = checkHandlerBindings(unit)
+let checkComplement (table: NodeTypeTable) count node _span expression =
+    match expression with
+        | ExprBitwiseNot(operand) ->
+            match (nodeOperatorAt(node)(table), nodeTypeAt(nodeIdentityOf(operand))(table)) with
+                | (Some(NodeOperator { traitName = "BitwiseNot", instance = PrimitiveInstance, operandType = recorded }), Some(actual)) ->
+                    if actual == recorded
+                    then count + 1
+                    else Ashes.IO.panic("complement operator recorded a different operand type")
+                | _ -> Ashes.IO.panic("integer complement must record a primitive instance")
+        | _ -> count
+
+let checkPrimitiveComplements unit =
+    match parseProgram("(~1, ~1u8, ~1u16, ~1u32, ~1u64)") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            if table.typeCount == count && foldProgramNodes(checkComplement(table))(0)(program) == 5
+                            then Unit
+                            else Ashes.IO.panic("complement expression coverage incomplete")
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("complement inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("integer complement fixture did not parse")
+
+let runRecordedInferenceCoverageTests unit =
+    unit
+    |> checkHandlerBindings
+    |> checkPrimitiveComplements
