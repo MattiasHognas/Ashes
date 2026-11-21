@@ -3030,7 +3030,9 @@ public sealed class LinuxBackendCoverageTests
         // the owned result itself, so the back edge releases the previous iteration's map, as it
         // does when the call is written in the argument's place. (The map's updates grow the arena
         // per round on this path, so this is checked on the lowered loop.)
-        GeneralRcDropsInLoop(BuildMapLoopSuccessorBoundByLetProgram(3), "solve").ShouldBe(3);
+        string source = BuildMapLoopSuccessorBoundByLetProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "Ashes.Collection.Map.setStr(key)(false)", "solve(rest)((key", "__rcdrop_general");
     }
 
     [Test]
@@ -3041,9 +3043,21 @@ public sealed class LinuxBackendCoverageTests
         // receives the parameter itself or a call's owned result, which holds the earlier record's
         // parts by references of its own, so the earlier record is released at the edge that hands
         // the map on unchanged. The merged record handed to the generic setStr is an owned
-        // reference-counted copy, released after the call when the map did not adopt it (the sixth
-        // record release), instead of a deep copy into the to-space region, which nothing reclaims.
-        DropperCallsInLoop(BuildTableMergedOrHandedOnProgram(3), "solve", "__rcdrop_record").ShouldBe(6);
+        // reference-counted copy, released after the call when the map did not adopt it.
+        string source = BuildTableMergedOrHandedOnProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "lookup(key)(table)", "solve(table)(rest)", "__rcdrop_record");
+
+        SourceLocation setCall = FindSourceLocation(source, "Ashes.Collection.Map.setStr(key)(merged)");
+        List<IrInst> instructions = loop.Instructions;
+        List<IrCfgBlock> blocks = IrControlFlowGraph.Build(instructions);
+        blocks.Any(block =>
+            instructions[block.Start] is IrInst.Label label && label.Name.StartsWith("rc_handed_over_not_adopted_", StringComparison.Ordinal)
+            && instructions.GetRange(block.Start, block.End - block.Start).OfType<IrInst.CallKnown>().Any(drop =>
+                drop.Location == setCall && drop.FuncLabel.StartsWith("__rcdrop_record", StringComparison.Ordinal)
+                && instructions.Take(block.Start).OfType<IrInst.CallClosure>()
+                    .Any(call => call.Location == setCall && call.ArgTemp == drop.ArgTemp))).ShouldBeTrue(
+                        "the non-adopting setStr path must release the merged record it was given");
     }
 
     [Test]
@@ -3052,28 +3066,53 @@ public sealed class LinuxBackendCoverageTests
         // A back queue of strings handed on unchanged while the map of queued keys is rebuilt, on
         // the map's general path: the queue holds nothing of an earlier map but strings it retains,
         // so the back edge releases the earlier map.
-        GeneralRcDropsInLoop(BuildMapLoopPredecessorPastQueueOfStringsProgram(3), "solve").ShouldBe(7);
+        string source = BuildMapLoopPredecessorPastQueueOfStringsProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "Ashes.Collection.Map.setStr(key)(false)", "solve(rest)(back)(dequeued)", "__rcdrop_general");
     }
 
-    // The general droppers a loop's closure helper calls, the loop lowered without reuse
-    // specializations.
-    private static int GeneralRcDropsInLoop(string source, string loopName)
-        => DropperCallsInLoop(source, loopName, "__rcdrop_general");
+    private static IrFunction GetTailLoop(IrProgram ir, string loopName)
+        => ir.Functions.Single(function =>
+            function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: var name }
+            && string.Equals(name, loopName, StringComparison.Ordinal)
+            && function.Instructions.OfType<IrInst.Jump>().Any(jump =>
+                string.Equals(jump.Target, function.Label + "_body", StringComparison.Ordinal)));
 
-    // The droppers of one family (a label prefix) a loop's closure helper calls, the loop lowered
-    // without reuse specializations.
-    private static int DropperCallsInLoop(string source, string loopName, string dropperPrefix)
+    private static SourceLocation FindSourceLocation(string source, string expression)
     {
-        IrProgram ir = LowerProgramWithImportsWithoutReuse(source);
-        IrFunction loop = ir.Functions
-            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: var name }
-                && string.Equals(name, loopName, StringComparison.Ordinal))
-            .Single(function => function.Instructions.Any(instruction =>
-                instruction is IrInst.Jump { Target: var target }
-                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
-        return loop.Instructions.Count(instruction =>
-            instruction is IrInst.CallKnown { FuncLabel: var label }
-                && label.StartsWith(dropperPrefix, StringComparison.Ordinal));
+        source = source.ReplaceLineEndings("\n");
+        int offset = source.IndexOf(expression, StringComparison.Ordinal);
+        offset.ShouldBeGreaterThanOrEqualTo(0);
+        var index = new SourceTextIndex(source);
+        (int line, int column) = index.ToPosition(index.ToUtf8Offset(offset), SourcePositionEncoding.Utf16);
+        return new SourceLocation("<memory>", line + 1, column + 1);
+    }
+
+    private static void AssertPredecessorReleasedAtEdge(
+        IrFunction loop, string source, string producerExpression, string recursiveCall, string dropperPrefix)
+    {
+        SourceLocation producer = FindSourceLocation(source, producerExpression);
+        SourceLocation edge = FindSourceLocation(source, recursiveCall);
+        List<IrInst> instructions = loop.Instructions;
+        // Before installing the new call result, lowering saves the old slot in a separate
+        // predecessor slot. Follow that value to its drop, independently of other owners.
+        int saveIndex = Enumerable.Range(1, instructions.Count - 2).Single(i =>
+            instructions[i] is IrInst.StoreLocal save && save.Location == producer
+            && instructions[i - 1] is IrInst.LoadLocal old && old.Target == save.Source
+            && instructions[i + 1] is IrInst.StoreLocal update && update.Slot == old.Slot);
+        int predecessor = ((IrInst.StoreLocal)instructions[saveIndex]).Slot;
+        int jumpIndex = instructions.FindIndex(instruction => instruction is IrInst.Jump jump
+            && jump.Location == edge && string.Equals(jump.Target, loop.Label + "_body", StringComparison.Ordinal));
+        jumpIndex.ShouldBeGreaterThan(saveIndex);
+
+        List<IrCfgBlock> blocks = IrControlFlowGraph.Build(instructions);
+        int edgeBlock = IrControlFlowGraph.FindBlock(blocks, jumpIndex);
+        int[] dominators = IrControlFlowGraph.ComputeImmediateDominators(blocks);
+        instructions.OfType<IrInst.LoadLocal>().Count(load => load.Slot == predecessor
+            && IrControlFlowGraph.Dominates(dominators, IrControlFlowGraph.FindBlock(blocks, instructions.IndexOf(load)), edgeBlock)
+            && instructions.OfType<IrInst.CallKnown>().Any(drop =>
+                drop.ArgTemp == load.Target && drop.FuncLabel.StartsWith(dropperPrefix, StringComparison.Ordinal)))
+            .ShouldBe(1, $"the back edge at '{recursiveCall}' must release the predecessor saved at '{producerExpression}'");
     }
 
     [Test]
@@ -5870,17 +5909,12 @@ public sealed class LinuxBackendCoverageTests
         // A loop threading a map through a helper's owned result while it walks a list of strings.
         // The walked list's tail holds only parts of the list the loop was entered with, so each
         // earlier iteration's map is released at the back edge rather than overwritten in its slot:
-        // one release there, beside the two at the loop's exit. (The map's own reuse specialization
-        // grows the arena per round, so this is checked on the lowered loop, not by peak memory.)
-        IrProgram ir = LowerProgramWithImports(BuildMapThreadedThroughWalkedListLoopProgram(3));
-        IrFunction loop = ir.Functions
-            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: "dependentsOf" })
-            .Single(function => function.Instructions.Any(instruction =>
-                instruction is IrInst.Jump { Target: var target }
-                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
-        loop.Instructions.Count(instruction =>
-            instruction is IrInst.CallKnown { FuncLabel: var label }
-                && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBe(3);
+        // the old result of addDependents is saved before the current result replaces it.
+        string source = BuildMapThreadedThroughWalkedListLoopProgram(3);
+        IrProgram ir = LowerProgramWithSourceLocations(source);
+        IrFunction loop = GetTailLoop(ir, "dependentsOf");
+        const string pipeline = "dependents\n            |> addDependents(key)";
+        AssertPredecessorReleasedAtEdge(loop, source, pipeline, pipeline, "__rcdrop_general");
 
         if (OperatingSystem.IsLinux())
         {
@@ -11178,26 +11212,6 @@ public sealed class LinuxBackendCoverageTests
     internal static IrProgram LowerProgramWithImports(string source)
         => LowerProgramWithImportsAndLowering(source).Ir;
 
-    // A program with imports lowered without reuse specializations, the general path stage 1 takes.
-    private static IrProgram LowerProgramWithImportsWithoutReuse(string source)
-    {
-        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
-        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
-        HashSet<string> importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
-        Diagnostics diagnostics = new();
-        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
-        diagnostics.ThrowIfAny();
-        Lowering lowering = new(
-            diagnostics,
-            importedStdModules,
-            parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases,
-            layout.ConstructorModules,
-            new LoweringConfiguration(EnableReuse: false));
-        IrProgram ir = lowering.Lower(program);
-        diagnostics.ThrowIfAny();
-        return ir;
-    }
-
     internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(
         string source, LoweringConfiguration? configuration = null)
     {
@@ -11289,7 +11303,7 @@ public sealed class LinuxBackendCoverageTests
 
     // A standalone program lowered with its source context, as the CLI lowers it: every emitted
     // instruction carries its source location.
-    private static IrProgram LowerProgramWithSourceLocations(string source)
+    private static IrProgram LowerProgramWithSourceLocations(string source, LoweringConfiguration? configuration = null)
     {
         ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
@@ -11303,7 +11317,8 @@ public sealed class LinuxBackendCoverageTests
             diagnostics,
             new HashSet<string>(parsed.ImportNames, StringComparer.Ordinal),
             parsed.ImportAliases,
-            layout.ConstructorModules);
+            layout.ConstructorModules,
+            configuration);
         lowering.SetSourceContext(layout);
         IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
@@ -24008,11 +24023,12 @@ public sealed class LinuxBackendCoverageTests
         // Each top-level item's escape body is bound to no name and handed to one argument of a
         // curried call. The value an earlier iteration left in its slot was released only when the
         // call's result was kept in an owned slot, and that result is a partial application, so the
-        // loop kept every escape body until its exit: one release fewer at the back edge. (The
+        // loop kept every escape body until its exit. The
         // program's own arena grows with the rounds for another reason, so this checks the release
-        // rather than the memory.) The count pins that rule (one fewer without it); the leak-check
-        // property of the same shape is CurriedChainPredecessorLeakTests in Ashes.Fuzzing.Tests.
-        DropperCallsInLoop(BuildCurriedChainPredecessorProgram(2), "lowerItems", "__rcdrop_general").ShouldBe(22);
+        // directly. The same shape has a leak-check property in CurriedChainPredecessorLeakTests.
+        string source = BuildCurriedChainPredecessorProgram(2);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "lowerItems");
+        AssertPredecessorReleasedAtEdge(loop, source, "topLevelEscapeBody(nextAnalysis)", "lowerItems(rest)(trailing)", "__rcdrop_general");
     }
 
     private static string BuildArenaHeadTupleOwnerDuplicateProgram(int rounds)
