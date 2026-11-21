@@ -165,7 +165,7 @@ let expectRepresentativeInstructions unit =
             | _ -> test.fail("TLS connect did not emit its task instruction"))
     |> (given (_) ->
         match emitCoreBuiltin(CoreTcpForkWorkers)(false)(10)(binaryArguments)(binaryTypes) with
-            | CoreBuiltinEmission { instructions = CreateForkWorkersTask(10, 2, 1) :: [], error = None } -> Unit
+            | CoreBuiltinEmission { instructions = CreateForkWorkersTask(10, 1, 2) :: [], error = None } -> Unit
             | _ -> test.fail("TCP worker lowering did not preserve the stage-0 port/count operand order"))
     |> (given (_) ->
         match emitCoreBuiltin(CoreBytesFromText)(false)(10)(unaryArguments)(unaryTypes) with
