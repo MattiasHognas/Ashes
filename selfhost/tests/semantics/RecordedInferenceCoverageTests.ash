@@ -1,12 +1,19 @@
+import CoreOrderedInferenceTests.readShippedSources
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeIdentity
 import AshesCompiler.Semantics.NodeTypeTable
+import AshesCompiler.Semantics.ProjectInference
+import AshesCompiler.Semantics.ShippedModuleStitching.stitchWithShippedModules
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.CoreLowering.Emit.initialState
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withNodeTypes
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTypeParameters
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 export (
     value runRecordedInferenceCoverageTests,
@@ -96,8 +103,104 @@ let checkArmBodyShadowing unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("shadowing inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("shadowing inference fixture did not parse")
 
+let checkRecordInstantiation (table: NodeTypeTable) node count =
+    match (nodeTypeAt(node)(table), nodeInstantiationAt(node)(table)) with
+        | (Some(SemNamed(_id, "Box", element :: [])), Some(NodeInstantiation { arguments = (_variable, argument) :: [] })) ->
+            if element == argument
+            then count + 1
+            else Ashes.IO.panic("record constructor argument and result layout disagree")
+        | _ -> Ashes.IO.panic("record construction or update lost its own instantiation")
+
+let checkRecordNode (table: NodeTypeTable) count node _span expression =
+    match expression with
+        | ExprRecord("Box", _fields, _) -> checkRecordInstantiation(table)(node)(count)
+        | ExprRecordUpdate(_target, _fields) -> checkRecordInstantiation(table)(node)(count)
+        | _ -> count
+
+let checkRecordInstantiations unit =
+    (let source = "type Box(a) = | value: a\nlet first = Box(value = 1)\nlet second = Box(value = \"two\")\n((first with value = 3), (second with value = \"four\"))"
+    in
+        match parseProgram(source) with
+            | ProgramParseResult { program = parsed, diagnostics = [] } ->
+                match identifyProgram(0)(parsed) with
+                    | (program, count) ->
+                        match inferProgram(program) with
+                            | ProgramInferenceResult { nodeTypes = table, error = None, semanticType = SemTuple(SemNamed(_, "Box", SemInt :: []) :: SemNamed(_, "Box", SemString :: []) :: []) } ->
+                                if table.typeCount == count && foldProgramNodes(checkRecordNode(table))(0)(program) == 4
+                                then Unit
+                                else Ashes.IO.panic("record constructor or update lacks a numbered type")
+                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("record inference failed: " + Ashes.Trait.Show.show(error))
+                            | _ -> Ashes.IO.panic("distinct record instantiations lost their result types")
+            | _ -> Ashes.IO.panic("record instantiation fixture did not parse"))
+
+let checkTypeTranslation unit =
+    (let state = initialState(Unit)
+    in
+        let leaves = [SemInt, SemUInt(8), SemFloat, SemBigInt, SemString, SemRune, SemBytes, SemBool, SemNever, SemVariable(73), SemPointer(SemOpaque("Handle"))]
+        in
+            let source =
+                Some(SemVariable(75))
+                |> SemRow([SemCapability("Inspect")([SemVariable(74)])])
+                |> Some
+                |> SemFunction(SemNamed(91)("Maybe")([SemList(SemTuple(leaves))]))(SemTuple([]))
+            in
+                match translateRecordedType(state)(source) with
+                    | Ok(SemFunction(SemNamed(0, "Maybe", SemList(SemTuple(translated)) :: []), SemTuple([]), None)) ->
+                        if translated == leaves
+                        then Unit
+                        else Ashes.IO.panic("recorded aggregate translation changed a leaf or closed an unconstrained variable")
+                    | _ -> Ashes.IO.panic("recorded type translation lost a named argument or kept a lowering capability row"))
+
+let checkRigidScope unit =
+    (let state = initialState(Unit)
+    in
+        match ("a"
+        |> SemParameter(1)
+        |> translateRecordedType(state), "a"
+        |> SemParameter(1)
+        |> translateRecordedType(withStateActiveTypeParameters([("a", SemVariable(81))])(state)), []
+        |> SemCapability("Inspect")
+        |> translateRecordedType(state), None
+        |> SemRow([])
+        |> translateRecordedType(state)) with
+            | (Error(_unscoped), Ok(SemVariable(81)), Error(_capability), Error(_row)) -> Unit
+            | _ -> Ashes.IO.panic("recorded type translation did not respect the rigid parameter scope or standalone row boundary"))
+
+let checkDerivedTree unit =
+    (let path = "tests/trait_deriving.ash"
+    in
+        match (Ashes.IO.Directory.entries("lib/Ashes"), Ashes.IO.File.readText(path)) with
+            | (Ok(names), Ok(source)) ->
+                match names
+                |> readShippedSources
+                |> stitchWithShippedModules("regression")(path)(source) with
+                    | Ok(project) ->
+                        let identified = identifyStitchedProject(project)
+                        in
+                            match identified.program.error with
+                                | Some(error) -> Ashes.IO.panic("recursive deriving expansion failed before numbering: " + Ashes.Trait.Show.show(error))
+                                | None ->
+                                    let environment =
+                                        "standalone"
+                                        |> emptyTypeEnvironmentForPackage
+                                        |> withIntrinsicBuiltinSignatures
+                                    in
+                                        match inferIdentifiedStitchedProjectFrom(environment)(project)(identified) with
+                                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                                if identified.program.nodeCount > 0 && table.typeCount == identified.program.nodeCount
+                                                then Unit
+                                                else Ashes.IO.panic("derived implementations contain untyped numbered expressions")
+                                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("recursive deriving inference failed: " + Ashes.Trait.Show.show(error))
+                    | Error(error) -> Ashes.IO.panic("recursive deriving fixture failed to stitch: " + Ashes.Trait.Show.show(error))
+            | (Error(message), _) -> Ashes.IO.panic(message)
+            | (_, Error(message)) -> Ashes.IO.panic(message))
+
 let runRecordedInferenceCoverageTests unit =
     unit
     |> checkHandlerBindings
     |> checkPrimitiveComplements
     |> checkArmBodyShadowing
+    |> checkRecordInstantiations
+    |> checkTypeTranslation
+    |> checkRigidScope
+    |> checkDerivedTree
