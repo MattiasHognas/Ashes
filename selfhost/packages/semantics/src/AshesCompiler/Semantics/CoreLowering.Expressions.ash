@@ -2996,7 +2996,8 @@ let nameCarriesOperatorConstraint (state: CoreLoweringState) (name: Str) =
 // A plan needs a generalized `Eq`, `Ord` or `Not` requirement on the binding's scheme. With no
 // written `requires`, the scheme's requirements are the ones its value produced, so a value that
 // can produce none of the three has no plan and the inference that would say so is not run.
-let mentionsStandardMethod value = exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Hash")(value) || exprReadsName("Ashes.Trait.Hash")(value)
+// Stitching rewrites the standard trait qualifiers before lowering chooses a dictionary ABI.
+let mentionsStandardMethod value = exprReadsName("Ashes_Trait_Show")(value) || exprReadsName("Ashes_Trait_Hash")(value) || exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Hash")(value) || exprReadsName("Ashes.Trait.Hash")(value)
 
 let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraintSyntax)) (state: CoreLoweringState) =
     match requirements with
@@ -3287,7 +3288,7 @@ type ConstrainedGroupMember =
 let recursive groupMayUseDictionaries (bindings: List(LetBindingSyntax)) state =
     match bindings with
         | [] -> false
-        | LetBindingSyntax { value = value, requirements = requirements } :: rest -> !constrainedPlanCannotApply(value)(requirements)(state) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Hash")(value) || exprReadsName("Hash")(value) || groupMayUseDictionaries(rest)(state)
+        | LetBindingSyntax { value = value, requirements = requirements } :: rest -> !constrainedPlanCannotApply(value)(requirements)(state) || groupMayUseDictionaries(rest)(state)
 
 let recursive planGroupMembers pairs environment state =
     match pairs with
