@@ -449,44 +449,23 @@ let testCleanupResourceEmission unit =
             | CleanupResource(5, "Resource", None) -> Unit
             | _ -> test.fail("unexpected cleanup resource instruction"))
 
-// A declared external resource `Counted` with an opening function, a borrowing reader, a
-// consuming transfer, and its destructor.
-let countedParameter ownership =
-    ExternalParameterAbi(
-        parameterIndex = 0,
-        abiType = ExternalAbiOpaque("Counted"),
-        source = dummyParamSource with ownership = ownership
-    )
+// Use the declared signatures so the result of openCounted owns a Counted resource
+// and readCounted returns Int. Lowering keeps those source types across the ABI.
+let countedDeclarations = "external type Counted resource destructor closeCounted\nexternal openCounted(Int) -> Counted = \"counted_open@libcounted.so\"\nexternal readCounted(borrow Counted) -> Int = \"counted_read@libcounted.so\"\nexternal transferCounted(consume Counted) -> void = \"counted_transfer@libcounted.so\"\nexternal closeCounted(consume Counted) -> void = \"counted_close@libcounted.so\"\n"
 
-let countedAbi name symbolName parameters returnType destructorFor = makeExternalFunctionAbi(name)(symbolName)(Some("libcounted.so"))(parameters)(returnType)(false) with destructorForResource = destructorFor
-
-let countedAbis =
-    [
-        countedAbi("openCounted")("counted_open")([ExternalParameterAbi(parameterIndex = 0, abiType = ExternalAbiInt, source = dummyParamSource)])(ExternalAbiOpaque("Counted"))(None),
-        countedAbi("readCounted")("counted_read")([countedParameter(ExternalOwnershipBorrow)])(ExternalAbiInt)(None),
-        countedAbi("transferCounted")("counted_transfer")([countedParameter(ExternalOwnershipConsume)])(ExternalAbiVoid)(None),
-        countedAbi("closeCounted")("counted_close")([countedParameter(ExternalOwnershipConsume)])(ExternalAbiVoid)(Some("Counted"))
-    ]
-
-let recursive layoutsOf abis =
-    match abis with
-        | [] -> []
-        | abi :: rest -> makeLayout(abi) :: layoutsOf(rest)
-
-let parsedBody source =
-    match parseProgram(source) with
-        | ProgramParseResult { program = ProgramSyntax { body = Some(body) }, diagnostics = [] } -> body
-        | _ -> test.fail("expected a cleanly parsed trailing expression in: " + source)
+let countedResult source =
+    match parseProgram(countedDeclarations + "(" + source + ")") with
+        | ProgramParseResult { program = program, diagnostics = [] } -> lowerCoreProgram(program)
+        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("external resource program failed to parse: " + Ashes.Trait.Show.show(diagnostics))
 
 let countedProgram source =
-    source
-    |> parsedBody
-    |> loweredProgramWithExternal(layoutsOf(countedAbis))(countedAbis)(["Counted"])
+    match countedResult(source) with
+        | CoreLoweringResult { program = Some(program), error = None } -> program
+        | CoreLoweringResult { error = Some(error) } -> test.fail("external resource lowering failed: " + Ashes.Trait.Show.show(error))
+        | _ -> test.fail("external resource lowering produced no program")
 
 let countedError source =
-    match source
-    |> parsedBody
-    |> loweredResultWithExternal(layoutsOf(countedAbis))(countedAbis)(["Counted"]) with
+    match countedResult(source) with
         | CoreLoweringResult { error = Some(error) } -> error
         | _ -> test.fail("expected lowering to fail for: " + source)
 
