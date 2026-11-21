@@ -3876,6 +3876,22 @@ let testRunTcoScalarLoopFixture shipped unit =
 let testRunTcoListWalkFixture shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("selfhost/parity/semantics/lowered-ir/tco_list_walk.source"))("selfhostBackendRunTcoListWalk")("selfhost_backend_tco_list_walk_e2e")("3015")
 
+let assertOwnershipFixture shipped directory suffix fixture expected unit =
+    assertProgramPrints(buildSharedTestModule(shipped)(directory + "/" + fixture + suffix))(fixture)("selfhost_backend_" + fixture + "_e2e")(expected)
+
+let testRunOwnershipFixtures shipped unit =
+    (let parity = assertOwnershipFixture(shipped)("selfhost/parity/semantics/lowered-ir")(".source")
+    in
+        unit
+        |> parity("generic_collection_loop_reuses_matched_accumulator")("1")
+        |> parity("collection_threaded_through_helper_releases_by_slot")("1")
+        |> parity("non_tail_self_call_list_result")("1")
+        |> parity("spine_cell_head_bound_by_let_releases_its_binding")("5")
+        |> parity("aggregate_borrowing_owner_kept_by_callee")("1")
+        |> parity("producer_conses_nested_variant_head")("4")
+        |> parity("record_head_list_producer")("2")
+        |> assertOwnershipFixture(shipped)("tests")(".ash")("tail_call_scalar_shadowing_another_arms_list_tail")("7"))
+
 let testRunSharedTcoUnusedChainParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_unused_chain_parameter.ash"))("selfhostBackendRunSharedTcoUnusedChainParameter")("selfhost_backend_shared_tco_unused_chain_parameter_e2e")("0")
 
@@ -5902,6 +5918,7 @@ let run shipped =
     |> testRunSharedTcoLetAliasOfRcParameter(shipped)
     |> testRunTcoScalarLoopFixture(shipped)
     |> testRunTcoListWalkFixture(shipped)
+    |> testRunOwnershipFixtures(shipped)
     |> testRunSharedTcoUnusedChainParameter(shipped)
     |> testRunSharedTcoGenericCurriedHelperResult(shipped)
     |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
