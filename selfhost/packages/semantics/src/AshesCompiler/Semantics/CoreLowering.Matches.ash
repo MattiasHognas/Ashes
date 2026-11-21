@@ -2470,8 +2470,29 @@ let noteArmTupleBinders (heldByTuple: Bool) (pattern: Pattern) (slots: List(Mayb
         | (true, PatternTuple(parts), LoweredCorePattern { state = state, error = None }) -> patternResult with state = noteTupleBinderParameters(parts)(slots)(state)
         | _ -> patternResult
 
+// Fix each binder's lexical ownership when the pattern has unified with the scrutinee.
+// A type learned by a later call in the arm cannot retroactively create a scope owner.
+let recursive settlePatternReads count (bindings: List(CoreBinding)) state =
+    if count <= 0
+    then bindings
+    else
+        match bindings with
+            | [] -> []
+            | binding :: rest ->
+                let settled =
+                    match armOwnerOf(state)(binding) with
+                        | Some(_owner) -> binding
+                        | None -> binding with ownedRead = false
+                in settled :: settlePatternReads(count - 1)(rest)(state)
+
+let settleArmOwnership outerCount (result: LoweredCorePattern) =
+    match result with
+        | LoweredCorePattern { state = state, error = None } -> result with state = (state with bindings = settlePatternReads(length(state.bindings) - outerCount)(state.bindings)(state))
+        | _ -> result
+
 let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (scrutineeParameterSlots: List(Maybe(Int))) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
     match patternResult
+    |> settleArmOwnership(length(outerBindings))
     |> noteArmTupleBinders(scrutineeOwnerIsTuple(scrutineeOwner))(pattern)(scrutineeParameterSlots)
     |> registerPatternOwnerSites(outerBindings)(scrutineeOwnerIsTuple(scrutineeOwner))
     |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with
