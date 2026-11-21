@@ -413,6 +413,12 @@ The main runtime-only HTTP replay then passed three fully traced rounds and 100 
 
 Main's corrected broad native run is active at `87af15c7`, output `work/r10pre/named-native2/`, using fresh `policy-shared3/s0/ashes`. Integration is frozen. `tmc_repair` also handed back `73daf91b` on `fix/r10-backend-ownership-fixtures` in `r10-typed-consumer-audit`: the backend suite executes the seven original ownership fixture sources and the scalar-shadowing regression. This test-only commit is pushed, awaiting integration and runtime validation. The worker is now implementing the existing stage-0 poison switch in the stage-1 backend, on `fix/r10-native-poison` in `r10-native-poison` from `87af15c7`; default code generation must remain unchanged.
 
+That native run is now complete: the poison `-O0` harness built in **8:59**, peak **20,094,276 KB**, then **83 of 96 named groups passed**, 13 failed assertions, and **32 of 95 IR fixtures differed**. This is the newest broad result. All 32 names also differed in the prior 35-fixture set; `mutual_recursion_later_sibling_call_requests_arena_result`, `recursive_insert_curried_stage_requests_no_arena_result` and `self_call_inside_constructor_owns_its_result` now match. No-reuse validation remains. Current stage-0 controls for all eight ownership programs passed both plain and poison (**16/16**) in `work/r10pre/ownership-stage0-controls2/`. The first controls attempt only rejected the `.source` extension; the corrected runner supplies those exact file contents via `--expr`.
+
+The HTTP candidate's main replay passed 100 rounds (12,000 requests plus readiness) with **zero connected-client resets and zero EBADF trace lines**, versus 13 connected resets in the old binary's 100-round run. It is preserved as `r10-http-worker-count/work/http-replay/fixed-server`, with `fixed.log` / `fixed-trace.*`. The candidate disarms task-frame resource cleanup after an explicit close; deterministic cancellation and descriptor-reuse regressions are still being added by `lowering_evidence`.
+
+Poison instrumentation `8d0a2285` is committed and pushed, awaiting integration/build/runtime proof. `tmc_repair` is now porting task resource-frame lifecycle support on `fix/r10-resource-frame-port` in `r10-resource-frame-port`. Its first prerequisite, pushed `832133cb`, preserves explicit frame-dropper labels and invokes them exactly once on completion/cancellation. Typed Socket capture ownership and consume/disarm notification remain under implementation with the C# worker; enabling untyped cleanup for every saved value is unsafe. No agent load has run.
+
 The stored-tuple fix `bd915b62` is integrated as `4961ecf3`: conservative unknown-callee demands now retain their selected field prefix, leaving unrelated Eq evidence latent. Its native suite, including the positive stage assertion, passes. The full stage-0 attempt at `c313e129` stopped at whitespace before suites; format-only `e3dc636e` is integrated as `eee4de68`, and subsequent full results are recorded above.
 
 While integration is frozen for the running checks, coordinator handoff updates are committed and pushed on `fix/r10-live-checkpoints` in its own worktree. Cherry-pick new documentation commits after the reader finishes; they do not change compiler source.
@@ -445,6 +451,24 @@ All worktree names below are relative to `.claude/worktrees/`. Generated scripts
 | `r10-fixture-candidates` | Coordinator scripts and preserved fixture/stack evidence under `work/`; `parallel-codegen` / `fix/parallel-codegen` is separately paused. |
 
 #### Current evidence and next validation
+
+The 13 named native failures awaiting review/fixes are below. Keep the source programs unchanged. An assertion may be updated only after the reference and actual compiler behavior establish that its oracle is stale. Full logs are in `work/r10pre/named-native2/cases/`; the three generic-assertion backtraces are in its `gdb/` directory.
+
+| Group (`run…Tests`) | First failure |
+| --- | --- |
+| `CapabilityInference` | Resume arguments should match operation results. |
+| `RecordedInferenceCoverage` | Deriving `Tree` fails before numbering with `UnsupportedDerivedTrait("Tree", "Ashes_Trait_Eq")`. |
+| `TraitInference` | Trait declaration rejected with `UndeterminedTraitRequirement("Equal", ...)`. |
+| `Ir` | Opcode assertion at `IrTests.ash:268`, actual 81. |
+| `CoreLogicalNotInference` | Unknown lowering binding `__ashes_standard_trait_Eq_equal_int`. |
+| `CoreOrderedInference` | Unused comparator retains a provisional body, six functions. |
+| `CoreProgramLowering` | Expected constrained program to fail without environment, but it lowered. |
+| `CoreBuiltinLowering` | Builtin registry consumed an async-owned operation. |
+| `CoreExternalLowering` | Assertion at `CoreExternalLoweringTests.ash:286`. |
+| `CoreTraitDispatchLowering` | Assertion at `CoreTraitDispatchLoweringTests.ash:245`, actual 3. |
+| `CoreCapabilityLowering` | Expected internal resume error, received located ASH020. |
+| `CallWindowLowering` | Expected `Alloc Target=21 SizeBytes=16 RuntimeManaged=true` not found. |
+| `TakenOverRecordLowering` | `taken_over_record_group_settled_by_caller` IR mismatch. |
 
 | Source | What was observed |
 | --- | --- |
