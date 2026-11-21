@@ -110,7 +110,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void AddSchemeFtv(TypeScheme scheme, HashSet<int> result)
+    private IReadOnlySet<int> SchemeFreeVariables(TypeScheme scheme)
     {
         if (!_schemeFreeVariables.TryGetValue(scheme, out IReadOnlySet<int>? variables))
         {
@@ -118,6 +118,12 @@ public sealed partial class Lowering
             _schemeFreeVariables.Add(scheme, variables);
         }
 
+        return variables;
+    }
+
+    private void AddSchemeFtv(TypeScheme scheme, HashSet<int> result)
+    {
+        IReadOnlySet<int> variables = SchemeFreeVariables(scheme);
         if (variables.Count > 0)
         {
             result.UnionWith(variables);
@@ -131,7 +137,7 @@ public sealed partial class Lowering
     private readonly Dictionary<Binding, TypeRef.TVar[]> _bindingTypeVariables =
         new(ReferenceEqualityComparer.Instance);
 
-    private void AddBindingTypeFtv(Binding binding, HashSet<int> result)
+    private TypeRef.TVar[] BindingTypeVariables(Binding binding)
     {
         if (!_bindingTypeVariables.TryGetValue(binding, out TypeRef.TVar[]? variables))
         {
@@ -141,6 +147,12 @@ public sealed partial class Lowering
             _bindingTypeVariables.Add(binding, variables);
         }
 
+        return variables;
+    }
+
+    private void AddBindingTypeFtv(Binding binding, HashSet<int> result)
+    {
+        TypeRef.TVar[] variables = BindingTypeVariables(binding);
         foreach (TypeRef.TVar variable in variables)
         {
             FtvType(variable, result);

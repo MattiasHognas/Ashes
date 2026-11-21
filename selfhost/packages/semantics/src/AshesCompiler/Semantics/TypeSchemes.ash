@@ -10,6 +10,7 @@ export (
     type InstantiationResult(..),
     value freeTypeVariables,
     value freeSchemeVariables,
+    value schemeHoldsVariable,
     value schemeIsClosed,
     value freeEnvironmentVariables,
     value resolveEnvironmentVariables,
@@ -133,6 +134,19 @@ let recursive isQuantifiedVariable variableId (quantified: List((Int, Str))) =
             if sameVariableId(variableId)(candidate)
             then true
             else isQuantifiedVariable(variableId)(tail)
+
+// Membership in the free variables of one scheme, without collecting its other variables.
+let recursive occursInArguments variable arguments =
+    match arguments with
+        | [] -> false
+        | arg :: rest -> occursInType(variable)(arg) || occursInArguments(variable)(rest)
+
+let recursive occursInRequirements variable requirements =
+    match requirements with
+        | [] -> false
+        | TraitConstraint { typeArguments = args } :: rest -> occursInArguments(variable)(args) || occursInRequirements(variable)(rest)
+
+let schemeHoldsVariable variable (scheme: TypeScheme) = !isQuantifiedVariable(variable)(scheme.quantified) && (occursInType(variable)(scheme.body) || occursInRequirements(variable)(scheme.constraints))
 
 // Whether every variable of a type is quantified. The walk visits the same constructors as
 // freeTypeVariables, without building the variable list.

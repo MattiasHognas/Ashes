@@ -754,28 +754,46 @@ let recursive selfNamesReaching (label: Str) (bindings: List(CoreBinding)) (stat
             else selfNamesReaching(label)(rest)(state)
         | _ :: rest -> selfNamesReaching(label)(rest)(state)
 
-// The bindings that hold a result's variables: every one in scope but the function's own self
-// reference, which names them itself, and a closure's capture of that self reference (one of
-// `selfNames`, stage 0's capture of a self binding).
-let recursive bindingsBesideSelfNamed (label: Str) (selfNames: List(Str)) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
-    match bindings with
-        | [] -> []
-        | (CoreBinding { location = CoreSelf(selfLabel, _size) } as binding) :: rest ->
-            if state
+// A recursive self reference names its own result variables. Only independent bindings
+// can establish that a value containing those variables already exists.
+let isPhantomQuerySelf label selfNames binding state =
+    match binding with
+        | CoreBinding { location = CoreSelf(selfLabel, _size) } ->
+            state
             |> stateFunctionReturnedClosureLabels
             |> curryChainReaches(64)(selfLabel)(label)
-            then bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
-            else binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
-        | (CoreBinding { name = name, location = CoreEnvironment(_index) } as binding) :: rest ->
-            if containsLabel(name)(selfNames)
-            then bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
-            else binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
-        | binding :: rest -> binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+        | CoreBinding { name = name, location = CoreEnvironment(_index) } -> containsLabel(name)(selfNames)
+        | _ -> false
 
-let bindingsBesideSelf (label: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
-    bindingsBesideSelfNamed(label)(selfNamesReaching(label)(state
-    |> stateEnclosingBindings
-    |> append(state.bindings))(state))(bindings)(state)
+let recursive candidatesBesideScheme candidates scheme =
+    match candidates with
+        | [] -> []
+        | id :: [] ->
+            if schemeHoldsVariable(id)(scheme)
+            then []
+            else candidates
+        | id :: rest ->
+            let remaining = candidatesBesideScheme(rest)(scheme)
+            in
+                if schemeHoldsVariable(id)(scheme)
+                then remaining
+                else id :: remaining
+
+let recursive candidatesBesideBindings label selfNames candidates bindings (state: CoreLoweringState) =
+    match candidates with
+        | [] -> []
+        | _ ->
+            match bindings with
+                | [] -> candidates
+                | (CoreBinding { closedScheme = closed, scheme = scheme } as binding) :: rest ->
+                    if closed || isPhantomQuerySelf(label)(selfNames)(binding)(state)
+                    then candidatesBesideBindings(label)(selfNames)(candidates)(rest)(state)
+                    else
+                        let remaining =
+                            scheme
+                            |> applySchemeSubstitutionMap(state.substitution)
+                            |> candidatesBesideScheme(candidates)
+                        in candidatesBesideBindings(label)(selfNames)(remaining)(rest)(state)
 
 let contractLayoutOrSelf (substituted: SemanticType) (original: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcValueType(substituted)(state)
@@ -802,15 +820,23 @@ let recursive joinVariables (left: List(Int)) (right: List(Int)) =
 // The variables of a function's resolved result that no binding beside the function's own self
 // reference holds and no pending trait goal names: its phantoms.
 let phantomResultVariables (label: Str) (resolved: SemanticType) (state: CoreLoweringState) =
-    pendingOperatorScheme(state) :: resolvedBindingSchemes(bindingsBesideSelf(label)(state.bindings)(state))(state)
-    |> freeEnvironmentVariables
-    |> joinVariables(state
-    |> resolvedBindingSchemes(bindingsBesideSelf(label)(stateEnclosingBindings(state))(state))
-    |> freeEnvironmentVariables)
-    |> (given (held: List(Int)) ->
-        resolved
-        |> freeTypeVariables
-        |> variablesNotHeld(held))
+    match freeTypeVariables(resolved) with
+        | [] -> []
+        | candidates ->
+            match state
+            |> pendingOperatorScheme
+            |> candidatesBesideScheme(candidates) with
+                | [] -> []
+                | pending ->
+                    let outer = stateEnclosingBindings(state)
+                    in
+                        let selfNames =
+                            state
+                            |> selfNamesReaching(label)(outer)
+                            |> append(selfNamesReaching(label)(state.bindings)(state))
+                        in
+                            let remaining = candidatesBesideBindings(label)(selfNames)(pending)(state.bindings)(state)
+                            in candidatesBesideBindings(label)(selfNames)(remaining)(outer)(state)
 
 // Only a function a `let` binds is generalized once lowered; any other (a lambda handed to a call, a
 // constructor taken as a function) is typed by the context it meets afterwards.
