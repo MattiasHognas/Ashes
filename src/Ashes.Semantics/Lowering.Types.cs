@@ -778,6 +778,7 @@ public sealed partial class Lowering
     private abstract record Binding(TypeRef Type)
     {
         public virtual TextSpan? DefinitionSpan => null;
+        public int CoroutineHelperArity { get; init; }
 
         public sealed record Local(int Slot, TypeRef T, TextSpan? Span = null) : Binding(T)
         {

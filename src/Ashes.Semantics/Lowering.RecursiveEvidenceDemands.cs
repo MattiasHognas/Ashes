@@ -79,10 +79,10 @@ public sealed partial class Lowering
     }
 
     private (int, TypeRef) LowerLetRecursiveValue(Expr.LetRecursive binding, Expr.Lambda? innerLambda,
-        TypeRef recursiveType, LoweredValueRequest request, out bool helperMarkerAdded)
+        TypeRef recursiveType, LoweredValueRequest request)
     {
         int first = _traitDemands.Count;
-        (int, TypeRef) lowered = LowerLetRecursiveValueCore(binding, innerLambda, recursiveType, request, out helperMarkerAdded);
+        (int, TypeRef) lowered = LowerLetRecursiveValueCore(binding, innerLambda, recursiveType, request);
         if (_collectInferredTraitElaboration)
         {
             RegisterRecursiveCallbackPeers([(binding.Name, binding.Value)]);

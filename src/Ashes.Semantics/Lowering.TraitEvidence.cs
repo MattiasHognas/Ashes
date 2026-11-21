@@ -2262,11 +2262,31 @@ public sealed partial class Lowering
             Expr.StrLit => new TypeRef.TStr(),
             Expr.RuneLit => new TypeRef.TRune(),
             Expr.BoolLit => new TypeRef.TBool(),
-            Expr.Var variable => TryGetKnownBindingType(Lookup(variable.Name)),
+            Expr.Var variable => TryGetSourceBindingType(Lookup(variable.Name)),
             Expr.QualifiedVar qualified when ResolveSpecializableCalleeName(qualified) is { } resolved =>
                 TryGetKnownBindingType(Lookup(resolved)),
             _ => null,
         };
+    }
+
+    private TypeRef? TryGetSourceBindingType(Binding? binding)
+    {
+        TypeRef? type = TryGetKnownBindingType(binding);
+        return binding is { CoroutineHelperArity: > 0 } && type is not null
+            ? CoroutineHelperSourceType(type, binding.CoroutineHelperArity)
+            : type;
+    }
+
+    private TypeRef? CoroutineHelperSourceType(TypeRef type, int arity)
+    {
+        TypeRef pruned = Prune(type);
+        if (arity == 0)
+        {
+            return pruned is TypeRef.TNamedType { Symbol.Name: "Task", TypeArgs.Count: 2 } task ? task.TypeArgs[1] : null;
+        }
+        return pruned is TypeRef.TFun function && CoroutineHelperSourceType(function.Ret, arity - 1) is { } result
+            ? function with { Ret = result }
+            : null;
     }
 
     private TypeRef? TryGetKnownBindingType(Binding? binding) => binding switch
