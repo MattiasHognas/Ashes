@@ -425,6 +425,8 @@ Inference worker commits `42524c1f` and `61fe580e` are integrated as `e72af846` 
 
 The unsupported Socket instruction is `SetDrainTimeout` in the shipped TCP server wrapper; stage-0 shutdown semantics also involve `RequestServerStop`. The worker is tracing the scheduler contract before porting the missing backend path, with both Socket source programs unchanged. Exact reruns of all saved ownership executables passed **16/16**, including the scalar-shadowing program's expected 7. Logs and verdicts are `work/r10pre/backend-native3-fixed/ownership-exact.tsv` and each mode's `.stdout` / `.stderr` files; the main script is `r10-fixture-candidates/work/ownership-native-exact.sh`. The measurement reader remains active at `75fb346f`; integration must not change until it finishes.
 
+Socket worker commit `3502ed04` on `fix/r10-external-next` implements `SetDrainTimeout` emission using the same 10,000 ms initial setting as stage 0, with a targeted shared-global/store check. It is pending integration and native validation. This is only the opcode slice: the stage-1 accept runtime predates graceful shutdown and does not yet consume the setting. The worker is continuing `RequestServerStop` and actual drain/shutdown semantics, with another 30-minute implementation budget; do not count a stored-but-unused setting as completed behavior.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
