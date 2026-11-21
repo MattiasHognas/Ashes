@@ -100,6 +100,42 @@ let checkLocalBindings unit =
         |> infer
         |> expectSuccess)
 
+// An unknown requirement can remain latent through a returned callback. A known consumer of
+// that same callback forces its first stage at the binding, including through a lexical alias.
+let checkHigherOrderEvidence unit =
+    (let invoke = "let invoke f = f(Unit)\nlet relay f = let local = invoke in local(f)\n"
+    in
+        let keep = "let keep f = f\n"
+        in
+            let ignore = "let ignore : (Unit -> a -> Bool) -> a -> Bool = given f -> given x -> true\n"
+            in
+                stagedSource + invoke + "let check = relay(pick)\ntrue"
+                |> parsed
+                |> infer
+                |> expectImmediate
+                |> (given (_) ->
+                    stagedSource + keep + "let saved = keep(pick)\ntrue"
+                    |> parsed
+                    |> infer
+                    |> expectSuccess)
+                |> (given (_) ->
+                    stagedSource + keep + "let check = keep(pick)(Unit)\ntrue"
+                    |> parsed
+                    |> infer
+                    |> expectImmediate)
+                |> (given (_) ->
+                    stagedSource + ignore + "let check = ignore(pick)\n(check(1), check(true))"
+                    |> parsed
+                    |> infer
+                    |> expectSuccess)
+                |> (given (_) ->
+                    match stagedSource + "let saved : Unit -> Str -> Bool = pick\ntrue"
+                    |> parsed
+                    |> infer with
+                        | ProgramInferenceResult { error = Some(ProgramExpressionError(NoTraitImplementation("Seed", SemString :: []))) } -> Unit
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("wrong missing-instance error for a constrained reference: " + Ashes.Trait.Show.show(error))
+                        | _ -> Ashes.IO.panic("a function reference lost its concrete typing constraint")))
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -117,4 +153,4 @@ let runImmediateEvidenceInferenceTests unit =
                 |> inferFixture(shipped)
                 |> expectSuccess)
             |> checkStages
-            |> checkLocalBindings)
+            |> checkLocalBindings) |> checkHigherOrderEvidence

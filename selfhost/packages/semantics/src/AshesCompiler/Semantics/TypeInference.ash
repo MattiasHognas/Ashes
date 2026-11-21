@@ -204,6 +204,7 @@ type TypeEnvironment =
     // leaves it off, so its speculative inference is unchanged.
     | programInferenceRules: Bool
     | evidenceProfiles: MapTree(Str, List(Int))
+    | evidenceFlows: MapTree(Str, EvidenceCallFlow)
     | inFunctionBody: Bool
     // When present, mirrors `bindings` and `constructors` by name. Only an environment that
     // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
@@ -373,7 +374,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, evidenceProfiles = Ashes.Collection.Map.empty, inFunctionBody = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, evidenceProfiles = Ashes.Collection.Map.empty, evidenceFlows = Ashes.Collection.Map.empty, inFunctionBody = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -422,6 +423,11 @@ let shadowEvidenceProfile name (environment: TypeEnvironment) =
         | Some(_old) -> Ashes.Collection.Map.setStr(name)([])(environment.evidenceProfiles)
         | None -> environment.evidenceProfiles
 
+let shadowEvidenceFlow name (environment: TypeEnvironment) =
+    match Ashes.Collection.Map.getStr(name)(environment.evidenceFlows) with
+        | Some(_old) -> Ashes.Collection.Map.setStr(name)(UnknownEvidenceFlow)(environment.evidenceFlows)
+        | None -> environment.evidenceFlows
+
 let addTypeBinding name scheme (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes, lookupIndex = index } ->
@@ -429,7 +435,14 @@ let addTypeBinding name scheme (environment: TypeEnvironment) =
                 match schemes with
                     | Some(open) -> Some(scheme :: open)
                     | None -> None
-            in environment with evidenceProfiles = shadowEvidenceProfile(name)(environment), bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
+            in environment with evidenceFlows = shadowEvidenceFlow(name)(environment), evidenceProfiles = shadowEvidenceProfile(name)(environment), bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
+
+let addParameterTypeBinding node name scheme environment =
+    (let bound = addTypeBinding(name)(scheme)(environment)
+    in
+        if bound.programInferenceRules && node >= 0
+        then bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(FormalEvidenceParameter(node))(bound.evidenceFlows)
+        else bound)
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
@@ -1113,6 +1126,14 @@ let recursive instantiateDemandRequirements arguments constraints =
         | [] -> []
         | TraitConstraint { traitName = name, typeArguments = types } :: rest -> TraitConstraint(traitName = name, typeArguments = instantiatedTypes(arguments)(types)) :: instantiateDemandRequirements(arguments)(rest)
 
+let noteCallFlow name node (environment: TypeEnvironment) (supply: TypeVariableSupply) =
+    match Ashes.Collection.Map.getStr(name)(environment.evidenceFlows) with
+        | Some(flow) -> supply with evidenceFlowSites = (node, flow) :: supply.evidenceFlowSites
+        | None ->
+            match resolveConstructorBinding(name)(environment) with
+                | Some(_constructor) -> supply with evidenceFlowSites = (node, SourceEvidenceFlow([])([])) :: supply.evidenceFlowSites
+                | None -> supply
+
 let noteReferenceAt name (environment: TypeEnvironment) node (scheme: TypeScheme) (before: TypeVariableSupply) requirements (after: TypeVariableSupply) =
     if recordsAt(environment)(node)
     then
@@ -1131,7 +1152,10 @@ let noteReferenceAt name (environment: TypeEnvironment) node (scheme: TypeScheme
                             |> functionArgumentCount
                             |> zipEvidenceStages(instantiateDemandRequirements(arguments)(constraints))(stages)
             in
-                let noted = withEvidenceSite(node)(demands)(after)
+                let noted =
+                    after
+                    |> withEvidenceSite(node)(demands)
+                    |> noteCallFlow(name)(node)(environment)
                 in
                     match scheme.quantified with
                         | [] -> noted
@@ -3377,55 +3401,103 @@ let recursive openImmediateRequirements demands =
             then constraint :: openImmediateRequirements(rest)
             else openImmediateRequirements(rest)
 
+let recursive acceptsCallback semanticType =
+    match semanticType with
+        | SemFunction(SemFunction(_arg, _body, _row), _result, _outer) -> true
+        | SemFunction(SemVariable(_id), _result, _row) -> true
+        | SemFunction(_arg, result, _row) -> acceptsCallback(result)
+        | _ -> false
+
+let recursive capturesCallbackAt root sites =
+    match sites with
+        | [] -> false
+        | (node, flow) :: rest ->
+            if node < root
+            then false
+            else
+                match flow with
+                    | FormalEvidenceParameter(_id) -> true
+                    | SourceEvidenceFlow(_parameters, _first :: _tail) -> true
+                    | _ -> capturesCallbackAt(root)(rest)
+
+let mayBeFunction semanticType =
+    match semanticType with
+        | SemVariable(_variable) -> true
+        | SemFunction(_arg, _result, _row) -> true
+        | _ -> false
+
+let analyzeEvidenceBinding (base: TypeEnvironment) value semanticType selected (supply: TypeVariableSupply) substitution =
+    if base.programInferenceRules && identifiedNode(value) >= 0
+    then
+        if selected != [] || acceptsCallback(semanticType) || mayBeFunction(semanticType) && capturesCallbackAt(identifiedNode(value))(supply.evidenceFlowSites)
+        then
+            match evidenceFlowForValue(identifiedNode(value))(value)(supply.evidenceSites)(supply.evidenceFlowSites) with
+                | (demands, flow) -> (resolvedDemands(base)(substitution)(demands), flow)
+        else
+            if mayBeFunction(semanticType)
+            then ([], SourceEvidenceFlow([])([]))
+            else ([], UnknownEvidenceFlow)
+    else ([], UnknownEvidenceFlow)
+
+let setSourceCallFlow name flow (bound: TypeEnvironment) =
+    match flow with
+        | UnknownEvidenceFlow -> bound
+        | _ -> bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(flow)(bound.evidenceFlows)
+
 // A local strictly evaluated value has one evidence type through the entire enclosing
 // invocation. Hold those variables out of its local quantifier; its surrounding lambda can
 // then generalize them, after its body has related them to the parameter and result.
 let inferEvidenceBinding (name: Str) (value: Expr) (semanticType: SemanticType) selected (base: TypeEnvironment) (scope: TypeEnvironment) substitution (supply: TypeVariableSupply) =
-    (let demands =
-        if base.programInferenceRules && selected != []
-        then
-            supply.evidenceSites
-            |> demandStagesForValue(identifiedNode(value))(value)
-            |> resolvedDemands(base)(substitution)
-        else []
+    (let analysis = analyzeEvidenceBinding(base)(value)(semanticType)(selected)(supply)(substitution)
     in
-        let immediate = openImmediateRequirements(demands)
+        let demands =
+            match analysis with
+                | (timing, _flow) -> timing
         in
-            let ambient = inferenceEnvironmentSchemes(base)
+            let flow =
+                match analysis with
+                    | (_timing, selectedFlow) -> selectedFlow
             in
-                let boundary =
-                    match immediate with
-                        | [] -> ambient
-                        | _ -> TypeScheme(quantified = [], body = SemTuple([]), constraints = immediate) :: ambient
+                let immediate = openImmediateRequirements(demands)
                 in
-                    let scheme = generalizeUnderSubstitution(boundary)(substitution)(semanticType)(selected)
+                    let ambient = inferenceEnvironmentSchemes(base)
                     in
-                        let bound = addTypeBinding(name)(scheme)(scope)
+                        let boundary =
+                            match immediate with
+                                | [] -> ambient
+                                | _ -> TypeScheme(quantified = [], body = SemTuple([]), constraints = immediate) :: ambient
                         in
-                            let stages = bindingStages(base)(scheme.constraints)(demands)
+                            let scheme = generalizeUnderSubstitution(boundary)(substitution)(semanticType)(selected)
                             in
-                                let next =
-                                    match stages with
-                                        | [] -> bound
-                                        | _ -> bound with evidenceProfiles = Ashes.Collection.Map.setStr(name)(stages)(bound.evidenceProfiles)
+                                let bound =
+                                    scope
+                                    |> addTypeBinding(name)(scheme)
+                                    |> setSourceCallFlow(name)(flow)
                                 in
-                                    let noted =
-                                        if base.programInferenceRules && stages != [] && identifiedNode(value) >= 0
-                                        then
-                                            withNodeNote(NodeEvidenceProfileNote(identifiedNode(value))(stages))(supply)
-                                        else supply
+                                    let stages = bindingStages(base)(scheme.constraints)(demands)
                                     in
-                                        let error =
-                                            match immediate with
-                                                | TraitConstraint { traitName = traitName, typeArguments = args } :: _rest ->
-                                                    if base.inFunctionBody
-                                                    then None
-                                                    else
-                                                        args
-                                                        |> ImmediateTraitEvidenceRequired(traitName)
-                                                        |> Some
-                                                | [] -> None
-                                        in EvidenceBindingInference(scheme = scheme, environment = next, supply = noted, error = error))
+                                        let next =
+                                            match stages with
+                                                | [] -> bound
+                                                | _ -> bound with evidenceProfiles = Ashes.Collection.Map.setStr(name)(stages)(bound.evidenceProfiles)
+                                        in
+                                            let noted =
+                                                if base.programInferenceRules && stages != [] && identifiedNode(value) >= 0
+                                                then
+                                                    withNodeNote(NodeEvidenceProfileNote(identifiedNode(value))(stages))(supply)
+                                                else supply
+                                            in
+                                                let error =
+                                                    match immediate with
+                                                        | TraitConstraint { traitName = traitName, typeArguments = args } :: _rest ->
+                                                            if base.inFunctionBody
+                                                            then None
+                                                            else
+                                                                args
+                                                                |> ImmediateTraitEvidenceRequired(traitName)
+                                                                |> Some
+                                                        | [] -> None
+                                                in EvidenceBindingInference(scheme = scheme, environment = next, supply = noted, error = error))
 
 let recursive implementationHeadMatches typeArguments (implementations: List(TraitImplementationInferenceDefinition)) =
     match implementations with
@@ -5365,7 +5437,7 @@ and inferAgainst expected expression environment substitution supply ambientRow 
                             | (bodyAmbientRow, bodyAmbientSupply) ->
                                 match inferAgainst(expectedResult)(body)(environment
                                 |> lambdaBodyEnvironment
-                                |> addTypeBinding(name)(parameterScheme))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
+                                |> addParameterTypeBinding(currentNodeOf(supply))(name)(parameterScheme))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
                                     | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
                                         addConstraints(
                                             bodyConstraints,
@@ -5524,7 +5596,7 @@ and inferWith expression environment substitution supply ambientRow =
                                     let bodyEnvironment =
                                         environment
                                         |> lambdaBodyEnvironment
-                                        |> addTypeBinding(name)(parameterScheme)
+                                        |> addParameterTypeBinding(currentNodeOf(supply))(name)(parameterScheme)
                                     in
                                         match freshTypeVariable(annotationSupply) with
                                             | (bodyAmbientRow, bodyAmbientSupply) ->

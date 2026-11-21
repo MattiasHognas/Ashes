@@ -14,6 +14,8 @@ export (
     type TypeScheme(..),
     type NodeTypeNote(..),
     type TypeVariableSupply(..),
+    type EvidenceParameterUse(..),
+    type EvidenceCallFlow(..),
     value initialTypeVariableSupply,
     value typeVariableSupplyFrom,
     value reservedInferenceTypeVariableCount,
@@ -90,15 +92,32 @@ type NodeTypeNote =
 // every step in order: `currentNode` is the identified node being inferred, or -1, and `notes`
 // holds the youngest note first. An inference that is abandoned abandons its notes with its
 // supply.
+// A source callback is called with arguments at a stage of its enclosing function. A returned
+// callback/result can consume additional caller arguments. Parameter identities in a walk
+// are numbered lambda nodes; in a published source profile they are zero-based argument slots.
+type EvidenceParameterUse =
+    | parameter: Int
+    | applied: Int
+    | stage: Int
+    | returned: Bool
+    deriving {Eq, Show}
+
+type EvidenceCallFlow =
+    | SourceEvidenceFlow(List(EvidenceParameterUse), List(EvidenceParameterUse))
+    | FormalEvidenceParameter(Int)
+    | UnknownEvidenceFlow
+    deriving {Eq, Show}
+
 type TypeVariableSupply =
     | nextId: Int
     | currentNode: Int
     | notes: List(NodeTypeNote)
     | evidenceSites: List((Int, List((TraitConstraint, Int))))
+    | evidenceFlowSites: List((Int, EvidenceCallFlow))
     deriving {Eq, Show}
 
 let initialTypeVariableSupply : Unit -> TypeVariableSupply =
-    given (_unit) -> TypeVariableSupply(nextId = 0, currentNode = -1, notes = [], evidenceSites = [])
+    given (_unit) -> TypeVariableSupply(nextId = 0, currentNode = -1, notes = [], evidenceSites = [], evidenceFlowSites = [])
 
 // A supply that starts above a block of ids some statically embedded `TypeScheme` already
 // quantifies over. Such a scheme is written before any supply runs, so its quantified ids are fixed
@@ -106,7 +125,7 @@ let initialTypeVariableSupply : Unit -> TypeVariableSupply =
 // `(id, SemVariable(id))` and `applySubstitution` recurses on that self-mapping forever. Starting
 // past the reservation is the guarantee; leaving a gap and hoping no program grows into it is not.
 let typeVariableSupplyFrom : Int -> TypeVariableSupply =
-    given (nextId) -> TypeVariableSupply(nextId = nextId, currentNode = -1, notes = [], evidenceSites = [])
+    given (nextId) -> TypeVariableSupply(nextId = nextId, currentNode = -1, notes = [], evidenceSites = [], evidenceFlowSites = [])
 
 // The id an inference supply starts above. Two blocks are minted before any supply runs and must
 // never be reissued: `CoreBuiltinLowering`'s builtin signatures quantify over
@@ -126,7 +145,7 @@ let currentNodeOf (supply: TypeVariableSupply) = supply.currentNode
 
 let withNodeNote (note: NodeTypeNote) (supply: TypeVariableSupply) = supply with notes = note :: supply.notes
 
-let withoutNodeNotes (supply: TypeVariableSupply) = supply with notes = [], evidenceSites = []
+let withoutNodeNotes (supply: TypeVariableSupply) = supply with notes = [], evidenceSites = [], evidenceFlowSites = []
 
 let recursive anyType : (SemanticType -> Bool) -> List(SemanticType) -> Bool =
     given (predicate) ->
