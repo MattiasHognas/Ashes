@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.ShippedModuleStitching
@@ -5320,6 +5321,62 @@ let testServerStopSignals unit =
         in codegenEntryFunction(name)(context)(entry)([IrStringLiteral(label = "s0", value = "second stop returned")])
     in assertProgramPrints(build)("serverStopSignals")("selfhost_backend_server_stop_signals")("0"))
 
+// Seed the detected CPU count before linking so even a broken override can fork at most one child.
+external lookupWorkerCapGlobal(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedGlobal@libLLVM.so"
+
+let testAutomaticServerWorkerOverride unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                0
+                |> LoadConstInt(0)
+                |> irOf,
+                1
+                |> LoadConstInt(1)
+                |> irOf,
+                irOf(StoreParallelWorkerOverride(1)),
+                0
+                |> CreateForkWorkersTask(2)(0)
+                |> irOf,
+                2
+                |> RunTask(3)
+                |> irOf,
+                false
+                |> GetAdtField(4)(3)(0)
+                |> irOf,
+                ExternalAbiUInt(32)
+                |> CallExternal(5)("wait")(Some("libc.so.6"))([0])([ExternalAbiPointer(ExternalAbiUInt(32))])
+                |> irOf,
+                4294967295
+                |> LoadConstInt(6)
+                |> irOf,
+                6
+                |> CmpIntEq(7)(5)
+                |> irOf,
+                irOf(PrintInt(4)),
+                irOf(PrintBool(7)),
+                irOf(Return(0))
+            ])(0)(8)
+        in
+            match codegenEntryFunction(name)(context)(entry)([]) with
+                | (module_, builder) ->
+                    match printModuleToString(module_) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(text) ->
+                            let _ =
+                                "@__ashes_parallel_cap = internal global i64 0"
+                                |> Ashes.Text.contains(text)
+                                |> test.assertEqual(true)
+                            in
+                                let cap = lookupWorkerCapGlobal(module_)("__ashes_parallel_cap")
+                                in
+                                    let _ =
+                                        false
+                                        |> constInt(int64Type(context))(2u64)
+                                        |> setInitializer(cap)
+                                    in (module_, builder)
+    in assertProgramPrintsLinesWithImports([("wait", "libc.so.6")])(build)("automaticServerWorkerOverride")("selfhost_backend_server_worker_override")(["0", "true"]))
+
 let testServerDrainTimeoutSetting unit =
     (let build name context =
         let entry =
@@ -6247,6 +6304,7 @@ let run shipped =
     |> testServerShutdownFinishesSpawnedHandler(shipped)
     |> testServerShutdownBoundsUnfinishedHandler(shipped)
     |> testServerStopSignals
+    |> testAutomaticServerWorkerOverride
     |> testServerDrainTimeoutSetting
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
