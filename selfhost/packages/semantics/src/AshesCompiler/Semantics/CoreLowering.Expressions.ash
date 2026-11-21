@@ -65,6 +65,8 @@ import AshesCompiler.Semantics.CoreLowering.CallArguments
 import AshesCompiler.Semantics.CoreLowering.CallResults
 import AshesCompiler.Semantics.CoreLowering.Matches
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
+import AshesCompiler.Semantics.CoreLowering.CoroutineHelpers
+import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
 import AshesCompiler.Semantics.CoreLowering.Aggregates
 import AshesCompiler.Semantics.CoreLowering.Constructors
 import AshesCompiler.Semantics.CoreLowering.Records
@@ -2275,20 +2277,25 @@ let scopeForkingTask (forks: Bool) (taskTemp: Int) (taskType: SemanticType) (sta
 // lowered as a lambda returning `Ok(body)` whose awaits suspend, the lambda's function becomes a
 // coroutine over a task frame, and `CreateTask` builds the task from the lambda's closure, its
 // captures copied into the frame.
-let lowerCoroutineTask body lower (state: CoreLoweringState) =
+let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
     (let label = "lambda_" + Ashes.Text.fromInt(state.nextLambdaId)
     in
         match state
         |> clearConsumerRequest
         |> withStatePendingCoroutineBody(true)
-        |> lowerLambda("__async_unit")(callArgumentsInline |> ExprCall(ExprVar("Ok"))(body)(false))(None)(false)(lower) with
+        |> lowerLambda("__async_unit")(if transparent
+        then body
+        else ExprCall(ExprVar("Ok"))(body)(false)(callArgumentsInline))(None)(false)(lower) with
             | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
             | LoweredCoreValue { state = loweredState, temp = closureTemp, semanticType = lambdaType, error = None } ->
                 match resolveType(loweredState)(lambdaType) with
                     | SemFunction(_parameter, resultType, _row) ->
                         match loweredState
                         |> withStatePendingCoroutineBody(false)
-                        |> asyncTaskTypeOf(resultType) with
+                        |> (given (typed) ->
+                            if transparent
+                            then (typed, SemNamed(0)("Task")([SemString, resultType]), None)
+                            else asyncTaskTypeOf(resultType)(typed)) with
                             | (failedState, _taskType, Some(error)) -> failure(failedState)(error)
                             | (typedState, taskType, None) ->
                                 let captureCount = closureCaptureCount(label)(typedState.reversedInstructions)
@@ -2336,7 +2343,7 @@ let lowerAsyncTask body lower (state: CoreLoweringState) =
     if exprContainsAwait(body)
     then
         state
-        |> lowerCoroutineTask(body)(lower)
+        |> lowerCoroutineTask(false)(body)(lower)
         |> rejectEscapingJoinHandle
     else
         state
@@ -2635,7 +2642,7 @@ let lowerSynthesized lower (expression: Expr) (state: CoreLoweringState) =
                         error = error
                     )
 
-let lowerCallExpression expression function argument lower state =
+let lowerOrdinaryCallExpression expression function argument lower state =
     match asyncTaskBody(expression)(state) with
         | Some(body) -> lowerAsyncTask(body)(lower)(state)
         | None ->
@@ -2653,6 +2660,41 @@ let lowerCallExpression expression function argument lower state =
                     then
                         lowerAsParallelWorker(lowerSynthesized(lower)(rewritten))(state)
                     else lowerSynthesized(lower)(rewritten)(state)
+
+let awaitHelper task lower (state: CoreLoweringState) =
+    match state
+    |> clearConsumerRequest
+    |> lower(task) with
+        | LoweredCoreValue { state = failed, error = Some(error) } -> failure(failed)(error)
+        | LoweredCoreValue { state = built, semanticType = taskType, temp = ptr, error = None } ->
+            match freshType(built) with
+                | FreshType { state = introduced, semanticType = result } ->
+                    match bindType(taskType)(SemNamed(0)("Task")([SemString, result]))(introduced) with
+                        | (failed, Some(error)) -> failure(failed)(error)
+                        | (typed, None) ->
+                            match freshTemp(typed) with
+                                | FreshTemp { state = allocated, temp = temp } ->
+                                    let instruction =
+                                        if stateCoroutineBody(state)
+                                        then AwaitTask(temp)(ptr)
+                                        else RunTask(temp)(ptr)
+                                    in
+                                        allocated
+                                        |> emit(instruction)
+                                        |> success(temp)(resolveType(allocated)(result))
+
+let lowerCallExpression expression function argument lower state =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar("$coroutine", "task"), arguments = body :: [] } -> lowerCoroutineTask(true)(body)(lower)(state)
+        | CoreCallSpine { root = ExprQualifiedVar("$coroutine", "await"), arguments = body :: [] } -> awaitHelper(body)(lower)(state)
+        | CoreCallSpine { root = ExprQualifiedVar("$coroutine", "begin"), arguments = ExprString(restart) :: ExprTuple(params) :: body :: [] } -> enterHelperLoop(restart)(params)(body)(lower)(state)
+        | CoreCallSpine { root = ExprQualifiedVar("$coroutine", "restart"), arguments = ExprString(restart) :: ExprTuple(params) :: ExprTuple(args) :: [] } -> restartHelperLoop(restart)(params)(args)(lower)(state)
+        | CoreCallSpine { root = ExprLambda(_p, _b, _a) } ->
+            match directHelperCall(expression) with
+                | Some((factory, args)) ->
+                    awaitHelper(callWith(ExprVar(factory))(args))(lower)(state)
+                | None -> lowerOrdinaryCallExpression(expression)(function)(argument)(lower)(state)
+        | _ -> lowerOrdinaryCallExpression(expression)(function)(argument)(lower)(state)
 
 // The spine of the loop being lowered now holds a cell, so its return has one to close.
 let activateTmcChain (state: CoreLoweringState) =
@@ -3497,7 +3539,7 @@ let lowerPossiblyConstrainedLet name value body annotation requirements lower st
         | Some(staged) -> lower(staged)(state)
         | None -> lowerScheduledConstrainedLet(name)(value)(body)(annotation)(requirements)(lower)(state)
 
-let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
+let lowerOrdinaryLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
     match constrainedBindingPlan(name)(true)(value)(annotation)(requirements)(state) with
         | Some(plan) ->
             match openConstrainedRecursive(name)(value)(plan)(lower)(state) with
@@ -3508,6 +3550,19 @@ let lowerPossiblyConstrainedLetRecursive name value body annotation requirements
                 | failed -> failed
         | None ->
             lowerLetRecursive(name)(bindingLambdaValue(annotation)(value)(state))(body)(annotation)(lower)(state)
+
+let alreadyReturnsAsyncTask value state =
+    match asyncTaskBody(collectInnermostBody(value))(state) with
+        | Some(_body) -> true
+        | None -> false
+
+let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
+    if stateCoroutineBody(state) && !Ashes.Text.startsWith(name)("$async_helper_") && requirements == [] && !alreadyReturnsAsyncTask(value)(state)
+    then
+        match helperRewrite(name)(bindingLambdaValue(annotation)(value)(state))(body)(state.nextLambdaId) with
+            | Some(rewritten) -> lowerSynthesized(lower)(rewritten)(state)
+            | None -> lowerOrdinaryLetRecursive(name)(value)(body)(annotation)(requirements)(lower)(state)
+    else lowerOrdinaryLetRecursive(name)(value)(body)(annotation)(requirements)(lower)(state)
 
 // Whether a lambda body names a resource binding of the enclosing scope other than its own
 // parameter.

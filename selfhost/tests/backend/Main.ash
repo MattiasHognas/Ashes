@@ -3874,6 +3874,9 @@ let testSocketCaptureTeardown shipped unit =
             let _ = run("socket_capture_close")(["true", "true"])
             in run("socket_capture_cancel")(["true"]))
 
+let testRecursiveAwaitingHelperRemainsCallable shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))("recursiveAwaitingHelperRemainsCallable")("selfhost_backend_recursive_awaiting_helper")("62")
+
 let testCompileConcurrentHttpServerForReplay shipped unit =
     compileTestExecutable([])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/concurrent_http_server.ash.source"))("concurrentHttpServer")("selfhost_backend_concurrent_http_server")
 
@@ -6350,6 +6353,7 @@ let run shipped =
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
     |> testSocketCaptureTeardown(shipped)
+    |> testRecursiveAwaitingHelperRemainsCallable(shipped)
     |> testCompileConcurrentHttpServerForReplay(shipped)
     |> testRcDupDrop
     |> testIsReferenceCounted

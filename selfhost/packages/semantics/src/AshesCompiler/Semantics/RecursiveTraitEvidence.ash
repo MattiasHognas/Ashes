@@ -6,6 +6,7 @@ import AshesCompiler.Frontend.Syntax
 import Ashes.Collection.List.append
 export (
     value rewriteRecursiveTraitEvidence,
+    value replaceFreeReference,
 )
 
 let recursive containsName (name: Str) (names: List(Str)) =
@@ -65,6 +66,20 @@ let recursive applyEvidence reference evidence =
         | name :: rest ->
             applyEvidence(ExprCall(reference)(ExprVar(name))(false)(callArgumentsInline))(rest)
 
+type ReferenceRewrite =
+    | EvidenceFor(Str)
+    | ReplaceReference(Str, Expr)
+
+let referenceName target =
+    match target with
+        | EvidenceFor(name) -> name
+        | ReplaceReference(name, _value) -> name
+
+let rewrittenReference target reference evidence =
+    match target with
+        | EvidenceFor(_name) -> applyEvidence(reference)(evidence)
+        | ReplaceReference(_name, value) -> value
+
 let recursive rewriteExpressions self evidence blocked expressions =
     match expressions with
         | [] -> Some([])
@@ -94,7 +109,7 @@ and rewriteCases self evidence blocked cases =
                 match patternNames(pattern) with
                     | None -> None
                     | Some(names) ->
-                        if containsName(self)(names)
+                        if containsName(referenceName(self))(names)
                         then Some((body, guard))
                         else
                             let shadowed = blocked || namesShadowEvidence(evidence)(names)
@@ -114,7 +129,7 @@ and rewriteArms self evidence blocked arms =
                 match patternListNames(patterns) with
                     | None -> None
                     | Some(names) ->
-                        if containsName(self)(names)
+                        if containsName(referenceName(self))(names)
                         then Some(body)
                         else rewrite(self)(evidence)(blocked || namesShadowEvidence(evidence)(names))(body)
             in
@@ -137,12 +152,12 @@ and rewriteUnary self evidence blocked constructor operand =
         | None -> None
 and rewriteLet self evidence blocked isRecursive name value body parameters annotation requirements =
     (let nextValue =
-        if isRecursive && name == self || containsName(self)(parameters)
+        if isRecursive && name == referenceName(self) || containsName(referenceName(self))(parameters)
         then Some(value)
         else rewrite(self)(evidence)(blocked || namesShadowEvidence(evidence)(parameters) || isRecursive && containsName(name)(evidence))(value)
     in
         let nextBody =
-            if name == self
+            if name == referenceName(self)
             then Some(body)
             else rewrite(self)(evidence)(blocked || containsName(name)(evidence))(body)
         in
@@ -155,13 +170,13 @@ and rewriteLet self evidence blocked isRecursive name value body parameters anno
 and rewrite self evidence blocked expression =
     match expression with
         | ExprVar(name) ->
-            if name == self
+            if name == referenceName(self)
             then
                 if blocked
                 then None
                 else
                     evidence
-                    |> applyEvidence(expression)
+                    |> rewrittenReference(self)(expression)
                     |> Some
             else Some(expression)
         | ExprAt(span, inner) ->
@@ -202,7 +217,7 @@ and rewrite self evidence blocked expression =
         | ExprLet(name, value, body, parameters, annotation, requirements) -> rewriteLet(self)(evidence)(blocked)(false)(name)(value)(body)(parameters)(annotation)(requirements)
         | ExprLetRecursive(name, value, body, parameters, annotation, requirements) -> rewriteLet(self)(evidence)(blocked)(true)(name)(value)(body)(parameters)(annotation)(requirements)
         | ExprLetResult(name, value, body) ->
-            match (rewrite(self)(evidence)(blocked)(value), if name == self
+            match (rewrite(self)(evidence)(blocked)(value), if name == referenceName(self)
             then Some(body)
             else rewrite(self)(evidence)(blocked || containsName(name)(evidence))(body)) with
                 | (Some(nextValue), Some(nextBody)) ->
@@ -211,7 +226,7 @@ and rewrite self evidence blocked expression =
                     |> Some
                 | _ -> None
         | ExprLambda(name, body, annotation) ->
-            if name == self
+            if name == referenceName(self)
             then Some(expression)
             else
                 rewriteUnary(self)(evidence)(blocked || containsName(name)(evidence))(given (next) -> ExprLambda(name)(next)(annotation))(body)
@@ -274,4 +289,7 @@ let rewriteRecursiveTraitEvidence self evidence expression =
         | _ ->
             if containsName(self)(evidence)
             then None
-            else rewrite(self)(evidence)(false)(expression)
+            else rewrite(EvidenceFor(self))(evidence)(false)(expression)
+
+let replaceFreeReference name value expression =
+    rewrite(ReplaceReference(name)(value))([])(false)(expression)

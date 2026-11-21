@@ -828,8 +828,23 @@ let expectSocketsReleasedOnlyByOwningFrames unit =
                         |> hasFrameDropper
                         |> test.assertEqual(false))
 
+let expectRecursiveAwaitingHelperSuspends unit =
+    (let source = "let job n = async(let recursive loop k total = if k <= 0 then total else match await Ashes.Task.sleep(1) with | Ok(_tick) -> loop(k - 1)(total + 1) | Error(_e) -> total in loop(n)(0))\njob"
+    in
+        let lines = dumpSource(source)
+        in
+            let _ =
+                lines
+                |> countLinesContaining("    RunTask")("TaskTemp=")
+                |> test.assertEqual(0)
+            in
+                lines
+                |> countLinesContaining("    Jump")("Target=__async_loop_")
+                |> test.assertEqual(1))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectRecursiveAwaitingHelperSuspends
     |> expectSocketsReleasedOnlyByOwningFrames
     |> expectBytesUpdatesReuseFreshBuffers
     |> expectLongTrailingChainUnderOwnedLetLowers
