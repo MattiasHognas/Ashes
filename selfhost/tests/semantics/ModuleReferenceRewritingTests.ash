@@ -159,7 +159,7 @@ let expectMainRewriting units =
 // record literal and a record pattern name the constructor, which the lowering looks up.
 let privateProgram =
     ProgramSyntax(items = [TopLevelType(
-        TypeDecl(name = "Cfg", typeParameters = [], constructors = [TypeConstructor(name = "Cfg", parameters = [TypeNamed("Int")], fieldNames = ["width"])], isRecord = true, derivingTraits = [])
+        TypeDecl(name = "Cfg", typeParameters = [], constructors = [TypeConstructor(name = "Cfg", parameters = [TypeNamed("Int")], fieldNames = ["width"])], isRecord = true, derivingTraits = ["Render"])
     ), TopLevelLet(false
     |> ExprRecord("Cfg")([("width", ExprInt(1))])
     |> binding("make"))(false), TopLevelLet(
@@ -173,7 +173,7 @@ let privateUnit = SemanticStitchUnit(name = "Priv", packageId = "dep", sourcePat
 
 let expectPrivateRecordRewriting units =
     match requireProgram("Priv")(units) with
-        | ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Priv_Cfg", constructors = TypeConstructor { name = "AshesPrivateConstructor_Priv_Cfg" } :: [] }) :: TopLevelLet(LetBindingSyntax { value = ExprRecord("AshesPrivateConstructor_Priv_Cfg", _fields, _multiline) }, false) :: TopLevelLet(LetBindingSyntax { value = ExprMatch(_scrutinee, (PatternRecord("AshesPrivateConstructor_Priv_Cfg", _patternFields), _body, None) :: [], _fallback) }, false) :: [] } -> units
+        | ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Priv_Cfg", derivingTraits = "Foo_Util_Render" :: [], constructors = TypeConstructor { name = "AshesPrivateConstructor_Priv_Cfg" } :: [] }) :: TopLevelLet(LetBindingSyntax { value = ExprRecord("AshesPrivateConstructor_Priv_Cfg", _fields, _multiline) }, false) :: TopLevelLet(LetBindingSyntax { value = ExprMatch(_scrutinee, (PatternRecord("AshesPrivateConstructor_Priv_Cfg", _patternFields), _body, None) :: [], _fallback) }, false) :: [] } -> units
         | _ -> test.fail("a private record literal and pattern should name the private constructor")
 
 let runModuleReferenceRewritingTests unit =

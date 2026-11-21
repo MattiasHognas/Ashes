@@ -107,6 +107,17 @@ let resolveReferenceCompilerName project moduleName boundary kind name =
         | Some(definition) -> definitionCompilerName(definition)
         | None -> unimportedOrWritten(project)(moduleName)(kind)(name)
 
+let rewriteTraitName project moduleName boundary name =
+    match parentAndLeaf(name) with
+        | Some((qualifier, leaf)) -> resolveQualifiedCompilerName(project)(moduleName)(qualifier)(StitchedTrait)(leaf)
+        | None ->
+            match resolveStitchedUnqualified(moduleName)(boundary)(StitchedTrait)(name)(project) with
+                | Some(definition) -> definitionCompilerName(definition)
+                | None ->
+                    match resolveStitchedUnimported(moduleName)(StitchedTrait)(name)(project) with
+                        | Some(definition) -> definitionCompilerName(definition)
+                        | None -> deepCopy(name)
+
 let rewriteTypeName project moduleName boundary typeParameters name =
     if textExists(name)(typeParameters)
     then deepCopy(name)
@@ -207,11 +218,10 @@ let recursive rewriteTraitConstraints project moduleName boundary typeParameters
     match constraints with
         | [] -> []
         | TraitConstraintSyntax { traitName = traitName, typeArguments = arguments } :: rest ->
-            TraitConstraintSyntax(traitName = rewriteTypeName(
+            TraitConstraintSyntax(traitName = rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                typeParameters,
                 traitName
             ), typeArguments = rewriteTypes(
                 project,
@@ -807,11 +817,10 @@ let recursive rewriteDerivingTraits project moduleName boundary traits =
     match traits with
         | [] -> []
         | name :: rest ->
-            rewriteTypeName(
+            rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                [],
                 name
             ) :: rewriteDerivingTraits(project)(moduleName)(boundary)(rest)
 
@@ -1080,11 +1089,10 @@ let recursive rewriteImplementationBindings project moduleName boundary bindings
 let rewriteImplementationDeclaration project moduleName boundary declaration =
     match declaration with
         | TraitImplementationDecl { traitName = traitName, typeArguments = arguments, requirements = requirements, bindings = bindings } ->
-            TraitImplementationDecl(traitName = rewriteTypeName(
+            TraitImplementationDecl(traitName = rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                [],
                 traitName
             ), typeArguments = rewriteTypes(
                 project,
