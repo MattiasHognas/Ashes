@@ -1,3 +1,10 @@
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
@@ -207,6 +214,42 @@ let checkStitchedFixture shipped path =
                         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("stitched regression failed: " + Ashes.Trait.Show.show(error))
                         | _ -> Ashes.IO.panic("stitched regression produced no program")
 
+// Lower the captured loop through the same numbered syntax and type table as a typed
+// CLI compile. Both instantiations must use arithmetic in the entry module.
+let recursive hasEntryInstruction path opcode lines =
+    match lines with
+        | [] -> false
+        | line :: rest -> Ashes.Text.startsWith(line)("    " + opcode + " ") && Ashes.Text.contains(line)(path) || hasEntryInstruction(path)(opcode)(rest)
+
+let checkTypedEntryCopyIr path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(ir), error = None } ->
+            let lines = formatIr(ir)(LoweredIr)(None)
+            in
+                if hasEntryInstruction(path)("AddInt")(lines) && hasEntryInstruction(path)("AddFloat")(lines)
+                then Unit
+                else Ashes.IO.panic("entry-frame loop lost an arithmetic instantiation")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("typed entry-frame loop failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("typed entry-frame loop produced no program")
+
+let checkTypedEntryCopy shipped path =
+    match Ashes.IO.File.readText(path) with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match stitchWithShippedModules("regression")(path)(source)(shipped) with
+                | Error(error) -> Ashes.IO.panic("entry-frame stitching failed: " + Ashes.Trait.Show.show(error))
+                | Ok(stitched) ->
+                    let identified = identifyStitchedProject(stitched)
+                    in
+                        match inferIdentifiedStitchedProjectFrom("standalone"
+                        |> emptyTypeEnvironmentForPackage
+                        |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("entry-frame inference failed: " + Ashes.Trait.Show.show(error))
+                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                table
+                                |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))
+                                |> checkTypedEntryCopyIr(path)
+
 let checkStitchedLibraryContext unit =
     match Ashes.IO.Directory.entries("lib/Ashes") with
         | Error(message) -> Ashes.IO.panic(message)
@@ -215,6 +258,8 @@ let checkStitchedLibraryContext unit =
             in
                 Unit
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/logical_not_inferred_predicates.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_evaluates_argument_once_at_two_types.ash"))
+                |> (given (_) -> checkTypedEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
