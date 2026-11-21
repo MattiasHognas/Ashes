@@ -2291,7 +2291,7 @@ public static class ProjectSupport
                     scope[target.ModuleName] = byModule[target.ModuleName];
                 }
             }
-            foreach (string import in owner.Imports)
+            foreach (string import in owner.Imports.Where(import => ImportsWholeModule(owner, import)))
             {
                 if (byModule.TryGetValue(import, out IReadOnlySet<string>? values))
                 {
@@ -3386,6 +3386,12 @@ public static class ProjectSupport
         }
     }
 
+    private static bool ImportsWholeModule(ProjectModule module, string name) =>
+        module.WholeModuleImports?.Contains(name) != false
+        || module.Aliases.Values.Contains(name, StringComparer.Ordinal)
+        || module.Selectors.Any(selector => selector.ExportName.Length > 0 && char.IsUpper(selector.ExportName[0])
+            && string.Equals(selector.ModuleName, name, StringComparison.Ordinal));
+
     private static List<KeyValuePair<string, string>> BuildVisibleAliases(
         ProjectModule module,
         IReadOnlyList<string> availableLocalBindings,
@@ -3454,11 +3460,8 @@ public static class ProjectSupport
         List<KeyValuePair<string, string>> aliases)
     {
         // Binding selectors (`import M.name [as x]`) introduce the selected value export unqualified.
-        // They are resolved before whole-module imports so an explicitly selected name wins over the
-        // same name being brought in by a whole-module import. The alias target is the qualified
-        // reference `Module.name`, which the lowering resolves uniformly for built-in members and
-        // stitched user-module bindings (`Ashes_Module_name`) alike — so no implicit re-export occurs:
-        // the alias lives only in this module's stitched source. Type selectors (`import M.Type`) need
+        // Resolve the selected alias to its validated export directly: the selector does not import
+        // the module qualifier. Intrinsic selectors have already been rewritten. Type selectors need
         // no value alias: type declarations are hoisted to the top of the combined source and are
         // already globally visible, so an unqualified type reference resolves with nothing to inject.
         foreach (var selector in module.Selectors)
@@ -3473,7 +3476,7 @@ public static class ProjectSupport
 
             aliases.Add(new KeyValuePair<string, string>(
                 selector.LocalName,
-                $"{selector.ModuleName}.{selector.ExportName}"));
+                $"{SanitizeModuleBindingName(selector.ModuleName)}_{selector.ExportName}"));
         }
     }
 
@@ -3490,7 +3493,7 @@ public static class ProjectSupport
         // A selector import (`import M.name`) lists M again beside a whole-module `import M`.
         foreach (var import in module.Imports.Reverse().Distinct(StringComparer.Ordinal))
         {
-            if (!exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
+            if (!ImportsWholeModule(module, import) || !exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
             {
                 continue;
             }
