@@ -127,6 +127,7 @@ export (
     value withRefreshedHeapLayoutFacts,
     value withDroppedHeapLayoutFacts,
     value heapFactsOf,
+    value heapResourceOf,
     value lookupOwnerReleasePlan,
     value locateSynthesizedFunction,
     value spliceInlineRelease,
