@@ -1948,6 +1948,7 @@ public static class ProjectSupport
                 HasPosition: true);
         }
 
+        bool recoveredEntry = TryRecoverWrappedEntry(layout, entries, combinedIndex, entryFilePath, entryStrippedSource, originalIndex, results);
         foreach (var entry in entries)
         {
             var start = combinedIndex.ToUtf16Offset(entry.Span.Start);
@@ -1955,6 +1956,10 @@ public static class ProjectSupport
 
             if (start >= layout.EntryOffset)
             {
+                if (recoveredEntry)
+                {
+                    continue;
+                }
                 var (line, column) = OffsetToLineColumn(combined, layout.EntryOffset, start);
                 results.Add(AtEntryPosition(entry, line, column, length));
                 continue;
@@ -1984,6 +1989,49 @@ public static class ProjectSupport
         }
 
         return WithoutStandardLibraryCascades(results);
+    }
+
+    private static bool TryRecoverWrappedEntry(
+        CombinedCompilationLayout layout,
+        IReadOnlyList<DiagnosticEntry> entries,
+        SourceTextIndex combinedIndex,
+        string path,
+        string strippedSource,
+        SourceTextIndex originalIndex,
+        List<MappedDiagnostic> results)
+    {
+        if (layout.ModuleOffsets.Count == 0)
+        {
+            return false;
+        }
+
+        int end = layout.ModuleOffsets[^1].EndOffset;
+        if (end != layout.Source.Length - 1 || layout.Source[end] != ')'
+            || !entries.Any(entry => entry.Code == DiagnosticCodes.ParseError
+                && combinedIndex.ToUtf16Offset(entry.Start) == end))
+        {
+            return false;
+        }
+
+        // Recovery at a generated ')' can create several diagnostics at that token and the
+        // subsequent EOF. Parse the entry's own text to recover at its actual end of input.
+        (string outerSource, _) = ExpandInlineModules(strippedSource, "", path);
+        Diagnostics diagnostics = new();
+        _ = new Parser(outerSource, diagnostics).ParseProgram();
+        SourceTextIndex outerIndex = new(outerSource);
+        int OriginalOffset(int offset)
+        {
+            (int line, int column) = outerIndex.ToPosition(offset, SourcePositionEncoding.UnicodeScalar);
+            return originalIndex.FromPosition(line, column, SourcePositionEncoding.UnicodeScalar);
+        }
+
+        foreach (DiagnosticEntry error in diagnostics.StructuredErrors)
+        {
+            TextSpan span = TextSpan.FromBounds(OriginalOffset(error.Start), OriginalOffset(error.End));
+            results.Add(new MappedDiagnostic(error with { Span = span }, path, HasPosition: true));
+        }
+
+        return diagnostics.StructuredErrors.Count > 0;
     }
 
     // The standard library's own code compiles cleanly, so a diagnostic placed in a shipped module

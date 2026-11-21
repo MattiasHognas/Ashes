@@ -980,6 +980,20 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void MapDiagnosticsToOriginal_recovers_at_the_source_end_of_an_unfinished_binding()
+    {
+        const string original = "let x = 1\nlet y = x +";
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        Diagnostics diagnostics = new();
+        _ = new Parser(layout.Source, diagnostics).ParseProgram();
+        IReadOnlyList<ProjectSupport.MappedDiagnostic> mapped = ProjectSupport.MapDiagnosticsToOriginal(
+            layout, diagnostics.StructuredErrors, "<memory>", original, parsed.SourceWithoutImports);
+        mapped.Select(diagnostic => diagnostic.Entry.Message).ShouldBe(["Expected expression but found EOF."]);
+        mapped[0].Entry.Start.ShouldBe(original.Length);
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
     {
         // The Ashes.Collection.List import stitches a source stdlib module, so the entry body sits behind a
