@@ -3928,6 +3928,8 @@ let testSocketHelperTeardown shipped unit =
 
 let testIndirectAwaitingHelperCarriesStringAcrossRestart shipped unit = assertSharedProgramPrintsExactly(shipped)("indirect_awaiting_helper_carries_string_across_restart")("p21|q321")
 
+let testAwaitingListInequalityKeepsElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_list_inequality_keeps_element_dictionary")("no yes")
+
 let testAsyncLoopAccumulator shipped unit = assertSharedProgramPrintsExactly(shipped)("async_loop_accumulator")("15")
 
 let testAwaitingHelperKeepsOwnedBackedgeValues shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_helper_keeps_owned_backedge_values")("2=1=seed")
@@ -6429,6 +6431,7 @@ let run shipped =
     |> testSocketHelperTeardown(shipped)
     |> testAwaitingHelperKeepsOwnedBackedgeValues(shipped)
     |> testAsyncLoopAccumulator(shipped)
+    |> testAwaitingListInequalityKeepsElementDictionary(shipped)
     |> testIndirectAwaitingHelperCarriesStringAcrossRestart(shipped)
     |> testRecursiveAwaitingHelperRemainsCallable(shipped)
     |> testCompileConcurrentHttpServerForReplay(shipped)
