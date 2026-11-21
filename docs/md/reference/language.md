@@ -3657,6 +3657,14 @@ together. Instantiating the binding freshens every quantified variable in both i
 its constraints. Constraints propagate through calls, closures, partial application, higher-order
 arguments, matches, async bodies, and capability-performing functions.
 
+A binding evaluates its right-hand side immediately and exactly once. Each trait operation performed
+during that evaluation requires a determined instance or evidence already available from an enclosing
+binding. If selecting its instance would require a type fixed only by a later polymorphic use, the
+binding is ambiguous (ASH010). A type annotation can fix the instance at the binding. Requirements
+used only when invoking the returned function can remain generalized. For example, when a first
+application writes a prefix and returns a function that shows its argument, the write occurs once
+at the first application, and later calls can supply different `Show` instances.
+
 A constraint on type variables that a local `let` does not generalize, because they belong to an
 enclosing binding (a parameter's type, say), is a requirement of that enclosing binding, whether or
 not the `let`'s name is ever used:
