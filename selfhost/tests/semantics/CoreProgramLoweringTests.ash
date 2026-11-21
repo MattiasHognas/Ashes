@@ -10,6 +10,7 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.Unification
 export (
     value runCoreProgramLoweringTests,
 )
