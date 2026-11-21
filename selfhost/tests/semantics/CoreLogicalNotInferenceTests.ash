@@ -82,6 +82,11 @@ let checkShowExpressionBoundary unit =
         | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Show", SemVariable(_id))) } -> Unit
         | _ -> Ashes.IO.panic("non-replaying Show expression accepted an unresolved goal")
 
+let checkEscapingDictionary unit =
+    match lowerExpressionSource("let invert x = !x in invert") with
+        | CoreLoweringResult { program = None, error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
+        | _ -> Ashes.IO.panic("unresolved dictionary escaped the expression boundary")
+
 let checkRecursiveExpressionBoundary unit =
     match lowerExpressionSource("let recursive even n = if n == 0 then true else !even(n - 1) in even(10)") with
         | CoreLoweringResult { program = Some(program), semanticType = SemBool, error = None } ->
@@ -90,7 +95,7 @@ let checkRecursiveExpressionBoundary unit =
             |> Ashes.Text.join("\n"))("CmpIntEq")
             then
                 match lowerExpressionSource("let recursive invert x = !x in invert") with
-                    | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
+                    | CoreLoweringResult { program = None, error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
                     | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("escaping recursive Not changed its diagnostic: " + Ashes.Trait.Show.show(error))
                     | _ -> Ashes.IO.panic("recursive discovery placeholder escaped")
             else Ashes.IO.panic("recursive expression did not emit negation")
@@ -107,4 +112,5 @@ let runCoreLogicalNotInferenceTests unit =
     |> checkMixedNotEvidence
     |> checkExpressionBoundary
     |> checkShowExpressionBoundary
+    |> checkEscapingDictionary
     |> checkRecursiveExpressionBoundary

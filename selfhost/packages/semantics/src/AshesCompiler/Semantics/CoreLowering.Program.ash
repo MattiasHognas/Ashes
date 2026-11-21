@@ -2426,6 +2426,7 @@ let releaseEntryGeneralRcOwnedSlots (lowered: LoweredCoreValue) =
 
 let buildProgram lowered =
     match lowered
+    |> refuseUnansweredGoals
     |> releaseEntryGeneralRcOwnedSlots
     |> resolveLoweredPendingBlocks with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
