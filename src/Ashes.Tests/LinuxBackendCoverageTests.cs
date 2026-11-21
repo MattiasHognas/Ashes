@@ -5898,7 +5898,9 @@ public sealed class LinuxBackendCoverageTests
         // when makeNode is inlined, once the helper body is lowered; nothing released it before.
         // (The specialization copies the missing value into the persistent region at every call,
         // so this is checked on the lowered program, not by peak memory.)
-        IrProgram ir = LowerProgramWithImports(BuildMapUpsertClosureResultLoopProgram(40));
+        string source = BuildMapUpsertClosureResultLoopProgram(40);
+        IrProgram production = LowerWithRuntimeRcMapLoop(source, "rounds", "counts");
+        IrProgram ir = LowerProgramWithImportsAndLowering(source, PersistentMapConfiguration).Ir;
         bool copiedResultReleased = ir.Functions.Any(function =>
         {
             List<IrInst> instructions = function.Instructions;
@@ -5914,6 +5916,8 @@ public sealed class LinuxBackendCoverageTests
         {
             ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
             result.Stdout.ShouldBe("44\n");
+            ExecutionResult productionResult = await CompileRunWithLinuxLlvmAsync(production).ConfigureAwait(false);
+            productionResult.Stdout.ShouldBe(result.Stdout);
         }
     }
 
@@ -9013,7 +9017,8 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Reuse_update_reads_the_value_it_overwrites_from_the_token_cell()
     {
-        IrProgram ir = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        IrProgram ir = LowerProgramWithImportsAndLowering(
+            BuildPersistentMapStringUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         int checkedUpdates = 0;
         foreach (IrFunction function in ir.Functions)
         {
@@ -9039,11 +9044,13 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        IrProgram mapProbe = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        IrProgram mapProbe = LowerProgramWithImportsAndLowering(
+            BuildPersistentMapStringUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         AllInstructions(mapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
         AllInstructions(mapProbe).Any(instruction => instruction is IrInst.CopyStringIntoOrFresh).ShouldBeTrue();
 
-        IrProgram hashMapProbe = LowerProgramWithImports(BuildPersistentHashMapUpdateMemoryProgram(1));
+        IrProgram hashMapProbe = LowerProgramWithImportsAndLowering(
+            BuildPersistentHashMapUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         AllInstructions(hashMapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
         hashMapProbe.Functions.Any(function =>
             function.Origin?.Kind == IrFunctionOriginKind.TraitOperatorSpecialization
@@ -9052,12 +9059,45 @@ public sealed class LinuxBackendCoverageTests
                 "Ashes_Collection_HashMap_hMax",
                 StringComparison.Ordinal)).ShouldBeTrue();
 
+        await AssertMapUpdateMemoryPlateausAsync(PersistentMapConfiguration).ConfigureAwait(false);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_map_memory_should_plateau_as_updates_scale()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        LowerWithRuntimeRcMapLoop(BuildPersistentMapStringUpdateMemoryProgram(1), "loop", "map");
+        LowerWithRuntimeRcMapLoop(BuildPersistentHashMapUpdateMemoryProgram(1), "loop", "map");
+        await AssertMapUpdateMemoryPlateausAsync(LoweringConfiguration.Default).ConfigureAwait(false);
+    }
+
+    // Production reserves these concrete changing variants for runtime RC before persistent
+    // specialization. Exercise the independent region path on the same inputs without changing
+    // process-global compiler controls in concurrently executing tests.
+    private static LoweringConfiguration PersistentMapConfiguration { get; } = new(EnableGenericVariantLoopRc: false);
+
+    private static IrProgram LowerWithRuntimeRcMapLoop(string source, string loopName, string parameterName)
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithImportsAndLowering(source);
+        IReadOnlyList<TcoParamPlacementTrace> placements = lowering.GetTcoPlacementDecisions(loopName)
+            ?? throw new InvalidOperationException($"No TCO placement snapshot for '{loopName}'.");
+        placements.Single(trace => string.Equals(trace.Current.ParameterName, parameterName, StringComparison.Ordinal))
+            .Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        return ir;
+    }
+
+    private static async Task AssertMapUpdateMemoryPlateausAsync(LoweringConfiguration configuration)
+    {
         List<MemoryExecutionResult> mapSamples = await MeasureImportedMemoryGrowthAsync(
             BuildPersistentMapStringUpdateMemoryProgram,
-            outputPerIteration: 1).ConfigureAwait(false);
+            outputPerIteration: 1, configuration: configuration).ConfigureAwait(false);
         List<MemoryExecutionResult> hashMapSamples = await MeasureImportedMemoryGrowthAsync(
             BuildPersistentHashMapUpdateMemoryProgram,
-            outputPerIteration: 1).ConfigureAwait(false);
+            outputPerIteration: 1, configuration: configuration).ConfigureAwait(false);
 
         AssertMemoryPlateaus("persistent Map String-value update", mapSamples);
         AssertMemoryPlateaus("persistent HashMap fixed-key update", hashMapSamples);
@@ -11158,7 +11198,8 @@ public sealed class LinuxBackendCoverageTests
         return ir;
     }
 
-    internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(string source)
+    internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(
+        string source, LoweringConfiguration? configuration = null)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -11168,7 +11209,7 @@ public sealed class LinuxBackendCoverageTests
         var program = new Parser(layout.Source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
 
-        var lowering = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+        var lowering = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, configuration: configuration);
         var ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
         return (lowering, ir);
@@ -11476,13 +11517,14 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<List<MemoryExecutionResult>> MeasureImportedMemoryGrowthAsync(
         Func<int, string> sourceFactory,
-        int outputPerIteration)
+        int outputPerIteration,
+        LoweringConfiguration? configuration = null)
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
         List<MemoryExecutionResult> samples = new(iterationCounts.Length);
         foreach (int iterations in iterationCounts)
         {
-            IrProgram ir = LowerProgramWithImports(sourceFactory(iterations));
+            IrProgram ir = LowerProgramWithImportsAndLowering(sourceFactory(iterations), configuration).Ir;
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
             sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
             samples.Add(sample);

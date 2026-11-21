@@ -22,7 +22,8 @@ public sealed partial class Lowering
         TypeRef parameterType,
         bool requireExitContract = true)
     {
-        if (!GeneralRcEnabled
+        if (!_configuration.EnableGenericVariantLoopRc
+            || !GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_TCO") is not null
             || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_GENERICVARIANTLOOPRC"))
             || !facts.HasVisibleBinding
