@@ -432,8 +432,13 @@ known strict-callee ordering regression. The independent strict-prefix split `61
 integrated as `7115f734`, typo repair `5673913d` as `75f979f8`, and captured-self normalizer
 `5af4e0e1` as `902c0e0b`. The worker's stage-0 poison smokes passed exact ordering and nested
 captured/aliased mixed-constraint behavior; integrated/native stage-1 proof is still pending.
-No main load job is currently running. Next: short fresh-source inference/build preflight, then
-the per-module native suite once the immediate-evidence policy batch is ready.
+The fresh-source preflight at `8c8e59a1` (`work/r10pre/prefix-preflight/`) passed the stage-0 build
+and both strict/captured-prefix poison regressions. Whole-compiler inference **failed** at
+`CoreLowering.Program.ash:2267:86`: argument 2 of `lowerScheduledProgramPasses` expected
+`Maybe(Expr)` instead of the normalized trailing `Expr` (10,036 items / 183 modules). The tool
+returned exit 0 despite printing `error`; require an explicit `ok` result when judging this check.
+Worker correction `03875c48` is pushed but not integrated. No main load job is currently running.
+Next: integrate the completed policy batch, rerun source preflight, then the per-module native suite.
 
 The native preflight at `4a6478c7` (`work/r10pre/native-port/`) passed solution build/format,
 C# 3,064 passed / 13 failed / 2 skipped, LSP 88/88 and compiler inference 9,995 items / 182 modules.
@@ -462,10 +467,11 @@ available enclosing evidence; requirements used only by the returned function re
 Reference change `ec3265c1` is integrated as `62d8e5de` before implementation. Standalone-inference
 and lowering enforcement are active work. The user's positive example keeps Seed.first/inspect
 inside `check x`, so check remains polymorphic with inferred Seed/Eq evidence supplied at each call.
-The independent early-callee effect case has a unique required order and remains a blocking compiler
-bug: `generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
-`entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. Agent is implementing a
-declaration-site split preserving lexical captures and the ordinary full-call ABI.
+The independent early-callee effect case has a unique required order:
+`generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
+`entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. The declaration-site split
+preserving lexical captures and the ordinary full-call ABI is integrated and passes the fresh
+stage-0 poison check; native stage-1 proof is pending.
 
 Active workers are now `lowering_evidence` in `r10-evidence-audit` (C# policy and lowering scheduling;
 bounded single-project CLI recovery builds/short smokes authorized) and `tmc_repair` in
@@ -474,6 +480,13 @@ standalone inference metadata/enforcement). Its reference dependency `c3f995b8` 
 `ec3265c1`; skip the duplicate at integration. Metadata contract is a demand stage for each
 canonical scheme requirement ordinal, exposed as `nodeEvidenceStagesAt(rhsRoot)(nodeTypes)`;
 direct method/operator execution demands evidence, reference instantiation alone does not.
+Pending pushed slices on `fix/r10-evidence-audit`: `80e21b10` (C# immediate evidence policy),
+`e946de8f` (borrowed scheme-read ownership; stage-1 equivalent path already exists), `854a6c30`
+(transitive wrapper strictness in both compilers), and `03875c48` (normalized trailing expression).
+`fix/r10-immediate-evidence` has `b346b24c` (standalone policy and stage metadata); its
+`335a3d10` dependency duplicates integrated `75f979f8` and must be skipped. The inference worker
+is finishing higher-order invocation/ignored-callback/returned-callback coverage; the lowering worker
+is wiring validation for raw lowering entry points while reusing validation on checked CLI paths.
 Both use
 GPT-6.2 Astra; no third active worker. Their `work/BRIEF.md` and `work/PROGRESS.md` hold details.
 `imports_diagnostics` is idle. The type-coverage manifest preflight reached an unchanged
