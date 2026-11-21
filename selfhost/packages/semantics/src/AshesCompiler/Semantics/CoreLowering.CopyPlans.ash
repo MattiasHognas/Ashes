@@ -494,6 +494,7 @@ let recursive lookupRuntimeManagedListSlot (slot: Int) (entries: List((Int, Int,
 // constructor's tag, its cell size, whether the cell is tagless, and its owned children by field
 // index.
 type ArgumentCopyPlan =
+    | ClosureArgumentCopy
     | ScalarArgumentCopy
     | LeafArgumentCopy(Int)
     | ListHeadArgumentCopy(ListHeadCopyKind)
@@ -1198,6 +1199,8 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = resultTemp } ->
                     match plan with
+                        | ClosureArgumentCopy ->
+                            (emit(CopyOutClosure(resultTemp)(sourceTemp)(true)(RcNormalization))(allocated), resultTemp)
                         | LeafArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ShallowAdtArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ListHeadArgumentCopy(headCopy) -> (rcNormalizationListCopyOut(resultTemp)(sourceTemp)(headCopy)(allocated), resultTemp)
@@ -1554,6 +1557,8 @@ let emitArgumentCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: Co
                     (emit(CopyOutList(normalizedTemp)(sourceTemp)(headCopy)(true)(RcNormalization))(allocated), normalizedTemp)
                 // The whole argument was already tested, so its spine walk is the plain one.
                 | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(allocated)
+                | ClosureArgumentCopy ->
+                    (emit(CopyOutClosure(normalizedTemp)(sourceTemp)(true)(RcNormalization))(allocated), normalizedTemp)
                 | TupleArgumentCopy(_elements) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | ConstructorArgumentCopy(_constructorPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | SwitchArgumentCopy(_constructorPlans) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)

@@ -835,6 +835,9 @@ let emitClosureCaptureDrop (capturedTemp: Int) (resolved: SemanticType) (state: 
             emit(RcDrop(capturedTemp)("Bytes")(-1)(true)(false)(None))(state)
         | SemBigInt ->
             emit(RcDrop(capturedTemp)("BigInt")(-1)(true)(false)(None))(state)
+        | SemFunction(_argument, _result, _row) ->
+            emit(RcDrop(capturedTemp)("Function")(-1)(true)(false)(None))(state)
+        | SemTuple(_elements) as tuple -> emitOwnedValueRelease(emit)(capturedTemp)(tuple)(state)
         | SemNamed(_symbolId, _name, _arguments) as named -> emitOwnedValueRelease(emit)(capturedTemp)(named)(state)
         | _ -> state
 
@@ -951,20 +954,55 @@ let canNormalizeClosureCapture (resolved: SemanticType) (state: CoreLoweringStat
                 | Some(_text) -> true
                 | None -> false
 
+// Evidence fields are either method closures or nested dictionaries of methods.
+let recursive dictionaryCopyPlan semanticType =
+    match semanticType with
+        | SemFunction(_argument, _result, _row) -> Some(ClosureArgumentCopy)
+        | SemTuple(elements) ->
+            match dictionaryFieldPlans(elements) with
+                | Some(plans) -> Some(TupleArgumentCopy(plans))
+                | None -> None
+        | _ -> None
+and dictionaryFieldPlans elements =
+    match elements with
+        | [] -> Some([])
+        | element :: rest ->
+            match (dictionaryCopyPlan(element), dictionaryFieldPlans(rest)) with
+                | (Some(first), Some(remaining)) -> Some(first :: remaining)
+                | _ -> None
+
+let recursive capturesTraitEvidence captures =
+    match captures with
+        | [] -> false
+        | CoreBinding { name = name } :: rest -> Ashes.Text.startsWith(name)("__trait_") || capturesTraitEvidence(rest)
+
 // `(environment offset, type text, copy plan, type)` per capture, in environment order, when every
 // capture is one the normalizer re-establishes through the deep copy.
-let recursive deepCopyCaptureLayout (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+let recursive deepCopyCaptureLayout (evidence: Bool) (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
     match types with
         | [] -> Some([])
         | captureType :: rest ->
             let resolved = resolveType(state)(captureType)
             in
-                if canNormalizeClosureCapture(resolved)(state)
+                if evidence
                 then
-                    match (captureTypeText(resolved), generalCopyPlanOf(resolved)(state), deepCopyCaptureLayout(rest)(index + 1)(state)) with
-                        | (Some(text), Some(plan), Some(layout)) -> Some((index * 8, text, plan, resolved) :: layout)
+                    match (dictionaryCopyPlan(resolved), deepCopyCaptureLayout(evidence)(rest)(index + 1)(state)) with
+                        | (Some(plan), Some(layout)) -> Some((index * 8, Ashes.Trait.Show.show(resolved), plan, resolved) :: layout)
+                        | (None, Some(layout)) ->
+                            match resolved with
+                                | SemVariable(_id) -> Some((index * 8, "word", ScalarArgumentCopy, resolved) :: layout)
+                                | _ ->
+                                    match (canNormalizeClosureCapture(resolved)(state), captureTypeText(resolved), generalCopyPlanOf(resolved)(state)) with
+                                        | (true, Some(text), Some(plan)) -> Some((index * 8, text, plan, resolved) :: layout)
+                                        | _ -> None
                         | _ -> None
-                else None
+                else
+                    if canNormalizeClosureCapture(resolved)(state)
+                    then
+                        match (captureTypeText(resolved), generalCopyPlanOf(resolved)(state), deepCopyCaptureLayout(evidence)(rest)(index + 1)(state)) with
+                            | (Some(text), Some(plan), Some(layout)) -> Some((index * 8, text, plan, resolved) :: layout)
+                            | _ -> None
+                    else None
 
 let recursive deepCopyOwnedCaptures (layout: List((Int, Str, ArgumentCopyPlan, SemanticType))) =
     match layout with
@@ -1041,7 +1079,7 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
     match captures with
         | [] -> state
         | _ ->
-            match deepCopyCaptureLayout(captureTypes(captures))(0)(state) with
+            match deepCopyCaptureLayout(capturesTraitEvidence(captures))(captureTypes(captures))(0)(state) with
                 | Some(layout) ->
                     match match deepCopyOwnedCaptures(layout) with
                         | [] -> (state, None)
