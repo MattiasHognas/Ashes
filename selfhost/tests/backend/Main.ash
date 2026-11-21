@@ -3859,6 +3859,10 @@ let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgr
 
 let testRunMutualShowDictionariesAtCalls shipped unit = assertSharedProgramPrintsExactly(shipped)("mutually_recursive_show_functions_keep_dictionary_at_call_sites")("42 true")
 
+let testRunForwardedPartialPrefix shipped unit = assertSharedProgramPrintsExactly(shipped)("forwarded_partial_runs_callee_prefix_before_next_binding")("entered|bound|v=42 v=true")
+
+let testRunAmbientEvidenceInPartialPrefix shipped unit = assertSharedProgramPrintsExactly(shipped)("partial_uses_ambient_evidence_during_binding_evaluation")("7|7 true")
+
 // Both programs bind port zero to obtain a private listener. dup(1) reuses the
 // lowest open descriptor slot, exposing a second close of a transferred socket.
 let testSocketCaptureTeardown shipped unit =
@@ -6267,6 +6271,8 @@ let run shipped =
     |> testRunLaterSiblingBesideFreshTupleArm(shipped)
     |> testRunConstrainedPartialDeclaredArithmetic(shipped)
     |> testRunMutualShowDictionariesAtCalls(shipped)
+    |> testRunForwardedPartialPrefix(shipped)
+    |> testRunAmbientEvidenceInPartialPrefix(shipped)
     |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedCurriedLoopCapturingRecordWithOwnedChild(shipped)
