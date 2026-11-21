@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.EvidenceDemand.indexEvidenceUse
 import AshesCompiler.Semantics.EvidenceDemand.zipEvidenceStages
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
@@ -506,7 +507,7 @@ let recursive includesRecursiveUse use uses =
         | [] -> false
         | candidate :: rest -> candidate == use || includesRecursiveUse(use)(rest)
 
-let recursive stableUses remaining earlier result widen =
+let recursive stableUses remaining earlier result indexed widen =
     match remaining with
         | [] -> reverse(result)
         | (EvidenceParameterUse { path = path } as use) :: rest ->
@@ -515,16 +516,16 @@ let recursive stableUses remaining earlier result widen =
                 then use with path = ["*"]
                 else use
             in
-                if includesRecursiveUse(stable)(result)
-                then stableUses(rest)(earlier)(result)(widen)
-                else stableUses(rest)(earlier)(stable :: result)(widen)
+                match indexEvidenceUse(stable)(indexed) with
+                    | None -> stableUses(rest)(earlier)(result)(indexed)(widen)
+                    | Some(next) -> stableUses(rest)(earlier)(stable :: result)(next)(widen)
 
 let stableRecursiveFlow name summaries flow widen =
     match (flow, siblingSummary(name)(summaries)) with
         | (SourceEvidenceFlow(uses, captures), Some(RecursiveEvidenceSummary { flow = SourceEvidenceFlow(previous, retained) })) ->
             widen
-            |> stableUses(appendProgramConstraints(retained)(captures))(retained)([])
-            |> SourceEvidenceFlow(stableUses(appendProgramConstraints(previous)(uses))(previous)([])(widen))
+            |> stableUses(appendProgramConstraints(retained)(captures))(retained)([])(Ashes.Collection.Map.empty)
+            |> SourceEvidenceFlow(stableUses(appendProgramConstraints(previous)(uses))(previous)([])(Ashes.Collection.Map.empty)(widen))
         | _ -> flow
 
 let recursive inferRecursiveEvidencePass members previous (outer: TypeEnvironment) substitution (next: TypeEnvironment) (supply: TypeVariableSupply) summaries widen =

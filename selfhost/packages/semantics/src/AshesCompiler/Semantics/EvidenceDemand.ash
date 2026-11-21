@@ -5,6 +5,7 @@ import AshesCompiler.Semantics.Types
 import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.append
 export (
+    value indexEvidenceUse,
     value evidenceFlowForValue,
     value projectEvidenceField,
     value evidenceFlowOfPattern,
@@ -34,8 +35,9 @@ type DemandSites =
 type EvidenceWalk =
     | requirements: List((TraitConstraint, Int))
     | uses: List(EvidenceParameterUse)
+    | indexedUses: MapTree(EvidenceParameterUse, Unit)
 
-let emptyWalk = EvidenceWalk(requirements = [], uses = [])
+let emptyWalk = EvidenceWalk(requirements = [], uses = [], indexedUses = Ashes.Collection.Map.empty)
 
 // Negative application count means an unknown consumer can invoke any argument stage.
 let moreArguments count extra =
@@ -157,15 +159,58 @@ and alternativePatternFlows alternatives flow bound =
                                 | (name, firstFlow) ->
                                     (name, AlternativeEvidenceFlow(firstFlow :: Ashes.Collection.List.map(memberNamed(name))(others))) :: acc)(bound)(firstBindings)
 
-let recursive containsUse use existing =
-    match existing with
-        | [] -> false
-        | candidate :: rest -> candidate == use || containsUse(use)(rest)
+// Index membership separately from the encounter-ordered use list. A different application
+// count, demand stage, return flag or projection is a different observation of the same formal.
+let recursive compareUsePaths (left: List(Str)) (right: List(Str)) =
+    match (left, right) with
+        | ([], []) -> 0
+        | ([], _head :: _rest) -> -1
+        | (_head :: _rest, []) -> 1
+        | (first :: rest, other :: tail) ->
+            let order = Ashes.Text.compare(first)(other)
+            in
+                if order == 0
+                then compareUsePaths(rest)(tail)
+                else order
+
+let compareEvidenceUses (left: EvidenceParameterUse) (right: EvidenceParameterUse) =
+    if left.parameter != right.parameter
+    then
+        if left.parameter < right.parameter
+        then -1
+        else 1
+    else
+        if left.applied != right.applied
+        then
+            if left.applied < right.applied
+            then -1
+            else 1
+        else
+            if left.stage != right.stage
+            then
+                if left.stage < right.stage
+                then -1
+                else 1
+            else
+                if left.returned != right.returned
+                then
+                    if left.returned
+                    then 1
+                    else -1
+                else compareUsePaths(left.path)(right.path)
+
+let indexEvidenceUse (use: EvidenceParameterUse) (indexed: MapTree(EvidenceParameterUse, Unit)) =
+    if Ashes.Collection.Map.containsWith(compareEvidenceUses)(use)(indexed)
+    then None
+    else
+        indexed
+        |> Ashes.Collection.Map.setWith(compareEvidenceUses)(use)(Unit)
+        |> Some
 
 let addUse (use: EvidenceParameterUse) (found: EvidenceWalk) =
-    if containsUse(use)(found.uses)
-    then found
-    else found with uses = use :: found.uses
+    match indexEvidenceUse(use)(found.indexedUses) with
+        | None -> found
+        | Some(indexed) -> found with uses = use :: found.uses, indexedUses = indexed
 
 let recursive projectCapturedUses uses applied depth escapes (found: EvidenceWalk) =
     match uses with

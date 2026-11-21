@@ -2,6 +2,7 @@ import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.EvidenceDemand.indexEvidenceUse
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.NodeIdentity
@@ -237,6 +238,28 @@ let checkReturnedPeerStages unit =
                 | ProgramInferenceResult { error = None, nodeTypes = table } -> checkProfile(program)(table)("delayed")([2, 1])
                 | result -> expectSuccess(result)
 
+let recursive checkRepeatedUses remaining indexed =
+    match remaining with
+        | [] -> Unit
+        | use :: rest ->
+            match indexEvidenceUse(use)(indexed) with
+                | None -> checkRepeatedUses(rest)(indexed)
+                | Some(_next) -> Ashes.IO.panic("duplicate evidence use survived indexing")
+
+let recursive checkDistinctUses originals remaining indexed =
+    match remaining with
+        | [] -> checkRepeatedUses(originals)(indexed)
+        | use :: rest ->
+            match indexEvidenceUse(use)(indexed) with
+                | None -> Ashes.IO.panic("distinct evidence uses compared equal")
+                | Some(next) -> checkDistinctUses(originals)(rest)(next)
+
+let checkEvidenceUseIdentity unit =
+    (let baseUse = EvidenceParameterUse(parameter = 0, path = [], applied = 1, stage = 1, returned = false)
+    in
+        let uses = [baseUse, (baseUse with parameter = 1), (baseUse with applied = -1), (baseUse with stage = 2), (baseUse with returned = true), (baseUse with path = ["left", "right"]), (baseUse with path = ["left"]), (baseUse with path = ["left.right"]), (baseUse with path = ["left", "result"])]
+        in checkDistinctUses(uses)(uses)(Ashes.Collection.Map.empty))
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -268,3 +291,4 @@ let runImmediateEvidenceInferenceTests unit =
     |> checkTupleCallbackKeepsReturnedRequirement
     |> checkRecursiveEvidence
     |> checkReturnedPeerStages
+    |> checkEvidenceUseIdentity
