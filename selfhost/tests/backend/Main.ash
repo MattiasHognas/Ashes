@@ -3080,7 +3080,7 @@ let testRunStaticExecutableForRealIrMatchNestedModule unit =
 // Compiles `buildModule`'s program through the complete pipeline (codegen, object emission,
 // linking), writes and runs the executable, and asserts its single line of stdout and a `0` exit —
 // the same steps every run test above performs inline.
-let assertProgramPrints buildModule name executablePath expectedLine =
+let assertProgramPrintsLine requireEnd buildModule name executablePath expectedLine =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
@@ -3099,10 +3099,20 @@ let assertProgramPrints buildModule name executablePath expectedLine =
                                             match Ashes.IO.Process.readStdoutLine(process) with
                                                 | None -> test.fail("expected one line of stdout from the linked executable, got none")
                                                 | Some(line) ->
-                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    let _ =
+                                                        if requireEnd
+                                                        then
+                                                            process
+                                                            |> Ashes.IO.Process.readStdoutLine
+                                                            |> test.assertEqual(None)
+                                                        else Unit
                                                     in
-                                                        let _ = test.assertEqual(expectedLine)(line)
-                                                        in test.assertEqual(0)(exitCode)
+                                                        let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                        in
+                                                            let _ = test.assertEqual(expectedLine)(line)
+                                                            in test.assertEqual(0)(exitCode)
+
+let assertProgramPrints buildModule name executablePath expectedLine = assertProgramPrintsLine(false)(buildModule)(name)(executablePath)(expectedLine)
 
 // `assertProgramPrints` with the executable invoked with `args`, so a program reading
 // `Ashes.IO.args` sees a real argument vector.
@@ -3835,6 +3845,19 @@ let sharedTestSource path =
 
 let buildSharedTestModule shipped path name context =
     codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
+
+let assertSharedProgramPrintsExactly shipped fixture expected =
+    assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("tests/" + fixture + ".ash"))(fixture)("selfhost_backend_" + fixture)(expected)
+
+let testRunGenericAddReadingTopLevelValue shipped unit = assertSharedProgramPrintsExactly(shipped)("generic_add_binding_reading_top_level_value_used_at_int_and_float")("12 4.5")
+
+let testRunTraitGoalsSettledAtBinding shipped unit = assertSharedProgramPrintsExactly(shipped)("trait_goals_of_generic_binding_used_at_one_type_settled_at_site")("41 yes")
+
+let testRunLaterSiblingBesideFreshTupleArm shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursion_later_sibling_result_beside_fresh_tuple_arm")("306")
+
+let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgramPrintsExactly(shipped)("constrained_partial_uses_declared_arithmetic_methods")("-1 17")
+
+let testRunMutualShowDictionariesAtCalls shipped unit = assertSharedProgramPrintsExactly(shipped)("mutually_recursive_show_functions_keep_dictionary_at_call_sites")("42 true")
 
 // Both programs bind port zero to obtain a private listener. dup(1) reuses the
 // lowest open descriptor slot, exposing a second close of a transferred socket.
@@ -6239,6 +6262,11 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
     |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
+    |> testRunGenericAddReadingTopLevelValue(shipped)
+    |> testRunTraitGoalsSettledAtBinding(shipped)
+    |> testRunLaterSiblingBesideFreshTupleArm(shipped)
+    |> testRunConstrainedPartialDeclaredArithmetic(shipped)
+    |> testRunMutualShowDictionariesAtCalls(shipped)
     |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedCurriedLoopCapturingRecordWithOwnedChild(shipped)
