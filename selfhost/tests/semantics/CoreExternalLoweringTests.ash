@@ -247,7 +247,7 @@ let testDirectStringExternalCall unit =
                             |> test.assertEqual(true)))
 
 let testNativeStringReturn unit =
-    (let abi =
+    (let declaration =
         makeExternalFunctionAbi(
             "c_get_name",
             "get_name",
@@ -257,33 +257,37 @@ let testNativeStringReturn unit =
             false
         )
     in
-        let layouts = [makeLayout(abi)]
+        let sourceResult = SemNamed(0)("Result")([SemString, SemString])
         in
-            let callExpr =
-                ExprCall(
-                    ExprVar("c_get_name"),
-                    ExprVar("Unit"),
-                    false,
-                    callArgumentsInline
-                )
+            let abi = declaration with sourceTyping = (emptyTyping with sourceResult = sourceResult)
             in
-                let program = loweredProgramWithExternal(layouts)([abi])([])(callExpr)
+                let layouts = [makeLayout(abi)]
                 in
-                    let instrs = entryInstructions(program)
+                    let callExpr =
+                        ExprCall(
+                            ExprVar("c_get_name"),
+                            ExprVar("Unit"),
+                            false,
+                            callArgumentsInline
+                        )
                     in
-                        instrs
-                        |> containsCallExternal("get_name")(None)
-                        |> test.assertEqual(true)
-                        |> (given (_) ->
-                            instrs
-                            |> containsCopyFfiString
-                            |> test.assertEqual(true))
-                        |> (given (_) ->
+                        let program = loweredProgramWithExternal(layouts)([abi])([])(callExpr)
+                        in
+                            let instrs = entryInstructions(program)
+                            in
+                                instrs
+                                |> containsCallExternal("get_name")(None)
+                                |> test.assertEqual(true)
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsCopyFfiString
+                                    |> test.assertEqual(true))
+                                |> (given (_) ->
                             // The copied native string is a `Result(Str, Str)`, stage 0's
                             // `MaterializeNativeString`, not a bare string.
-                            match loweredResultWithExternal(layouts)([abi])([])(callExpr) with
-                                | CoreLoweringResult { semanticType = semanticType } ->
-                                    test.assertEqual(SemNamed(0)("Result")([SemString, SemString]))(semanticType)))
+                                    match loweredResultWithExternal(layouts)([abi])([])(callExpr) with
+                                        | CoreLoweringResult { semanticType = semanticType } ->
+                                            test.assertEqual(SemNamed(0)("Result")([SemString, SemString]))(semanticType)))
 
 let testOutParameterAndReturnPackaging unit =
     (let abi =
