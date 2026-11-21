@@ -4,6 +4,7 @@ import AshesCompiler.Semantics.RecursiveTraitEvidence.replaceFreeReference
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
+import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.Constructors.collectCallSpine
 import AshesCompiler.Semantics.TcoAnalysis.collectLambdaParamNames
 import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
@@ -133,7 +134,7 @@ let helperRewrite name value continuation annotation id =
                             in
                                 match (replaceFreeReference(name)(adapter)(value), replaceFreeReference(name)(adapter)(continuation)) with
                                     | (Some(nextValue), Some(nextBody)) ->
-                                        let names = Ashes.Collection.List.map(ExprVar)(params)
+                                        let names = Ashes.Collection.List.map(ExprString)(params)
                                         in
                                             let body =
                                                 nextValue
@@ -156,48 +157,80 @@ let helperRewrite name value continuation annotation id =
 
 let destination restart name = "$slot" + restart + name
 
-let recursive bindArguments restart params lower (state: CoreLoweringState) =
+let unusedDestination restart name = destination(restart)(name) + "#unused"
+
+let recursive bindArguments restart params used lower (state: CoreLoweringState) =
     match params with
         | [] -> (state, None)
-        | ExprVar(name) :: rest ->
-            match state
-            |> clearConsumerRequest
-            |> lower(ExprVar(name)) with
-                | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, Some(error))
-                | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
-                    match freshLocal(read) with
-                        | FreshLocal { state = allocated, local = slot } ->
-                            let binding = CoreBinding(name = name, scheme = emptyScheme(ty), location = CoreLocal(slot), ownedRead = false, patternFact = None, closedScheme = false)
-                            in
-                                let alias = binding with name = destination(restart)(name)
-                                in
-                                    (allocated with bindings = binding :: alias :: allocated.bindings)
-                                    |> emit(StoreLocal(slot)(temp))
-                                    |> bindArguments(restart)(rest)(lower)
+        | ExprString(name) :: rest ->
+            if containsName(name)(used)
+            then
+                match state
+                |> clearConsumerRequest
+                |> lower(ExprVar(name)) with
+                    | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, Some(error))
+                    | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
+                        match freshLocal(read) with
+                            | FreshLocal { state = allocated, local = slot } ->
+                                allocated
+                                |> addBinding(name)(emptyScheme(ty))(CoreLocal(slot))
+                                |> addBinding(destination(restart)(name))(emptyScheme(ty))(CoreLocal(slot))
+                                |> emit(StoreLocal(slot)(temp))
+                                |> bindArguments(restart)(rest)(used)(lower)
+            else
+                match freshType(state) with
+                    | FreshType { state = typed, semanticType = ty } ->
+                        match freshLocal(typed) with
+                            | FreshLocal { state = allocated, local = scratch } ->
+                                allocated
+                                |> addBinding(unusedDestination(restart)(name))(emptyScheme(ty))(CoreLocal(scratch))
+                                |> bindArguments(restart)(rest)(used)(lower)
         | _ -> (state, Some(UnsupportedCoreLoweringExpression("coroutine loop parameter")))
 
 let enterHelperLoop restart params body lower (state: CoreLoweringState) =
-    match bindArguments(restart)(params)(lower)(state) with
+    match bindArguments(restart)(params)(collectFree(body)([])([]))(lower)(state) with
         | (entered, None) ->
             entered
             |> emit(Label(restart))
             |> lower(body)
         | (failed, Some(error)) -> failure(failed)(error)
 
+let successorBinding restart name (state: CoreLoweringState) =
+    match lookupBinding(destination(restart)(name))(state.bindings) with
+        | Some(binding) -> (true, Some(binding))
+        | None ->
+            (false, lookupBinding(unusedDestination(restart)(name))(state.bindings))
+
+// Evaluate every argument before overwriting a slot. A borrowed pattern child or an alias
+// reaching the next iteration needs its owner to survive this iteration's scope exits.
 let recursive successorArguments restart params args lower (state: CoreLoweringState) values =
     match (params, args) with
         | ([], []) -> (state, values, None)
-        | (ExprVar(name) :: ps, arg :: rest) ->
-            match lookupBinding(destination(restart)(name))(state.bindings) with
-                | Some(CoreBinding { location = CoreLocal(slot), scheme = scheme }) ->
-                    match state
-                    |> clearConsumerRequest
-                    |> lower(arg) with
-                        | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, [], Some(error))
-                        | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
-                            match bindType(scheme.body)(ty)(read) with
-                                | (typed, None) -> successorArguments(restart)(ps)(rest)(lower)(typed)((slot, temp) :: values)
-                                | (failed, Some(error)) -> (failed, [], Some(error))
+        | (ExprString(name) :: ps, arg :: rest) ->
+            match successorBinding(restart)(name)(state) with
+                | (used, Some(CoreBinding { location = CoreLocal(slot), scheme = scheme })) ->
+                    let result =
+                        state
+                        |> clearConsumerRequest
+                        |> lower(arg)
+                    in
+                        let kept =
+                            if used
+                            then
+                                result
+                                |> duplicatePatternOwnerChild(arg)
+                                |> retainTransferredChild(arg)(true)
+                            else result
+                        in
+                            match kept with
+                                | LoweredCoreValue { state = failed, error = Some(error) } -> (failed, [], Some(error))
+                                | LoweredCoreValue { state = read, temp = temp, semanticType = ty, error = None } ->
+                                    match bindType(scheme.body)(ty)(read) with
+                                        | (typed, None) ->
+                                            successorArguments(restart)(ps)(rest)(lower)(typed)(if used
+                                            then (slot, temp) :: values
+                                            else values)
+                                        | (failed, Some(error)) -> (failed, [], Some(error))
                 | _ -> (state, [], Some(UnsupportedCoreLoweringExpression("coroutine loop slot")))
         | _ -> (state, [], Some(UnsupportedCoreLoweringExpression("coroutine loop arity")))
 

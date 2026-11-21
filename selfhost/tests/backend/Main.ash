@@ -3874,6 +3874,8 @@ let testSocketCaptureTeardown shipped unit =
             let _ = run("socket_capture_close")(["true", "true"])
             in run("socket_capture_cancel")(["true"]))
 
+let testAwaitingHelperKeepsOwnedBackedgeValues shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_helper_keeps_owned_backedge_values")("2=1=seed")
+
 let testRecursiveAwaitingHelperRemainsCallable shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))("recursiveAwaitingHelperRemainsCallable")("selfhost_backend_recursive_awaiting_helper")("62")
 
@@ -6357,6 +6359,7 @@ let run shipped =
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
     |> testSocketCaptureTeardown(shipped)
+    |> testAwaitingHelperKeepsOwnedBackedgeValues(shipped)
     |> testRecursiveAwaitingHelperRemainsCallable(shipped)
     |> testCompileConcurrentHttpServerForReplay(shipped)
     |> testRcDupDrop
