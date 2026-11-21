@@ -259,6 +259,7 @@ let checkStitchedLibraryContext unit =
                 Unit
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/logical_not_inferred_predicates.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_evaluates_argument_once_at_two_types.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_forwards_show_evidence.ash"))
                 |> (given (_) -> checkTypedEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))

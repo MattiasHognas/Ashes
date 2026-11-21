@@ -3032,10 +3032,12 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
 let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation requirements (state: CoreLoweringState) =
-    (let candidate =
+    let (candidate, forwardsRequirements) =
         match lambdaParts(value) with
-            | Some(_parts) -> written || !constrainedPlanCannotApply(value)(requirements)(state)
-            | None -> !isRecursive && constrainedPartialApplication(value)(state)
+            | Some(_parts) -> (written || !constrainedPlanCannotApply(value)(requirements)(state), written)
+            | None ->
+                let partial = !isRecursive && constrainedPartialApplication(value)(state)
+                in (partial, partial)
     in
         if candidate
         then
@@ -3043,10 +3045,10 @@ let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                 | CoreConstrainedInference { error = Some(_error) } -> None
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedPlanSupportedIn(written)(constraints)(state)
+                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state)
                     then Some(plan)
                     else None
-        else None)
+        else None
 
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
     constrainedBindingPlanWith(writtenRequirements(requirements))(name)(isRecursive)(value)(annotation)(requirements)(state)
