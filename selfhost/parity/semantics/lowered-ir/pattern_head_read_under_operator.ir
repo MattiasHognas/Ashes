@@ -2,7 +2,31 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from stamp]
-  locals=26 temps=42
+  locals=31 temps=76
+    LoadLocal             Target=28 Slot=1   (pattern_head_read_under_operator.ash:5:1)
+    LoadArgumentOwnership Target=29   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=30 Value=1   (pattern_head_read_under_operator.ash:5:1)
+    AndInt                Target=31 Left=29 Right=30   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=31 Target=rc_arg_normalize_copy_7   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=22 Source=28   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=rc_arg_normalize_done_8   (pattern_head_read_under_operator.ash:5:1)
+  rc_arg_normalize_copy_7:
+    IsReferenceCounted    Target=32 SourceTemp=28
+    JumpIfFalse           CondTemp=32 Target=rc_representation_copy_9   (pattern_head_read_under_operator.ash:5:1)
+    RcDup                 Target=33 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=33   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=rc_representation_done_10   (pattern_head_read_under_operator.ash:5:1)
+  rc_representation_copy_9:
+    CopyOutList           DestTemp=34 SrcTemp=28 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=23 Source=34   (pattern_head_read_under_operator.ash:5:1)
+  rc_representation_done_10:
+    LoadLocal             Target=35 Slot=23   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=22 Source=35   (pattern_head_read_under_operator.ash:5:1)
+  rc_arg_normalize_done_8:
+    LoadLocal             Target=36 Slot=22   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=1 Source=36   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=37 Value=1   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=19 Source=37   (pattern_head_read_under_operator.ash:5:1)
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (pattern_head_read_under_operator.ash:5:1)
     StoreLocal            Slot=4 Source=0   (pattern_head_read_under_operator.ash:5:1)
@@ -52,68 +76,136 @@ function lambda_0  [SourceFunction from stamp]
     StoreLocal            Slot=5 Source=14   (pattern_head_read_under_operator.ash:8:28)
     LoadLocal             Target=18 Slot=18   (pattern_head_read_under_operator.ash:8:70)
     Borrow                Target=19 SourceTemp=18
-    LoadLocal             Target=20 Slot=1   (pattern_head_read_under_operator.ash:8:28)
-    StoreLocal            Slot=1 Source=19   (pattern_head_read_under_operator.ash:8:28)
+    RcDup                 Target=20 SourceTemp=19 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=18
+    LoadLocal             Target=21 Slot=1   (pattern_head_read_under_operator.ash:8:28)
+    LoadConstInt          Target=22 Value=0   (pattern_head_read_under_operator.ash:8:28)
+    StoreLocal            Slot=19 Source=22   (pattern_head_read_under_operator.ash:8:28)
+    LoadLocal             Target=23 Slot=1   (pattern_head_read_under_operator.ash:8:28)
+    StoreLocal            Slot=1 Source=20   (pattern_head_read_under_operator.ash:8:28)
+    LoadLocal             Target=62 Slot=19
+    JumpIfFalse           CondTemp=62 Target=rc_tco_drop_inactive_31
+    StoreLocal            Slot=29 Source=23
+  rcdrop_list_32:
+    LoadLocal             Target=63 Slot=29
+    LoadConstInt          Target=64 Value=0
+    CmpIntNe              Target=65 Left=63 Right=64
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_34
+    RcIsUnique            Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_33
+    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0
+    RcDrop                SourceTemp=67 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=68 BasePtr=63 OffsetBytes=8
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=68
+    Jump                  Target=rcdrop_list_32
+  rcdrop_list_shared_33:
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_34
+  rcdrop_list_end_34:
+  rc_tco_drop_inactive_31:
+    StoreLocal            Slot=30 Source=21
+  rcdrop_list_35:
+    LoadLocal             Target=69 Slot=30
+    LoadConstInt          Target=70 Value=0
+    CmpIntNe              Target=71 Left=69 Right=70
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_37
+    RcIsUnique            Target=72 SourceTemp=69
+    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_36
+    LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0
+    RcDrop                SourceTemp=73 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=74 BasePtr=69 OffsetBytes=8
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=74
+    Jump                  Target=rcdrop_list_35
+  rcdrop_list_shared_36:
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_37
+  rcdrop_list_end_37:
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=28
+    StoreLocal            Slot=1 Source=20
+    LoadConstInt          Target=75 Value=1
+    StoreLocal            Slot=19 Source=75
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=28
     RestoreStackPointer   Slot=9   (pattern_head_read_under_operator.ash:8:28)
     Jump                  Target=lambda_0_body   (pattern_head_read_under_operator.ash:8:28)
-    LoadConstInt          Target=21 Value=0   (pattern_head_read_under_operator.ash:8:28)
-    StoreLocal            Slot=10 Source=21   (pattern_head_read_under_operator.ash:6:5)
-    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=19
-    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=19
-    Jump                  Target=match_end_0   (pattern_head_read_under_operator.ash:6:5)
-  match_arm_cleanup_4:
+    LoadConstInt          Target=24 Value=0   (pattern_head_read_under_operator.ash:8:28)
+    StoreLocal            Slot=10 Source=24   (pattern_head_read_under_operator.ash:6:5)
     RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_end_0   (pattern_head_read_under_operator.ash:6:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
     Jump                  Target=match_none_1   (pattern_head_read_under_operator.ash:6:5)
   match_none_1:
-    LoadConstInt          Target=23 Value=0   (pattern_head_read_under_operator.ash:6:5)
-    StoreLocal            Slot=10 Source=23   (pattern_head_read_under_operator.ash:6:5)
+    LoadConstInt          Target=26 Value=0   (pattern_head_read_under_operator.ash:6:5)
+    StoreLocal            Slot=10 Source=26   (pattern_head_read_under_operator.ash:6:5)
   match_end_0:
-    LoadLocal             Target=24 Slot=10   (pattern_head_read_under_operator.ash:6:5)
-    LoadLocal             Target=25 Slot=5   (pattern_head_read_under_operator.ash:5:1)
-    LoadConstInt          Target=26 Value=0   (pattern_head_read_under_operator.ash:5:1)
-    CmpIntNe              Target=27 Left=25 Right=26   (pattern_head_read_under_operator.ash:5:1)
-    JumpIfFalse           CondTemp=27 Target=tmc_close_empty_7   (pattern_head_read_under_operator.ash:5:1)
-    StoreMemOffset        BasePtr=25 OffsetBytes=8 Source=24   (pattern_head_read_under_operator.ash:5:1)
-    LoadLocal             Target=28 Slot=6   (pattern_head_read_under_operator.ash:5:1)
-    StoreLocal            Slot=21 Source=28   (pattern_head_read_under_operator.ash:5:1)
-    Jump                  Target=tmc_close_done_8   (pattern_head_read_under_operator.ash:5:1)
-  tmc_close_empty_7:
-    StoreLocal            Slot=21 Source=24   (pattern_head_read_under_operator.ash:5:1)
-  tmc_close_done_8:
-    LoadLocal             Target=29 Slot=21   (pattern_head_read_under_operator.ash:5:1)
-    LoadConstInt          Target=30 Value=0   (pattern_head_read_under_operator.ash:5:1)
-    StoreLocal            Slot=22 Source=30   (pattern_head_read_under_operator.ash:5:1)
-    LoadArgumentOwnership Target=31   (pattern_head_read_under_operator.ash:5:1)
-    LoadConstInt          Target=32 Value=1   (pattern_head_read_under_operator.ash:5:1)
-    ShrInt                Target=33 Left=31 Right=32   (pattern_head_read_under_operator.ash:5:1)
-    AndInt                Target=34 Left=33 Right=32   (pattern_head_read_under_operator.ash:5:1)
-    JumpIfFalse           CondTemp=34 Target=rc_result_owned_9   (pattern_head_read_under_operator.ash:5:1)
-    CopyOutList           DestTemp=35 SrcTemp=29 HeadCopy=Inline Purpose=ArenaResultBoundary   (pattern_head_read_under_operator.ash:5:1)
-    StoreLocal            Slot=24 Source=29   (pattern_head_read_under_operator.ash:5:1)
-  rcdrop_list_11:
-    LoadLocal             Target=36 Slot=24   (pattern_head_read_under_operator.ash:5:1)
-    LoadConstInt          Target=37 Value=0   (pattern_head_read_under_operator.ash:5:1)
-    CmpIntNe              Target=38 Left=36 Right=37   (pattern_head_read_under_operator.ash:5:1)
-    JumpIfFalse           CondTemp=38 Target=rcdrop_list_end_13   (pattern_head_read_under_operator.ash:5:1)
-    RcIsUnique            Target=39 SourceTemp=36
-    JumpIfFalse           CondTemp=39 Target=rcdrop_list_shared_12   (pattern_head_read_under_operator.ash:5:1)
-    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=8   (pattern_head_read_under_operator.ash:5:1)
-    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=24 Source=40   (pattern_head_read_under_operator.ash:5:1)
-    Jump                  Target=rcdrop_list_11   (pattern_head_read_under_operator.ash:5:1)
-  rcdrop_list_shared_12:
-    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_13   (pattern_head_read_under_operator.ash:5:1)
-  rcdrop_list_end_13:
-    StoreLocal            Slot=23 Source=35   (pattern_head_read_under_operator.ash:5:1)
-    Jump                  Target=rc_result_done_10   (pattern_head_read_under_operator.ash:5:1)
-  rc_result_owned_9:
-    StoreLocal            Slot=23 Source=29   (pattern_head_read_under_operator.ash:5:1)
-  rc_result_done_10:
-    LoadLocal             Target=41 Slot=23   (pattern_head_read_under_operator.ash:5:1)
-    Return                Source=41   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=27 Slot=10   (pattern_head_read_under_operator.ash:6:5)
+    LoadLocal             Target=38 Slot=5   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=39 Value=0   (pattern_head_read_under_operator.ash:5:1)
+    CmpIntNe              Target=40 Left=38 Right=39   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=40 Target=tmc_close_empty_11   (pattern_head_read_under_operator.ash:5:1)
+    StoreMemOffset        BasePtr=38 OffsetBytes=8 Source=27   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=41 Slot=6   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=24 Source=41   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=tmc_close_done_12   (pattern_head_read_under_operator.ash:5:1)
+  tmc_close_empty_11:
+    StoreLocal            Slot=24 Source=27   (pattern_head_read_under_operator.ash:5:1)
+  tmc_close_done_12:
+    LoadLocal             Target=42 Slot=24   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=43 Slot=1   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=44 Slot=19   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=44 Target=rc_tco_exit_drop_inactive_13   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=25 Source=43   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_14:
+    LoadLocal             Target=45 Slot=25   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=46 Value=0   (pattern_head_read_under_operator.ash:5:1)
+    CmpIntNe              Target=47 Left=45 Right=46   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_end_16   (pattern_head_read_under_operator.ash:5:1)
+    RcIsUnique            Target=48 SourceTemp=45
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_shared_15   (pattern_head_read_under_operator.ash:5:1)
+    LoadMemOffset         Target=49 BasePtr=45 OffsetBytes=0   (pattern_head_read_under_operator.ash:5:1)
+    RcDrop                SourceTemp=49 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=50 BasePtr=45 OffsetBytes=8   (pattern_head_read_under_operator.ash:5:1)
+    RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=50   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=rcdrop_list_14   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_shared_15:
+    RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_16   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_end_16:
+  rc_tco_exit_drop_inactive_13:
+    LoadArgumentOwnership Target=51   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=52 Value=1   (pattern_head_read_under_operator.ash:5:1)
+    ShrInt                Target=53 Left=51 Right=52   (pattern_head_read_under_operator.ash:5:1)
+    AndInt                Target=54 Left=53 Right=52   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=54 Target=rc_result_owned_17   (pattern_head_read_under_operator.ash:5:1)
+    CopyOutList           DestTemp=55 SrcTemp=42 HeadCopy=Inline Purpose=ArenaResultBoundary   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=27 Source=42   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_19:
+    LoadLocal             Target=56 Slot=27   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=57 Value=0   (pattern_head_read_under_operator.ash:5:1)
+    CmpIntNe              Target=58 Left=56 Right=57   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_21   (pattern_head_read_under_operator.ash:5:1)
+    RcIsUnique            Target=59 SourceTemp=56
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_20   (pattern_head_read_under_operator.ash:5:1)
+    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=8   (pattern_head_read_under_operator.ash:5:1)
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=60   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=rcdrop_list_19   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_shared_20:
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_21   (pattern_head_read_under_operator.ash:5:1)
+  rcdrop_list_end_21:
+    StoreLocal            Slot=26 Source=55   (pattern_head_read_under_operator.ash:5:1)
+    Jump                  Target=rc_result_done_18   (pattern_head_read_under_operator.ash:5:1)
+  rc_result_owned_17:
+    StoreLocal            Slot=26 Source=42   (pattern_head_read_under_operator.ash:5:1)
+  rc_result_done_18:
+    LoadLocal             Target=61 Slot=26   (pattern_head_read_under_operator.ash:5:1)
+    Return                Source=61   (pattern_head_read_under_operator.ash:5:1)
 
 function lambda_1  [SourceFunction from count]
   locals=11 temps=11
@@ -121,43 +213,43 @@ function lambda_1  [SourceFunction from count]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (pattern_head_read_under_operator.ash:11:5)
     CmpIntEq              Target=2 Left=0 Right=1   (pattern_head_read_under_operator.ash:11:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_17   (pattern_head_read_under_operator.ash:11:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_25   (pattern_head_read_under_operator.ash:11:5)
     LoadConstInt          Target=3 Value=0   (pattern_head_read_under_operator.ash:12:17)
     StoreLocal            Slot=2 Source=3   (pattern_head_read_under_operator.ash:11:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_14   (pattern_head_read_under_operator.ash:11:5)
-  match_arm_cleanup_17:
+    Jump                  Target=match_end_22   (pattern_head_read_under_operator.ash:11:5)
+  match_arm_cleanup_25:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_16   (pattern_head_read_under_operator.ash:11:5)
-  match_next_16:
+    Jump                  Target=match_next_24   (pattern_head_read_under_operator.ash:11:5)
+  match_next_24:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (pattern_head_read_under_operator.ash:11:5)
     CmpIntNe              Target=5 Left=0 Right=4   (pattern_head_read_under_operator.ash:11:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_18   (pattern_head_read_under_operator.ash:11:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_26   (pattern_head_read_under_operator.ash:11:5)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (pattern_head_read_under_operator.ash:11:5)
     LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (pattern_head_read_under_operator.ash:11:5)
     LoadConstInt          Target=8 Value=1   (pattern_head_read_under_operator.ash:13:21)
     StoreLocal            Slot=2 Source=8   (pattern_head_read_under_operator.ash:11:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
-    Jump                  Target=match_end_14   (pattern_head_read_under_operator.ash:11:5)
-  match_arm_cleanup_18:
+    Jump                  Target=match_end_22   (pattern_head_read_under_operator.ash:11:5)
+  match_arm_cleanup_26:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
-    Jump                  Target=match_none_15   (pattern_head_read_under_operator.ash:11:5)
-  match_none_15:
+    Jump                  Target=match_none_23   (pattern_head_read_under_operator.ash:11:5)
+  match_none_23:
     LoadConstInt          Target=9 Value=0   (pattern_head_read_under_operator.ash:11:5)
     StoreLocal            Slot=2 Source=9   (pattern_head_read_under_operator.ash:11:5)
-  match_end_14:
+  match_end_22:
     LoadLocal             Target=10 Slot=2   (pattern_head_read_under_operator.ash:11:5)
     Return                Source=10   (pattern_head_read_under_operator.ash:10:1)
 
 function _start_main  [ProgramEntry]
   locals=14 temps=33
     LoadConstInt          Target=0 Value=0   (pattern_head_read_under_operator.ash:5:1)
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (pattern_head_read_under_operator.ash:5:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (pattern_head_read_under_operator.ash:5:1)
     StoreLocal            Slot=0 Source=1   (pattern_head_read_under_operator.ash:5:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     LoadConstInt          Target=2 Value=0   (pattern_head_read_under_operator.ash:10:1)
@@ -189,30 +281,30 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=19 Value=1   (pattern_head_read_under_operator.ash:15:35)
     AndInt                Target=20 Left=18 Right=19   (pattern_head_read_under_operator.ash:15:35)
     StoreLocal            Slot=9 Source=15   (pattern_head_read_under_operator.ash:15:35)
-    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_19   (pattern_head_read_under_operator.ash:15:35)
+    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_27   (pattern_head_read_under_operator.ash:15:35)
     RcDup                 Target=21 SourceTemp=15 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=9 Source=21   (pattern_head_read_under_operator.ash:15:35)
-  rc_call_argument_not_retained_19:
+  rc_call_argument_not_retained_27:
     LoadLocal             Target=22 Slot=9   (pattern_head_read_under_operator.ash:15:35)
     CallClosure           Target=23 ClosureTemp=5 ArgTemp=22 RuntimeManagedArgumentFlagTemp=20   (pattern_head_read_under_operator.ash:15:35)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=10
     StoreLocal            Slot=11 Source=15   (pattern_head_read_under_operator.ash:15:35)
-  rcdrop_list_20:
+  rcdrop_list_28:
     LoadLocal             Target=24 Slot=11   (pattern_head_read_under_operator.ash:15:35)
     LoadConstInt          Target=25 Value=0   (pattern_head_read_under_operator.ash:15:35)
     CmpIntNe              Target=26 Left=24 Right=25   (pattern_head_read_under_operator.ash:15:35)
-    JumpIfFalse           CondTemp=26 Target=rcdrop_list_end_22   (pattern_head_read_under_operator.ash:15:35)
+    JumpIfFalse           CondTemp=26 Target=rcdrop_list_end_30   (pattern_head_read_under_operator.ash:15:35)
     RcIsUnique            Target=27 SourceTemp=24
-    JumpIfFalse           CondTemp=27 Target=rcdrop_list_shared_21   (pattern_head_read_under_operator.ash:15:35)
+    JumpIfFalse           CondTemp=27 Target=rcdrop_list_shared_29   (pattern_head_read_under_operator.ash:15:35)
     LoadMemOffset         Target=28 BasePtr=24 OffsetBytes=8   (pattern_head_read_under_operator.ash:15:35)
     RcDrop                SourceTemp=24 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=11 Source=28   (pattern_head_read_under_operator.ash:15:35)
-    Jump                  Target=rcdrop_list_20   (pattern_head_read_under_operator.ash:15:35)
-  rcdrop_list_shared_21:
+    Jump                  Target=rcdrop_list_28   (pattern_head_read_under_operator.ash:15:35)
+  rcdrop_list_shared_29:
     RcDrop                SourceTemp=24 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_22   (pattern_head_read_under_operator.ash:15:35)
-  rcdrop_list_end_22:
+    Jump                  Target=rcdrop_list_end_30   (pattern_head_read_under_operator.ash:15:35)
+  rcdrop_list_end_30:
     TextFromInt           Target=29 ValueTemp=23   (pattern_head_read_under_operator.ash:15:16)
     PrintStr              Source=29   (pattern_head_read_under_operator.ash:15:1)
     AllocAdt              Target=30 Tag=0 FieldCount=0   (pattern_head_read_under_operator.ash:15:1)

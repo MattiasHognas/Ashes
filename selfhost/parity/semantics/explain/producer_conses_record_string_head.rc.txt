@@ -1,27 +1,57 @@
 RC report
 =========
 
-Function: getNodeNames
+Function: __rcnorm_1
   Operations
-    dup:                  1
-    drop:                 4
-    uniqueness checks:    1
-    allocations:          1
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               3
 
-Function: allDeps
+Function: __rcdrop_record_2
   Operations
     dup:                  0
     drop:                 4
     uniqueness checks:    2
-    allocations:          1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: getNodeNames
+  Operations
+    dup:                  4
+    drop:                 10
+    uniqueness checks:    4
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               2
 
-Function: countNames [lambda_3]
+Function: __rcdrop_structural_4
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: allDeps
+  Operations
+    dup:                  4
+    drop:                 11
+    uniqueness checks:    5
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: countNames [lambda_6]
   Operations
     dup:                  2
     drop:                 9
@@ -41,7 +71,7 @@ Function: countNames
     reuse tokens:         0
     copies:               0
 
-Function: countLists [lambda_5]
+Function: countLists [lambda_8]
   Operations
     dup:                  2
     drop:                 12
@@ -61,7 +91,7 @@ Function: countLists
     reuse tokens:         0
     copies:               0
 
-Function: countNames [lambda_3__scalarenv0]
+Function: countNames [lambda_6__scalarenv0]
   Operations
     dup:                  2
     drop:                 9
@@ -71,7 +101,7 @@ Function: countNames [lambda_3__scalarenv0]
     reuse tokens:         0
     copies:               1
 
-Function: countLists [lambda_5__scalarenv1]
+Function: countLists [lambda_8__scalarenv1]
   Operations
     dup:                  2
     drop:                 12
