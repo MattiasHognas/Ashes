@@ -387,13 +387,13 @@ let recordedDeclarationAt (node: Int) (state: CoreLoweringState) =
                 | None -> None
         | None -> None
 
-let recursive recordedSchemeNamed (name: Str) (bindings: List((Str, TypeScheme))) =
+let recursive recordedSchemeForValue (name: Str) (valueType: SemanticType) (bindings: List((Str, TypeScheme))) =
     match bindings with
         | [] -> None
         | (candidate, scheme) :: rest ->
-            if candidate == name
+            if candidate == name && scheme.body == valueType
             then Some(scheme)
-            else recordedSchemeNamed(name)(rest)
+            else recordedSchemeForValue(name)(valueType)(rest)
 
 // The operator-generic scheme the standalone inference recorded for `name` at the `let` node
 // `node` below top level, when the type recorded for the value node `valueNode` is the scheme's
@@ -402,11 +402,11 @@ let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int)
     match stateNodeTypes(state) with
         | None -> None
         | Some(table) ->
-            match (table
-            |> nodeBindingsAt(node)
-            |> recordedSchemeNamed(name), nodeTypeAt(valueNode)(table)) with
-                | (Some(TypeScheme { body = body } as recorded), Some(valueType)) ->
-                    if valueType == body
-                    then operatorGenericScheme(recorded)(state)
-                    else None
-                | _ -> None
+            match nodeTypeAt(valueNode)(table) with
+                | Some(valueType) ->
+                    match table
+                    |> nodeBindingsAt(node)
+                    |> recordedSchemeForValue(name)(valueType) with
+                        | Some(recorded) -> operatorGenericScheme(recorded)(state)
+                        | None -> None
+                | None -> None

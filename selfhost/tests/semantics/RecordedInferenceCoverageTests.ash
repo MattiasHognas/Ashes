@@ -4,6 +4,9 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeIdentity
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.CoreLowering.Emit.initialState
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withNodeTypes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 export (
     value runRecordedInferenceCoverageTests,
@@ -67,7 +70,34 @@ let checkPrimitiveComplements unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("complement inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("integer complement fixture did not parse")
 
+let checkShadowingLet state found node _span expression =
+    match expression with
+        | ExprLet("value", rhs, _body, _parameters, _annotation, _requirements) ->
+            match recordedNestedOperatorGenericScheme(node)("value")(nodeIdentityOf(rhs))(state) with
+                | Some(TypeScheme { quantified = _ :: _, constraints = TraitConstraint { traitName = "Add" } :: _ }) -> true
+                | _ -> Ashes.IO.panic("the arm's Int binding hid the inner value's quantified Add scheme")
+        | _ -> found
+
+let checkArmBodyShadowing unit =
+    match parseProgram("match 7 with | value -> let value = given x -> x + x in value(3)") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            let state =
+                                Unit
+                                |> initialState
+                                |> withNodeTypes(table)
+                            in
+                                if foldProgramNodes(checkShadowingLet(state))(false)(program)
+                                then Unit
+                                else Ashes.IO.panic("missing shadowing let")
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("shadowing inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("shadowing inference fixture did not parse")
+
 let runRecordedInferenceCoverageTests unit =
     unit
     |> checkHandlerBindings
     |> checkPrimitiveComplements
+    |> checkArmBodyShadowing
