@@ -92,14 +92,6 @@ let recursive callableFlow flow =
         | MemberEvidenceFlow(_demands, inner) -> callableFlow(inner)
         | other -> other
 
-let recursive flowAtPath path flow =
-    match path with
-        | [] -> flow
-        | field :: rest ->
-            flow
-            |> projectEvidenceField(field)
-            |> flowAtPath(rest)
-
 let recursive renameEvidenceFlow arguments flow =
     match flow with
         | AggregateEvidenceFlow(fields) ->
@@ -293,11 +285,21 @@ let recursive useNestedFlow flow applied depth escapes found =
         | AlternativeEvidenceFlow(flows) ->
             Ashes.Collection.List.foldLeft(given (acc) ->
                 given (child) -> useNestedFlow(child)(applied)(depth)(escapes)(acc))(found)(flows)
-        | FormalEvidenceParameter(id, _path) ->
+        | FormalEvidenceParameter(id, path) ->
             addFormalUse(["*"]
+            |> append(path)
             |> FormalEvidenceParameter(id)
             |> Some)(applied)(depth)(escapes)(found)
         | other -> useFlow(other)(applied)(depth)(escapes)(found)
+
+// An unknown consumer can inspect the selected value's descendants, including through an
+// alias to a stored aggregate. Sibling fields belong to separate source paths.
+let recursive useProjectedFlow path flow applied depth escapes found =
+    match path with
+        | [] -> useFlow(flow)(applied)(depth)(escapes)(found)
+        | "*" :: _rest -> useNestedFlow(flow)(applied)(depth)(escapes)(found)
+        | field :: rest ->
+            useProjectedFlow(rest)(projectEvidenceField(field)(flow))(applied)(depth)(escapes)(found)
 
 let recursive sourceParameterIds value ordinal found =
     match bare(value) with
@@ -505,9 +507,7 @@ and walkProjection path value applied depth escapes sites found =
                                 | Some(member) -> walkProjection(rest)(member)(applied)(depth)(escapes)(sites)(found)
                                 | None -> found
                         | None ->
-                            useFlow(value
-                            |> siteFlow(sites)
-                            |> flowAtPath(path))(applied)(depth)(escapes)(found)
+                            useProjectedFlow(path)(siteFlow(sites)(value))(applied)(depth)(escapes)(found)
 and walkValues values depth sites found =
     match values with
         | [] -> found

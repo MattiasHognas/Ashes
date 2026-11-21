@@ -147,6 +147,22 @@ let checkHigherOrderEvidence unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("wrong missing-instance error for a constrained reference: " + Ashes.Trait.Show.show(error))
                         | _ -> Ashes.IO.panic("a function reference lost its concrete typing constraint")))
 
+// Passing the second tuple field to an unknown function cannot force a second application
+// of the function in the first field. Its Eq requirement stays on the returned comparator.
+let checkTupleCallbackKeepsReturnedRequirement unit =
+    (let source = "let invoke pair = match pair with | (action, arg) -> action(arg)\nlet agree u = given x -> x == x\nlet inline = invoke((agree, Unit))\nlet stored = (agree, Unit)\nlet delayed = invoke(stored)\n(inline(1), inline(true), delayed(1), delayed(true))"
+    in
+        match source
+        |> parsed
+        |> identifyProgram(0) with
+            | (program, _count) ->
+                match infer(program) with
+                    | ProgramInferenceResult { error = None, nodeTypes = table } ->
+                        [1]
+                        |> checkProfile(program)(table)("inline")
+                        |> (given (_) -> checkProfile(program)(table)("delayed")([1]))
+                    | result -> expectSuccess(result))
+
 let checkAggregateEvidence unit =
     (let invoke = "let invoke pair = match pair with | (action, arg) -> action(arg)\n"
     in
@@ -249,5 +265,6 @@ let runImmediateEvidenceInferenceTests unit =
             |> checkLocalBindings)
     |> checkHigherOrderEvidence
     |> checkAggregateEvidence
+    |> checkTupleCallbackKeepsReturnedRequirement
     |> checkRecursiveEvidence
     |> checkReturnedPeerStages
