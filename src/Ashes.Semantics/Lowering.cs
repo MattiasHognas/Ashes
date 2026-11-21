@@ -4047,7 +4047,8 @@ public sealed partial class Lowering
         string Name,
         bool PopInlinableShadow,
         bool RemoveCoroutineHelperMarker,
-        bool SuppressArenaReclaim = false)
+        bool SuppressArenaReclaim = false,
+        bool TransfersOwnedResult = false)
     {
         /// <summary>
         /// The binding this frame was pushed for, so the instructions it emits on the way out carry its
@@ -4106,6 +4107,12 @@ public sealed partial class Lowering
             }
 
             _currentSourceExpr = frame.Binding ?? enclosingSourceExpr;
+            if (frame.TransfersOwnedResult)
+            {
+                // Only the final forwarded read takes the outgoing reference. Earlier
+                // reads from the same moved-at-exit binding still borrow it.
+                MarkRuntimeManagedTemp(result.Temp, type: result.Type, ownership: LoweredTempOwnershipKind.NewlyProduced);
+            }
             result = frame.Kind == SequentialBindingKind.Ordinary
                 ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
                 : PopRecursiveLetScope(result);
@@ -4171,7 +4178,7 @@ public sealed partial class Lowering
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
-        TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
+        bool transfersOwnedResult = TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         bool shadowed = PushSequentialLetInlinableShadow(let);
@@ -4180,7 +4187,8 @@ public sealed partial class Lowering
             let.Name,
             shadowed,
             RemoveCoroutineHelperMarker: false,
-            SuppressArenaReclaim: affineArm is not null);
+            SuppressArenaReclaim: affineArm is not null,
+            TransfersOwnedResult: transfersOwnedResult);
     }
 
     // Stores the bound value in the binding's slot, noting the name as a binder of the owned slot
@@ -6571,12 +6579,12 @@ public sealed partial class Lowering
         SetScopedOwnershipAlias(name, ResolveOwnershipAlias(aliasSourceName));
     }
 
-    private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
+    private bool TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         if (_collectInferredTraitElaboration
             || _borrowedTraitDictionaryBindings.Contains(let.Name))
         {
-            return;
+            return false;
         }
         var prunedValueType = Prune(valueType);
         RefineTempOwnershipType(valueTemp, prunedValueType);
@@ -6620,6 +6628,7 @@ public sealed partial class Lowering
                 if (runtimeManaged && IsTailForwardedBindingResult(let.Body, let.Name))
                 {
                     LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
+                    return true;
                 }
                 else if (!runtimeManaged && LookupOwnedValue(let.Name) is { } arenaOwner)
                 {
@@ -6627,6 +6636,7 @@ public sealed partial class Lowering
                 }
             }
         }
+        return false;
     }
 
 

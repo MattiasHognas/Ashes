@@ -539,7 +539,8 @@ public sealed partial class Lowering
         LoweredTempOwnershipReason reason = LoweredTempOwnershipReason.ExplicitLoweringDecision,
         int? sourceTemp = null,
         TypeRef? type = null,
-        SourceLocation? location = null)
+        SourceLocation? location = null,
+        LoweredTempOwnershipKind? ownership = null)
     {
         _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? existing);
         LoweredTempOwnershipReason effectiveReason =
@@ -559,7 +560,7 @@ public sealed partial class Lowering
             type ?? existing?.Type,
             layout,
             LoweredTempDropKind.RuntimeRcHeader,
-            existing?.Ownership ?? LoweredTempOwnershipKind.NewlyProduced,
+            ownership ?? existing?.Ownership ?? LoweredTempOwnershipKind.NewlyProduced,
             existing?.Producer ?? ProducerForReason(effectiveReason),
             location ?? existing?.Location,
             effectiveReason,
