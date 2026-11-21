@@ -3900,7 +3900,10 @@ let assertNumberedFixturePrints shipped fixture expected =
 
 let testOriginalTmcAccumulators shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("tmc_dedup_with_grown_seen_accumulator")("p1,p2,p3")
-    in assertSharedProgramPrintsExactly(shipped)("qualified_module_call_fresh_list_argument_released")("21"))
+    in
+        let _ = assertSharedProgramPrintsExactly(shipped)("qualified_module_call_fresh_list_argument_released")("21")
+        in
+            assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/qualified_callee_fifty_rounds.ash.source"))("qualifiedCalleeFiftyRounds")("selfhost_backend_qualified_callee_fifty_rounds")("300"))
 
 let testOriginalOperatorEvidence shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("logical_not_inferred_predicates")("true|true|1")
@@ -3916,8 +3919,11 @@ let testOriginalMatchedFieldOwnership shipped unit =
 let testOriginalCapturedDictionaries shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("escaping_constrained_partial_keeps_its_captured_evidence")("passed")
     in
-        let _ = assertSharedProgramPrintsExactly(shipped)("constrained_partial_forwards_show_evidence")("n=42 n=true")
-        in assertSharedProgramPrintsExactly(shipped)("constrained_function_uses_helper_from_its_definition")("first"))
+        let _ =
+            assertProgramPrintsWithArgs(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/escaping_dictionary_rounds.ash.source"))("escapingDictionaryRounds")("selfhost_backend_escaping_dictionary_rounds")(["1000"])("passed")
+        in
+            let _ = assertSharedProgramPrintsExactly(shipped)("constrained_partial_forwards_show_evidence")("n=42 n=true")
+            in assertSharedProgramPrintsExactly(shipped)("constrained_function_uses_helper_from_its_definition")("first"))
 
 let testReturnedAssociationListElement shipped unit = assertSharedProgramPrintsExactly(shipped)("as_pattern_element_returned_from_consumed_list")("0:2/0 1:2/1 2:2/2")
 
