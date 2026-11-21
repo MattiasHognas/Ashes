@@ -190,7 +190,7 @@ static byte[] CompileToImage(
         lowering.SetSourceContext(layout);
     }
 
-    var ir = CompilePhaseTiming.Measure("lower", () => lowering.Lower(program));
+    var ir = CompilePhaseTiming.Measure("lower", () => lowering.LowerExecutable(program));
     diag.ThrowIfAny();
 
     WriteIrDump(emitIr, IrDumpStage.Lowered, ir);

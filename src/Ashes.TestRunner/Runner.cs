@@ -1077,7 +1077,7 @@ public static class Runner
         {
             lowering.SetSourceContext(layout);
         }
-        var loweredIr = lowering.Lower(program);
+        var loweredIr = lowering.LowerExecutable(program);
         diag.ThrowIfAny();
 
         var optimizedIr = pipeline == TestPipeline.Optimized

@@ -1065,6 +1065,27 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Lowers a native program whose entry point has no caller to supply trait dictionaries.
+    /// Inference clients use <see cref="Lower(Program)"/> to inspect residual requirements.
+    /// </summary>
+    public IrProgram LowerExecutable(Program program)
+    {
+        IrProgram ir = Lower(program);
+        if (_diag.StructuredErrors.Count == 0 && program.Body is { } body)
+        {
+            foreach (TraitConstraint constraint in LastTraitConstraints)
+            {
+                if (!IsConcreteTraitConstraint(constraint))
+                {
+                    ReportAmbiguousTraitRequirement(constraint, GetSpan(body));
+                    break;
+                }
+            }
+        }
+        return ir;
+    }
+
+    /// <summary>
     /// Records non-recursive top-level functions (a plain <c>let</c> whose value is a lambda chain)
     /// so a saturated call to one inside a reuse arm can be inlined, letting the helper's constructor
     /// reuse a dead cell. <c>let recursive</c> / mutually-recursive groups are excluded — they can't be

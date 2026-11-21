@@ -526,13 +526,18 @@ public sealed partial class Lowering
     /// </summary>
     private (int, TypeRef) ReportUnresolvableTraitConstraint(TraitConstraint constraint, TextSpan span)
     {
+        ReportAmbiguousTraitRequirement(constraint, span);
+        return ReturnNeverWithDummyTemp();
+    }
+
+    private void ReportAmbiguousTraitRequirement(TraitConstraint constraint, TextSpan span)
+    {
         ReportTraitResolutionFailure(
             TraitConstraint.StableKey(constraint),
             span,
             $"Trait requirement '{FormatTraitConstraint(constraint)}' is ambiguous: its type cannot be "
                 + "determined from context, so no evidence can be supplied for it.",
             InvalidTraitDeclarationCode);
-        return ReturnNeverWithDummyTemp();
     }
 
     private string FormatResolutionTrace(
