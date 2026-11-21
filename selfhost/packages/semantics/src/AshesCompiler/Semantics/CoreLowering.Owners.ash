@@ -114,6 +114,7 @@ export (
     value pendingOperatorTypes,
     value sealedOperatorTypes,
     value pendingOperatorScheme,
+    value resolvedAmbientAnswer,
     value generalizeResolvedType,
     value tailForwardedVariable,
     value isTailForwardedBindingResult,
@@ -1262,10 +1263,25 @@ let recursive sealedOperatorTypes sealed acc =
         | [] -> acc
         | (_label, _target, semanticType) :: rest -> sealedOperatorTypes(rest)(semanticType :: acc)
 
-let recursive pendingTraitGoalTypes goals acc =
+let recursive resolvedAmbientAnswer operand candidates state =
+    match candidates with
+        | [] -> None
+        | (binding, candidate) :: rest ->
+            if resolveType(state)(candidate) == operand
+            then Some(ProvenAmbientMethod(binding))
+            else resolvedAmbientAnswer(operand)(rest)(state)
+
+// A local eager result stays monomorphic while it is unresolved. Once the body
+// has unified it with a dictionary in scope at the original use, replay can
+// build it per invocation; this obligation no longer restricts the enclosing scheme.
+let recursive pendingTraitGoalTypes state goals acc =
     match goals with
         | [] -> acc
-        | (_key, semanticType, _methods) :: rest -> pendingTraitGoalTypes(rest)(semanticType :: acc)
+        | (_key, semanticType, []) :: rest -> pendingTraitGoalTypes(state)(rest)(semanticType :: acc)
+        | (_key, semanticType, candidates) :: rest ->
+            match resolvedAmbientAnswer(resolveType(state)(semanticType))(candidates)(state) with
+                | Some(_proof) -> pendingTraitGoalTypes(state)(rest)(acc)
+                | None -> pendingTraitGoalTypes(state)(rest)(semanticType :: acc)
 
 // The types a generalization must hold back, in the environment position that keeps them out of
 // the quantifier: a deferred operator's operand, and the operand of a trait goal this pass could
@@ -1278,7 +1294,7 @@ let pendingOperatorScheme state =
                 quantified = [],
                 body = []
                 |> resolvedPendingOperatorTypes(state)([]
-                |> pendingTraitGoalTypes(goals)
+                |> pendingTraitGoalTypes(state)(goals)
                 |> sealedOperatorTypes(sealed)
                 |> pendingOperatorTypes(pending))
                 |> SemTuple,

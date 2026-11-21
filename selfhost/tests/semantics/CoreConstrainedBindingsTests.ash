@@ -1,6 +1,9 @@
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.CoreLowering.Emit.initialState
+import AshesCompiler.Semantics.CoreLowering.Emit.bindType
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withStatePendingTraitGoals
+import AshesCompiler.Semantics.CoreLowering.Owners.pendingOperatorScheme
 import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreConstrainedBindings
@@ -144,12 +147,33 @@ let checkAwaitQueryIdentity unit =
                 | (TypeInferenceResult { semanticType = SemNamed(_id, "Result", SemString :: SemInt :: []), error = None }, TypeInferenceResult { error = Some(ExpectedTaskType(SemNamed(77, "Other", _arguments))) }) -> Unit
                 | _ -> Ashes.IO.panic("await lost the environment's Task identity"))
 
+let checkPendingEvidenceBoundary unit =
+    (let operand = SemVariable(9001)
+    in
+        let supplied = SemVariable(9002)
+        in
+            let unrelated = SemVariable(9003)
+            in
+                let state =
+                    Unit
+                    |> initialState
+                    |> withStatePendingTraitGoals([("first", operand, [("seedDictionary", supplied)]), ("other", unrelated, [])])
+                in
+                    let before = pendingOperatorScheme(state)
+                    in
+                        match bindType(operand)(supplied)(state) with
+                            | (bound, None) ->
+                                let after = pendingOperatorScheme(bound)
+                                in assert(schemeHoldsVariable(9001)(before) && !schemeHoldsVariable(9002)(after) && !schemeHoldsVariable(9001)(after) && schemeHoldsVariable(9003)(after))("only the obligation satisfied by the enclosing dictionary may generalize")
+                            | _ -> Ashes.IO.panic("pending result could not unify with its enclosing dictionary"))
+
 let runCoreConstrainedBindingsTests unit =
     (let environment = standardTraitEnvironment(Unit)
     in
         Unit
         |> (given (_) -> checkRecursiveInference(environment))
         |> checkAsyncPlan
+        |> checkPendingEvidenceBoundary
         |> checkAwaitQueryIdentity
         |> (given (_) -> checkBoundaryRequirements(environment))
         |> (given (_) -> checkLayouts(environment))

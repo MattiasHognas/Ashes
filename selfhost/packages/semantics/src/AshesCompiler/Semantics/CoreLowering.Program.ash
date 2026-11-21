@@ -1967,14 +1967,6 @@ let registeredProgramState items state =
 
 // Pending goals are stored newest first. Prepending each resolved occurrence leaves
 // each site's list in lowering order, including holes for occurrences that stayed open.
-let recursive resolvedAmbientAnswer operand candidates state =
-    match candidates with
-        | [] -> None
-        | (binding, candidate) :: rest ->
-            if resolveType(state)(candidate) == operand
-            then Some(ProvenAmbientMethod(binding))
-            else resolvedAmbientAnswer(operand)(rest)(state)
-
 let recursive resolvedTraitGoals (pending: List((Str, SemanticType, List((Str, SemanticType))))) (state: CoreLoweringState) (sites: MapTree(Str, List(Maybe(CoreTraitGoalAnswer)))) =
     match pending with
         | [] -> sites

@@ -1,6 +1,8 @@
 // Planning for ordinary constrained bindings. The source scheme stays independent
 // of the hidden dictionary parameters used by the emitted closure.
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.NodeIdentity.identifyExpression
+import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
@@ -60,6 +62,14 @@ let recursive selectRequirements generalized constraints quantified =
 // Only requirements selected by this binding's quantified variables become hidden parameters.
 let coreGeneralizedScheme (scheme: TypeScheme) = scheme with constraints = selectRequirements(true)(scheme.constraints)(scheme.quantified)
 
+// Immediate dictionary demands can hold type variables out of a local let's
+// quantifier. Numbering is needed only when the source has such a boundary.
+let visitsLocalBinding found _id _span expression =
+    match expression with
+        | ExprLet(_, _, _, _, _, _) -> true
+        | ExprLetRecursive(_, _, _, _, _, _) -> true
+        | _ -> found
+
 // A recursive binding must be inferred monomorphically inside its own body, and
 // generalized only outside that self environment. Inferring a synthetic let keeps
 // that rule in the existing inference engine instead of duplicating it here.
@@ -73,20 +83,37 @@ let inferCoreConstrainedBinding name isRecursive value annotation requirements (
         else ExprLet(name)(value)(ExprVar(name))([])(annotation)(requirements)
     in
         // The written scheme uses the program rules for trait names and unary negation.
-        let inferenceEnvironment =
-            if requirements == []
-            then environment
-            else environment with programInferenceRules = true, lookupIndex = None
+        let hasLocals = foldExpressionNodes(visitsLocalBinding)(false)(value)
         in
-            match inferExpressionFrom(expression)(inferenceEnvironment)([])(supply) with
-                | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = nextSupply, constraints = constraints, error = error } ->
-                    let resolved = applySubstitution(substitution)(semanticType)
-                    in
-                        let scheme =
-                            constraints
-                            |> applyInferenceConstraints(substitution)
-                            |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(environment))(substitution)(resolved)
-                        in CoreConstrainedInference(scheme = coreGeneralizedScheme(scheme), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = nextSupply, error = error))
+            let inferenceEnvironment =
+                if requirements == [] && !hasLocals
+                then environment
+                else environment with programInferenceRules = true, lookupIndex = None
+            in
+                let inferred =
+                    if hasLocals
+                    then
+                    // Immediate requirements are associated with source nodes. A private
+                    // query owns its numbering and returns only its fresh type-variable supply.
+                        match identifyExpression(0)(expression) with
+                            | (numbered, _count) ->
+                                supply.nextId
+                                |> typeVariableSupplyFrom
+                                |> inferExpressionFrom(numbered)(inferenceEnvironment)([])
+                    else inferExpressionFrom(expression)(inferenceEnvironment)([])(supply)
+                in
+                    match inferred with
+                        | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = nextSupply, constraints = constraints, error = error } ->
+                            let resolved = applySubstitution(substitution)(semanticType)
+                            in
+                                let scheme =
+                                    constraints
+                                    |> applyInferenceConstraints(substitution)
+                                    |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(environment))(substitution)(resolved)
+                                in
+                                    CoreConstrainedInference(scheme = coreGeneralizedScheme(scheme), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = if hasLocals
+                                    then supply with nextId = nextSupply.nextId
+                                    else nextSupply, error = error))
 
 let recursive traitParameterSubstitution parameters arguments =
     match (parameters, arguments) with

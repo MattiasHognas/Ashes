@@ -1148,6 +1148,23 @@ let deferMethodGoal traitName methodName key operand result state =
     |> stateActiveTraitMethods
     |> matchingMethodCandidates(traitName)(methodName))(key)(operand)(result)(state)
 
+// The caller's dictionary carries the actual method arrow. Its codomain can be
+// the only occurrence of the trait parameter, as in first : Unit -> a.
+let emitSelectedUnaryMethod plan closureTemp closureType operandTemp resultType state =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName }) ->
+            match resolveType(state)(closureType) with
+                | SemFunction(_argument, suppliedResult, _row) ->
+                    match bindType(resultType)(suppliedResult)(state) with
+                        | (bound, None) ->
+                            emitTraitMethodCall(closureTemp)(operandTemp)(resolveType(bound)(resultType))(bound)
+                        | (failed, Some(error)) -> failure(failed)(error)
+                | _ ->
+                    closureType
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+        | _ -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(state)
+
 // `Ashes.Trait.Show.show(x)` and its unary siblings, the counterpart of the mapped binary operators:
 // resolve the trait's evidence for the operand's own type, build the method's closure for that plan,
 // and call it. A concrete operand resolves an instance directly; inside a generic body the operand's
@@ -1165,7 +1182,7 @@ let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: S
                         | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
                         | _resolvable ->
                             match buildTraitMethodClosure(plan)(methodName)(lower)(pinnedState) with
-                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
+                                | LoweredCoreValue { state = closureState, temp = closureTemp, semanticType = closureType, error = None } -> emitSelectedUnaryMethod(plan)(closureTemp)(closureType)(operandTemp)(resultType)(closureState)
                                 | failed -> failed
                 | TraitEvidenceResolution { plan = None } ->
                     match unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState) with
