@@ -532,6 +532,12 @@ items).
 **Checks next:** one combined validation batch of integration `8da62f16`, using
 `work/r10pre/combined.sh` and `work/r10pre/combined/`: build/format, C#/LSP/e2e, frontend and
 semantics suites (the latter also includes logical-not and ordered-equality regressions).
+The first disposable fixture build stopped on MA0006 in `ProjectSupport.cs`; worker commit
+`70e40f45` corrects the ordinal comparison (integration `d30f72dc`). The worker also supplied
+`f808164a`, fixing explicit module-qualifier collisions with imported bare values; its three-file
+regression already runs correctly on stage 1 bootstrap54. Both are included before the fresh stage-0
+build. The candidate generator is `r10-fixture-candidates/work/candidates.sh`; its initial failed
+build log is preserved as `work/candidates/build-initial.log` there.
 Generate fixture candidates once in `r10-fixture-candidates`, for the parity worker to review.
 Do not repeat heavyweight driver builds for each individual fix.
 
