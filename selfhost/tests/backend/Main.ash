@@ -5279,6 +5279,12 @@ let testRcReleaseInstrumentation unit =
                 |> Ashes.Text.contains(text)
                 |> test.assertEqual(expected))
 
+let testServerShutdownFinishesSpawnedHandler shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/server_shutdown_finishes_spawned_handler.ash"))("serverShutdownFinishesSpawnedHandler")("selfhost_backend_server_shutdown_finishes_spawned_handler")("handler drained")
+
+let testServerShutdownBoundsUnfinishedHandler shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/server_shutdown_bounds_unfinished_handler.ash"))("serverShutdownBoundsUnfinishedHandler")("selfhost_backend_server_shutdown_bounds_unfinished_handler")("bounded")
+
 let testForkedServerWorkerIndex shipped unit =
     (let source = "import Ashes.Net.Tcp.Server\nimport Ashes.Task\nexternal type WaitStatus\nexternal waitChild(FfiBuffer(WaitStatus)) -> u32 = \"wait@libc.so.6\"\nmatch Ashes.Task.run(Ashes.Net.Tcp.Server.forkWorkers(0)(2)) with\n    | Ok(0) -> let pid = waitChild([]) in Ashes.IO.print(pid != 0u32 && pid != 4294967295u32)\n    | Ok(index) -> Ashes.IO.print(index)\n    | Error(message) -> Ashes.IO.print(message)"
     in
@@ -6238,6 +6244,8 @@ let run shipped =
     |> testCopyOutListScopedInnerLists
     |> testRcReleaseInstrumentation
     |> testForkedServerWorkerIndex(shipped)
+    |> testServerShutdownFinishesSpawnedHandler(shipped)
+    |> testServerShutdownBoundsUnfinishedHandler(shipped)
     |> testServerStopSignals
     |> testServerDrainTimeoutSetting
     |> testReallocatedPoisonedCell
