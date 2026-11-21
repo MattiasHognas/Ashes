@@ -618,10 +618,15 @@ let inferRecursiveGroup bindings state =
 
 // Lowering uses the same joint inference as the program pass before fixing the dictionary
 // convention of any member. Its supply shares the lowering state's variable identities.
-let inferRecursiveGroupForLowering bindings environment supply =
-    match inferRecursiveGroup(bindings)(ProgramInferenceState(environment = environment, substitution = [], supply = supply, nextTypeSymbolId = 0, error = None)) with
-        | ProgramInferenceState { environment = resolved, substitution = substitution, supply = next, error = None } -> Some((resolved, substitution, next))
-        | _ -> None
+// Isolate locally numbered evidence sites. Only fresh type-variable IDs escape into lowering.
+let inferRecursiveGroupForLowering bindings (environment: TypeEnvironment) (supply: TypeVariableSupply) =
+    match identifyBindings(0)(bindings)([]) with
+        | (numbered, _nextNode) ->
+            let groupState = ProgramInferenceState(environment = (environment with programInferenceRules = true, lookupIndex = None), substitution = [], supply = typeVariableSupplyFrom(supply.nextId), nextTypeSymbolId = 0, error = None)
+            in
+                match inferRecursiveGroup(numbered)(groupState) with
+                    | ProgramInferenceState { environment = resolved, substitution = substitution, supply = next, error = None } -> Some((resolved, substitution, (supply with nextId = next.nextId)))
+                    | _ -> None
 
 let recursive registerTypeParameters parameters context supply reversedTypes reversedQuantified =
     match parameters with

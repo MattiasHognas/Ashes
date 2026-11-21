@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.ProjectSyntaxStitching
 export (
     value runCoreOrderedInferenceTests,
     value readShippedSources,
+    value standardTraits,
 )
 
 let lowerSource source =

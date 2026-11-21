@@ -1,3 +1,4 @@
+import CoreOrderedInferenceTests.standardTraits
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Parser
@@ -27,7 +28,7 @@ let checkUnresolvedOperands unit =
     |> (given (_) -> expectBool("let invert : Bool -> Bool = given value -> !value\ninvert(false)"))
     |> (given (_) -> expectBool("let recursive even n = if n == 0 then true else !even(n - 1)\neven(10)"))
     |> (given (_) -> expectBool("let recursive first n = if n == 0 then true else !second(n - 1) and second n = if n == 0 then true else !first(n - 1)\nfirst(10)"))
-    |> (given (_) -> expectBool("let recursive retained values rejected = match values with | [] -> [] | value :: rest -> if !contains(value)(rejected) then value :: retained(rest)(rejected) else retained(rest)(rejected) and contains value values = match values with | [] -> false | candidate :: rest -> candidate == value || contains(value)(rest)\nmatch retained([1, 2])([2]) with | value :: [] -> value == 1 | _ -> false"))
+    |> (given (_) -> expectBool(standardTraits(Unit) + "\nlet recursive retained values rejected = match values with | [] -> [] | value :: rest -> if !contains(value)(rejected) then value :: retained(rest)(rejected) else retained(rest)(rejected) and contains value values = match values with | [] -> false | candidate :: rest -> candidate == value || contains(value)(rest)\nmatch retained([1, 2])([2]) with | value :: [] -> value == 1 | _ -> false"))
 
 let checkInvalidOperand unit =
     match lowerSource("!1") with
