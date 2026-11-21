@@ -84,6 +84,7 @@ public sealed partial class Lowering
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
+    private readonly Dictionary<TextSpan, TypeScheme> _recursiveHoverSignatures = [];
     // Generated derived-implementation bodies carry their type declaration's span, so an expression
     // hover with exactly that span is never recorded.
     private readonly HashSet<TextSpan> _derivedSpans = [];
@@ -3644,12 +3645,14 @@ public sealed partial class Lowering
         var result = LowerVarBound(v, b, request);
         RecordCallbackReference(v, result.Type);
 
-        RecordHoverType(
-            GetSpan(v),
-            v.Name,
-            result.Type,
-            GetHoverParameterNames(b),
-            GetHoverIsParameter(b));
+        if (b.DefinitionSpan is { } definition && _recursiveHoverSignatures.TryGetValue(definition, out TypeScheme? signature))
+        {
+            RecordHoverScheme(GetSpan(v), v.Name, signature, GetHoverParameterNames(b), isDefinition: false);
+        }
+        else
+        {
+            RecordHoverType(GetSpan(v), v.Name, result.Type, GetHoverParameterNames(b), GetHoverIsParameter(b));
+        }
 
         // Compiler-inferred borrowing.
         // When an owned binding is accessed, emit a Borrow instruction.
@@ -6869,6 +6872,16 @@ public sealed partial class Lowering
             CountSourceLambdaParameters(letRecursive.Value),
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
+        // A recursive call sees the implementation closure with its leading evidence parameters.
+        // Its source reference denotes the logical signature, including through closure captures.
+        TextSpan definition = AstSpans.GetLetRecursiveNameOrDefault(letRecursive);
+        bool recordSignature = _configuration.CollectHoverTypes && usesTraitDictionary && IsValidSpan(definition)
+            && signature.Type is not null;
+        if (recordSignature)
+        {
+            _recursiveHoverSignatures[definition] = new TypeScheme([], signature.Type!, signature.Requirements);
+        }
+
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
         PushTraitConstraintScope();
         (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
@@ -6876,6 +6889,10 @@ public sealed partial class Lowering
             innerLambda,
             recursiveType,
             request.WithoutExpectedType());
+        if (recordSignature)
+        {
+            _recursiveHoverSignatures.Remove(definition);
+        }
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
         (inferredRequirements, needsLateTraitTypeHint) = NormalizeRecursiveTraitRequirements(
