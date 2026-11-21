@@ -194,6 +194,8 @@ export (
     value withStatePendingStackClosure,
     value stateCoroutineBody,
     value withStateCoroutineBody,
+    value statePendingCoroutineBody,
+    value stateCompletedTaskFrameDropper,
     value withStatePendingCoroutineBody,
     value withCompletedTaskFrameDropper,
     value enterPendingCoroutineBody,
@@ -2079,6 +2081,14 @@ let stateCoroutineBody (state: CoreLoweringState) =
 let withStateCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with coroutineBody = value))
+
+let statePendingCoroutineBody (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.pendingCoroutineBody)
+
+let stateCompletedTaskFrameDropper (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.completedTaskFrameDropper)
 
 let withCompletedTaskFrameDropper value (state: CoreLoweringState) =
     (let group = state.functionState

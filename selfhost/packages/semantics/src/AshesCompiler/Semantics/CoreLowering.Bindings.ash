@@ -946,7 +946,7 @@ let taskHeaderSize =
         | TaskStructLayout { headerSize = size } -> size
 
 let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
-    if outer.functionState.pendingCoroutineBody
+    if statePendingCoroutineBody(outer)
     then
         match localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished) with
             | [] -> value with state = withCompletedTaskFrameDropper(None)(value.state)
