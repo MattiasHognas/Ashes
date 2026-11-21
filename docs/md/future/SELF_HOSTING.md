@@ -421,6 +421,10 @@ integration head, and hand back a `BATCH READY` batch with the load work they ne
 worktree's `work/PROGRESS.md`. The coordinator pushes each agent branch and the integration branch
 after every commit, cherry-picks batches onto the integration branch, and updates this section. The
 agent rules are in the `step-f-round3` worktree's `work/coord/rules.md` (machine-local).
+User clarification on 2026-11-21: maximize implementation per batch before coordinator heavy
+validation; immediately assign failures to the next implementation batch. Keep remote branches
+current. The coordinator is authorized to choose validated milestone PRs, merge them, and remove
+local/remote branches no longer needed (preserve still-needed evidence first).
 
 **Orientation for a new session.** Everything below is either on `origin` (branches, this file) or
 on the development machine (marked *local*: git-ignored, under the repository checkout).
@@ -440,9 +444,11 @@ Branches on `origin`:
 
 | Branch | Role |
 | --- | --- |
-| `main` | Last merge: #1159 (`f6e28970`). |
+| `main` | Round-10 baseline: #1159 (`f6e28970`); refresh before the milestone PR. |
 | `selfhost/round10` | The integration branch; integrated batches and held changes are distinguished below. |
-| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Validated on 2026-11-21; all except the TMC fix integrated (table below). |
+| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Integrated, with the TMC correction from fix/r10-tmc-regressions. |
+| `fix/r10-tmc-regressions`, `fix/r10-import-diagnostics`, `fix/r10-lowering-evidence` | First resumed batches integrated through 8da62f16; combined validation pending. |
+| `fix/r10-ownership-parity`, `fix/r10-remaining-correctness` | Active second batches, both from integration 8da62f16. |
 | `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
 | `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
 
@@ -451,9 +457,12 @@ Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works
 | Worktree | Branch | Use |
 | --- | --- | --- |
 | `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
-| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Prepared for held TMC repair, then IR fixtures; Opus attempt hit usage limit without edits. |
-| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Prepared for imports (7), parser recovery (6), diagnostics (5); Opus attempt hit usage limit without edits. |
-| `r10-lowering-evidence` | `fix/r10-lowering-evidence` | Astra worker for recursive Not (2) and two-equality-site evidence (3), from integration 319fbe06. |
+| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Completed batch; full C# repair evidence under work/coordinator/repaired/. |
+| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Completed imports/parser/diagnostics batch; focused probes under work/. |
+| `r10-lowering-evidence` | `fix/r10-lowering-evidence` | Completed Not/equality/executable-boundary batch. |
+| `r10-ownership-parity` | `fix/r10-ownership-parity` | Active: owned match-result uniqueness and IR/explain parity (4, 1, 9). |
+| `r10-remaining-correctness` | `fix/r10-remaining-correctness` | Active: REST example and bootstrap36 correctness audit (8, 10). |
+| `r10-fixture-candidates` | detached 8da62f16 | Coordinator-only disposable fixture generation, candidates under work/. |
 | `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
 | `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
 | `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
@@ -520,14 +529,22 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** coordinator TMC repair validation in
-`r10-tmc-regressions/work/coordinator/repaired/` at `d3493f6e`: filtered qualified-callee test and
-C# format pass; stage-0 rebuild, dedup and full C# checks follow. Source frozen during validation.
+**Checks next:** one combined validation batch of integration `8da62f16`, using
+`work/r10pre/combined.sh` and `work/r10pre/combined/`: build/format, C#/LSP/e2e, frontend and
+semantics suites (the latter also includes logical-not and ordered-equality regressions).
+Generate fixture candidates once in `r10-fixture-candidates`, for the parity worker to review.
+Do not repeat heavyweight driver builds for each individual fix.
+
+TMC repair validation completed at `d3493f6e` (`r10-tmc-regressions/work/coordinator/repaired/`):
+build, format, qualified-callee and dedup pass. Full C#: 3,041 passed, 32 failed, 2 skipped;
+15 leak/plateau failures and 17 IR/explain fixtures, no runtime crash. The fixture differences
+need review; the five additional non-blocking leak rows remain deferred, not forgotten.
 The integration lowering diagnostic build (`work/r10pre/lowering-diagnostic/`, source `319fbe06`)
 failed before producing a binary: `OwnershipSummary.ash:255:243 ASH048 Constructor 'Consumed' is
 declared in module 'AshesCompiler.Semantics.OwnershipSummary', which this module does not import.`
-No bug-2/3 runtime outputs exist. The constructor is declared in that same module, and column 243
-exceeds the source line, so the imports worker is investigating the actual caller/provenance.
+No bug-2/3 runtime outputs exist from that build. Root cause was comparing UTF-8 AST offsets with
+UTF-16 module boundaries in declaration provenance; corrected in integration `c0c4ae71`, with a
+Unicode regression. No self-import was added. A fresh stage 0 is required for the next build.
 Parser evidence: `work/r10pre/parse-recovery.log` reproduces EOF instead of Int with integration
 frontend; the worker's `work/parse-recovery-fixed/run.log` confirms its fix reports Int at 21..22.
 Integrated-head checks at `fc50661a` finished on 2026-11-21:
@@ -546,35 +563,36 @@ That one test passes on the saved main baseline (`work/r10pre/baseline-qualified
 The isolated check on integration base `a5bf718f` plus only the held TMC patch (`7f3d3e00`)
 also crashes, confirming the patch introduces it; exact log:
 `r10-tmc-regressions/work/coordinator/qualified-callee.log`. Its test-project build is clean.
-The TMC fix is held for rework; do not count it as integrated or its regression as leak-only.
+The TMC regression is corrected and integrated; stage-1 validation is still pending.
 The old strict-import compile has no recorded
 completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
 `artifacts/selfhost-dev/s1-pre10-debug` is absent, and no compiler job was running on resumption.
-There is no ASH048 result to act on. Whole-compiler compilation remains pending behind the gate.
+That old run supplies no result. Whole-compiler compilation remains pending behind the gate.
 
 **Batch integration on 2026-11-21** (every cherry-pick pushed immediately):
 
 | Branch (worktree) | Commits | What | Load work before or after integrating |
 | --- | --- | --- | --- |
-| `fix/parity-bugs-4` (`parity-bugs`) | 3d4ff885 held; ada43aa6, d641e842, e91443e7 integrated as 7d866873, bed9e5ab, 7bff6f17 | The TMC fix resolves the projects crash but introduces the qualified-callee crash above; it needs rework in both compilers. The independent suite expectations and known-module diagnostic are integrated. | C# and e2e completed; shared stage-1 validation pending. Review the 12 additional IR/explain mismatches after fixing the crash. |
+| `fix/parity-bugs-4` and `fix/r10-tmc-regressions` | Original suite/diagnostic commits 7d866873, bed9e5ab, 7bff6f17; TMC and corrections 4c51c882, f4a48722, aa1d74be | Cons-tail loop-edge facts and correct transfer of the final spine tail, ported to both compilers. | Stage-0 crash and dedup pass; fixture review and shared stage-1 validation pending. |
 | `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed ([record](SELF_HOSTING_LOG.md#round-10-stage-0-fixture-repairs)); the two IR fixtures below remain open. | Full C# validation and integrated-head checks matched expectations; shared stage-1 validation pending. |
 
-The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
+The combined source is on origin at `8da62f16`. Lowering-evidence integration is `44820898`,
+`12c7bf89`, `be8f6f28`; imports/parser/diagnostics integration is `1089a9ae`, `bbf05bac`,
+`8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
 
-**Active workers:** two GPT-6.2 Astra workers, `imports_diagnostics` and `lowering_evidence`, each
-following its worktree's `work/BRIEF.md`, a 50-minute batch budget, no load work and no pushes.
-`tmc_repair` handed back `BATCH READY` at `d3493f6e` and is idle. All branches are pushed.
-Pending batches (not yet integrated):
-- TMC: held `7f3d3e00`, repair `6ca862d6`, direct-cons-tail guard `d3493f6e`; stage-0 and stage-1 ports.
-- Imports/diagnostics: `1be56ce8` exported trait resolution, `93607791` alias visibility,
-  `dddc84e1` written-requirement diagnostic priority, `c9c549dc` synthetic-parenthesis diagnostics,
-  `18fd4ab3` stage-1 newline recovery. Still implementing the batch and investigating ASH048 above.
-- Lowering evidence: `f71c3973` final unanswered-goal check, `64eb0c42` equality deferral and ordered
-  proof replay. Still reviewing expression/program boundary behavior and preparing the handback.
-`work/PROGRESS.md` files contain exact load requests. The earlier Opus attempts made no changes.
+**Active workers:** two GPT-6.2 Astra workers, each with a fresh worktree from `8da62f16`,
+self-contained `work/BRIEF.md`, 50-minute batch budget, no load work and no pushes:
+- `tmc_repair` resumed in `r10-ownership-parity`: missing match uniqueness port and IR parity.
+- `imports_diagnostics` resumed in `r10-remaining-correctness`: REST example and bootstrap36 audit.
+`lowering_evidence` is idle. All three first batches handed back clean and are integrated; their
+old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
 
-**Open bugs** (the gate; 0 awaiting validation, 7/6/5 plus the new ASH048 blocker assigned to imports,
-2/3 assigned to lowering evidence; 1/4/8/9/10 remain open for subsequent batches):
+**Gate status:** 0/2/3/5/6 and the alias/trait portion of 7 have implementations integrated and
+await combined validation. The Unicode provenance blocker is fixed in source. The selector-only
+portion of 7 no longer reproduces on bootstrap54 (regression prints 42); inline declaring-name
+regression still needs stage-1 verification. Active implementation work is 1/4/8/9/10 below.
+
+**Original bug descriptions and remaining validation**:
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
    qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
