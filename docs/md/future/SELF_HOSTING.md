@@ -410,6 +410,10 @@ to the bugs below until then. The user resumed work on 2026-11-21. The integrati
 and matched origin at `a5eef21e`. The installed Claude CLI supports Opus, but both worker attempts
 stopped on the account's weekly usage limit (reset reported November 22 at 11:00 Stockholm time).
 The user authorized GPT-6.2 Astra as the substitute, and both prepared workers are now running.
+The user reaffirmed the complete goal: stage 2 compiles stage 3 without errors and byte-identically;
+inference replaces discovery/replay and repeated lowering; parallel LLVM/codegen/linking follows.
+Blocking leaks are fixed immediately. After multithreading, **all** remaining compiler and generated
+program leaks must be fixed; this round's leak exclusions are temporary.
 
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
@@ -449,6 +453,7 @@ Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works
 | `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
 | `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Prepared for held TMC repair, then IR fixtures; Opus attempt hit usage limit without edits. |
 | `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Prepared for imports (7), parser recovery (6), diagnostics (5); Opus attempt hit usage limit without edits. |
+| `r10-lowering-evidence` | `fix/r10-lowering-evidence` | Astra worker for recursive Not (2) and two-equality-site evidence (3), from integration 319fbe06. |
 | `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
 | `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
 | `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
@@ -515,9 +520,16 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** coordinator current-source lowering diagnostic driver, under
-`work/r10pre/lowering-diagnostic/`: print the escaping recursive `Not` result (bug 2), then
-lower the two-equality-site reproducer (bug 3). This is a focused driver, not the shared round.
+**Checks in flight:** coordinator TMC repair validation in
+`r10-tmc-regressions/work/coordinator/repaired/` at `d3493f6e`: filtered qualified-callee test and
+C# format pass; stage-0 rebuild, dedup and full C# checks follow. Source frozen during validation.
+The integration lowering diagnostic build (`work/r10pre/lowering-diagnostic/`, source `319fbe06`)
+failed before producing a binary: `OwnershipSummary.ash:255:243 ASH048 Constructor 'Consumed' is
+declared in module 'AshesCompiler.Semantics.OwnershipSummary', which this module does not import.`
+No bug-2/3 runtime outputs exist. The constructor is declared in that same module, and column 243
+exceeds the source line, so the imports worker is investigating the actual caller/provenance.
+Parser evidence: `work/r10pre/parse-recovery.log` reproduces EOF instead of Int with integration
+frontend; the worker's `work/parse-recovery-fixed/run.log` confirms its fix reports Int at 21..22.
 Integrated-head checks at `fc50661a` finished on 2026-11-21:
 solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
 known leaks plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
@@ -549,14 +561,20 @@ There is no ASH048 result to act on. Whole-compiler compilation remains pending 
 
 The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 
-**Active workers:** two GPT-6.2 Astra workers, authorized by the user on 2026-11-21:
-`tmc_repair` in `r10-tmc-regressions` and `imports_diagnostics` in `r10-import-diagnostics`.
-Each follows its self-contained `work/BRIEF.md`, a 50-minute batch budget, no load work and no
-pushes. Both branches are on origin; the TMC worktree includes held patch `7f3d3e00`.
-Their `work/PROGRESS.md` files are the handbacks. The earlier Opus attempts made no changes.
+**Active workers:** two GPT-6.2 Astra workers, `imports_diagnostics` and `lowering_evidence`, each
+following its worktree's `work/BRIEF.md`, a 50-minute batch budget, no load work and no pushes.
+`tmc_repair` handed back `BATCH READY` at `d3493f6e` and is idle. All branches are pushed.
+Pending batches (not yet integrated):
+- TMC: held `7f3d3e00`, repair `6ca862d6`, direct-cons-tail guard `d3493f6e`; stage-0 and stage-1 ports.
+- Imports/diagnostics: `1be56ce8` exported trait resolution, `93607791` alias visibility,
+  `dddc84e1` written-requirement diagnostic priority, `c9c549dc` synthetic-parenthesis diagnostics,
+  `18fd4ab3` stage-1 newline recovery. Still implementing the batch and investigating ASH048 above.
+- Lowering evidence: `f71c3973` final unanswered-goal check, `64eb0c42` equality deferral and ordered
+  proof replay. Still reviewing expression/program boundary behavior and preparing the handback.
+`work/PROGRESS.md` files contain exact load requests. The earlier Opus attempts made no changes.
 
-**Open bugs** (the gate; active assignments cover 0 and optionally 1 in the TMC worktree,
-7/6/5 in the imports worktree; 2/3/4/8/9/10 remain unassigned):
+**Open bugs** (the gate; 0 awaiting validation, 7/6/5 plus the new ASH048 blocker assigned to imports,
+2/3 assigned to lowering evidence; 1/4/8/9/10 remain open for subsequent batches):
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
    qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
