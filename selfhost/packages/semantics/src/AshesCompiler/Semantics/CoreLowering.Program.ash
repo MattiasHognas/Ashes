@@ -1510,9 +1510,9 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                             | CoreLoweringState { bindings = outerBindings } ->
                                 let pairs = letBindingSyntaxPairs(bindings)(state)
                                 in
-                                    match []
-                                    |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
-                                    |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
+                                    match state
+                                    |> groupMemberStarts(bindings)
+                                    |> openPossiblyConstrainedGroup(bindings)(pairs)(lowerCore) with
                                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                         | LoweredCoreValue { state = opened, error = None } ->
                                             lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)

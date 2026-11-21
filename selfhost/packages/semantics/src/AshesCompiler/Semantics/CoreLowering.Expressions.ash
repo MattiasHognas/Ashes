@@ -8,6 +8,8 @@ import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Frontend.Syntax.LetBindingSyntax
+import AshesCompiler.Semantics.ProgramInference.inferRecursiveGroupForLowering
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Syntax.callArgumentsPipe
@@ -83,6 +85,7 @@ export (
     value writtenRequirements,
     value lowerConstrainedBindingValue,
     value openPossiblyConstrainedRecursive,
+    value openPossiblyConstrainedGroup,
     value constrainedAliasBinding,
     value lowerConstrainedAlias,
     value storedConstrainedScheme,
@@ -3271,6 +3274,138 @@ let openConstrainedRecursive name value (plan: CoreConstrainedInference) lower s
             |> constrainedPlanSourceType
             |> UnsupportedCoreTraitDispatch("recursive evidence forwarding")
             |> failure(state)
+
+// A group is inferred with monomorphic siblings. Its physical member arrows include the hidden
+// dictionaries, while source calls both inside and after the group see the logical arrows.
+type ConstrainedGroupMember =
+    | name: Str
+    | source: Expr
+    | scheme: TypeScheme
+    | physical: SemanticType
+    | methods: List((Str, SemanticType, Str, Str))
+
+let recursive groupMayUseDictionaries (bindings: List(LetBindingSyntax)) state =
+    match bindings with
+        | [] -> false
+        | LetBindingSyntax { value = value, requirements = requirements } :: rest -> !constrainedPlanCannotApply(value)(requirements)(state) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Hash")(value) || exprReadsName("Hash")(value) || groupMayUseDictionaries(rest)(state)
+
+let recursive planGroupMembers pairs environment state =
+    match pairs with
+        | [] -> Some([])
+        | (name, source) :: rest ->
+            match resolveWrittenTypeBinding(name)(environment) with
+                | Some(scheme) ->
+                    if constrainedPlanSupportedIn(true)(scheme.constraints)(state)
+                    then
+                        match state
+                        |> stateTraitEnvironment
+                        |> coreConstrainedLayout(scheme.constraints) with
+                            | CoreConstrainedLayout { parameterTypes = parameters, methods = methods, error = None } ->
+                                let member =
+                                    ConstrainedGroupMember(name = name, source = state
+                                    |> stateTraitEnvironment
+                                    |> rewriteCoreConstrainedValue(source)(scheme.constraints), scheme = scheme, physical = scheme.body
+                                    |> withoutCapabilityRows
+                                    |> coreConstrainedPhysicalType(parameters), methods = methods)
+                                in
+                                    match planGroupMembers(rest)(environment)(state) with
+                                        | Some(members) -> Some(member :: members)
+                                        | None -> None
+                            | _ -> None
+                    else None
+                | None -> None
+
+let recursive anyGroupDictionaries members =
+    match members with
+        | [] -> false
+        | ConstrainedGroupMember { scheme = TypeScheme { constraints = constraints } } :: rest -> constraints != [] || anyGroupDictionaries(rest)
+
+let recursive pinGroupMemberArrows (plans: List(ConstrainedGroupMember)) members state =
+    match (plans, members) with
+        | (plan :: rest, PreparedCoreRecursiveBinding { semanticType = arrow } :: tail) ->
+            match bindType(arrow)(plan.physical)(state) with
+                | (pinned, None) -> pinGroupMemberArrows(rest)(tail)(pinned)
+                | failed -> failed
+        | _ -> (state, None)
+
+let recursive groupMemberForLabel label (plans: List(ConstrainedGroupMember)) prepared =
+    match (plans, prepared) with
+        | (plan :: rest, PreparedCoreRecursiveBinding { label = candidate } :: tail) ->
+            if candidate == label
+            then Some(plan)
+            else groupMemberForLabel(label)(rest)(tail)
+        | _ -> None
+
+let recursive logicalSiblingBindings plans prepared bindings =
+    match bindings with
+        | [] -> []
+        | (CoreBinding { location = CoreSelf(label, _size) } as binding) :: rest ->
+            let logical =
+                match groupMemberForLabel(label)(plans)(prepared) with
+                    | Some(member) -> binding with scheme = (member.scheme with quantified = [], body = withoutCapabilityRows(member.scheme.body)), closedScheme = false
+                    | None -> binding
+            in logical :: logicalSiblingBindings(plans)(prepared)(rest)
+        | binding :: rest -> binding :: logicalSiblingBindings(plans)(prepared)(rest)
+
+let recursive exposeGroupSchemes (plans: List(ConstrainedGroupMember)) outer state =
+    match plans with
+        | [] -> state
+        | member :: rest ->
+            state
+            |> restoreBindings(replaceConstrainedScheme(member.name)(finalizeConstrainedScheme(member.scheme)(outer)(state))(state.bindings))
+            |> exposeGroupSchemes(rest)(outer)
+
+let openGroupWithDictionaries plans lower state =
+    (let pairs =
+        map(given (plan: ConstrainedGroupMember) -> (plan.name, plan.source))(plans)
+    in
+        match prepareRecursiveGroup(pairs)(state)([]) with
+            | PreparedCoreRecursiveGroup { state = preparedState, members = members, error = None } as prepared ->
+                match pinGroupMemberArrows(plans)(members)(preparedState) with
+                    | (failed, Some(error)) -> failure(failed)(error)
+                    | (pinned, None) ->
+                        let memberLower =
+                            given (body) ->
+                                given (entered: CoreLoweringState) ->
+                                    match groupMemberForLabel(stateLoweringBodyLabel(entered))(plans)(members) with
+                                        | Some(member) ->
+                                            entered
+                                            |> restoreBindings(logicalSiblingBindings(plans)(members)(entered.bindings))
+                                            |> withStateActiveTraitMethods(state
+                                            |> stateActiveTraitMethods
+                                            |> append(member.methods))
+                                            |> lower(body)
+                                        | None -> lower(body)(entered)
+                        in
+                            match openPreparedRecursiveGroup(pairs)(memberLower)(state.bindings)((prepared with state = pinned)) |> restoreConstrainedBindingState(state) with
+                                | LoweredCoreValue { state = opened, error = None } as result -> result with state = exposeGroupSchemes(plans)(state.bindings)(opened)
+                                | failed -> failed
+            | PreparedCoreRecursiveGroup { state = failed, error = Some(error) } -> failure(failed)(error))
+
+let openPossiblyConstrainedGroup bindings pairs lower (state: CoreLoweringState) =
+    (let ordinary =
+        given (_unit) ->
+            []
+            |> prepareRecursiveGroup(pairs)(state)
+            |> openPreparedRecursiveGroup(pairs)(lower)(state.bindings)
+    in
+        if groupMayUseDictionaries(bindings)(state)
+        then
+            match inferRecursiveGroupForLowering(bindings)(constrainedInferenceEnvironment(state))(state.typeSupply) with
+                | Some((environment, substitution, supply)) ->
+                    match planGroupMembers(pairs)(environment)(state) with
+                        | Some(plans) ->
+                            if anyGroupDictionaries(plans)
+                            then
+                                match state
+                                |> withTypeSupply(supply)
+                                |> mergeConstrainedSubstitution(substitution) with
+                                    | (adopted, None) -> openGroupWithDictionaries(plans)(lower)(adopted)
+                                    | (failed, Some(error)) -> failure(failed)(error)
+                            else ordinary(Unit)
+                        | None -> ordinary(Unit)
+                | None -> ordinary(Unit)
+        else ordinary(Unit))
 
 let openUnregisteredConstrainedRecursive name value annotation requirements lower (state: CoreLoweringState) =
     match constrainedBindingPlan(name)(true)(value)(annotation)(requirements)(state) with

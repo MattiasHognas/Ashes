@@ -31,6 +31,7 @@ export (
     value inferIdentifiedProgramUnitsFrom,
     value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
+    value inferRecursiveGroupForLowering,
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,
@@ -465,6 +466,13 @@ let inferRecursiveGroup bindings state =
                                 ProgramExpressionError(error)
                             ))
         | failedState -> failedState
+
+// Lowering uses the same joint inference as the program pass before fixing the dictionary
+// convention of any member. Its supply shares the lowering state's variable identities.
+let inferRecursiveGroupForLowering bindings environment supply =
+    match inferRecursiveGroup(bindings)(ProgramInferenceState(environment = environment, substitution = [], supply = supply, nextTypeSymbolId = 0, error = None)) with
+        | ProgramInferenceState { environment = resolved, substitution = substitution, supply = next, error = None } -> Some((resolved, substitution, next))
+        | _ -> None
 
 let recursive registerTypeParameters parameters context supply reversedTypes reversedQuantified =
     match parameters with
