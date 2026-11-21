@@ -403,6 +403,8 @@ type CorePassCounts =
     | relowerings: Int
     | tableCallResults: Int
     | tableFallbacks: Int
+    | recordedCopyCalls: Int
+    | inferredCopyCalls: Int
     | error: Maybe(CoreLoweringError)
 
 type CoreLoweringMeasurement =
@@ -418,13 +420,13 @@ type CoreLoweringMeasurement =
     | first: CorePassCounts
     | replay: CorePassCounts
 
-let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, error = None)
+let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, error = None)
 
 let passCountsOf (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, error = error } ->
             match stateTypeObservation(state) with
-                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks }) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, error = error)
+                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies }) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies, error = error)
                 | None -> noPassCounts with error = error
 
 // The seed every program-level lowering starts from with source locations and reuse on, given the

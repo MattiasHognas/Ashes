@@ -119,13 +119,15 @@ let reportTraversal regions (measurement: CoreLoweringMeasurement) =
                         then 2
                         else 1, 0)
             in
-                let _ = Ashes.IO.writeErrorLine("lowering traversals=" + Ashes.Text.fromInt(traversals) + " body_relowerings_first=" + Ashes.Text.fromInt(first.relowerings) + " body_relowerings_retained=" + Ashes.Text.fromInt(retained) + " body_relowerings_emit_replay=" + Ashes.Text.fromInt(replay.relowerings))
+                let _ = Ashes.IO.writeErrorLine("concrete_copy_calls first_recorded=" + Ashes.Text.fromInt(first.recordedCopyCalls) + " first_inferred=" + Ashes.Text.fromInt(first.inferredCopyCalls) + " emit_replay_recorded=" + Ashes.Text.fromInt(replay.recordedCopyCalls) + " emit_replay_inferred=" + Ashes.Text.fromInt(replay.inferredCopyCalls))
                 in
-                    let _ =
-                        match measurement.equalityGoalKeys with
-                            | [] -> Unit
-                            | keys -> Ashes.IO.writeErrorLine("structural equality keys: " + Ashes.Text.join(" ")(keys))
-                    in reportSites(regions)(measurement.goalDetails))
+                    let _ = Ashes.IO.writeErrorLine("lowering traversals=" + Ashes.Text.fromInt(traversals) + " body_relowerings_first=" + Ashes.Text.fromInt(first.relowerings) + " body_relowerings_retained=" + Ashes.Text.fromInt(retained) + " body_relowerings_emit_replay=" + Ashes.Text.fromInt(replay.relowerings))
+                    in
+                        let _ =
+                            match measurement.equalityGoalKeys with
+                                | [] -> Unit
+                                | keys -> Ashes.IO.writeErrorLine("structural equality keys: " + Ashes.Text.join(" ")(keys))
+                        in reportSites(regions)(measurement.goalDetails))
 
 let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProject) =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch complete")

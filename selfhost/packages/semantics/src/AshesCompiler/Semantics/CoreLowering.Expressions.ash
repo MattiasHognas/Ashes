@@ -49,6 +49,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedNodeType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedClosedTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
@@ -1288,6 +1289,22 @@ let concreteCopyDeclined state =
     then withStateConcreteDeclines(stateConcreteDeclines(state) + 1)(state)
     else state
 
+// Both inference routes must prove the same source scheme, pure arrows, and
+// argument-determined result before looking up a copy by parameter types.
+let concreteCopyTypeFromProof exactParameters (candidate: CoreConcreteCandidate) resolved =
+    match concreteConstrainedArguments(candidate.arity)(resolved) with
+        | Some(parameters) ->
+            match pinProvenConcreteConstrainedFunction(candidate.scheme)(parameters)(resolved) with
+                | Some(pinned) ->
+                    match concreteConstrainedArguments(candidate.arity)(pinned) with
+                        | Some(checked) ->
+                            if !exactParameters || checked == parameters
+                            then Some((parameters, pinned))
+                            else None
+                        | None -> None
+                | None -> None
+        | None -> None
+
 // The original scheme is instantiated privately; speculative inference cannot
 // change caller state until a fully concrete source copy has been accepted.
 let inferConcreteCopyType (candidate: CoreConcreteCandidate) arguments (state: CoreLoweringState) =
@@ -1305,18 +1322,22 @@ let inferConcreteCopyType (candidate: CoreConcreteCandidate) arguments (state: C
                             in
                                 match inferExpressionFrom(appendConstrainedArguments(ExprVar(name))(arguments))(bound)([])(supply) with
                                     | TypeInferenceResult { substitution = substitution, error = None } ->
-                                        let resolved = applySubstitution(substitution)(functionType)
-                                        in
-                                            match concreteConstrainedArguments(candidate.arity)(resolved) with
-                                                | None -> None
-                                                | Some(parameters) ->
-                                                    match pinProvenConcreteConstrainedFunction(candidate.scheme)(parameters)(resolved) with
-                                                        | Some(pinned) ->
-                                                            match concreteConstrainedArguments(candidate.arity)(pinned) with
-                                                                | Some(_parameters) -> Some((parameters, pinned))
-                                                                | None -> None
-                                                        | None -> None
+                                        functionType
+                                        |> applySubstitution(substitution)
+                                        |> concreteCopyTypeFromProof(false)(candidate)
                                     | _ -> None
+
+let recordedCandidateCopyType (candidate: CoreConcreteCandidate) reference arguments state =
+    match recordedConcreteCallType(reference)(nodeIdentityOf(candidate.source))(candidate.arity)(arguments)(state) with
+        | Some(proven) -> concreteCopyTypeFromProof(true)(candidate)(proven)
+        | None -> None
+
+let concreteCopyTypeAtCall candidate reference arguments state =
+    match if reference < 0
+    then None
+    else recordedCandidateCopyType(candidate)(reference)(arguments)(state) with
+        | Some(copyType) -> (observeLoweringEvent(5)(state), Some(copyType))
+        | None -> (observeLoweringEvent(6)(state), inferConcreteCopyType(candidate)(arguments)(state))
 
 let recursive concreteRootReadsEnvironment instructions =
     match instructions with
@@ -1548,20 +1569,20 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
     if coreListLength(arguments) != candidate.arity || stateConcreteDepth(state) >= 8
     then (concreteCopyDeclined(state), None)
     else
-        match inferConcreteCopyType(candidate)(arguments)(state) with
-            | None -> (concreteCopyDeclined(state), None)
-            | Some((parameters, functionType)) ->
-                match state
+        match concreteCopyTypeAtCall(candidate)(reference)(arguments)(state) with
+            | (observed, None) -> (concreteCopyDeclined(observed), None)
+            | (observed, Some((parameters, functionType))) ->
+                match observed
                 |> stateConcreteRegistry
                 |> lookupCoreConcreteCopy(candidate.identity)(parameters) with
                     | Some(Some(label)) ->
-                        (state, state
+                        (observed, observed
                         |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) ->
-                        declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(concreteCopyDeclined(state))(state)
+                        declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(concreteCopyDeclined(observed))(observed)
                     | None ->
-                        match generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(state) with
+                        match generateConcreteCopy(candidate)(reference)(parameters)(functionType)(arguments)(lower)(observed) with
                             | (rejected, None) -> declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(rejected)(rejected)
                             | generated -> generated
 

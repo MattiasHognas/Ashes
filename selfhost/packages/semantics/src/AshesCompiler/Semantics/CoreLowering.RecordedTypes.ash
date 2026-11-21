@@ -18,6 +18,9 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.concreteConstrainedArguments
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.preparePureConcreteScheme
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 export (
@@ -29,6 +32,7 @@ export (
     value recordedClosedTypeAt,
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
+    value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
     value rawOperatorDeclarationSchemes,
     value withRawOperatorDeclarationSchemes,
@@ -257,6 +261,68 @@ let recordedCopyInstantiation (reference: Int) (source: Int) (functionType: Sema
                                 else []
                             | _ -> []
                 | _ -> []
+
+// The argument nodes and the callee come from the same numbered call. An
+// unnumbered replacement argument has no entry and keeps speculative inference.
+let recursive recordedArgumentsMatch expected arguments table state =
+    match (expected, arguments) with
+        | ([], []) -> true
+        | (parameter :: rest, argument :: tail) ->
+            match nodeTypeAt(nodeIdentityOf(argument))(table) with
+                | Some(recorded) -> instantiatedRecordedType(state)(recorded) == parameter && recordedArgumentsMatch(rest)(tail)(table)(state)
+                | None -> false
+        | _ -> false
+
+// An inferred arrow can still have a bare row variable at a pure use. The
+// source may choose the empty row only when that variable was quantified by
+// its declaration; preparePureConcreteScheme checks this on the original type.
+let recursive copyRowsAllowPureInstance arity called =
+    if arity == 0
+    then true
+    else
+        match called with
+            | SemFunction(_parameter, result, None) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemRow([], None))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemVariable(_open))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | _ -> false
+
+let recordedCopyAtInstance arity arguments substitutions definition called table state =
+    (let applied = applySubstitution(substitutions)(definition)
+    in
+        if definition == applied || applied != called || !copyRowsAllowPureInstance(arity)(called)
+        then None
+        else
+            let quantified =
+                Ashes.Collection.List.map(given (entry) ->
+                    match entry with
+                        | (id, _actual) -> (id, ""))(substitutions)
+            in
+                match preparePureConcreteScheme(TypeScheme(quantified = quantified, body = definition, constraints = []))(arity) with
+                    | Some(pureScheme) ->
+                        let instance = applySubstitution(substitutions)(pureScheme.body)
+                        in
+                            match concreteConstrainedArguments(arity)(instance) with
+                                | Some(parameters) ->
+                                    if recordedArgumentsMatch(parameters)(arguments)(table)(state)
+                                    then
+                                        match translateRecordedTypeAsIs(state)(instance) with
+                                            | Ok(translated) -> Some(translated)
+                                            | Error(_message) -> None
+                                    else None
+                                | None -> None
+                    | None -> None)
+
+// Validate the original effect rows before translation: lowering drops rows
+// from function types. Both the named source body and the numbered use must
+// agree at this reference's own instantiation, including its result layout.
+let recordedConcreteCallType reference source arity arguments (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match (nodeInstantiationAt(reference)(table), nodeTypeAt(source)(table), nodeTypeAt(reference)(table)) with
+                | (Some(NodeInstantiation { arguments = substitutions }), Some(definition), Some(useType)) ->
+                    recordedCopyAtInstance(arity)(arguments)(instantiatedArguments(state)(substitutions))(definition)(instantiatedRecordedType(state)(useType))(table)(state)
+                | _ -> None
 
 // The operator traits whose operators lowering holds monomorphic: it emits their integer form over
 // open operands and settles it once the type is known, so it gives a binding using them no

@@ -3973,6 +3973,8 @@ let testOriginalCapturedDictionaries shipped unit =
 
 let testReturnedAssociationListElement shipped unit = assertSharedProgramPrintsExactly(shipped)("as_pattern_element_returned_from_consumed_list")("0:2/0 1:2/1 2:2/2")
 
+let testNumberedGenericAddReturnsList shipped unit = assertNumberedFixturePrints(shipped)("generic_add_binding_reading_top_level_value_returns_list_at_int_and_float")("12,4 4.5,1.5")
+
 let testNumberedGenericAddReadingTopLevelValue shipped unit = assertNumberedFixturePrints(shipped)("generic_add_binding_reading_top_level_value_used_at_int_and_float")("12 4.5")
 
 let testNumberedListEqualityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
@@ -6443,6 +6445,7 @@ let run shipped =
     |> testOriginalCapturedDictionaries(shipped)
     |> testReturnedAssociationListElement(shipped)
     |> testNumberedGenericAddReadingTopLevelValue(shipped)
+    |> testNumberedGenericAddReturnsList(shipped)
     |> testRunTraitGoalsSettledAtBinding(shipped)
     |> testRunLaterSiblingBesideFreshTupleArm(shipped)
     |> testRunConstrainedPartialDeclaredArithmetic(shipped)

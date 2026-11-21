@@ -10,9 +10,14 @@ import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
 import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.CoreLowering.Emit.initialState
+import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLowering
+import AshesCompiler.Semantics.CoreLowering.measureRawCoreProgramLowering
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withNodeTypes
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateNodeInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallType
+import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTypeParameters
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 export (
@@ -222,6 +227,102 @@ let checkGuardedOrPattern unit =
                             | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("guard inference failed: " + Ashes.Trait.Show.show(error))
             | _ -> Ashes.IO.panic("guarded or-pattern fixture did not parse"))
 
+// Use inferred tables from two concrete references to one generic source. The
+// copy returns an aggregate, so confusing these layouts also changes ownership.
+let copySourceNode table found node _span _expression =
+    match nodeDeclarationAt(node)(table) with
+        | Some(("twice", _scheme)) -> node
+        | _ -> found
+
+let checkCopySite state source count _node _span expression =
+    match expression with
+        | ExprCall(callee, argument, _space, _layout) ->
+            match stripExprAt(callee) with
+                | ExprVar("twice") ->
+                    let reference = nodeIdentityOf(callee)
+                    in
+                        match (stripExprAt(argument), recordedConcreteCallType(reference)(source)(1)([argument])(state)) with
+                            | (ExprInt(_), Some(SemFunction(SemInt, SemList(SemInt), None))) ->
+                                if recordedConcreteCallType(reference)(source)(1)([ExprInt(0)])(state) == None && recordedConcreteCallType(reference)(reference)(1)([argument])(state) == None
+                                then count + 1
+                                else Ashes.IO.panic("concrete copy accepted a synthesized argument or unrelated definition")
+                            | (ExprFloat(_, _), Some(SemFunction(SemFloat, SemList(SemFloat), None))) -> count + 1
+                            | _ -> Ashes.IO.panic("recorded concrete copy lost a call's own parameters or aggregate result")
+                | _ -> count
+        | _ -> count
+
+let checkCopyLoweringPaths table program =
+    (let clock =
+        given (_unit) -> 0
+    in
+        let typed = measureCoreProgramLowering(clock)(Some(table))("copies.ash")("")(program)
+        in
+            let legacy = measureRawCoreProgramLowering(clock)(table)("copies.ash")("")(program)
+            in
+                let firstTyped = typed.first
+                in
+                    let firstLegacy = legacy.first
+                    in
+                        if firstTyped.error == None && firstLegacy.error == None && firstTyped.recordedCopyCalls >= 2 && firstTyped.inferredCopyCalls == 0 && firstLegacy.recordedCopyCalls == 0 && firstLegacy.inferredCopyCalls >= 2
+                        then Unit
+                        else Ashes.IO.panic("concrete copy lowering paths: typed recorded=" + Ashes.Text.fromInt(firstTyped.recordedCopyCalls) + ", typed inferred=" + Ashes.Text.fromInt(firstTyped.inferredCopyCalls) + ", legacy inferred=" + Ashes.Text.fromInt(firstLegacy.inferredCopyCalls)))
+
+let checkConcreteCopyFacts unit =
+    match parseProgram("let twice x = [x + x, x]\n(twice(1), twice(1.5))") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            let source =
+                                foldProgramNodes(copySourceNode(table))(-1)(program)
+                            in
+                                let state =
+                                    Unit
+                                    |> initialState
+                                    |> withNodeTypes(table)
+                                in
+                                    if source >= 0 && foldProgramNodes(checkCopySite(state)(source))(0)(program) == 2
+                                    then checkCopyLoweringPaths(table)(program)
+                                    else Ashes.IO.panic("missing concrete copy references")
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("copy inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("copy fixture did not parse")
+
+// Inside a specialized wrapper the use can still carry that wrapper's
+// variable id. Read it through the current copy; do not guess it when open.
+let recordedCopyInFrame sourceRow useRow rowArguments enclosing =
+    (let formal = SemVariable(7)
+    in
+        let actual = SemVariable(40)
+        in
+            let source = SemFunction(formal)(SemList(formal))(sourceRow)
+            in
+                let called = SemFunction(actual)(SemList(actual))(useRow)
+                in
+                    let reference = NodeInstantiation(arguments = (7, actual) :: rowArguments, requirements = [], dictionaries = [], evidenceDemands = [])
+                    in
+                        let table =
+                            emptyNodeTypeTable with types = Ashes.Collection.Map.empty |> Ashes.Collection.Map.setInt(1)(source) |> Ashes.Collection.Map.setInt(2)(called) |> Ashes.Collection.Map.setInt(3)(actual), instantiations = Ashes.Collection.Map.setInt(2)(reference)(Ashes.Collection.Map.empty)
+                        in
+                            Unit
+                            |> initialState
+                            |> withNodeTypes(table)
+                            |> withStateNodeInstantiation(enclosing)
+                            |> recordedConcreteCallType(2)(1)(1)([ExprNode(3)(ExprVar("x"))]))
+
+let checkCopyRowAndScope unit =
+    (let sourceRow = Some(SemVariable(8))
+    in
+        let actualRow = SemVariable(41)
+        in
+            let effect = SemRow([SemCapability("Inspect")([])])(None)
+            in
+                let enclosing = [(40, SemFloat)]
+                in
+                    match (recordedCopyInFrame(sourceRow)(Some(actualRow))([(8, actualRow)])(enclosing), recordedCopyInFrame(sourceRow)(Some(actualRow))([(8, actualRow)])([]), recordedCopyInFrame(Some(actualRow))(Some(actualRow))([])(enclosing), recordedCopyInFrame(sourceRow)(Some(effect))([(8, effect)])(enclosing)) with
+                        | (Some(SemFunction(SemFloat, SemList(SemFloat), None)), None, None, None) -> Unit
+                        | _ -> Ashes.IO.panic("concrete copy lost its enclosing instantiation, guessed an open type, or erased a capability"))
+
 let runRecordedInferenceCoverageTests unit =
     unit
     |> checkHandlerBindings
@@ -229,6 +330,8 @@ let runRecordedInferenceCoverageTests unit =
     |> checkArmBodyShadowing
     |> checkGuardedOrPattern
     |> checkRecordInstantiations
+    |> checkConcreteCopyFacts
+    |> checkCopyRowAndScope
     |> checkTypeTranslation
     |> checkRigidScope
     |> checkDerivedTree

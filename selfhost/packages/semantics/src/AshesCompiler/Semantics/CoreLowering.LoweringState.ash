@@ -857,6 +857,9 @@ type CoreTypeObservation =
     | tableCallResults: Int
     // How many calls lowered against a recorded expected type failed and were lowered again without it.
     | tableFallbacks: Int
+    // Concrete source-copy calls whose argument tree was skipped or inferred.
+    | recordedCopyCalls: Int
+    | inferredCopyCalls: Int
 
 type CoreTraitGoalAnswer =
     | ProvenOperandType(SemanticType)
@@ -1422,7 +1425,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -1466,7 +1469,7 @@ let observeOperatorType (traitName: Str) (operandType: SemanticType) (state: Cor
 // Counts one operator site answered from the recorded node types (0), one deferred or pended
 // operator goal (1), one function body lowered again (2), or one call whose expected result type
 // came from the recorded node types (3), or one such call lowered again without it after it failed
-// (4), when the lowering observes.
+// (4). Concrete source-copy calls count a recorded proof (5) or speculative inference (6).
 let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
     (let group = state.programState
     in
@@ -1479,6 +1482,8 @@ let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
                         | 1 -> observation with deferredOperators = observation.deferredOperators + 1
                         | 2 -> observation with relowerings = observation.relowerings + 1
                         | 3 -> observation with tableCallResults = observation.tableCallResults + 1
+                        | 5 -> observation with recordedCopyCalls = observation.recordedCopyCalls + 1
+                        | 6 -> observation with inferredCopyCalls = observation.inferredCopyCalls + 1
                         | _ -> observation with tableFallbacks = observation.tableFallbacks + 1
                 in state with programState = (group with typeObservation = Some(counted)))
 
