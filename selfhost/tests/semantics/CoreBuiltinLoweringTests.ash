@@ -22,6 +22,7 @@ let ternaryTypes = [SemInt, SemInt, SemInt]
 let builtinCases =
     [
         (CoreProgramArgs, [], []),
+        (CoreTaskRun, unaryArguments, unaryTypes),
         (CorePrint, unaryArguments, unaryTypes),
         (CorePanic, unaryArguments, unaryTypes),
         (CoreWrite, unaryArguments, unaryTypes),
@@ -220,8 +221,8 @@ let expectBuiltinRegistry unit =
             | _ -> test.fail("the deep copy intrinsic is absent from the core builtin registry"))
     |> (given (_) ->
         match coreBuiltinKind("Ashes.Task")("run") with
-            | None -> Unit
-            | _ -> test.fail("the builtin registry consumed an operation owned by async lowering"))
+            | Some(CoreTaskRun) -> Unit
+            | _ -> test.fail("task.run must lower through the RunTask builtin"))
     |> (given (_) ->
         match coreBuiltinKind("Ashes.Ffi")("copyBytes") with
             | Some(CoreFfiCopyBytes) -> Unit
