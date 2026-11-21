@@ -1,0 +1,24 @@
+let succ (i: Int) =
+    if i < 3
+    then [i + 1]
+    else []
+
+let recursive postorder (open: List(Int)) (pending: List(List(Int))) (order: List(Int)) =
+    match (open, pending) with
+        | (block :: openRest, [] :: pendingRest) -> postorder(openRest)(pendingRest)(block :: order)
+        | (block :: openRest, (successor :: more) :: pendingRest) -> postorder(successor :: block :: openRest)(succ(successor) :: more :: pendingRest)(order)
+        | _ -> order
+
+let recursive total (xs: List(Int)) =
+    match xs with
+        | [] -> 0
+        | x :: rest -> x + total(rest)
+
+let probe (n: Int) = total(postorder([0])([[n]])([]))
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe(n))
+
+Ashes.IO.print(loop(ROUNDS)(0))
