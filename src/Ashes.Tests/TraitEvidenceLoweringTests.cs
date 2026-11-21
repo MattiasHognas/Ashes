@@ -345,6 +345,18 @@ public sealed class TraitEvidenceLoweringTests
             .OfType<IrInst.MakeClosure>()
             .Any(closure => closure.EnvSizeBytes > 0)
             .ShouldBeTrue();
+        program.Functions
+            .Where(function => function.Origin?.Kind == IrFunctionOriginKind.ClosureEnvironmentNormalizer)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.CopyOutClosure>()
+            .Any(copy => copy.RuntimeManaged && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization)
+            .ShouldBeTrue();
+        program.Functions
+            .Where(function => function.Origin?.Kind == IrFunctionOriginKind.RuntimeManagedClosureDropper)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.RcDrop>()
+            .Any(drop => drop is { TypeName: "Function", RuntimeManaged: true })
+            .ShouldBeTrue();
     }
 
     [Test]
