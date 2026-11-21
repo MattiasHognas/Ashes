@@ -215,6 +215,23 @@ let checkStitchedFixture shipped path =
                         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("stitched regression failed: " + Ashes.Trait.Show.show(error))
                         | _ -> Ashes.IO.panic("stitched regression produced no program")
 
+let checkRawImmediateEvidence shipped path =
+    match Ashes.IO.File.readText(path) with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match stitchWithShippedModules("regression")(path)(source)(shipped) with
+                | Error(error) ->
+                    error
+                    |> Ashes.Trait.Show.show
+                    |> Ashes.IO.panic
+                | Ok(StitchedSyntaxProject { program = program }) ->
+                    match lowerCoreProgramWithSource(path)(source)(program) with
+                        | CoreLoweringResult { error = Some(CoreImmediateEvidenceDiagnostic(message)) } ->
+                            if Ashes.Text.contains(message)("needed while evaluating this binding")
+                            then Unit
+                            else Ashes.IO.panic(message)
+                        | _ -> Ashes.IO.panic("raw lowering accepted unresolved immediate evidence")
+
 // Lower the captured loop through the same numbered syntax and type table as a typed
 // CLI compile. Both instantiations must use arithmetic in the entry module.
 let recursive hasEntryInstruction path opcode lines =
@@ -266,6 +283,9 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_uses_declared_arithmetic_methods.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/captured_partial_separates_early_and_residual_requirements.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/generalized_partial_runs_callee_prefix_before_next_binding.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/forwarded_partial_runs_callee_prefix_before_next_binding.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/partial_uses_ambient_evidence_during_binding_evaluation.ash"))
+                |> (given (_) -> checkRawImmediateEvidence(shipped)("tests/partial_requires_open_evidence_before_returning_function.ash"))
                 |> (given (_) -> checkTypedEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))

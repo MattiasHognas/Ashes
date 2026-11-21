@@ -452,7 +452,7 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         if inferenceErrorWantsCallSiteWording(stitched.definitionPlacements)(error)
         then
             match stitched.program
-            |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
+            |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
             |> wordedLoweringError(inferenceErrorLocationPrefix(inputPath)(source)(result)) with
                 | Some(text) -> text
                 | None -> inferenceText
@@ -477,7 +477,10 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                         nodeTypes
                         |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
                         |> loweredStitchedResult
-                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched))
+                    else
+                        stitched.program
+                        |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
+                        |> loweredStitchedResult)
 
 let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     if typedLoweringRequested(Unit)

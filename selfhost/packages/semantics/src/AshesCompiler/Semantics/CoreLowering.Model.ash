@@ -87,6 +87,7 @@ type CoreLoweringError =
     | PerformTargetNotCapabilityOperation(Str)
     // A capability, handler or provider diagnostic stage 0 reports: its code and message.
     | CoreCapabilityDiagnostic(Str, Str)
+    | CoreImmediateEvidenceDiagnostic(Str)
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
     | ResourceDoubleClose(Str)

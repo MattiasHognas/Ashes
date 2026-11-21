@@ -18,6 +18,11 @@ import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceError
+import AshesCompiler.Semantics.ProgramInference.inferProgramFromPackage
+import AshesCompiler.Semantics.InferenceDiagnostics.inferenceErrorDiagnostic
 import AshesCompiler.Semantics.MutualRecursionDispatch
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
@@ -27,7 +32,25 @@ import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Expressions
 import AshesCompiler.Semantics.CoreLowering.Program
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.untranslatableRecordedTypes
-let lowerCoreProgram (program: ProgramSyntax) =
+// Raw executable callers have no identified inference result. Preserve their established
+// lowering diagnostics except for an unresolved requirement needed during binding evaluation.
+let validateRawBindingEvidence environment (program: ProgramSyntax) lower =
+    (let builtins =
+        match environment with
+            | Some(provided) -> provided
+            | None ->
+                "standalone"
+                |> emptyTypeEnvironmentForPackage
+                |> withIntrinsicBuiltinSignatures
+    in
+        match inferProgramFromPackage("standalone")(builtins)(program) with
+            | ProgramInferenceResult { error = Some(ProgramExpressionError(ImmediateTraitEvidenceRequired(_name, _args)) as error), errorLocation = location } ->
+                match inferenceErrorDiagnostic([])(program.items)(builtins)(location)(error) with
+                    | Some((_code, message)) -> failedCoreLowering(CoreImmediateEvidenceDiagnostic(message))
+                    | None -> failedCoreLowering(CoreImmediateEvidenceDiagnostic("A trait requirement is needed while evaluating this binding. Add a type annotation to determine its instance."))
+            | _ -> lower(program))
+
+let lowerValidatedCoreProgram (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -47,6 +70,8 @@ let lowerCoreProgram (program: ProgramSyntax) =
 
 // As lowerCoreProgram, for a numbered program and the types inference recorded against it, as
 // lowerCoreNumberedProgramWithSourceAndReuse takes them.
+let lowerCoreProgram program = validateRawBindingEvidence(None)(program)(lowerValidatedCoreProgram)
+
 let lowerCoreNumberedProgram (program: ProgramSyntax) (nodeTypes: NodeTypeTable) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
@@ -77,7 +102,7 @@ let lowerCoreNumberedProgram (program: ProgramSyntax) (nodeTypes: NodeTypeTable)
 // `constructorLayouts` needs a real entry for `"Unit"` too whenever any supplied builtin can
 // return it (`finishBuiltinUnit` allocates a builtin's `Unit` result through an ordinary
 // constructor layout, not a hardcoded shape — the same path a user's own zero-field ADT uses).
-let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program: ProgramSyntax) (constructorLayouts: List(CoreConstructorLayout)) (builtinLayouts: List(CoreBuiltinLayout)) =
+let lowerValidatedCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program: ProgramSyntax) (constructorLayouts: List(CoreConstructorLayout)) (builtinLayouts: List(CoreBuiltinLayout)) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -99,6 +124,9 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> buildProgram
 
 // The empty name stands for the trailing expression; spans start out in its region.
+let lowerCoreProgramWithSourceAndContext path source program constructors builtins =
+    validateRawBindingEvidence(None)(program)(given (validated) -> lowerValidatedCoreProgramWithSourceAndContext(path)(source)(validated)(constructors)(builtins))
+
 let withSourceRegions (regions: SourceRegions) (state: CoreLoweringState) =
     state
     |> withStateSourceContext(Some(regions.context))
@@ -135,23 +163,23 @@ let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source:
 // A program with a mutually recursive group that merges into one dispatch loop is lowered in its
 // merged form. The merge does not know the members' types, so a merged program that fails to
 // lower gives way to the program as written, whose own result, error included, stands.
-let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
-    match mergeMutualRecursionGroups(program) with
-        | None -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
-        | Some(merged) ->
-            match lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(merged) with
-                | CoreLoweringResult { error = None } as lowered -> lowered
-                | _failed -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
-
 // As lowerCoreProgramWithSourceAndReuse for a stitched program whose spans resolve in their own
 // files' texts.
-let lowerCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
+let lowerValidatedCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
     match mergeMutualRecursionGroups(program) with
         | None -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
         | Some(merged) ->
             match lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(merged) with
                 | CoreLoweringResult { error = None } as lowered -> lowered
                 | _failed -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
+
+let lowerCoreProgramWithRegionsAndReuse reuseEnabled regions program =
+    regions
+    |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)
+    |> validateRawBindingEvidence(None)(program)
+
+let lowerCoreProgramWithSourceAndReuse reuseEnabled path source program =
+    lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(singleSourceRegions(path)(source))(program)
 
 // As lowerProgramWithSourceAndReuse, for a program the standalone inference ran on first: its
 // items are the numbered units with `deriving` already expanded, every expression node is wrapped
@@ -211,7 +239,7 @@ let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSy
 // Recursive top-level bindings and call-site trait-evidence forwarding
 // (rewriteTraitConstrainedReference) are not yet wired — a deliberately narrower first slice of
 // the trait-dictionary physical-lowering epic.
-let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: ProgramSyntax) =
+let lowerValidatedCoreProgramWithEnvironment (environment: TypeEnvironment) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -228,6 +256,11 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(Some(environment))
                 |> buildProgram
+
+let lowerCoreProgramWithEnvironment environment program =
+    environment
+    |> lowerValidatedCoreProgramWithEnvironment
+    |> validateRawBindingEvidence(Some(environment))(program)
 
 // These entry points do not replay a discovery pass. Unresolved trait goals must fail
 // here instead of allowing a provisional constant to escape into executable IR.

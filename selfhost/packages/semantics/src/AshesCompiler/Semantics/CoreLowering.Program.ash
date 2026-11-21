@@ -2263,7 +2263,7 @@ let lowerScheduledProgramPasses items trailingBody environment (seed: CoreLoweri
                 | (pending, equalityGoals) -> replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
 
 let lowerProgramPasses items trailing environment seed =
-    match scheduleStrictProgram(items)(trailing) with
+    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
         | (scheduled, body) -> lowerScheduledProgramPasses(scheduled)(body)(environment)(seed)
 
 // The two passes lowerProgramPasses runs, each with the time `clock` reads around it in
@@ -2297,7 +2297,7 @@ let lowerScheduledProgramPassesMeasured clock items trailingBody environment (se
                             in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
 
 let lowerProgramPassesMeasured clock items trailing environment seed =
-    match scheduleStrictProgram(items)(trailing) with
+    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
         | (scheduled, body) -> lowerScheduledProgramPassesMeasured(clock)(scheduled)(body)(environment)(seed)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:

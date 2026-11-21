@@ -8,6 +8,8 @@ import AshesCompiler.Semantics.ModuleReferenceRewriting.patternNames
 import AshesCompiler.Semantics.ModuleReferenceRewriting.patternListNames
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
+import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
+import AshesCompiler.Semantics.NodeTypeTable.nodeEvidenceStagesAt
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
@@ -21,6 +23,7 @@ export (
 )
 
 type StrictStage =
+    | nodeTypes: Maybe(NodeTypeTable)
     | prefix: Str
     | resume: Str
     | arity: Int
@@ -86,7 +89,7 @@ let recursive describePrefix value parameters locals bindings arity suffix =
                                                 match entry with
                                                     | (name, rhs, sugar, ty, reqs) -> ExprLet(name)(rhs)(inner)(sugar)(ty)(reqs))(packed)(bindings)
                                     in
-                                        Some(StrictStage(prefix = "$partial_prefix_" + suffix, resume = "$partial_resume_" + suffix, arity = arity, prefixBody = foldLeft(given (inner) ->
+                                        Some(StrictStage(nodeTypes = None, prefix = "$partial_prefix_" + suffix, resume = "$partial_resume_" + suffix, arity = arity, prefixBody = foldLeft(given (inner) ->
                                             given (entry) ->
                                                 match entry with
                                                     | (name, ty) -> ExprLambda(name)(inner)(ty))(prefix)(parameters), resumeBody = residual))
@@ -96,18 +99,33 @@ let recursive describePrefix value parameters locals bindings arity suffix =
             else describePrefix(body)(parameters)(name :: locals)((name, rhs, sugar, annotation, requirements) :: bindings)(arity)(suffix)
         | _ -> None
 
-let strictStage name value =
-    describePrefix(value)([])([])([])(0)(name + "_" + Ashes.Text.fromInt(sourceStart(value)))
+let strictStage nodeTypes name value =
+    match describePrefix(value)([])([])([])(0)(name + "_" + Ashes.Text.fromInt(sourceStart(value))) with
+        | Some(stage) -> Some((stage with nodeTypes = nodeTypes))
+        | None -> None
 
 let recursive spine expression arguments =
     match stripExprAt(expression) with
         | ExprCall(function, argument, _sugar, _layout) -> spine(function)(argument :: arguments)
         | root -> (root, arguments)
 
+let recursive hasLatentStage stages =
+    match stages with
+        | [] -> false
+        | arity :: rest -> arity > 0 || hasLatentStage(rest)
+
+let residualNeedsDictionary (stage: StrictStage) expression =
+    match stage.nodeTypes with
+        | Some(table) ->
+            match nodeEvidenceStagesAt(nodeIdentityOf(expression))(table) with
+                | Some(stages) -> hasLatentStage(stages)
+                | None -> true
+        | None -> true
+
 let strictPartial (stage: StrictStage) names expression =
     match spine(expression)([]) with
         | (ExprVar(name), args) ->
-            if contains(names)(name) && length(args) == stage.arity
+            if contains(names)(name) && length(args) == stage.arity && residualNeedsDictionary(stage)(expression)
             then
                 args
                 |> foldLeft(apply)(ExprVar(stage.prefix))
@@ -325,8 +343,8 @@ and rewriteFields child fields =
         match field with
             | (name, value) -> (name, child(value)))(fields)
 
-let scheduleStrictLocal name value body annotation reqs =
-    match strictStage(name)(value) with
+let scheduleStrictLocal nodeTypes name value body annotation reqs =
+    match strictStage(nodeTypes)(name)(value) with
         | None -> None
         | Some(stage) ->
             let changed = rewrite(stage)([name])(body)
@@ -365,11 +383,11 @@ let recursive rewriteItems stage names items reversed trailing =
             match rewriteItem(stage)(names)(item) with
                 | (after, changed) -> rewriteItems(stage)(after)(rest)(changed :: reversed)(trailing)
 
-let recursive declaresStage item =
+let recursive declaresStage nodeTypes item =
     match item with
-        | TopLevelAt(_span, inner) -> declaresStage(inner)
+        | TopLevelAt(_span, inner) -> declaresStage(nodeTypes)(inner)
         | TopLevelLet(binding, false) ->
-            match strictStage(binding.name)(binding.value) with
+            match strictStage(nodeTypes)(binding.name)(binding.value) with
                 | Some(stage) -> Some((binding.name, stage))
                 | None -> None
         | _ -> None
@@ -386,18 +404,18 @@ let recursive usesPrefix name items trailing =
                                 | ExprVar(read) -> used || read == name
                                 | _ -> used)(false)(item) || usesPrefix(name)(rest)(trailing)
 
-let recursive scheduleItems items trailing reversed =
+let recursive scheduleItems nodeTypes items trailing reversed =
     match items with
         | [] -> (reverse(reversed), trailing)
         | item :: rest ->
-            match declaresStage(item) with
-                | None -> scheduleItems(rest)(trailing)(item :: reversed)
+            match declaresStage(nodeTypes)(item) with
+                | None -> scheduleItems(nodeTypes)(rest)(trailing)(item :: reversed)
                 | Some((name, stage)) ->
                     match rewriteItems(stage)([name])(rest)([])(trailing) with
                         | (remaining, body) ->
                             if usesPrefix(stage.prefix)(remaining)(body)
                             then
-                                scheduleItems(remaining)(body)(item :: TopLevelLet(syntheticBinding(stage.resume)(stage.resumeBody))(false) :: TopLevelLet(syntheticBinding(stage.prefix)(stage.prefixBody))(false) :: reversed)
-                            else scheduleItems(rest)(trailing)(item :: reversed)
+                                scheduleItems(nodeTypes)(remaining)(body)(item :: TopLevelLet(syntheticBinding(stage.resume)(stage.resumeBody))(false) :: TopLevelLet(syntheticBinding(stage.prefix)(stage.prefixBody))(false) :: reversed)
+                            else scheduleItems(nodeTypes)(rest)(trailing)(item :: reversed)
 
-let scheduleStrictProgram items trailing = scheduleItems(items)(trailing)([])
+let scheduleStrictProgram nodeTypes items trailing = scheduleItems(nodeTypes)(items)(trailing)([])

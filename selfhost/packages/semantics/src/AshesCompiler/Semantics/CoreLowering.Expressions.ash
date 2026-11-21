@@ -3475,7 +3475,7 @@ let lowerScheduledConstrainedLet name value body annotation requirements lower (
                                     | None -> lowerLet(name)(lambdaValue)(body)(lower)(state)
 
 let lowerPossiblyConstrainedLet name value body annotation requirements lower state =
-    match scheduleStrictLocal(name)(value)(body)(annotation)(requirements) with
+    match scheduleStrictLocal(stateNodeTypes(state))(name)(value)(body)(annotation)(requirements) with
         | Some(staged) -> lower(staged)(state)
         | None -> lowerScheduledConstrainedLet(name)(value)(body)(annotation)(requirements)(lower)(state)
 
