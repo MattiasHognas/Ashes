@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render one project for the semantics, backend and IR parity suites of CHECKOUT.
+# Render one project for native tests, IR parity and typed lowering measurements.
 # Print its fresh project directory; run the resulting binary from a fixture-enabled cwd.
 set -euo pipefail
 if (( $# > 1 )); then
@@ -22,7 +22,7 @@ sed -e 's/"ashes-compiler-backend-tests"/"ashes-compiler-shared-native-tests"/' 
 for source in "$suites/semantics/"*.ash "$suites/backend/"*.ash; do
     module=${source##*/}
     [[ $module != Main.ash ]] || continue
-    if [[ -e "$project/$module" || $module == SemanticSuite.ash || $module == BackendSuite.ash || $module == ParitySuite.ash ]]; then
+    if [[ -e "$project/$module" || $module == SemanticSuite.ash || $module == BackendSuite.ash || $module == ParitySuite.ash || $module == MeasurementSuite.ash ]]; then
         echo "duplicate generated module: $module" >&2
         exit 1
     fi
@@ -106,17 +106,29 @@ awk -v cases="$project/parity-cases.txt" '
     END { if (entry != 1 || exported != 1 || capture != 1 || !count) exit 1 }
 ' "$suites/ir-program-parity/Main.ash" > "$project/ParitySuite.ash"
 
+# Export the original measurement runner; only its standalone command-line dispatch is omitted.
+awk '
+    !exported && /^let / { print "export (value run,)"; exported = 1 }
+    /^let run details path mode =$/ { runner++ }
+    /^match Ashes.IO.args with$/ { entry++ }
+    !entry { print }
+    END { if (!exported || runner != 1 || entry != 1) exit 1 }
+' "$suites/typed-lowering-measurement/Main.ash" > "$project/MeasurementSuite.ash"
+
 cat > "$project/Main.ash" <<'ASH'
 import SemanticSuite
 import BackendSuite
 import ParitySuite
+import MeasurementSuite
 match Ashes.IO.args with
     | "semantics" :: [] -> let _ = SemanticSuite.run(Unit) in Unit
     | "semantics" :: name :: [] -> let _ = SemanticSuite.runNamed(name) in Unit
     | "backend" :: root :: [] -> let _ = BackendSuite.runAll(root) in Unit
     | "backend" :: root :: name :: [] -> let _ = BackendSuite.runNamed(root)(name) in Unit
     | "parity" :: root :: output :: [] -> let _ = ParitySuite.run(root)(output) in Unit
-    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory>")
+    | "measure" :: path :: mode :: [] when mode == "typed" || mode == "legacy" -> let _ = MeasurementSuite.run(false)(path)(mode) in Unit
+    | "measure" :: path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> let _ = MeasurementSuite.run(true)(path)(mode) in Unit
+    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory> | measure <project/ashes.json> <legacy|typed> [--goal-details]")
 ASH
 mkdir "$project/actual"
 trap - EXIT
