@@ -13,6 +13,7 @@
 // are not ported either.
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
+import AshesCompiler.Backend.IrCodegen.Server
 import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Process.emitProcessPanicMessage
@@ -285,6 +286,7 @@ let emitLeafTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime) 
     emitHeaderTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(taskStateCode(kind))([(offsetIoArgument0, firstRef), (offsetIoArgument1, secondRef), (offsetWaitData1, thirdRef)])(name)
 
 type TaskRuntime =
+    | serverState: Maybe(ServerRuntime)
     | runTaskFn: LLVMValueRef
     | runTaskType: LLVMTypeRef
     | spawnEnqueueFn: LLVMValueRef
@@ -406,6 +408,7 @@ let defineReadyDequeue module_ context builder i64 i8 ptrType (globals: Schedule
                                                                                         in (dequeueFn, dequeueType))
 
 type SchedulerContext =
+    | schedServer: Maybe(ServerRuntime)
     | schedContext: LLVMContextRef
     | schedBuilder: LLVMBuilderRef
     | schedI64: LLVMTypeRef
@@ -5458,7 +5461,7 @@ let defineSchedulerRun module_ (sc: SchedulerContext) (fns: SchedulerFunctions) 
                                                                                                                 "sched_result"
                                                                                                                 |> schedWord(sc)(mainTask)(offsetResultSlot)
                                                                                                                 |> buildRet(sc.schedBuilder)
-                                                                                                            in TaskRuntime(runTaskFn = runFn, runTaskType = runType, spawnEnqueueFn = sc.enqueueFn, spawnEnqueueType = sc.enqueueType, forkScopedFn = fns.forkScopedFn, forkScopedType = fns.forkScopedType))
+                                                                                                            in TaskRuntime(serverState = sc.schedServer, runTaskFn = runFn, runTaskType = runType, spawnEnqueueFn = sc.enqueueFn, spawnEnqueueType = sc.enqueueType, forkScopedFn = fns.forkScopedFn, forkScopedType = fns.forkScopedType))
 
 // The scheduler and its helpers, defined once per module that has a coroutine.
 // The TLS leaf steps of a program that reaches TLS or HTTPS, by state code, and the TLS half of
@@ -5504,7 +5507,7 @@ let defineTlsLeafSteps module_ (sc: SchedulerContext) connectStep =
                                 )
                             in (steps, Some(HttpTlsSteps(httpHandshakeFn = handshakeFn, httpHandshakeType = handshakeType, httpTlsTransport = transport))))
 
-let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (usesTls: Bool) (hasFrameDroppers: Bool) closureFnType =
+let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (server: Maybe(ServerRuntime)) (usesTls: Bool) (hasFrameDroppers: Bool) closureFnType =
     (let globals =
         SchedulerGlobals(
             readyQueueHead = addZeroWordGlobal(module_)(i64)("__ashes_ready_head"),
@@ -5518,6 +5521,7 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
             | (enqueueFn, enqueueType) ->
                 let sc =
                     SchedulerContext(
+                        schedServer = server,
                         schedContext = context,
                         schedBuilder = builder,
                         schedI64 = i64,
