@@ -34,14 +34,16 @@ let recursive containsConstraint name constraints =
             then true
             else containsConstraint(name)(tail)
 
+// The declaration registers a polymorphic method. At an executable boundary its bare
+// reference has no dictionary, and the unresolved requirement retains that method type.
 let expectTraitRegistration unit =
     match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration)], body = "equal"
     |> ExprQualifiedVar("Equal")
     |> Some)) with
-        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = environment, error = None } ->
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = environment, error = Some(ProgramExpressionError(UndeterminedTraitRequirement("Equal", SemVariable(requiredId) :: []))) } ->
             let methodTypeChecked =
                 match applySubstitution(substitution)(semanticType) with
-                    | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemBool, None), None) ->
+                    | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemBool, None), None) when leftId == requiredId ->
                         test.assertEqual(
                             leftId,
                             rightId
@@ -61,8 +63,9 @@ let expectTraitRegistration unit =
                     | _ -> test.fail("Equal should be registered")
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } ->
             test.fail(
-                "trait declaration should infer: " + Ashes.Trait.Show.show(error)
+                "bare trait method should report its unresolved evidence: " + Ashes.Trait.Show.show(error)
             )
+        | ProgramInferenceResult { error = None } -> test.fail("bare trait method escaped its dictionary at the executable boundary")
 
 let expectForwardSupertraitRegistration unit =
     match inferProgram(
