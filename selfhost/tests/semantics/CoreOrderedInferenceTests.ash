@@ -291,11 +291,11 @@ let checkSocketHelperIr mode path lowered =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " socket helper failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(mode + " socket helper produced no program")
 
-let checkListEqualityLowered mode path lowered =
+let checkFixtureLowered mode path lowered =
     match lowered with
         | CoreLoweringResult { program = Some(_program), error = None } -> Unit
-        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " list equality failed for " + path + ": " + Ashes.Trait.Show.show(error))
-        | _ -> Ashes.IO.panic(mode + " list equality produced no program for " + path)
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " lowering failed for " + path + ": " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " lowering produced no program for " + path)
 
 let checkRawAndTypedIr verify shipped path =
     match Ashes.IO.File.readText(path) with
@@ -345,9 +345,13 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
-                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/list_equality_uses_ambient_element_dictionary.ash"))
-                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/list_inequality_uses_ambient_element_dictionary.ash"))
-                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/mutual_recursive_tree_rewrite_checks_empty_aliases.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/list_equality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/list_inequality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/mutual_recursive_tree_rewrite_checks_empty_aliases.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/recursive_report_uses_each_values_show_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/awaiting_report_keeps_typed_show_dictionaries.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/result_directed_method_uses_concrete_and_supplied_evidence.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/custom_method_value_selects_dictionary_from_argument_type.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
 let checkExpressionBoundary unit =
