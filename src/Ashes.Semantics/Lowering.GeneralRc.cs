@@ -1642,8 +1642,7 @@ public sealed partial class Lowering
         Binding? binding = rootExpr switch
         {
             Expr.Var variable => Lookup(variable.Name),
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         return binding switch

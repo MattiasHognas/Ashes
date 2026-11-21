@@ -164,7 +164,10 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null,
     IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null,
     IReadOnlyDictionary<string, IReadOnlySet<string>>? VisibleModules = null
-);
+)
+{
+    internal IReadOnlyDictionary<string, Dictionary<string, IReadOnlySet<string>>>? QualifiedValueScopes { get; init; }
+}
 
 /// <summary>
 /// Maps one fragment of reconstructed module text in the combined source back to where its text
@@ -2261,7 +2264,44 @@ public static class ProjectSupport
             moduleProvenanceByPath,
             entryTypeDeclFragments,
             appendFlatEntryBare) with
-        { VisibleModules = BuildVisibleModules(orderedModules) };
+        {
+            VisibleModules = BuildVisibleModules(orderedModules),
+            QualifiedValueScopes = BuildQualifiedValueScopes(orderedModules, exportedNames),
+        };
+    }
+
+    // Each source module sees its imported qualifiers, inline modules in the same file, and
+    // fully qualified shipped modules. Qualifiers share the declaring module's value-export set.
+    private static Dictionary<string, Dictionary<string, IReadOnlySet<string>>> BuildQualifiedValueScopes(
+        IReadOnlyList<ProjectModule> modules,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exports)
+    {
+        Dictionary<string, IReadOnlySet<string>> byModule = exports.ToDictionary(
+            pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value.ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
+        Dictionary<string, Dictionary<string, IReadOnlySet<string>>> scopes = new(StringComparer.Ordinal);
+        foreach (ProjectModule owner in modules)
+        {
+            Dictionary<string, IReadOnlySet<string>> scope = new(StringComparer.Ordinal);
+            string ownerFile = owner.FilePath.Split('#', 2)[0];
+            foreach (ProjectModule target in modules)
+            {
+                if (target.ModuleName.StartsWith("Ashes.", StringComparison.Ordinal)
+                    || target.InlineOrigin is not null && target.FilePath.StartsWith(ownerFile + "#", StringComparison.Ordinal))
+                {
+                    scope[target.ModuleName] = byModule[target.ModuleName];
+                }
+            }
+            foreach (string import in owner.Imports)
+            {
+                if (byModule.TryGetValue(import, out IReadOnlySet<string>? values))
+                {
+                    scope[GetLeafModuleQualifier(import)] = values;
+                    scope[import] = values;
+                }
+            }
+            scopes.Add(owner.ModuleName, scope);
+        }
+        return scopes;
     }
 
     /// <summary>

@@ -353,7 +353,7 @@ public sealed partial class Lowering
                     return null; // intrinsic member — lowered directly, not a stitched function
                 }
 
-                return ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
+                return QualifiedValueBindingName(qv);
             default:
                 return null;
         }

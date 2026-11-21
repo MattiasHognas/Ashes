@@ -6,7 +6,8 @@ public sealed record LoweringConfiguration(
     bool EnableTraitOperatorSpecialization = true,
     bool CollectHoverTypes = true,
     bool EnableElementSpecialization = true,
-    bool EnableGenericVariantLoopRc = true)
+    bool EnableGenericVariantLoopRc = true,
+    bool AllowFlattenedQualifiedValues = true)
 {
     /// <summary>The normal production lowering configuration.</summary>
     public static LoweringConfiguration Default { get; } = new();

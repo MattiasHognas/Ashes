@@ -98,6 +98,7 @@ public sealed partial class Lowering
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
     private SourceTextIndex[]? _moduleSourceIndexes;
     private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
+    private IReadOnlyDictionary<string, Dictionary<string, IReadOnlySet<string>>>? _qualifiedValueScopes;
     private IReadOnlyDictionary<string, ModuleProvenance>? _moduleProvenanceByPath;
     private IReadOnlyDictionary<string, IReadOnlySet<string>>? _visibleModulesByModule;
     private TextSpan? _typeReferenceSpan;
@@ -15479,8 +15480,7 @@ public sealed partial class Lowering
             // A stdlib/module-qualified callee (e.g. `Ashes.Collection.HashMap.set`) resolves the
             // same way LowerQualifiedVar's exported-binding path does: through the sanitized,
             // module-prefixed export name, not a plain Lookup of the unqualified name.
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         TypeScheme? scheme = binding switch
@@ -15532,8 +15532,7 @@ public sealed partial class Lowering
         Binding? binding = rootExpr switch
         {
             Expr.Var variable => Lookup(variable.Name),
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         TypeScheme? scheme = binding switch
@@ -19730,8 +19729,8 @@ public sealed partial class Lowering
             return;
         }
 
-        var synthesized = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
-        if (!bnd.Contains(synthesized)
+        string? synthesized = QualifiedValueBindingName(qv);
+        if (synthesized is not null && !bnd.Contains(synthesized)
             && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
         {
             res.Add(synthesized);

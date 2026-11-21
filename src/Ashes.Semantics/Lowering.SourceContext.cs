@@ -31,6 +31,7 @@ public sealed partial class Lowering
         _functionSourceNames = null;
         _moduleProvenanceByPath = null;
         _visibleModulesByModule = null;
+        _qualifiedValueScopes = null;
     }
 
     /// <summary>
@@ -44,6 +45,7 @@ public sealed partial class Lowering
         _functionSourceNames = layout.FunctionSourceNames;
         _moduleProvenanceByPath = layout.ModuleProvenanceByPath;
         _visibleModulesByModule = layout.VisibleModules;
+        _qualifiedValueScopes = layout.QualifiedValueScopes;
 
         // Pre-compute line starts per region (not per file) so disjoint regions
         // for the same file each get correct line/column mappings.
@@ -62,6 +64,16 @@ public sealed partial class Lowering
         }
 
         InstallSourceLineAnchors(layout);
+    }
+
+    private string ReferencingModule(TextSpan referenceSpan)
+    {
+        if (!_referencingModuleByOffset.TryGetValue(referenceSpan.Start, out string? referencing))
+        {
+            referencing = ResolveDeclarationProvenance(referenceSpan).ModuleName;
+            _referencingModuleByOffset[referenceSpan.Start] = referencing;
+        }
+        return referencing;
     }
 
     // A reconstructed module region is not line-for-line identical to its file, so its positions
@@ -149,6 +161,7 @@ public sealed partial class Lowering
         target._functionSourceNames = _functionSourceNames;
         target._moduleProvenanceByPath = _moduleProvenanceByPath;
         target._visibleModulesByModule = _visibleModulesByModule;
+        target._qualifiedValueScopes = _qualifiedValueScopes;
     }
 
     /// <summary>

@@ -1067,11 +1067,7 @@ public sealed partial class Lowering
             return null;
         }
 
-        if (!_referencingModuleByOffset.TryGetValue(referenceSpan.Start, out string? referencing))
-        {
-            referencing = ResolveDeclarationProvenance(referenceSpan).ModuleName;
-            _referencingModuleByOffset[referenceSpan.Start] = referencing;
-        }
+        string referencing = ReferencingModule(referenceSpan);
 
         if (string.Equals(referencing, declaring.ModuleName, StringComparison.Ordinal)
             || !_visibleModulesByModule.TryGetValue(referencing, out IReadOnlySet<string>? visible)
