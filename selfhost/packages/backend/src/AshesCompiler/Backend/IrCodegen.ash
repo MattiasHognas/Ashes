@@ -1674,9 +1674,14 @@ let codegenInstructionKind cx builder kind state =
                                             let taskRef =
                                                 emitCreateCompletedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(result)(tempEnv))("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
-                                        | CreateTask(target, closure, stateStructSize, captureCount, _frameDropper, _loopResetEligible) ->
+                                        | CreateTask(target, closure, stateStructSize, captureCount, frameDropper, _loopResetEligible) ->
                                             let taskRef =
-                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)("t" + Ashes.Text.fromInt(target))
+                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)(match frameDropper with
+                                                    | Some(label) ->
+                                                        liftedFunctions
+                                                        |> lookupIndexedStr(label)
+                                                        |> Some
+                                                    | None -> None)("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
                                         | RunTask(target, task) ->
                                             let resultRef =
@@ -2250,6 +2255,17 @@ let recursive instructionsUseRunTask instructions =
         | IrInstruction { instruction = ForkScopedTask(_target, _owner, _task) } :: _ -> true
         | _ :: rest -> instructionsUseRunTask(rest)
 
+let recursive instructionsHaveFrameDroppers instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CreateTask(_, _, _, _, Some(_label), _) } :: _ -> true
+        | _ :: rest -> instructionsHaveFrameDroppers(rest)
+
+let recursive functionsHaveFrameDroppers functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsHaveFrameDroppers(instructions) || functionsHaveFrameDroppers(rest)
+
 let recursive functionsUseRunTask functions =
     match functions with
         | [] -> false
@@ -2483,7 +2499,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                 moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
                                                                                 then
                                                                                     closureFnType
-                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))
+                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))(functionsHaveFrameDroppers(entryFunction :: functions))
                                                                                     |> Some
                                                                                 else None,
                                                                                 moduleParallelRuntime = if functionsUseParallel(entryFunction :: functions)

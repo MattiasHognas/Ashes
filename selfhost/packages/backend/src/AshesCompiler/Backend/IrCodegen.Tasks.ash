@@ -193,7 +193,7 @@ let recursive frameWordOffsets offset size =
     then []
     else offset :: frameWordOffsets(offset + 8)(size)
 
-let emitCreateTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime) closureRef stateStructSize captureCount name =
+let emitCreateTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime) closureRef stateStructSize captureCount frameDropper name =
     (let layout = taskStructLayout
     in
         let taskRef = emitArenaAlloc(context)(function_)(builder)(i64)(arena)(stateStructSize)(name)
@@ -219,7 +219,15 @@ let emitCreateTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime
                                     buildLoad(builder)(i64)(memOffsetPtr(builder)(i64)(i8)(ptrType)(closureRef)(8)(name + "_env_ptr"))(name + "_env")
                                 in
                                     let _ = copyTaskCaptures(builder)(i64)(i8)(ptrType)(taskRef)(envRef)(layout)(0)(captureCount)
-                                    in taskRef)
+                                    in
+                                        match frameDropper with
+                                            | None -> taskRef
+                                            | Some(dropper) ->
+                                                let _ =
+                                                    "task_frame_dropper"
+                                                    |> buildPtrToInt(builder)(dropper)(i64)
+                                                    |> storeTaskWord(builder)(i64)(i8)(ptrType)(taskRef)(layout.frameDropper)
+                                                in taskRef)
 
 let recursive storeTaskWords builder i64 i8 ptrType taskRef (words: List((Int, LLVMValueRef))) =
     match words with
@@ -400,6 +408,7 @@ type SchedulerContext =
     | schedI8: LLVMTypeRef
     | schedPtr: LLVMTypeRef
     | schedArena: ArenaRuntime
+    | frameDropperType: Maybe(LLVMTypeRef)
     | schedGlobals: SchedulerGlobals
     | enqueueFn: LLVMValueRef
     | enqueueType: LLVMTypeRef
@@ -447,6 +456,33 @@ let schedLoad (sc: SchedulerContext) slot name = buildLoad(sc.schedBuilder)(sc.s
 let schedSet (sc: SchedulerContext) slot value = buildStore(sc.schedBuilder)(value)(slot)
 
 // `Ok(value)` as a fresh arena cell, `[tag 0][value]`.
+// A frame callback accepts the task as its environment. Clearing the callback before
+// full teardown makes repeated completion or cancellation of that frame harmless.
+let emitFrameTeardown (sc: SchedulerContext) function_ task name =
+    match sc.frameDropperType with
+        | None -> Unit
+        | Some(dropperType) ->
+            let callBlock = appendBasicBlock(sc.schedContext)(function_)(name + "_drop")
+            in
+                let after = appendBasicBlock(sc.schedContext)(function_)(name + "_done")
+                in
+                    let dropper = schedWord(sc)(task)(taskStructLayout.frameDropper)(name + "_fn")
+                    in
+                        let zero = schedConst(sc)(0)
+                        in
+                            let _ =
+                                schedIf(sc)(schedEq(sc)(dropper)(zero)(name + "_empty"))(after)(callBlock)
+                            in
+                                let _ = schedAt(sc)(callBlock)
+                                in
+                                    let _ = schedStore(sc)(task)(taskStructLayout.frameDropper)(zero)
+                                    in
+                                        let _ =
+                                            buildCall(sc.schedBuilder)(dropperType)(buildIntToPtr(sc.schedBuilder)(dropper)(sc.schedPtr)(name + "_ptr"))([task, zero, zero])(3u32)(name + "_result")
+                                        in
+                                            let _ = schedBr(sc)(after)
+                                            in schedAt(sc)(after)
+
 let schedOk (sc: SchedulerContext) function_ value name =
     (let cell = emitArenaAlloc(sc.schedContext)(function_)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(16)(name)
     in
@@ -637,25 +673,27 @@ let defineCancelTask module_ (sc: SchedulerContext) =
                                                                             in
                                                                                 let _ = schedAt(sc)(finishBlock)
                                                                                 in
-                                                                                    let _ =
-                                                                                        "cancel_result"
-                                                                                        |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
-                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                    let _ = emitFrameTeardown(sc)(cancelFn)(task)("cancel_frame")
                                                                                     in
                                                                                         let _ =
-                                                                                            CompletedTaskState
-                                                                                            |> stateConst(sc.schedI64)
-                                                                                            |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                            "cancel_result"
+                                                                                            |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
+                                                                                            |> schedStore(sc)(task)(offsetResultSlot)
                                                                                         in
-                                                                                            let _ = schedBr(sc)(doneBlock)
+                                                                                            let _ =
+                                                                                                CompletedTaskState
+                                                                                                |> stateConst(sc.schedI64)
+                                                                                                |> schedStore(sc)(task)(offsetStateIndex)
                                                                                             in
-                                                                                                let _ = schedAt(sc)(doneBlock)
+                                                                                                let _ = schedBr(sc)(doneBlock)
                                                                                                 in
-                                                                                                    let _ =
-                                                                                                        0
-                                                                                                        |> schedConst(sc)
-                                                                                                        |> buildRet(sc.schedBuilder)
-                                                                                                    in (cancelFn, cancelType))
+                                                                                                    let _ = schedAt(sc)(doneBlock)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            0
+                                                                                                            |> schedConst(sc)
+                                                                                                            |> buildRet(sc.schedBuilder)
+                                                                                                        in (cancelFn, cancelType))
 
 // The successful collection of `all`: the children's `Ok` values consed onto an accumulator in
 // list order, which leaves them reversed, then reversed back, and the composite completed with
@@ -3940,6 +3978,8 @@ let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
                                                                                                         |> buildAdd(sc.schedBuilder)(sent)(accepted)
                                                                                                         |> schedStore(sc)(task)(offsetWaitData0)
                                                                                                     in
+// Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
+// nothing left to flush or read waits for the socket to accept more and sends the rest.
                                                                                                         let _ =
                                                                                                             schedIf(sc)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))("tls_send_ok"))(emitTlsIsWant(sc)(status)("tls_send_want"))("tls_send_progressing"))(finalizeBlock)(failBlock)
                                                                                                         in
@@ -3965,8 +4005,6 @@ let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
                                                                                                                                             in
                                                                                                                                                 let _ = schedAt(sc)(partialWriteBlock)
                                                                                                                                                 in
-// Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
-// nothing left to flush or read waits for the socket to accept more and sends the rest.
                                                                                                                                                     let _ =
                                                                                                                                                         schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSgt)(schedLoad(sc)(acceptedSlot)("tls_send_took_part"))(schedConst(sc)(0))("tls_send_partial_write"))(pendingWriteBlock)(failBlock)
                                                                                                                                                     in
@@ -5155,74 +5193,76 @@ let emitSchedulerComplete (sc: SchedulerContext) (fns: SchedulerFunctions) (bloc
     in
         let completed = schedLoad(sc)(taskSlot)("sched_completed")
         in
-            let waiter = schedWord(sc)(completed)(offsetWaiter)("sched_waiter")
+            let _ = emitFrameTeardown(sc)(runFn)(completed)("sched_frame")
             in
-                let _ =
-                    schedIf(sc)(schedEq(sc)(waiter)(schedConst(sc)(0))("sched_no_waiter"))(blocks.schedLoopBlock)(blocks.schedDeliverBlock)
+                let waiter = schedWord(sc)(completed)(offsetWaiter)("sched_waiter")
                 in
-                    let _ = schedAt(sc)(blocks.schedDeliverBlock)
+                    let _ =
+                        schedIf(sc)(schedEq(sc)(waiter)(schedConst(sc)(0))("sched_no_waiter"))(blocks.schedLoopBlock)(blocks.schedDeliverBlock)
                     in
-                        let waiterState = schedWord(sc)(waiter)(offsetStateIndex)("sched_waiter_state")
+                        let _ = schedAt(sc)(blocks.schedDeliverBlock)
                         in
-                            let _ =
-                                schedIf(sc)(schedEq(sc)(waiterState)(stateConst(sc.schedI64)(AllCompositeTaskState))("sched_waiter_is_all"))(blocks.schedAllWaiterBlock)(blocks.schedNotAllWaiterBlock)
+                            let waiterState = schedWord(sc)(waiter)(offsetStateIndex)("sched_waiter_state")
                             in
-                                let _ = schedAt(sc)(blocks.schedAllWaiterBlock)
+                                let _ =
+                                    schedIf(sc)(schedEq(sc)(waiterState)(stateConst(sc.schedI64)(AllCompositeTaskState))("sched_waiter_is_all"))(blocks.schedAllWaiterBlock)(blocks.schedNotAllWaiterBlock)
                                 in
-                                    let remaining =
-                                        buildSub(sc.schedBuilder)(schedWord(sc)(waiter)(offsetWaitData0)("sched_all_counter"))(schedConst(sc)(1))("sched_all_remaining")
+                                    let _ = schedAt(sc)(blocks.schedAllWaiterBlock)
                                     in
-                                        let _ = schedStore(sc)(waiter)(offsetWaitData0)(remaining)
+                                        let remaining =
+                                            buildSub(sc.schedBuilder)(schedWord(sc)(waiter)(offsetWaitData0)("sched_all_counter"))(schedConst(sc)(1))("sched_all_remaining")
                                         in
-                                            let _ =
-                                                schedIf(sc)(schedEq(sc)(remaining)(schedConst(sc)(0))("sched_all_ready"))(blocks.schedEnqueueWaiterBlock)(blocks.schedLoopBlock)
+                                            let _ = schedStore(sc)(waiter)(offsetWaitData0)(remaining)
                                             in
-                                                let _ = schedAt(sc)(blocks.schedNotAllWaiterBlock)
+                                                let _ =
+                                                    schedIf(sc)(schedEq(sc)(remaining)(schedConst(sc)(0))("sched_all_ready"))(blocks.schedEnqueueWaiterBlock)(blocks.schedLoopBlock)
                                                 in
-                                                    let _ =
-                                                        schedIf(sc)(schedEq(sc)(waiterState)(stateConst(sc.schedI64)(RaceCompositeTaskState))("sched_waiter_is_race"))(blocks.schedRaceWaiterBlock)(blocks.schedNormalWaiterBlock)
+                                                    let _ = schedAt(sc)(blocks.schedNotAllWaiterBlock)
                                                     in
-                                                        let _ = schedAt(sc)(blocks.schedRaceWaiterBlock)
+                                                        let _ =
+                                                            schedIf(sc)(schedEq(sc)(waiterState)(stateConst(sc.schedI64)(RaceCompositeTaskState))("sched_waiter_is_race"))(blocks.schedRaceWaiterBlock)(blocks.schedNormalWaiterBlock)
                                                         in
-                                                            let _ =
-                                                                schedIf(sc)(schedEq(sc)(schedWord(sc)(waiter)(offsetWaitData0)("sched_race_resolved"))(schedConst(sc)(0))("sched_race_open"))(blocks.schedRaceFirstBlock)(blocks.schedLoopBlock)
+                                                            let _ = schedAt(sc)(blocks.schedRaceWaiterBlock)
                                                             in
-                                                                let _ = schedAt(sc)(blocks.schedRaceFirstBlock)
+                                                                let _ =
+                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(waiter)(offsetWaitData0)("sched_race_resolved"))(schedConst(sc)(0))("sched_race_open"))(blocks.schedRaceFirstBlock)(blocks.schedLoopBlock)
                                                                 in
-                                                                    let _ =
-                                                                        "sched_race_result"
-                                                                        |> schedWord(sc)(completed)(offsetResultSlot)
-                                                                        |> schedStore(sc)(waiter)(offsetResultSlot)
+                                                                    let _ = schedAt(sc)(blocks.schedRaceFirstBlock)
                                                                     in
                                                                         let _ =
-                                                                            1
-                                                                            |> schedConst(sc)
-                                                                            |> schedStore(sc)(waiter)(offsetWaitData0)
+                                                                            "sched_race_result"
+                                                                            |> schedWord(sc)(completed)(offsetResultSlot)
+                                                                            |> schedStore(sc)(waiter)(offsetResultSlot)
                                                                         in
-                                                                            let _ = emitCancelRaceLosers(sc)(fns)(runFn)(raceCursorSlot)(waiter)(completed)
+                                                                            let _ =
+                                                                                1
+                                                                                |> schedConst(sc)
+                                                                                |> schedStore(sc)(waiter)(offsetWaitData0)
                                                                             in
-                                                                                let _ = schedBr(sc)(blocks.schedEnqueueWaiterBlock)
+                                                                                let _ = emitCancelRaceLosers(sc)(fns)(runFn)(raceCursorSlot)(waiter)(completed)
                                                                                 in
-                                                                                    let _ = schedAt(sc)(blocks.schedEnqueueWaiterBlock)
+                                                                                    let _ = schedBr(sc)(blocks.schedEnqueueWaiterBlock)
                                                                                     in
-                                                                                        let _ = schedEnqueue(sc)(waiter)
+                                                                                        let _ = schedAt(sc)(blocks.schedEnqueueWaiterBlock)
                                                                                         in
-                                                                                            let _ = schedBr(sc)(blocks.schedLoopBlock)
+                                                                                            let _ = schedEnqueue(sc)(waiter)
                                                                                             in
-                                                                                                let _ = schedAt(sc)(blocks.schedNormalWaiterBlock)
+                                                                                                let _ = schedBr(sc)(blocks.schedLoopBlock)
                                                                                                 in
-                                                                                                    let _ =
-                                                                                                        "sched_delivered"
-                                                                                                        |> schedWord(sc)(completed)(offsetResultSlot)
-                                                                                                        |> schedStore(sc)(waiter)(offsetResultSlot)
+                                                                                                    let _ = schedAt(sc)(blocks.schedNormalWaiterBlock)
                                                                                                     in
                                                                                                         let _ =
-                                                                                                            0
-                                                                                                            |> schedConst(sc)
-                                                                                                            |> schedStore(sc)(waiter)(offsetAwaitedTask)
+                                                                                                            "sched_delivered"
+                                                                                                            |> schedWord(sc)(completed)(offsetResultSlot)
+                                                                                                            |> schedStore(sc)(waiter)(offsetResultSlot)
                                                                                                         in
-                                                                                                            let _ = schedEnqueue(sc)(waiter)
-                                                                                                            in schedBr(sc)(blocks.schedLoopBlock))
+                                                                                                            let _ =
+                                                                                                                0
+                                                                                                                |> schedConst(sc)
+                                                                                                                |> schedStore(sc)(waiter)(offsetAwaitedTask)
+                                                                                                            in
+                                                                                                                let _ = schedEnqueue(sc)(waiter)
+                                                                                                                in schedBr(sc)(blocks.schedLoopBlock))
 
 // Stage 0's `ashes_scheduler_run`: the run queue seeded with the main task and stepped until the
 // main task completes. Only the outermost run drops what is still queued or parked when it ends;
@@ -5351,7 +5391,7 @@ let defineTlsLeafSteps module_ (sc: SchedulerContext) connectStep =
                                 )
                             in (steps, Some(HttpTlsSteps(httpHandshakeFn = handshakeFn, httpHandshakeType = handshakeType, httpTlsTransport = transport))))
 
-let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (usesTls: Bool) closureFnType =
+let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) (usesTls: Bool) (hasFrameDroppers: Bool) closureFnType =
     (let globals =
         SchedulerGlobals(
             readyQueueHead = addZeroWordGlobal(module_)(i64)("__ashes_ready_head"),
@@ -5371,6 +5411,9 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                         schedI8 = i8,
                         schedPtr = ptrType,
                         schedArena = arena,
+                        frameDropperType = if hasFrameDroppers
+                        then Some(closureFnType)
+                        else None,
                         schedGlobals = globals,
                         enqueueFn = enqueueFn,
                         enqueueType = enqueueType

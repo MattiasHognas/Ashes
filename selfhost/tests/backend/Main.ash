@@ -5264,6 +5264,80 @@ let testRcReleaseInstrumentation unit =
                                                 |> Ashes.Text.contains(text)
                                                 |> test.assertEqual(expected))
 
+// The coroutine and teardown both take the task pointer in environment local 0.
+// Reaping the same completed task again must not run its teardown again.
+let testExplicitTaskFrameDropper unit =
+    (let coroutine =
+        handBuiltLiftedFunction("frame_step")([
+            0
+            |> LoadLocal(0)
+            |> irOf,
+            -1
+            |> LoadConstInt(1)
+            |> irOf,
+            1
+            |> StoreMemOffset(0)(0)
+            |> irOf,
+            1
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(Return(2))
+        ])(2)(3)
+    in
+        let dropper =
+            handBuiltLiftedFunction("frame_cleanup")([
+                0
+                |> LoadLocal(0)
+                |> irOf,
+                160
+                |> LoadMemOffset(1)(0)
+                |> irOf,
+                irOf(PrintInt(1)),
+                irOf(Return(1))
+            ])(2)(2)
+        in
+            let entry =
+                [
+                    42
+                    |> LoadConstInt(0)
+                    |> irOf,
+                    false
+                    |> Alloc(1)(8)
+                    |> irOf,
+                    0
+                    |> StoreMemOffset(1)(0)
+                    |> irOf,
+                    false
+                    |> MakeClosure(2)("frame_step")(1)(8)(false)(false)(false)
+                    |> irOf,
+                    false
+                    |> CreateTask(3)(2)(168)(1)(Some("frame_cleanup"))
+                    |> irOf,
+                    3
+                    |> RunTask(4)
+                    |> irOf,
+                    3
+                    |> RunTask(5)
+                    |> irOf,
+                    false
+                    |> CreateTask(6)(2)(168)(1)(None)
+                    |> irOf,
+                    6
+                    |> RunTask(7)
+                    |> irOf,
+                    7
+                    |> LoadConstInt(8)
+                    |> irOf,
+                    irOf(PrintInt(8)),
+                    irOf(Return(8))
+                ]
+            in
+                let build name context =
+                    [coroutine, dropper]
+                    |> handBuiltProgram(handBuiltEntryFunction(name)(entry)(0)(9))
+                    |> codegenProgram(name)(context)
+                in assertProgramPrintsLines(build)("explicitTaskFrameDropper")("selfhost_backend_frame_dropper_e2e")(["42", "7"]))
+
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
 let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["true", "false", "false", "5"])
@@ -6078,6 +6152,7 @@ let run shipped =
     |> testCopyOutListScopedInnerLists
     |> testRcReleaseInstrumentation
     |> testReallocatedPoisonedCell
+    |> testExplicitTaskFrameDropper
     |> testRcDupDrop
     |> testIsReferenceCounted
     |> testImmortalNullary
