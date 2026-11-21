@@ -3888,6 +3888,8 @@ let testSocketCaptureTeardown shipped unit =
 let testSocketHelperTeardown shipped unit =
     assertProgramPrintsLinesWithImports([("dup", "libc.so.6"), ("close", "libc.so.6")])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))("socketHelperTeardown")("selfhost_backend_socket_helper_teardown")(["true", "true"])
 
+let testIndirectAwaitingHelperCarriesStringAcrossRestart shipped unit = assertSharedProgramPrintsExactly(shipped)("indirect_awaiting_helper_carries_string_across_restart")("p21|q321")
+
 let testAsyncLoopAccumulator shipped unit = assertSharedProgramPrintsExactly(shipped)("async_loop_accumulator")("15")
 
 let testAwaitingHelperKeepsOwnedBackedgeValues shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_helper_keeps_owned_backedge_values")("2=1=seed")
@@ -6384,6 +6386,7 @@ let run shipped =
     |> testSocketHelperTeardown(shipped)
     |> testAwaitingHelperKeepsOwnedBackedgeValues(shipped)
     |> testAsyncLoopAccumulator(shipped)
+    |> testIndirectAwaitingHelperCarriesStringAcrossRestart(shipped)
     |> testRecursiveAwaitingHelperRemainsCallable(shipped)
     |> testCompileConcurrentHttpServerForReplay(shipped)
     |> testRcDupDrop
