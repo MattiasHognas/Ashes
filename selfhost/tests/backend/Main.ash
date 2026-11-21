@@ -3904,7 +3904,10 @@ let testOriginalTmcAccumulators shipped unit =
 
 let testOriginalOperatorEvidence shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("logical_not_inferred_predicates")("true|true|1")
-    in assertSharedProgramPrintsExactly(shipped)("empty_list_equality_lambdas_at_two_element_types")("no no yes"))
+    in
+        let _ = assertSharedProgramPrintsExactly(shipped)("empty_list_equality_lambdas_at_two_element_types")("no no yes")
+        in
+            assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/empty_list_equality_distinct_element_types.ash.source"))("emptyListEqualityDistinctElementTypes")("selfhost_backend_empty_list_equality_distinct_element_types")("no"))
 
 let testOriginalMatchedFieldOwnership shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("matched_option_field_consed_into_call_argument_released_once")("1-2 10-11 1-2")

@@ -1,0 +1,5 @@
+let a = (given (xs) -> xs == [])([1, 2])
+
+let b = (given (ys) -> ys == [])(["x"])
+
+Ashes.IO.print(if a || b then "yes" else "no")
