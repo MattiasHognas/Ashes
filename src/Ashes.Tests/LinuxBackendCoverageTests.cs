@@ -9948,9 +9948,9 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<string> HttpRequestRawWithRetryAsync(int port, string request)
     {
-        var (_, bytes) = await HttpExchangeRawWithRetryAsync(port, request).ConfigureAwait(false);
-        using var buffer = new MemoryStream(bytes);
-        using var reader = new StreamReader(buffer, Encoding.UTF8);
+        (_, byte[] bytes) = await HttpExchangeRawWithRetryAsync(port, request).ConfigureAwait(false);
+        using MemoryStream buffer = new MemoryStream(bytes);
+        using StreamReader reader = new StreamReader(buffer, Encoding.UTF8);
         return reader.ReadToEnd().Trim();
     }
 
@@ -9967,7 +9967,7 @@ public sealed class LinuxBackendCoverageTests
                 await using (stream.ConfigureAwait(false))
                 {
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-                    using var buffer = new MemoryStream();
+                    using MemoryStream buffer = new MemoryStream();
                     await stream.CopyToAsync(buffer).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
                     return (((IPEndPoint)client.Client.LocalEndPoint!).Port, buffer.ToArray());
                 }
@@ -10664,15 +10664,15 @@ public sealed class LinuxBackendCoverageTests
             const int total = 120;
             const int waveSize = 8;
             const string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-            var failures = new List<string>();
+            List<string> failures = [];
             for (int offset = 0; offset < total; offset += waveSize)
             {
                 int count = Math.Min(waveSize, total - offset);
-                var tasks = Enumerable.Range(0, count).Select(_ => HttpExchangeRawWithRetryAsync(port, request)).ToArray();
-                var replies = await Task.WhenAll(tasks).ConfigureAwait(false);
+                Task<(int ClientPort, byte[] Bytes)>[] tasks = Enumerable.Range(0, count).Select(_ => HttpExchangeRawWithRetryAsync(port, request)).ToArray();
+                (int ClientPort, byte[] Bytes)[] replies = await Task.WhenAll(tasks).ConfigureAwait(false);
                 for (int i = 0; i < replies.Length; i++)
                 {
-                    var (clientPort, bytes) = replies[i];
+                    (int clientPort, byte[] bytes) = replies[i];
                     if (!bytes.AsSpan().StartsWith("HTTP/1.1 200 OK\r\n"u8))
                     {
                         string reply = bytes.Length == 0 ? "EOF before any response bytes"
