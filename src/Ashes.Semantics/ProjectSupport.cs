@@ -3260,7 +3260,7 @@ public static class ProjectSupport
         // detach the alias scheme from the hidden trait-evidence ABI. The legacy nested form keeps
         // its wrapping path because it is already represented as an expression pyramid.
         var renderedValue = flat
-            ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
+            ? ApplyAliasesByRenaming(binding.ValueSource, aliases, module.Aliases)
             : ApplyAliases(binding.ValueSource, aliases, exportAnnotations);
 
         prefix.Append($"{moduleBindingName}_{binding.Name}");
@@ -3355,8 +3355,19 @@ public static class ProjectSupport
     {
         var aliases = new List<KeyValuePair<string, string>>();
         var localNames = new HashSet<string>(StringComparer.Ordinal);
-        var referencedVariables = referencedNames.Variables;
+        HashSet<string> referencedVariables = new(referencedNames.Variables, StringComparer.Ordinal);
         var referencedQualifiedReferences = referencedNames.QualifiedReferences;
+
+        // A lowercase dotted receiver can be a record value or the module's explicit import alias.
+        foreach (QualifiedReference reference in referencedQualifiedReferences)
+        {
+            string receiver = reference.ModuleName;
+            if (receiver.Length > 0 && !char.IsUpper(receiver[0])
+                && !receiver.Contains('.', StringComparison.Ordinal) && !module.Aliases.ContainsKey(receiver))
+            {
+                referencedVariables.Add(receiver);
+            }
+        }
 
         AddLocalBindingAliases(module, availableLocalBindings, currentRecursiveBindings, referencedVariables, localNames, aliases);
         AddSelectorAliases(module, referencedVariables, localNames, aliases);
@@ -3547,7 +3558,10 @@ public static class ProjectSupport
     /// expression in <c>let ... in</c> bindings. Used for <c>let recursive</c> values, which must remain
     /// bare function literals so mutual/self references stay deferred to call time.
     /// </summary>
-    private static string ApplyAliasesByRenaming(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
+    private static string ApplyAliasesByRenaming(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> aliases,
+        IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         var trimmed = source.Trim();
         if (aliases.Count == 0)
@@ -3580,7 +3594,7 @@ public static class ProjectSupport
 
         // Alias keys inhabit the value/type namespace. Preserve same-spelled record-field tokens;
         // those labels are not references to the binding being qualified.
-        return RenameIdentifiers(trimmed, effectiveAliases, valueNames);
+        return RenameIdentifiers(trimmed, effectiveAliases, valueNames, moduleAliases);
     }
 
     /// <summary>
@@ -3964,7 +3978,8 @@ public static class ProjectSupport
     private static string RenameIdentifiers(
         string source,
         IReadOnlyList<KeyValuePair<string, string>> replacements,
-        IReadOnlySet<string> privateValueNames)
+        IReadOnlySet<string> privateValueNames,
+        IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         if (replacements.Count == 0)
         {
@@ -3993,6 +4008,8 @@ public static class ProjectSupport
             Token token = tokens[index];
             if (token.Kind == TokenKind.Ident
                 && byName.TryGetValue(token.Text, out string? replacement)
+                && !(moduleAliases?.ContainsKey(token.Text) == true
+                    && index + 1 < tokens.Count && tokens[index + 1].Kind == TokenKind.Dot)
                 && (!privateValueNames.Contains(token.Text) || !IsRecordFieldIdentifier(tokens, index)))
             {
                 builder.Append(source[copied..token.Position]).Append(replacement);
@@ -5166,15 +5183,6 @@ public static class ProjectSupport
                 break;
             case Expr.QualifiedVar qualifiedVar:
                 qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
-                // `receiver.field` spells a record field read like a module member. A lowercase
-                // receiver is a value binding, so it is a reference to that binding too.
-                if (qualifiedVar.Module.Length > 0
-                    && !qualifiedVar.Module.Contains('.', StringComparison.Ordinal)
-                    && !char.IsUpper(qualifiedVar.Module[0]))
-                {
-                    names.Add(qualifiedVar.Module);
-                }
-
                 break;
             case Expr.IntLit:
             case Expr.UIntLit:
