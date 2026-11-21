@@ -1,4 +1,5 @@
 import AshesCompiler.Frontend.Parser
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
@@ -34,6 +35,16 @@ let expectImmediate result =
         | ProgramInferenceResult { error = Some(ProgramExpressionError(ImmediateTraitEvidenceRequired("Seed", SemVariable(_variable) :: []))) } -> Unit
         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("expected immediate Seed evidence: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("a strict binding selected an instance from a later use")
+
+let expectFixtureLocation result =
+    (let source = readSource("tests/partial_requires_open_evidence_before_returning_function.ash")
+    in
+        match result with
+            | ProgramInferenceResult { errorLocation = Some(InferenceErrorLocation { span = Some(TextSpan { start = start }) }) } ->
+                if start == Ashes.Text.indexOf(source)("pick(Unit)")
+                then expectImmediate(result)
+                else Ashes.IO.panic("immediate evidence should point to the binding RHS")
+            | _ -> Ashes.IO.panic("missing RHS location for immediate evidence"))
 
 let expectSuccess result =
     match result with
@@ -143,7 +154,7 @@ let runImmediateEvidenceInferenceTests unit =
         in
             "partial_requires_open_evidence_before_returning_function"
             |> inferFixture(shipped)
-            |> expectImmediate
+            |> expectFixtureLocation
             |> (given (_) ->
                 "annotated_partial_resolves_evidence_before_returning_function"
                 |> inferFixture(shipped)

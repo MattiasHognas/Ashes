@@ -3447,6 +3447,13 @@ let setSourceCallFlow name flow (bound: TypeEnvironment) =
 // A local strictly evaluated value has one evidence type through the entire enclosing
 // invocation. Hold those variables out of its local quantifier; its surrounding lambda can
 // then generalize them, after its body has related them to the parameter and result.
+let immediateEvidenceError value traitName arguments =
+    (let error = ImmediateTraitEvidenceRequired(traitName)(arguments)
+    in
+        match expressionSpan(value) with
+            | Some(span) -> InferenceErrorAt(span)(error)
+            | None -> error)
+
 let inferEvidenceBinding (name: Str) (value: Expr) (semanticType: SemanticType) selected (base: TypeEnvironment) (scope: TypeEnvironment) substitution (supply: TypeVariableSupply) =
     (let analysis = analyzeEvidenceBinding(base)(value)(semanticType)(selected)(supply)(substitution)
     in
@@ -3494,7 +3501,7 @@ let inferEvidenceBinding (name: Str) (value: Expr) (semanticType: SemanticType) 
                                                             then None
                                                             else
                                                                 args
-                                                                |> ImmediateTraitEvidenceRequired(traitName)
+                                                                |> immediateEvidenceError(value)(traitName)
                                                                 |> Some
                                                         | [] -> None
                                                 in EvidenceBindingInference(scheme = scheme, environment = next, supply = noted, error = error))
