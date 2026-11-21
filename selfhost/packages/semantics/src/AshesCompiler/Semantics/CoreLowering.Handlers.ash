@@ -343,6 +343,23 @@ let lowerCapabilityOperationCall (layout: CoreCapabilityLayout) (capName: Str) (
                                         lowerStaticProviderCall(provider)(capName)(opName)(argTemps)(resolveType(boundState)(resType))(resolvedOperationType(boundState)(operationType))(lower)(boundState)
                                     | None -> lowerDynamicPerform(layout)(capName)(opName)(opIndex)(argTemps)(resType)(typedState)
 
+let lowerBuiltinStop argument lower state =
+    match constructorLayout("Unit")(state) with
+        | None -> failure(state)(UnknownLoweringBinding("Unit"))
+        | Some(layout) ->
+            let scheme = layout.scheme
+            in
+                match state
+                |> lower(argument)
+                |> unifyExpectedResult(scheme.body) with
+                    | LoweredCoreValue { state = argState, error = None } ->
+                        match freshTemp(argState) with
+                            | FreshTemp { state = next, temp = target } ->
+                                next
+                                |> emit(RequestServerStop(target))
+                                |> lowerConstructor(layout)([])(emptyConsumerRequest)(lower)
+                    | failed -> failed
+
 let lowerPerform operation lower state =
     match collectCallSpine(operation) with
         | CoreCallSpine { root = ExprQualifiedVar(capName, opName), arguments = arguments } ->
@@ -351,13 +368,7 @@ let lowerPerform operation lower state =
                 if opName == "stop"
                 then
                     match arguments with
-                        | arg :: [] ->
-                            match lower(arg)(state) with
-                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                                | LoweredCoreValue { state = argState, temp = argTemp, error = None } ->
-                                    argState
-                                    |> emit(RequestServerStop(argTemp))
-                                    |> success(argTemp)(SemNamed(0)("Unit")([]))
+                        | arg :: [] -> lowerBuiltinStop(arg)(lower)(state)
                         | _ ->
                             arguments
                             |> coreListLength

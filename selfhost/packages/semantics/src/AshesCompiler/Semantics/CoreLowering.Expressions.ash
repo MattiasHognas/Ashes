@@ -1728,6 +1728,7 @@ let lowerGeneralCall expression function argument lower state =
 // the implicit form of `perform`, and lowers as the operation call.
 let isCapabilityOperationCall expression (state: CoreLoweringState) =
     match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar("Stop", "stop"), arguments = _argument :: _rest } -> true
         | CoreCallSpine { root = ExprQualifiedVar(capName, _opName), arguments = _argument :: _rest } ->
             match state
             |> stateCapabilityLayouts
