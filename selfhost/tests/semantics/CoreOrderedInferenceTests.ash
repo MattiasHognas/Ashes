@@ -351,6 +351,7 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/recursive_report_uses_each_values_show_dictionary.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/awaiting_report_keeps_typed_show_dictionaries.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/result_directed_method_uses_concrete_and_supplied_evidence.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/local_eager_seed_uses_evidence_of_its_enclosing_function.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/custom_method_value_selects_dictionary_from_argument_type.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
