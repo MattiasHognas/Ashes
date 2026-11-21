@@ -1474,6 +1474,9 @@ into slot descriptors and, when the frame owns references, generates a frame
 dropper that releases each owned word and clears it. Scheduler completion,
 `ashes_cancel_task` and spawned-task reaping each run it, so a cancelled or
 abandoned task releases what it held without any path releasing it twice.
+When an awaited operation closes a socket, it first walks its waiter chain. Each
+frame relinquishes the matching direct socket cleanup before the operating
+system can reuse the handle. Other frame words retain their teardown obligations.
 Ordinary RC placement is scoped by a per-function "may execute inside a
 coroutine" effect, so creating a task does not force unrelated functions onto
 region placement.

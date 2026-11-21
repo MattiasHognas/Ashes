@@ -10631,6 +10631,51 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Awaited_socket_close_preserves_a_reused_descriptor_and_releases_unconsumed_captures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // dup acquires the lowest free descriptor. On the close path it occupies the
+        // socket number before the parent frame tears down. On the borrow path teardown
+        // frees a lower descriptor while leaving the replacement open.
+        using LoopbackPortLease port = LoopbackPortLease.Create();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            external duplicate(Int) -> Int = "dup@libc.so.6"
+            external release(Int) -> Int = "close@libc.so.6"
+            let hold shouldClose socket =
+                async(let nested u = async(await Ashes.Net.Tcp.close(socket))
+                in if shouldClose
+                    then match await nested(Unit) with
+                        | Ok(Ok(_u)) -> duplicate(1)
+                        | _ -> 0
+                    else match await Ashes.Task.sleep(1) with
+                        | Ok(_u) -> duplicate(1)
+                        | Error(_e) -> 0)
+            let run shouldClose =
+                match Ashes.Task.run(Ashes.Net.Tcp.Server.listen({{port.Port}})) with
+                    | Ok(socket) ->
+                        match Ashes.Task.run(hold(shouldClose)(socket)) with
+                            | Ok(replacement) ->
+                                let next = duplicate(1)
+                                in let _ = release(next)
+                                in Ashes.IO.print(release(replacement) == 0 && (shouldClose || next < replacement))
+                            | Error(e) -> Ashes.IO.print(e)
+                    | Error(e) -> Ashes.IO.print(e)
+            let _ = run(true)
+            run(false)
+            """;
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgramWithImports(source)).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true\ntrue\n", result.Stderr);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_serve_http_concurrently_across_workers()
     {
         // Concurrent HTTP under the run-queue scheduler: many simultaneous requests against a
