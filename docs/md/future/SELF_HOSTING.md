@@ -407,6 +407,10 @@ The stored-tuple fix `bd915b62` is integrated as `4961ecf3`: conservative unknow
 
 While integration is frozen for the running checks, coordinator handoff updates are committed and pushed on `fix/r10-live-checkpoints` in its own worktree. Cherry-pick new documentation commits after the reader finishes; they do not change compiler source.
 
+The full C# run on `b17375b1` completed with **3,022 passed / 56 failed / 2 skipped**, compared with the prior 3,073 / 5 / 2. LSP passed 88/88 and e2e is running. New failures cluster around directly escaping owners, immediately consumed runtime builtins, the Box payload transfer and explain fixtures; two additional RSS failures are not exempt as baseline leaks. Both workers identified the earlier scheme-read change `e946de8f` (integrated `3db7a02e`) as the cause in the Box witness: tail-forwarded ownership remained marked borrowed, preventing adoption by the enclosing binding. Pre/post query-optimization IR is identical for that witness, ruling out `66b8d0d3` there. Do not change the test oracles.
+
+`lowering_evidence` resumed in `r10-phantom-query` to fix the C# transfer while preserving borrowed intermediate reads. `tmc_repair` resumed in fresh `r10-root-ownership`, branch `fix/r10-root-ownership` from `b17375b1`, to audit the exact test entry point and provide the stage-1 counterpart or source-equivalence proof. Both have bounded diagnosis/implementation briefs; no agent load. Main's e2e reader still prevents integration.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
@@ -441,7 +445,7 @@ All worktree names below are relative to `.claude/worktrees/`. Generated scripts
 
 Use `work/r10pre/policy-preflight.sh <new-output>` for a fresh stage 0, source inference and poison-built native policy driver. Require an explicit `ok` from inference even when its exit code is zero. The current stage 0 is `work/r10pre/policy-combined/s0/ashes`. The standalone inference binary used by that script is named in the script. For full solution build/format, C#, LSP and stage-0 e2e use `../r10-fixture-candidates/work/policy-shared-checks.sh <new-output>`. Read each phase's exit code and failure rows in its own log.
 
-Main's policy preflight has passed; full stage-0 gates are running in `work/r10pre/policy-shared2/` (session 22829). Build and format passed; C# is running. Do not mutate integration while this job reads it. Prior `policy-shared` stopped at formatting, and the earlier chained run stopped at policy failure; neither supplies a current full C#/e2e result.
+Main's policy preflight has passed; full stage-0 gates are running in `work/r10pre/policy-shared2/` (session 22829). Build/format passed, C# has the 56 failures above, LSP passed and e2e is running. Do not mutate integration while this job reads it. Prior `policy-shared` stopped at formatting, and the earlier chained run stopped at policy failure; neither supplies a current full C#/e2e result.
 
 Once the source is ready, run `../r10-fixture-candidates/work/named-native-checks.sh <absolute-stage0-path> <new-output>` from integration using the coordinator's capped runner. It uses `render-named-capture.sh`, builds a poison-instrumented `--debug -O0` harness and executes all named groups individually from the repository root so they can read the checked-in programs. It then compares 95 lowered-IR fixtures. Case logs, the selected groups and mismatching IR are in `<new-output>/cases/`, `cases-list.txt` and `actual/`. Build and run the separate `--debug-disable-reuse` variant as well. Preserve prior result directories.
 
