@@ -854,6 +854,32 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void A_module_can_use_its_own_constructor_after_multibyte_source_text()
+    {
+        const string library = "type Item = | Known\nlet label = \"日本語の文字列\"\nlet item = Known\n";
+        const string entry = "1";
+        CombinedCompilationLayout layout = new(
+            library + entry, library.Length, library.Length,
+            [("Lib.ash", 0, library.Length), ("Main.ash", library.Length, library.Length + entry.Length)],
+            ModuleProvenanceByPath: new Dictionary<string, ModuleProvenance>(StringComparer.Ordinal)
+            {
+                ["Lib.ash"] = new("app", "Lib"),
+                ["Main.ash"] = new("app", "Main"),
+            },
+            VisibleModules: new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+            {
+                ["Main"] = new HashSet<string>(StringComparer.Ordinal),
+            });
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        lowering.SetSourceContext(layout);
+        _ = lowering.Lower(program);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void StandaloneCompilationLayout_should_keep_mutual_recursive_entry_group_flat_after_standard_traits()
     {
         const string source = """

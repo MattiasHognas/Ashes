@@ -1802,11 +1802,12 @@ public sealed partial class Lowering
     private TraitDeclarationProvenance ResolveDeclarationProvenance(TextSpan span)
     {
         string sourcePath = _currentFilePath ?? "<memory>";
-        if (_moduleOffsets is not null)
+        if (_moduleOffsets is not null && _sourceIndex is not null)
         {
+            int sourceOffset = _sourceIndex.ToUtf16Offset(span.Start);
             foreach ((string filePath, int startOffset, int endOffset) in _moduleOffsets)
             {
-                if (span.Start >= startOffset && span.Start < endOffset)
+                if (sourceOffset >= startOffset && sourceOffset < endOffset)
                 {
                     sourcePath = filePath;
                     break;
