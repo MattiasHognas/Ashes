@@ -415,7 +415,7 @@ inference replaces discovery/replay and repeated lowering; parallel LLVM/codegen
 Blocking leaks are fixed immediately. After multithreading, **all** remaining compiler and generated
 program leaks must be fixed; this round's leak exclusions are temporary.
 
-**Latest status (2026-11-21, integration `503dc64f`, pushed):** the user explicitly requested both
+**Latest status (2026-11-21, integration `902c0e0b`, pushed):** the user explicitly requested both
 agents work toward full inference coverage. The new evidence and type-table batches are integrated
 but await native validation. Static inventory covers 19 semantic type constructors, 48 expression
 constructors and 14 pattern constructors; this is not a claim of complete tested coverage.
@@ -424,6 +424,16 @@ still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` suppl
 translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
 because `ef95138d` was integrated as `b2f0f591`. Oracle repairs `e8b2074d` and `592c3a8b` are also
 integrated. Every cherry-pick was pushed. Main's next build must include all these batches.
+
+The next stage-0 batch at `f4c4cc6f` completed (`work/r10pre/coverage-batch/`): solution build,
+format and LSP 88/88 pass; C# **3,073 passed / five RSS failures / two skipped**, clearing all
+non-leak C# failures. E2e **1,291 passed / one failed / 80 skipped**; the only failure was the
+known strict-callee ordering regression. The independent strict-prefix split `610c85e3` is now
+integrated as `7115f734`, typo repair `5673913d` as `75f979f8`, and captured-self normalizer
+`5af4e0e1` as `902c0e0b`. The worker's stage-0 poison smokes passed exact ordering and nested
+captured/aliased mixed-constraint behavior; integrated/native stage-1 proof is still pending.
+No main load job is currently running. Next: short fresh-source inference/build preflight, then
+the per-module native suite once the immediate-evidence policy batch is ready.
 
 The native preflight at `4a6478c7` (`work/r10pre/native-port/`) passed solution build/format,
 C# 3,064 passed / 13 failed / 2 skipped, LSP 88/88 and compiler inference 9,995 items / 182 modules.
@@ -442,20 +452,29 @@ test functions). Run cases individually under caps to collect all failures rathe
 after the first panic. Keep both normal/no-reuse checks at the agreed gate. Focused drivers can
 use `--debug -O0`; the shared stage-1 build retains the specified `--debug -O2`.
 
-**Open semantic decision, asked asynchronously:** `r10-evidence-audit/work/early-open-dictionary.ash`
+**Semantic decision, resolved by the user:** `r10-evidence-audit/work/early-open-dictionary.ash`
 binds `check = pick(Unit)` before a marker, then uses `check` at Int and Bool. Strict evaluation
 requires an earlier effect once, but that effect depends on the not-yet-selected trait instance.
 Current stage 0 prints `bound|Int|Bool|true true`. The reference does not settle how to select one
-instance. User was asked: require concrete evidence at binding (recommended; annotate ambiguity),
-or make these bindings monomorphic so all uses must agree. **No answer yet; do not choose a policy.**
+instance. User chose **require concrete evidence at binding; annotate ambiguity**, not making
+affected bindings monomorphic from later top-level uses. Immediate work must have determined or
+available enclosing evidence; requirements used only by the returned function remain generalized.
+Reference change `ec3265c1` is integrated as `62d8e5de` before implementation. Standalone-inference
+and lowering enforcement are active work. The user's positive example keeps Seed.first/inspect
+inside `check x`, so check remains polymorphic with inferred Seed/Eq evidence supplied at each call.
 The independent early-callee effect case has a unique required order and remains a blocking compiler
 bug: `generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
 `entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. Agent is implementing a
 declaration-site split preserving lexical captures and the ordinary full-call ABI.
 
-Active workers are now `lowering_evidence` in `r10-evidence-audit` (independent strict-callee fix;
-extra 30-minute implementation batch, one bounded CLI build authorized) and `tmc_repair` in
-`r10-type-coverage` (coverage inventory, native diagnostic failure, IR classification). Both use
+Active workers are now `lowering_evidence` in `r10-evidence-audit` (C# policy and lowering scheduling;
+bounded single-project CLI recovery builds/short smokes authorized) and `tmc_repair` in
+`r10-immediate-evidence`, branch `fix/r10-immediate-evidence` from `f4c4cc6f` (45-minute batch:
+standalone inference metadata/enforcement). Its reference dependency `c3f995b8` duplicates
+`ec3265c1`; skip the duplicate at integration. Metadata contract is a demand stage for each
+canonical scheme requirement ordinal, exposed as `nodeEvidenceStagesAt(rhsRoot)(nodeTypes)`;
+direct method/operator execution demands evidence, reference instantiation alone does not.
+Both use
 GPT-6.2 Astra; no third active worker. Their `work/BRIEF.md` and `work/PROGRESS.md` hold details.
 `imports_diagnostics` is idle. The type-coverage manifest preflight reached an unchanged
 `ResultReachTests` row mismatch in the older standalone tool after fixing a new-test member read;
@@ -685,8 +704,8 @@ The combined source is on origin at `8da62f16`. Lowering-evidence integration is
 `8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
 
 **Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
-- `tmc_repair` resumed in `r10-type-coverage`, from `4a6478c7`: inference/table coverage and native
-  failure classification. Previous ownership/fixture/oracle batches are integrated.
+- `tmc_repair` resumed in `r10-immediate-evidence`, from `f4c4cc6f`: standalone inference enforcement
+  of the user-selected immediate-evidence policy. Previous coverage/normalizer batches are integrated.
 - `lowering_evidence` resumed in `r10-evidence-audit`: remaining constrained-binding/evidence audit.
 `imports_diagnostics` is idle. All three first batches handed back clean and are integrated; their
 old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
@@ -741,7 +760,7 @@ example compiles, and bugs 9/10 plus the corrected C# failure audit still requir
     arguments once, before the dictionary lambda. Fresh stage-0 double evaluation is a correctness
     bug; stage-1 current-source acceptance still needs proof (bootstrap54 rejects the second type).
 13. Independent early-callee effects must run once before the next binding; declaration-site fix
-    in progress. Dependent early evidence requires the user decision above.
+    is integrated, native verification pending. Enforce the user's chosen early-evidence policy.
 14. Newly found mutual-group dictionary ABI and higher-order/operator evidence cases are fixed in
     source in both compilers; their new regressions await fresh native validation.
 15. Type-table handler/guard scopes, primitive integer complement and shadowed-let scheme selection
