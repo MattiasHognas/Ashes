@@ -10631,6 +10631,46 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Cancelled_socket_wait_releases_its_capture_before_reusing_the_descriptor()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The timer cancels a parked accept. The dup survives the suspended factory
+        // returning and its caller leaving scope, each of which tears down its owners.
+        using LoopbackPortLease port = LoopbackPortLease.Create();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            external duplicate(Int) -> Int = "dup@libc.so.6"
+            external release(Int) -> Int = "close@libc.so.6"
+            let hold socket =
+                async(let acceptOne = async(match await Ashes.Net.Tcp.Server.accept(socket) with
+                        | Ok(_client) -> 1
+                        | Error(_e) -> 2)
+                in let timer = async(match await Ashes.Task.sleep(5) with
+                        | Ok(_u) -> 3
+                        | Error(_e) -> 4)
+                in match await Ashes.Task.race([acceptOne, timer]) with
+                    | Ok(3) -> duplicate(1)
+                    | _ -> 0)
+            let run u =
+                match Ashes.Task.run(Ashes.Net.Tcp.Server.listen({{port.Port}})) with
+                    | Ok(socket) ->
+                        match Ashes.Task.run(hold(socket)) with
+                            | Ok(replacement) -> replacement
+                            | Error(_e) -> -1
+                    | Error(_e) -> -1
+            Ashes.IO.print(release(run(Unit)) == 0)
+            """;
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgramWithImports(source)).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true\n", result.Stderr);
+    }
+
+    [Test]
     public async Task Awaited_socket_close_preserves_a_reused_descriptor_and_releases_unconsumed_captures()
     {
         if (!OperatingSystem.IsLinux())

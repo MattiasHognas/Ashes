@@ -128,6 +128,12 @@ public sealed partial class Lowering
 
     private bool CallUsesParamOnlyAsBorrowRead(Expr call, string p)
     {
+        if (call is Expr.Call { Arg: Expr body } && IsSuspendingTaskCall(call, body))
+        {
+            // A suspended task can outlive this call even when its body only reads the parameter.
+            return !MentionsVar(body, p);
+        }
+
         var args = new List<Expr>();
         var root = CollectCallArgs(call, args);
         // The op may be spelled through an import alias (`import Ashes.IO.Process as Process`), so
@@ -156,6 +162,11 @@ public sealed partial class Lowering
 
         return args.All(a => ParamUsedOnlyAsBorrowRead(a, p));
     }
+
+    private bool IsSuspendingTaskCall(Expr call, Expr body) =>
+        (IsAsyncIntrinsicCall(call) || call is Expr.Call { Func: Expr.QualifiedVar { Name: "task" } task }
+            && string.Equals(ResolveModuleAlias(task.Module), "Ashes.Task", StringComparison.Ordinal))
+        && ExprContainsAwait(body);
 
     private bool MatchUsesParamOnlyAsBorrowRead(Expr.Match m, string p)
     {
