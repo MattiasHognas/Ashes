@@ -2582,12 +2582,14 @@ let isClosedProducerChain (temp: Int) (state: CoreLoweringState) =
 
 // The slot that supplied the base case hands its reference to the last cell of a closed chain.
 let tcoExitTransferTemp (result: Int) (state: CoreLoweringState) =
-    match state.ownerState.closedProducerChain with
-        | Some((origin, closed, transferTemp)) ->
-            if closed == result && origin == stateActiveFunctionOrigin(state)
-            then transferTemp
-            else result
-        | None -> result
+    (let group = state.ownerState
+    in
+        match group.closedProducerChain with
+            | Some((origin, closed, transferTemp)) ->
+                if closed == result && origin == stateActiveFunctionOrigin(state)
+                then transferTemp
+                else result
+            | None -> result)
 
 // Whether `temp` is the result the function being lowered already made its own.
 let isGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
