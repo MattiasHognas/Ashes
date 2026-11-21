@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ShippedModuleStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
@@ -254,14 +255,26 @@ let checkEntryCopyIr mode path lowered =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("entry-frame loop failed in " + mode + " lowering: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("entry-frame loop produced no program in " + mode + " lowering")
 
+let recursive containsBlockingRun path instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RunTask(_, _), location = Some(IrSourceLocation(file, _, _)) } :: rest -> file == path || containsBlockingRun(path)(rest)
+        | _ :: rest -> containsBlockingRun(path)(rest)
+
+let recursive coroutineBlocks path functions =
+    match functions with
+        | [] -> false
+        | IrFunction { coroutine = Some(_), instructions = instructions } :: rest -> containsBlockingRun(path)(instructions) || coroutineBlocks(path)(rest)
+        | _ :: rest -> coroutineBlocks(path)(rest)
+
 let checkHelperSignatureIr mode path lowered =
     match lowered with
         | CoreLoweringResult { program = Some(ir), error = None } ->
             let lines = formatIr(ir)(LoweredIr)(None)
             in
-                if hasEntryInstruction(path)("Suspend")(lines) && Ashes.Text.contains(Ashes.Text.join("\n")(lines))("Target=__async_loop_")
+                if hasEntryInstruction(path)("Suspend")(lines) && Ashes.Text.contains(Ashes.Text.join("\n")(lines))("Target=__async_loop_") && !coroutineBlocks(path)(ir.functions)
                 then Unit
-                else Ashes.IO.panic(mode + " declared helper did not suspend and restart")
+                else Ashes.IO.panic(mode + " helper failed to suspend and restart without blocking: " + path)
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " declared helper failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(mode + " declared helper produced no program")
 
@@ -322,6 +335,8 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkEntryCopyIr)(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_preserves_declared_results.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/awaiting_helper_keeps_owned_backedge_values.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/async_loop_accumulator.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))

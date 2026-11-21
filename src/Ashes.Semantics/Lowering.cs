@@ -7376,10 +7376,11 @@ public sealed partial class Lowering
             SuppressSourceConstraintDiagnostics(letRecursive.Name));
         ImmutableSortedDictionary<string, Binding> selfScope = _scopes.Pop();
         TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
+        TypeScheme sourceScheme = RecursiveSourceScheme(selfScope[letRecursive.Name], recursiveScheme);
         RegisterRecursiveDemandScheme(letRecursive.Value, recursiveScheme);
         RecordInferredTraitBindingElaboration(
             letRecursive,
-            recursiveScheme,
+            sourceScheme,
             writtenRequirements,
             inferredRequirements,
             needsLateTraitTypeHint);
@@ -7404,12 +7405,19 @@ public sealed partial class Lowering
         RecordHoverScheme(
             AstSpans.GetLetRecursiveNameOrDefault(letRecursive),
             letRecursive.Name,
-            recursiveScheme,
+            sourceScheme,
             GetDeclaredHoverParameterNames(letRecursive.Value));
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
         RegisterLoweredRecursiveFunctionIdentity(letRecursive, slot, recursiveScheme);
         RegisterNestedRecursiveFunctionLabel(letRecursive, slot, valueAndType.valTemp);
     }
+
+    // Replay uses an inferred signature exactly like a written source annotation. A
+    // coroutine factory's physical Task result must stay private to its closure slot.
+    private TypeScheme RecursiveSourceScheme(Binding binding, TypeScheme scheme) =>
+        binding.CoroutineHelperArity > 0 && CoroutineHelperSourceType(scheme.Body, binding.CoroutineHelperArity) is { } body
+            ? new TypeScheme(scheme.Quantified, body, scheme.Constraints)
+            : scheme;
 
     // A `let recursive` helper declared inside a function body is called through its local slot,
     // whose closure has a statically known code label just as a top-level one does. Registering it
