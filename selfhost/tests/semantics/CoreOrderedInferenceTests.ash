@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ShippedModuleStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 export (
@@ -110,24 +111,26 @@ let checkStandardListSort traits unit =
             match expectBool(traits + "\n" + source + "\nmatch sort([\"z\", \"a\"]) with | first :: second :: [] -> first == \"a\" && second == \"z\" | _ -> false") with
                 | _ -> Unit
 
-let recursive countFunctions (functions: List(IrFunction)) =
+let recursive countValueStages (functions: List(IrFunction)) =
     match functions with
         | [] -> 0
-        | _function :: rest -> 1 + countFunctions(rest)
+        | IrFunction { origin = Some(IrFunctionOrigin { originKind = SourceFunctionOriginKind }) } :: rest -> 1 + countValueStages(rest)
+        | IrFunction { origin = Some(IrFunctionOrigin { originKind = ClosureHelperOrigin }) } :: rest -> 1 + countValueStages(rest)
+        | _helper :: rest -> countValueStages(rest)
 
 // An unused constrained binding is lowered once as a dictionary-taking function, as stage 0
 // emits it: one body per curried stage and no second copy left behind by a provisional pass.
-let expectFunctionCount expected message source =
+let expectValueStageCount expected message source =
     match expectBool(source) with
         | IrProgram { functions = functions } ->
-            if countFunctions(functions) == expected
+            if countValueStages(functions) == expected
             then Unit
             else
-                Ashes.IO.panic(message + ": " + Ashes.Text.fromInt(countFunctions(functions)) + " functions")
+                Ashes.IO.panic(message + ": " + Ashes.Text.fromInt(countValueStages(functions)) + " callable stages")
 
-let checkUnusedComparator unit = expectFunctionCount(3)("unused comparator retained a provisional body")("let before left right = left <= right\ntrue")
+let checkUnusedComparator unit = expectValueStageCount(3)("unused comparator retained a provisional body")("let before left right = left <= right\ntrue")
 
-let checkUnusedFunctionChains unit = expectFunctionCount(6)("unused function chain retained provisional bodies")("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue")
+let checkUnusedFunctionChains unit = expectValueStageCount(6)("unused function chain retained provisional bodies")("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue")
 
 let checkEscapingFunctionChain unit =
     match lowerSource("let before left right = left <= right\nlet alias = before\nlet next = alias\n(next, true)") with
