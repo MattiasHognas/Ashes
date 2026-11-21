@@ -313,7 +313,7 @@ let openStoredConstrainedTopLevel name value provisional scheme cursorSlot endSl
                         |> restoreBindings(replaceConstrainedScheme(name)(scheme)(stored.bindings))
                         |> registerConstrainedLogicalReference(name)(scheme), chainPending = PendingTopLevelClose(closeOwnedTypeName = letOwnedTypeName(value)(loweredValue)(saved), closeOwnerSlot = ownerSlot, closeCursorSlot = cursorSlot, closeEndSlot = endSlot, closeSpan = saved.currentSpan, closeOuterBindings = outerBindings, closeBracket = true) :: pending, chainError = None)
 
-let tryOpenConstrainedTopLevel name value annotation (written: Bool) escapeBody tailForwarded outerBindings pending state =
+let tryOpenConstrainedTopLevel name value annotation requirements escapeBody tailForwarded outerBindings pending state =
     match constrainedAliasBinding(value)(state) with
         | Some(binding) ->
             match openArenaBracket(state) with
@@ -323,7 +323,7 @@ let tryOpenConstrainedTopLevel name value annotation (written: Bool) escapeBody 
                     |> openStoredConstrainedTopLevel(name)(value)(false)(binding.scheme)(cursor)(end)(saved)(escapeBody)(tailForwarded)(outerBindings)(pending)
                     |> Some
         | None ->
-            match constrainedBindingPlanWith(written)(name)(false)(value)(annotation)([])(state) with
+            match constrainedBindingPlan(name)(false)(value)(annotation)(requirements)(state) with
                 | None -> None
                 | Some(plan) ->
                     match openArenaBracket(state) with
@@ -370,13 +370,13 @@ let openUnconstrainedArenaBracketedTopLevelLet name value annotation remainingBo
 // bracketed let releases its owner and restores the arena under the declaration's own span, a
 // recursive group only takes its names back out of scope. A failure passes through with each
 // declaration's names taken out of scope, as the nested form's failure did.
-let openUnregisteredArenaTopLevelLet name value annotation (written: Bool) remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
-    match tryOpenConstrainedTopLevel(name)(value)(annotation)(written)(escapeBody)(tailForwarded)(outerBindings)(pending)(state) with
+let openUnregisteredArenaTopLevelLet name value annotation requirements remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
+    match tryOpenConstrainedTopLevel(name)(value)(annotation)(requirements)(escapeBody)(tailForwarded)(outerBindings)(pending)(state) with
         | Some(opened) -> opened
         | None -> openUnconstrainedArenaBracketedTopLevelLet(name)(value)(annotation)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state)
 
-let openArenaBracketedTopLevelLet name value annotation (written: Bool) remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
-    match openUnregisteredArenaTopLevelLet(name)(value)(annotation)(written)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state) with
+let openArenaBracketedTopLevelLet name value annotation requirements remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
+    match openUnregisteredArenaTopLevelLet(name)(value)(annotation)(requirements)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state) with
         | OpenedTopLevelChain { chainState = opened, chainError = None } as result -> result with chainState = registerConcreteSource(name)(value)(false)(opened)
         | failed -> failed
 
@@ -1483,7 +1483,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                         | Some(layout) ->
                                             if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                             then
-                                                match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                                match openArenaBracketedTopLevelLet(name)(value)(annotation)(requirements)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
                                                     | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                     | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
                                             else
@@ -1491,7 +1491,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                     | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
                                         | None ->
-                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
+                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(requirements)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
                                                 | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                 | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
             | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, true) :: rest ->

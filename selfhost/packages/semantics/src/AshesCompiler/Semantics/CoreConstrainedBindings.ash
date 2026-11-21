@@ -66,21 +66,27 @@ let coreGeneralizedScheme (scheme: TypeScheme) = scheme with constraints = selec
 // The caller merges returned substitutions affecting outer variables and advances
 // its supply when it adopts this plan; unsupported inference can retain its
 // original lowering path without adopting any speculative state.
-let inferCoreConstrainedBinding name isRecursive value annotation requirements environment supply =
+let inferCoreConstrainedBinding name isRecursive value annotation requirements (environment: TypeEnvironment) supply =
     (let expression =
         if isRecursive
         then ExprLetRecursive(name)(value)(ExprVar(name))([])(annotation)(requirements)
         else ExprLet(name)(value)(ExprVar(name))([])(annotation)(requirements)
     in
-        match inferExpressionFrom(expression)(environment)([])(supply) with
-            | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = nextSupply, constraints = constraints, error = error } ->
-                let resolved = applySubstitution(substitution)(semanticType)
-                in
-                    let scheme =
-                        constraints
-                        |> applyInferenceConstraints(substitution)
-                        |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(environment))(substitution)(resolved)
-                    in CoreConstrainedInference(scheme = coreGeneralizedScheme(scheme), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = nextSupply, error = error))
+        // The written scheme uses the program rules for trait names and unary negation.
+        let inferenceEnvironment =
+            if requirements == []
+            then environment
+            else environment with programInferenceRules = true, lookupIndex = None
+        in
+            match inferExpressionFrom(expression)(inferenceEnvironment)([])(supply) with
+                | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = nextSupply, constraints = constraints, error = error } ->
+                    let resolved = applySubstitution(substitution)(semanticType)
+                    in
+                        let scheme =
+                            constraints
+                            |> applyInferenceConstraints(substitution)
+                            |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(environment))(substitution)(resolved)
+                        in CoreConstrainedInference(scheme = coreGeneralizedScheme(scheme), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = nextSupply, error = error))
 
 let recursive traitParameterSubstitution parameters arguments =
     match (parameters, arguments) with

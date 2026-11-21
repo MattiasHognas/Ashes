@@ -83,8 +83,6 @@ export (
     value registerConcreteSource,
     value recordCoverageOperatorConstrainedNames,
     value constrainedBindingPlan,
-    value constrainedBindingPlanWith,
-    value writtenRequirements,
     value lowerConstrainedBindingValue,
     value openPossiblyConstrainedRecursive,
     value openPossiblyConstrainedGroup,
@@ -3035,10 +3033,12 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
 
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
-let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation requirements (state: CoreLoweringState) =
+let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
     let (candidate, forwardsRequirements) =
         match lambdaParts(value) with
-            | Some(_parts) -> (written || !constrainedPlanCannotApply(value)(requirements)(state), written || mentionsStandardMethod(value))
+            | Some(_parts) ->
+                let written = writtenRequirements(requirements)
+                in (written || !constrainedPlanCannotApply(value)(requirements)(state), written || mentionsStandardMethod(value))
             | None ->
                 let partial = !isRecursive && constrainedPartialApplication(value)(state)
                 in (partial, partial)
@@ -3053,9 +3053,6 @@ let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation
                     then Some(plan)
                     else None
         else None
-
-let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
-    constrainedBindingPlanWith(writtenRequirements(requirements))(name)(isRecursive)(value)(annotation)(requirements)(state)
 
 let recursive constrainedPlanAvailable plan state =
     match plan with
