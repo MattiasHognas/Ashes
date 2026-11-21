@@ -3761,3 +3761,58 @@ The latest weekly quota snapshot is **96% used at 11:30:37 UTC**; check current 
 
 **Active shared build.** The checkpoint was fast-forwarded and pushed to integration as `78325617`. `work/r10pre/round10-bootstrap55/nonleak-gate.commit`, `nonleak-gate.md` and `validated-source-difference.txt` record the gate and documentation-only difference from `39e79d7f`. `round10-bootstrap.sh stage1` is running with `r10-original-tmc-resolution/work/reference/s0/ashes`, tag `bootstrap55`, coordinator slot, 24 GiB/no swap, 7,200-second compiler bound, `--debug -O2` and leak checking. Freeze integration throughout the phase chain; its scripts require the same source head for stage 2/3 and behavior. Use this checkpoint branch for live handoff updates. On stage-1 success, stage 2 and stage-1 behavior may overlap within caps; serialize network-conflicting checks. Stage 3 needs swap allowed in its parent scope too. This gate does not claim completed bootstrap, performance, zero replay or leak acceptance. The frozen `db54fdb9` comparison cannot substitute for current-source round-10 counters.
 
+
+## Post-pause repository cleanup (2026-11-21)
+
+The user explicitly requested cleanup after the quota pause, always preserving `main` and `release/*`. Compiler work remained paused; no builds, suites or agents were started. An origin fetch and PR lookup found no open PRs. The audit examined 121 remote-tracking refs (including origin HEAD), 503 local branches and 176 worktrees under `.claude/worktrees/`; the main checkout was excluded from worktree removal.
+
+Removed 6 remote branches atomically with expected-head leases, 21 local branches and 7 worktrees. Every deleted branch was already contained in, or had all its non-merge patches represented in, integration `673ab70e`; no unmatched merge commits were present. Every removed worktree had no tracked modifications, untracked files or ignored files, and its head was reachable from origin. Branches with unique work were retained even when their empty worktrees were removed. All protected local and remote refs were compared before and after and were unchanged. All worktrees with artifacts and all 12 dirty worktrees were retained; pending compiler and diagnostic branches remain available.
+
+Remote branches removed (their local copies were removed too):
+
+- `fix/parity-bugs-2`
+- `fix/parity-bugs-3`
+- `fix/r10-typed-consumer-audit`
+- `fix/strict-imports`
+- `fix/typecheck-decisions`
+- `fix/r10-handoff-queue`
+
+Complete local branch removal inventory:
+
+| Branch | Former head |
+| --- | --- |
+| `chore/llvm-23` | `7ce8d73111547f8b3a424a96489b594f980bb5d4` |
+| `chore/update-dotnet-packages` | `0dd8ba8f16d9f3abc88abeffe35aa02d986be32f` |
+| `fix/parity-bugs-2` | `5178d12e48056511de65ad7754e0c5f824168567` |
+| `fix/parity-bugs-3` | `aecb6a41bc3bb1eb108e017ba235449623a2f70c` |
+| `fix/r10-typed-consumer-audit` | `617eb374a20bdf4243b32279a7fd1736648e8017` |
+| `fix/strict-imports` | `27a7e439f6609497924a38c052e7bb2d2a6644c6` |
+| `fix/typecheck-decisions` | `2977e4ec896db48c4dd9293f6a593f474f1d263c` |
+| `selfhost/loop-parameter-placement` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `selfhost/patternwalk-callee-side` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `worktree-agent-a00df73c416cf50d9` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a069eb239e1a10625` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a21e070faa3f541fb` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a244a3fe6d6c35b66` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a26cad26c6f331875` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a5c0a6f781353b0e1` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a9ee5e83b457df88f` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-aadc205a50bb8a10e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ab060c61577f65791` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ad2d4687886452f58` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ae40c710d2b96377e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `fix/r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+
+Removed worktrees (relative to `.claude/worktrees/`):
+
+| Worktree | Former head |
+| --- | --- |
+| `r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+| `r10-live-checkpoints` | `09fe581f93f648840a4e4e18911d2b50cce10fb3` |
+| `round10` | `e0d8362220aed17b5aa589f37b40c4dce603aa4b` |
+| `step-f-s2-b47src` | `62f20a00ef0fad09e6c54a96eddc62c9df64c41a` |
+| `step-f-s2-crash-2-base` | `a2586d4f43b5ed569066052f3aa7c7b360fb58a4` |
+| `step-f-s2-crash-base` | `67e4588d122b04903a0d38017d2656765bf4ad41` |
+| `step-f-typed-program-docs` | `446d40faa4ac795e60dad3dd3a23f2c93a82d8ca` |
+
+The remaining remote branches and unattached local branches were checked for patch inclusion; branches with unmatched patches were retained. Among artifact-bearing worktrees, branch inclusion alone does not justify deleting tools or evidence. Further cleanup requires preserving their local content and checking current script dependencies. Full before/after refs, worktree inventories, patch-inclusion results and protected-ref comparisons are in integration `work/coord/cleanup-20261121/`.
