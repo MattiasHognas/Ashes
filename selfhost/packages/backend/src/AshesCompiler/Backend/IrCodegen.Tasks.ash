@@ -625,7 +625,109 @@ let emitCancelScopeChildren (sc: SchedulerContext) cancelFn cancelType task curs
                                                                 let _ = schedBr(sc)(loopBlock)
                                                                 in schedAt(sc)(afterBlock))
 
-// Stage 0's `ashes_cancel_task`, without the socket close (no socket leaf is ported): an unfinished
+// Notify each active owning frame before the leaf closes a socket. A pointer to a
+// stack word distinguishes this command (even for fd 0) from full teardown.
+let disarmSocketFrames (sc: SchedulerContext) function_ task socket =
+    match sc.frameDropperType with
+        | None -> Unit
+        | Some(dropperType) ->
+            let block name = appendBasicBlock(sc.schedContext)(function_)(name)
+            in
+                let (inspect, visit, call, advance, done) = (block("disarm_inspect"), block("disarm_visit"), block("disarm_call"), block("disarm_advance"), block("disarm_done"))
+                in
+                    let (socketSlot, cursor) = (schedSlot(sc)("closing_socket"), schedSlot(sc)("disarm_task"))
+                    in
+                        let _ = schedSet(sc)(socketSlot)(socket)
+                        in
+                            let _ = schedSet(sc)(cursor)(task)
+                            in
+                                let _ = schedBr(sc)(inspect)
+                                in
+                                    let _ = schedAt(sc)(inspect)
+                                    in
+                                        let current = schedLoad(sc)(cursor)("disarm_current")
+                                        in
+                                            let zero = schedConst(sc)(0)
+                                            in
+                                                let _ =
+                                                    schedIf(sc)(schedEq(sc)(current)(zero)("disarm_end"))(done)(visit)
+                                                in
+                                                    let _ = schedAt(sc)(visit)
+                                                    in
+                                                        let dropper = schedWord(sc)(current)(taskStructLayout.frameDropper)("disarm_dropper")
+                                                        in
+                                                            let _ =
+                                                                schedIf(sc)(schedEq(sc)(dropper)(zero)("disarm_no_callback"))(advance)(call)
+                                                            in
+                                                                let _ = schedAt(sc)(call)
+                                                                in
+                                                                    let command = buildPtrToInt(sc.schedBuilder)(socketSlot)(sc.schedI64)("disarm_command")
+                                                                    in
+                                                                        let _ =
+                                                                            buildCall(sc.schedBuilder)(dropperType)(buildIntToPtr(sc.schedBuilder)(dropper)(sc.schedPtr)("disarm_fn"))([current, command, zero])(3u32)("disarm_result")
+                                                                        in
+                                                                            let _ = schedBr(sc)(advance)
+                                                                            in
+                                                                                let _ = schedAt(sc)(advance)
+                                                                                in
+                                                                                    let _ =
+                                                                                        "disarm_waiter"
+                                                                                        |> schedWord(sc)(current)(offsetWaiter)
+                                                                                        |> schedSet(sc)(cursor)
+                                                                                    in
+                                                                                        let _ = schedBr(sc)(inspect)
+                                                                                        in schedAt(sc)(done)
+
+// HTTP tasks mirror the wait registration of the child they step. Both can
+// notify their owning frames, but only the underlying parked leaf owns the close.
+let cancelParkedSocket (sc: SchedulerContext) function_ task =
+    (let block name = appendBasicBlock(sc.schedContext)(function_)(name)
+    in
+        let (parked, close, clear, done) = (block("cancel_parked"), block("cancel_close"), block("cancel_clear"), block("cancel_after_close"))
+        in
+            let wait = schedWord(sc)(task)(offsetWaitKind)("cancel_wait")
+            in
+                let isWait kind name =
+                    schedEq(sc)(wait)(kind
+                    |> taskWaitCode
+                    |> schedConst(sc))(name)
+                in
+                    let isTcp =
+                        buildOr(sc.schedBuilder)(isWait(SocketReadTaskWait)("cancel_read"))(isWait(SocketWriteTaskWait)("cancel_write"))("cancel_tcp")
+                    in
+                        let isTls =
+                            buildOr(sc.schedBuilder)(isWait(TlsReadTaskWait)("cancel_tls_read"))(isWait(TlsWriteTaskWait)("cancel_tls_write"))("cancel_tls")
+                        in
+                            let _ =
+                                schedIf(sc)(buildOr(sc.schedBuilder)(isTcp)(isTls)("cancel_socket_wait"))(parked)(done)
+                            in
+                                let _ = schedAt(sc)(parked)
+                                in
+                                    let socket = schedWord(sc)(task)(offsetWaitHandle)("cancel_socket")
+                                    in
+                                        let _ = disarmSocketFrames(sc)(function_)(task)(socket)
+                                        in
+                                            let zero = schedConst(sc)(0)
+                                            in
+                                                let _ =
+                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetAwaitedTask)("cancel_io_child"))(zero)("cancel_is_leaf"))(close)(clear)
+                                                in
+                                                    let _ = schedAt(sc)(close)
+                                                    in
+                                                        let _ = emitLinuxClose(sc.schedBuilder)(sc.schedI64)(socket)
+                                                        in
+                                                            let _ = schedBr(sc)(clear)
+                                                            in
+                                                                let _ = schedAt(sc)(clear)
+                                                                in
+                                                                    let _ = schedStore(sc)(task)(offsetWaitKind)(zero)
+                                                                    in
+                                                                        let _ = schedStore(sc)(task)(offsetWaitHandle)(zero)
+                                                                        in
+                                                                            let _ = schedBr(sc)(done)
+                                                                            in schedAt(sc)(done))
+
+// Stage 0's `ashes_cancel_task`, an unfinished
 // task and the task it awaits complete with `Ok(0)`, so a race loser drops out of the run.
 let defineCancelTask module_ (sc: SchedulerContext) =
     (let cancelType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
@@ -653,47 +755,49 @@ let defineCancelTask module_ (sc: SchedulerContext) =
                                             in
                                                 let _ = schedAt(sc)(workBlock)
                                                 in
-                                                    let _ = emitCancelScopeChildren(sc)(cancelFn)(cancelType)(task)(cursorSlot)
+                                                    let _ = cancelParkedSocket(sc)(cancelFn)(task)
                                                     in
-                                                        let awaited = schedWord(sc)(task)(offsetAwaitedTask)("cancel_awaited_task")
+                                                        let _ = emitCancelScopeChildren(sc)(cancelFn)(cancelType)(task)(cursorSlot)
                                                         in
-                                                            let _ =
-                                                                schedIf(sc)(schedEq(sc)(awaited)(schedConst(sc)(0))("cancel_no_awaited"))(finishBlock)(awaitedBlock)
+                                                            let awaited = schedWord(sc)(task)(offsetAwaitedTask)("cancel_awaited_task")
                                                             in
-                                                                let _ = schedAt(sc)(awaitedBlock)
+                                                                let _ =
+                                                                    schedIf(sc)(schedEq(sc)(awaited)(schedConst(sc)(0))("cancel_no_awaited"))(finishBlock)(awaitedBlock)
                                                                 in
-                                                                    let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([awaited])(1u32)("cancel_recurse")
+                                                                    let _ = schedAt(sc)(awaitedBlock)
                                                                     in
-                                                                        let _ =
-                                                                            0
-                                                                            |> schedConst(sc)
-                                                                            |> schedStore(sc)(task)(offsetAwaitedTask)
+                                                                        let _ = buildCall(sc.schedBuilder)(cancelType)(cancelFn)([awaited])(1u32)("cancel_recurse")
                                                                         in
-                                                                            let _ = schedBr(sc)(finishBlock)
+                                                                            let _ =
+                                                                                0
+                                                                                |> schedConst(sc)
+                                                                                |> schedStore(sc)(task)(offsetAwaitedTask)
                                                                             in
-                                                                                let _ = schedAt(sc)(finishBlock)
+                                                                                let _ = schedBr(sc)(finishBlock)
                                                                                 in
-                                                                                    let _ = emitFrameTeardown(sc)(cancelFn)(task)("cancel_frame")
+                                                                                    let _ = schedAt(sc)(finishBlock)
                                                                                     in
-                                                                                        let _ =
-                                                                                            "cancel_result"
-                                                                                            |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
-                                                                                            |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                        let _ = emitFrameTeardown(sc)(cancelFn)(task)("cancel_frame")
                                                                                         in
                                                                                             let _ =
-                                                                                                CompletedTaskState
-                                                                                                |> stateConst(sc.schedI64)
-                                                                                                |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                                "cancel_result"
+                                                                                                |> schedOk(sc)(cancelFn)(schedConst(sc)(0))
+                                                                                                |> schedStore(sc)(task)(offsetResultSlot)
                                                                                             in
-                                                                                                let _ = schedBr(sc)(doneBlock)
+                                                                                                let _ =
+                                                                                                    CompletedTaskState
+                                                                                                    |> stateConst(sc.schedI64)
+                                                                                                    |> schedStore(sc)(task)(offsetStateIndex)
                                                                                                 in
-                                                                                                    let _ = schedAt(sc)(doneBlock)
+                                                                                                    let _ = schedBr(sc)(doneBlock)
                                                                                                     in
-                                                                                                        let _ =
-                                                                                                            0
-                                                                                                            |> schedConst(sc)
-                                                                                                            |> buildRet(sc.schedBuilder)
-                                                                                                        in (cancelFn, cancelType))
+                                                                                                        let _ = schedAt(sc)(doneBlock)
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                0
+                                                                                                                |> schedConst(sc)
+                                                                                                                |> buildRet(sc.schedBuilder)
+                                                                                                            in (cancelFn, cancelType))
 
 // The successful collection of `all`: the children's `Ok` values consed onto an accumulator in
 // list order, which leaves them reversed, then reversed back, and the composite completed with
@@ -1777,25 +1881,30 @@ let emitStepTcpClose (sc: SchedulerContext) stepFn task =
     in
         let failBlock = appendBasicBlock(sc.schedContext)(stepFn)("tcp_close_fail")
         in
-            let closed =
-                "tcp_close_socket"
+            let _ =
+                "tcp_close_owner"
                 |> schedWord(sc)(task)(offsetIoArgument0)
-                |> emitLinuxClose(sc.schedBuilder)(sc.schedI64)
+                |> disarmSocketFrames(sc)(stepFn)(task)
             in
-                let _ =
-                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(closed)(schedConst(sc)(0))("tcp_close_succeeded"))(okBlock)(failBlock)
+                let closed =
+                    "tcp_close_socket"
+                    |> schedWord(sc)(task)(offsetIoArgument0)
+                    |> emitLinuxClose(sc.schedBuilder)(sc.schedI64)
                 in
-                    let _ = schedAt(sc)(okBlock)
+                    let _ =
+                        schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSge)(closed)(schedConst(sc)(0))("tcp_close_succeeded"))(okBlock)(failBlock)
                     in
-                        let unitValue = emitArenaAllocAdt(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(0)(0)(false)("tcp_close_unit")
+                        let _ = schedAt(sc)(okBlock)
                         in
-                            let _ =
-                                "tcp_close_result"
-                                |> schedOk(sc)(stepFn)(unitValue)
-                                |> schedCompleteLeaf(sc)(task)
+                            let unitValue = emitArenaAllocAdt(sc.schedContext)(stepFn)(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(sc.schedArena)(0)(0)(false)("tcp_close_unit")
                             in
-                                let _ = schedAt(sc)(failBlock)
-                                in schedFailLeaf(sc)(stepFn)(task)(tcpCloseFailedCodes)("tcp_close_failure"))
+                                let _ =
+                                    "tcp_close_result"
+                                    |> schedOk(sc)(stepFn)(unitValue)
+                                    |> schedCompleteLeaf(sc)(task)
+                                in
+                                    let _ = schedAt(sc)(failBlock)
+                                    in schedFailLeaf(sc)(stepFn)(task)(tcpCloseFailedCodes)("tcp_close_failure"))
 
 // Stage 0's `ashes_step_tcp_listen_task` for Linux: a socket with `SO_REUSEADDR` and
 // `SO_REUSEPORT`, bound to `INADDR_ANY:port`, listening with a backlog of 128 and non-blocking,
@@ -3873,6 +3982,8 @@ let emitStepTlsHandshake (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
                                                                                                                                                                                                                                                                                                             in
                                                                                                                                                                                                                                                                                                                 let _ = schedAt(sc)(pendingReadBlock)
                                                                                                                                                                                                                                                                                                                 in
+// Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
+// nothing left to flush or read waits for the socket to accept more and sends the rest.
                                                                                                                                                                                                                                                                                                                     let _ =
                                                                                                                                                                                                                                                                                                                         "tls_handshake_read_socket"
                                                                                                                                                                                                                                                                                                                         |> schedWord(sc)(evaluateSession)(0)
@@ -3978,8 +4089,6 @@ let emitStepTlsSend (sc: SchedulerContext) (rt: TlsRuntime) stepFn task =
                                                                                                         |> buildAdd(sc.schedBuilder)(sent)(accepted)
                                                                                                         |> schedStore(sc)(task)(offsetWaitData0)
                                                                                                     in
-// Mbed TLS takes at most one record (16 KB) per write: a write that took part of the text with
-// nothing left to flush or read waits for the socket to accept more and sends the rest.
                                                                                                         let _ =
                                                                                                             schedIf(sc)(buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(status)(schedConst(sc)(0))("tls_send_ok"))(emitTlsIsWant(sc)(status)("tls_send_want"))("tls_send_progressing"))(finalizeBlock)(failBlock)
                                                                                                         in
