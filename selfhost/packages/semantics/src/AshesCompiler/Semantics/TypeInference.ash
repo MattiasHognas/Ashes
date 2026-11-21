@@ -49,6 +49,7 @@ export (
     value resolveExternalFunctionBinding,
     value addConstructorBinding,
     value resolveConstructorBinding,
+    value constructorParameters,
     value addCapabilityBinding,
     value resolveCapabilityBinding,
     value resolveCapabilityOperation,
@@ -1515,6 +1516,10 @@ let recursive splitConstructorType semanticType reversedParameters =
     match semanticType with
         | SemFunction(parameter, result, None) -> splitConstructorType(result)(parameter :: reversedParameters)
         | _ -> ConstructorTypeShape(parameters = reverse(reversedParameters), resultType = semanticType)
+
+let constructorParameters semanticType =
+    match splitConstructorType(semanticType)([]) with
+        | ConstructorTypeShape { parameters = parameters } -> parameters
 
 // Match coverage. The patterns of every arm are examined once the arms are typed, against the
 // scrutinee type as far as it is resolved: a match over an ADT must name every constructor or end

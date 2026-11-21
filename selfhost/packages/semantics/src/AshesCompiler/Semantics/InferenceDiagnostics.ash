@@ -27,6 +27,8 @@ import AshesCompiler.Semantics.TypeInference.ConstructorInferenceDefinition
 import AshesCompiler.Semantics.TypeInference.TypeEnvironment
 import AshesCompiler.Semantics.TypeInference.TypeInferenceError
 import AshesCompiler.Semantics.TypeInference.TraitImplementationSite
+import AshesCompiler.Semantics.TypeInference.constructorParameters
+import AshesCompiler.Semantics.TypeInference.resolveConstructorBinding
 import AshesCompiler.Semantics.TypeInference.resolveWrittenTypeBinding
 import AshesCompiler.Semantics.TypeResolution.TypeResolutionError
 import AshesCompiler.Semantics.Types
@@ -556,15 +558,31 @@ let callArgumentDiagnostic (placements: List(StitchedDefinitionPlacement)) (mism
         | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type)." + callArgumentContext(ordinal)(callee))
         | TypeArityMismatch(_left, _right) -> None
 
+let constructorShapeSuffix placements environment name =
+    match resolveConstructorBinding(name)(environment) with
+        | None -> ""
+        | Some(ConstructorInferenceDefinition { scheme = TypeScheme { quantified = quantified, body = body } }) ->
+            let sourceName = sourceNameOf(placements)(name)
+            in
+                let shape =
+                    match (name, constructorParameters(body)) with
+                        | (_, []) -> sourceName
+                        | ("Some", _) -> "Some(T)"
+                        | ("Ok", _) -> "Ok(A)"
+                        | ("Error", _) -> "Error(E)"
+                        | (_, parameters) ->
+                            sourceName + "(" + constructorParameterListText(quantified)(withSourceNamesIn(placements)(parameters)) + ")"
+                in " Expected shape: " + shape + "."
+
 // A call chain passing more arguments than its root takes, as stage 0 words it for a constructor,
 // for a value that is no function, and for a function.
-let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
+let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (environment: TypeEnvironment) (callee: Maybe(Str)) (expected: Int) (provided: Int) (calleeType: SemanticType) =
     (let counts = Ashes.Text.fromInt(expected) + " argument(s) but got " + Ashes.Text.fromInt(provided) + "."
     in
         match callee with
             | Some(name) ->
                 if startsUppercase(name)
-                then uncoded("Constructor '" + sourceNameOf(placements)(name) + "' expects " + counts)
+                then uncoded("Constructor '" + sourceNameOf(placements)(name) + "' expects " + counts + constructorShapeSuffix(placements)(environment)(name))
                 else
                     if expected == 0
                     then uncoded("Attempted to call '" + name + "' with " + Ashes.Text.fromInt(provided) + " argument(s), but its type is " + typeText(placements)(calleeType) + ", not a function.")
@@ -746,7 +764,7 @@ let externalAbiDiagnostic (error: ExternalAbiError) =
         | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
         | _ -> None
 
-let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
+let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (environment: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
     match error with
         | UnknownValue(name) ->
             name
@@ -761,7 +779,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
             "Unknown constructor '" + name + "' in pattern." + constructorHint(placements)(builtins)(name)
             |> uncoded
             |> unimportedNameOr("Constructor")(name)
-        | ConstructorPatternArityMismatch(name, expected, actual) -> uncoded("Constructor '" + name + "' expects " + Ashes.Text.fromInt(expected) + " argument(s) but pattern has " + Ashes.Text.fromInt(actual) + ".")
+        | ConstructorPatternArityMismatch(name, expected, actual) -> uncoded("Constructor '" + name + "' expects " + Ashes.Text.fromInt(expected) + " argument(s) but pattern has " + Ashes.Text.fromInt(actual) + "." + constructorShapeSuffix(placements)(environment)(name))
         | UnknownRecordPatternField(typeName, field) -> uncoded("Record type '" + sourceNameOf(placements)(typeName) + "' has no field '" + field + "'.")
         | UnknownRecordType(typeName) ->
             "Unknown record type '" + sourceNameOf(placements)(typeName) + "'."
@@ -800,7 +818,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | UnsignedCapabilityOperationRequiresSignature(capabilityName, operation) -> coded(unknownCapabilityCode)("Capability operation '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' needs an explicit signature to be used as a value.")
         | HandlerArmParameterCountMismatch(capabilityName, operation, armParameters, operationArity) -> coded(invalidHandlerCode)("Handler arm '" + sourceNameOf(placements)(capabilityName) + "." + operation + "' has " + Ashes.Text.fromInt(armParameters) + " parameter(s) but the operation takes " + Ashes.Text.fromInt(operationArity) + ".")
         | CallArgumentMismatch(mismatch, ordinal, callee) -> callArgumentDiagnostic(placements)(mismatch)(ordinal)(callee)
-        | CallChainArityMismatch(callee, expected, provided, calleeType) -> callChainArityDiagnostic(placements)(callee)(expected)(provided)(calleeType)
+        | CallChainArityMismatch(callee, expected, provided, calleeType) -> callChainArityDiagnostic(placements)(environment)(callee)(expected)(provided)(calleeType)
         | _ -> None
 
 let recursive typeDeclarationNamed (items: List(TopLevelItem)) (name: Str) =
@@ -852,11 +870,11 @@ let overlapDiagnostic (placements: List(StitchedDefinitionPlacement)) (traitName
 
 // The diagnostic stage 0 reports for an inference error, as its code and message, when stage 0
 // words that error.
-let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: ProgramInferenceError) =
+let recursive inferenceErrorDiagnosticIn (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (environment: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: ProgramInferenceError) =
     match error with
-        | ProgramErrorAt(_location, inner) -> inferenceErrorDiagnostic(placements)(items)(builtins)(location)(inner)
-        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorDiagnostic(placements)(items)(builtins)(location)(ProgramExpressionError(inner))
-        | ProgramExpressionError(inner) -> expressionDiagnostic(placements)(items)(builtins)(location)(inner)
+        | ProgramErrorAt(_location, inner) -> inferenceErrorDiagnosticIn(placements)(items)(builtins)(environment)(location)(inner)
+        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorDiagnosticIn(placements)(items)(builtins)(environment)(location)(ProgramExpressionError(inner))
+        | ProgramExpressionError(inner) -> expressionDiagnostic(placements)(items)(builtins)(environment)(location)(inner)
         | ProgramTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicateCapabilityDeclaration(name) -> uncoded("Duplicate capability name '" + sourceNameOf(placements)(name) + "'.")
         | ReservedCapabilityDeclaration(name) -> uncoded("Capability name '" + sourceNameOf(placements)(name) + "' is reserved for a built-in runtime capability.")
@@ -897,6 +915,8 @@ let recursive inferenceErrorDiagnostic (placements: List(StitchedDefinitionPlace
 
 // Whether a callee name is a definition stitching renamed (a module's binding under its compiler
 // name): stage 0 names it as the source spells it, which the error no longer knows.
+let inferenceErrorDiagnostic placements items builtins location error = inferenceErrorDiagnosticIn(placements)(items)(builtins)(builtins)(location)(error)
+
 let renamedDefinition (placements: List(StitchedDefinitionPlacement)) (name: Str) =
     match definitionNamed(placements)(name) with
         | Some(definition) -> definition.sourceName != definition.compilerName
@@ -1016,6 +1036,6 @@ let inferenceErrorText (stitched: StitchedSyntaxProject) (builtins: TypeEnvironm
         | Some(error) ->
             let prefix = locationPrefix(entryPath)(entrySource)(result.errorLocation)
             in
-                match inferenceErrorDiagnostic(withEntryQualifiedNames(stitched.entryModuleName)(stitched.definitionPlacements))(stitchedItems(stitched))(builtins)(result.errorLocation)(error) with
+                match inferenceErrorDiagnosticIn(withEntryQualifiedNames(stitched.entryModuleName)(stitched.definitionPlacements))(stitchedItems(stitched))(builtins)(result.environment)(result.errorLocation)(error) with
                     | Some((code, message)) -> prefix + codePrefix(code) + message
                     | None -> prefix + "Type inference failed: " + Ashes.Trait.Show.show(error)
