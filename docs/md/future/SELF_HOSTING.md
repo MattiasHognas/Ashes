@@ -419,6 +419,8 @@ Backend attempt `work/r10pre/backend-native3/` stopped before compilation at ASH
 
 The backend retry reads frozen `da068c5e`; external repair maps to `aebb362c`. Native-3 audit refresh found 31 of the 32 actual IR files byte-identical to native 2. The changed `non_tail_self_call_list_result` now equals the reference under the stricter `keep-reads.awk` comparison, without deleting its former identity borrow separately. Recomputed guard data still has 122 guards, 51 slots and 29 fixtures, all value 1 with resolved targets. Evidence is `work/r10pre/named-native3/{guard-cfg.tsv,audit/}`. This updates the static comparison, not generated-code runtime acceptance. The main-owned measurement script is `r10-fixture-candidates/work/typed-measurement-checks.sh`; its build and both measurements remain pending.
 
+Inference worker commit `42524c1f` awaits integration after the reader: joint recursive inference was skipped because candidate detection did not recognize stitched `Ashes_Trait_Show` / `Ashes_Trait_Hash`. It now uses the canonical names already recognized by resolution, with the original stitched regression unchanged. The separate coincident-Not failure is traced to lambda restart carrying the resolved substitution but resetting its ordered proof cursor; implementation is still in progress. Both fixes need a rebuilt native check.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
