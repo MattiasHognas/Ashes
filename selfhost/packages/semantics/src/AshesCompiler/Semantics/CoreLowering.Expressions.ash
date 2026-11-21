@@ -3342,7 +3342,7 @@ let recursive logicalSiblingBindings plans prepared bindings =
         | (CoreBinding { location = CoreSelf(label, _size) } as binding) :: rest ->
             let logical =
                 match groupMemberForLabel(label)(plans)(prepared) with
-                    | Some(member) -> binding with scheme = (member.scheme with quantified = [], body = withoutCapabilityRows(member.scheme.body)), closedScheme = false
+                    | Some(ConstrainedGroupMember { scheme = scheme }) -> binding with scheme = (scheme with quantified = [], body = withoutCapabilityRows(scheme.body)), closedScheme = false
                     | None -> binding
             in logical :: logicalSiblingBindings(plans)(prepared)(rest)
         | binding :: rest -> binding :: logicalSiblingBindings(plans)(prepared)(rest)
