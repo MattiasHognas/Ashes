@@ -5245,35 +5245,75 @@ let testReallocatedPoisonedCell unit =
         | Ok(Some("1")) -> assertProgramPrints(buildReallocatedPoisonedCell)("poisonedCell")("selfhost_backend_poisoned_cell_e2e")("-2459565876494606883")
         | _ -> Unit
 
+let moduleIrText build name =
+    (let context = contextCreate(Unit)
+    in
+        match build(name)(context) with
+            | (module_, builder) ->
+                let rendered = printModuleToString(module_)
+                in
+                    let _ = disposeBuilder(builder)
+                    in
+                        let _ = disposeModule(module_)
+                        in
+                            let _ = contextDispose(context)
+                            in
+                                match rendered with
+                                    | Error(message) -> test.fail(message)
+                                    | Ok(text) -> text)
+
 let testRcReleaseInstrumentation unit =
     (let expected =
         match Ashes.IO.Environment.get("ASHES_RC_POISON") with
             | Ok(Some("1")) -> true
             | _ -> false
     in
-        let context = contextCreate(Unit)
+        let text = moduleIrText(buildRcDupDropModule)("rcReleaseInstrumentation")
         in
-            match buildRcDupDropModule("rcReleaseInstrumentation")(context) with
-                | (module_, builder) ->
-                    let rendered = printModuleToString(module_)
-                    in
-                        let _ = disposeBuilder(builder)
-                        in
-                            let _ = disposeModule(module_)
-                            in
-                                let _ = contextDispose(context)
-                                in
-                                    match rendered with
-                                        | Error(message) -> test.fail(message)
-                                        | Ok(text) ->
-                                            let _ =
-                                                "call void @__ashes_rc_release_poison("
-                                                |> Ashes.Text.contains(text)
-                                                |> test.assertEqual(expected)
-                                            in
-                                                "ptr align 1 %rc_poison_ptr, i8 -35, i64 %rc_poison_size"
-                                                |> Ashes.Text.contains(text)
-                                                |> test.assertEqual(expected))
+            let _ =
+                "call void @__ashes_rc_release_poison("
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(expected)
+            in
+                "ptr align 1 %rc_poison_ptr, i8 -35, i64 %rc_poison_size"
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(expected))
+
+let testServerDrainTimeoutSetting unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                17
+                |> LoadConstInt(0)
+                |> irOf,
+                0
+                |> SetDrainTimeout(1)
+                |> irOf,
+                29
+                |> LoadConstInt(2)
+                |> irOf,
+                2
+                |> SetDrainTimeout(3)
+                |> irOf,
+                irOf(Return(3))
+            ])(0)(4)
+        in codegenEntryFunction(name)(context)(entry)([])
+    in
+        let text = moduleIrText(build)("serverDrainTimeout")
+        in
+            let _ =
+                "@__ashes_drain_timeout_ms = internal global i64 10000"
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(true)
+            in
+                let _ =
+                    "store i64 17, ptr @__ashes_drain_timeout_ms,"
+                    |> Ashes.Text.contains(text)
+                    |> test.assertEqual(true)
+                in
+                    "store i64 29, ptr @__ashes_drain_timeout_ms,"
+                    |> Ashes.Text.contains(text)
+                    |> test.assertEqual(true))
 
 // The coroutine and teardown both take the task pointer in environment local 0.
 // Reaping the same completed task again must not run its teardown again.
@@ -6162,6 +6202,7 @@ let run shipped =
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
     |> testRcReleaseInstrumentation
+    |> testServerDrainTimeoutSetting
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
     |> testSocketCaptureTeardown(shipped)

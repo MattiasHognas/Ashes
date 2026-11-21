@@ -345,6 +345,7 @@ type CodegenContext =
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
     | programArgsGlobal: LLVMValueRef
+    | drainTimeoutGlobal: Maybe(LLVMValueRef)
     | externalSymbols: List(ExternalSymbolDeclaration)
     | capabilityHandlerGlobals: MapTree(Int, LLVMValueRef)
     | nullaryCellGlobals: MapTree(Int, LLVMValueRef)
@@ -382,6 +383,7 @@ type ModuleCodegen =
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
     | moduleProgramArgsGlobal: LLVMValueRef
+    | moduleDrainTimeoutGlobal: Maybe(LLVMValueRef)
     // Whether any function in the module reads the program arguments, so only such a module's
     // entry walks argv.
     | moduleUsesProgramArgs: Bool
@@ -1718,6 +1720,16 @@ let codegenInstructionKind cx builder kind state =
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CreateTcpCloseTask(target, first) ->
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | SetDrainTimeout(target, milliseconds) ->
+                                            match cx.drainTimeoutGlobal with
+                                                | Some(global) ->
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
+                                                    let _ =
+                                                        buildStore(builder)(lookupTemp(cx)(milliseconds)(tempEnv))(global)
+                                                    in
+                                                        (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: missing drain timeout global")
                                         | CreateTcpListenTask(target, first) ->
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CreateForkWorkersTask(target, first, second) ->
@@ -1762,8 +1774,6 @@ let codegenInstructionKind cx builder kind state =
                                         | ParallelJoin(resultTarget, descTemp) ->
                                             (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
                                         | ParallelCleanup(descTemp) ->
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                             let _ =
                                                 emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
                                             in (tempEnv, terminated)
@@ -1794,6 +1804,8 @@ let codegenInstructionKind cx builder kind state =
                                         | ParallelQueueCleanup(descTemp) ->
                                             match parallelRuntime with
                                                 | Some(runtime) ->
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                                     let _ =
                                                         tempEnv
                                                         |> lookupTemp(cx)(descTemp)
@@ -1971,8 +1983,6 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -2106,13 +2116,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
+                                            // A program with worker threads reserves its reference-counted range here, on the
+                                            // main thread before any worker exists, by allocating and releasing one block.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                             else Unit
                                         in
-                                            // A program with worker threads reserves its reference-counted range here, on the
-                                            // main thread before any worker exists, by allocating and releasing one block.
                                             let _ =
                                                 if isEntry && arena.arenaThreadSlots
                                                 then
@@ -2149,6 +2159,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                                 closureFunctionType = closureFnType,
                                                                 envpGlobal = mc.moduleEnvpGlobal,
                                                                 programArgsGlobal = mc.moduleProgramArgsGlobal,
+                                                                drainTimeoutGlobal = mc.moduleDrainTimeoutGlobal,
                                                                 externalSymbols = mc.moduleExternalSymbols,
                                                                 capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
                                                                 nullaryCellGlobals = mc.moduleNullaryCellGlobals,
@@ -2265,6 +2276,29 @@ let recursive functionsHaveFrameDroppers functions =
     match functions with
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsHaveFrameDroppers(instructions) || functionsHaveFrameDroppers(rest)
+
+let recursive instructionsSetDrainTimeout instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SetDrainTimeout(_, _) } :: _ -> true
+        | _ :: rest -> instructionsSetDrainTimeout(rest)
+
+let recursive defineDrainTimeoutGlobal module_ i64 functions =
+    match functions with
+        | [] -> None
+        | IrFunction { instructions = instructions } :: rest ->
+            if instructionsSetDrainTimeout(instructions)
+            then
+                let global = addGlobal(module_)(i64)("__ashes_drain_timeout_ms")
+                in
+                    let _ =
+                        false
+                        |> constInt(i64)(10000u64)
+                        |> setInitializer(global)
+                    in
+                        let _ = setLinkage(global)(linkageInternal)
+                        in Some(global)
+            else defineDrainTimeoutGlobal(module_)(i64)(rest)
 
 let recursive functionsUseRunTask functions =
     match functions with
@@ -2471,6 +2505,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                 moduleClosureFunctionType = closureFnType,
                                                                                 moduleEnvpGlobal = envpGlobal,
                                                                                 moduleProgramArgsGlobal = programArgsGlobal,
+                                                                                moduleDrainTimeoutGlobal = defineDrainTimeoutGlobal(module_)(types.i64)(entryFunction :: functions),
                                                                                 moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
                                                                                 moduleExternalSymbols = []
                                                                                 |> collectExternalSymbols(entryFunction :: functions)
