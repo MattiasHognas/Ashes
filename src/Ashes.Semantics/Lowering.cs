@@ -6961,7 +6961,7 @@ public sealed partial class Lowering
         return new RecursiveTraitEvidenceElaboration(runtimeBinding, signature, info, usesDictionary);
     }
 
-    private (int, TypeRef) LowerLetRecursiveValue(
+    private (int, TypeRef) LowerLetRecursiveValueCore(
         Expr.LetRecursive letRecursive,
         Expr.Lambda? innerLambda,
         TypeRef recursiveType,
@@ -7347,6 +7347,7 @@ public sealed partial class Lowering
             SuppressSourceConstraintDiagnostics(letRecursive.Name));
         ImmutableSortedDictionary<string, Binding> selfScope = _scopes.Pop();
         TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
+        RegisterRecursiveDemandScheme(letRecursive.Value, recursiveScheme);
         RecordInferredTraitBindingElaboration(
             letRecursive,
             recursiveScheme,

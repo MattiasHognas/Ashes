@@ -552,6 +552,7 @@ public sealed partial class Lowering
             evidence.UsesDictionary,
             evidence.DictionaryInfos,
             out bool[] needsLateTraitTypeHints);
+        PropagateRecursiveDemands(group, inferredRequirements);
         ReplaceRecursiveGroupEvidenceRequirements(
             inferredRequirements,
             signatures,
@@ -738,6 +739,7 @@ public sealed partial class Lowering
                 GetSpan(group.Bindings[i].Value),
                 suppressDiagnostics: SuppressSourceConstraintDiagnostics(group.Bindings[i].Name));
             schemes[i] = GeneralizeBindingType(Prune(schemeType), requirements);
+            RegisterRecursiveDemandScheme(group.Bindings[i].Value, schemes[i]);
             if (usesTraitDictionary[i])
             {
                 RegisterTraitDictionaryScheme(schemes[i], _traitDictionaryFunctions[group.Bindings[i].Name]);
@@ -849,6 +851,7 @@ public sealed partial class Lowering
                     signatures[i].SourceOrderedRequirements);
             }
             var value = bindings[i].Value;
+            int firstDemand = _traitDemands.Count;
             var savedAnnotationParamTypes = _annotationParamTypes;
             var savedAnnotationParamCursor = _annotationParamCursor;
             _annotationParamTypes = !usesTraitDictionary[i]
@@ -880,6 +883,7 @@ public sealed partial class Lowering
                 forcedLabel: labels[i],
                 request: request);
             inferredRequirements[i] = PopTraitConstraintScope(out needsLateTraitTypeHints[i]);
+            RememberRecursiveDemands(value, firstDemand);
             _annotationParamTypes = savedAnnotationParamTypes;
             _annotationParamCursor = savedAnnotationParamCursor;
             Unify(recordTypes[i], closureType);

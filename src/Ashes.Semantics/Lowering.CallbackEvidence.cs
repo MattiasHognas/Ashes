@@ -140,8 +140,9 @@ public sealed partial class Lowering
                 break;
             case Expr.Let binding:
                 WalkCallbackUses(binding.Value, 0, depth, false, scope, uses);
+                bool tracksValue = MayReferToCallback(binding.Value, scope);
                 WalkCallbackUses(binding.Body, applied, depth, returned,
-                    scope.SetItem(binding.Name, CallbackOriginFor(binding.Value, scope)), uses);
+                    tracksValue ? scope.SetItem(binding.Name, CallbackOriginFor(binding.Value, scope)) : scope.Remove(binding.Name), uses);
                 break;
             case Expr.LetRecursive binding:
                 WalkCallbackUses(binding.Body, applied, depth, returned,
@@ -194,6 +195,15 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool MayReferToCallback(Expr value, ImmutableDictionary<string, CallbackOrigin> scope) =>
+        value switch
+        {
+            Expr.Var variable => scope.ContainsKey(variable.Name),
+            Expr.QualifiedVar field => scope.ContainsKey(field.Module),
+            Expr.IntLit or Expr.BoolLit or Expr.StrLit or Expr.FloatLit or Expr.RuneLit => false,
+            _ => true,
+        };
+
     private void WalkCallbackCall(Expr call, int applied, int depth, bool returned,
         ImmutableDictionary<string, CallbackOrigin> scope, HashSet<CallbackUse> uses)
     {
@@ -205,6 +215,10 @@ public sealed partial class Lowering
         for (int index = 0; index < arguments.Count; index++)
         {
             Expr argument = arguments[index];
+            if (!MayReferToCallback(argument, scope))
+            {
+                continue;
+            }
             WalkCallbackUses(argument, 0, depth, false, scope, uses);
             if (source is null)
             {
