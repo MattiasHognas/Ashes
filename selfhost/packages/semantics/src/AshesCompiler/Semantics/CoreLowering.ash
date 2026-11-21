@@ -175,7 +175,7 @@ let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source:
 // lower gives way to the program as written, whose own result, error included, stands.
 // As lowerCoreProgramWithSourceAndReuse for a stitched program whose spans resolve in their own
 // files' texts.
-let lowerValidatedCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) schemes (program: ProgramSyntax) =
+let lowerValidatedCoreProgramWithSchemesAndReuse (reuseEnabled: Bool) (regions: SourceRegions) schemes (program: ProgramSyntax) =
     match mergeMutualRecursionGroups(program) with
         | None -> lowerProgramWithRegionsAndSchemes(schemes)(reuseEnabled)(regions)(program)
         | Some(merged) ->
@@ -183,9 +183,14 @@ let lowerValidatedCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: 
                 | CoreLoweringResult { error = None } as lowered -> lowered
                 | _failed -> lowerProgramWithRegionsAndSchemes(schemes)(reuseEnabled)(regions)(program)
 
+let lowerValidatedCoreProgramWithRegionsAndReuse reuseEnabled regions program = lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(Ashes.Collection.Map.empty)(program)
+
+let lowerInferredRawProgramWithRegionsAndReuse reuseEnabled regions table program =
+    lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(rawOperatorDeclarationSchemes(table))(program)
+
 let lowerCoreProgramWithRegionsAndReuse reuseEnabled regions program =
     regions
-    |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)
+    |> lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)
     |> validateRawBindingEvidence(None)(program)
 
 let lowerCoreProgramWithSourceAndReuse reuseEnabled path source program =
