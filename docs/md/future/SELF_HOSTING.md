@@ -419,6 +419,24 @@ program leaks must be fixed; this round's leak exclusions are temporary.
 agents work toward full inference coverage. The new evidence and type-table batches are integrated
 but await native validation. Static inventory covers 19 semantic type constructors, 48 expression
 constructors and 14 pattern constructors; this is not a claim of complete tested coverage.
+
+**Newest checkpoint, source `b77ef21e`:** both immediate-evidence batches are integrated and pushed:
+`80e21b10` → `6eb76cf2`, `e946de8f` → `3db7a02e`, `854a6c30` → `2c0486e8`,
+`03875c48` → `f10ccbf2`, `b346b24c` → `ba33aeb2`, `e97feb40` → `0e6a388f`,
+and `4058260d` → `b77ef21e`. Duplicate dependencies were skipped. Both workers handed back clean.
+The standalone policy source check passed 1,950 items / 44 modules; native behavior is unverified.
+Main is running `work/r10pre/policy-preflight.sh`: fresh stage 0, whole-compiler source inference
+with explicit `ok` required, then a focused native policy build/run. Results use the matching folder.
+Do not mutate integration while this job reads it.
+
+One confirmed new gate blocker: stage 0 rejects direct `check = pick(Unit)` but accepts
+`invoke f = f(Unit); check = invoke(pick)`. The source-backed callback-demand port is present in
+standalone inference; stage-0 parity remains. `lowering_evidence` resumed in fresh
+`r10-callback-evidence`, branch `fix/r10-callback-evidence` from `b77ef21e`, to fix it.
+`tmc_repair` resumed in fresh `r10-evidence-boundaries`, branch `fix/r10-evidence-boundaries`
+from the same head, to fix RHS diagnostic locations and audit concrete higher-order boundaries.
+Both have 40-minute self-contained briefs, implementation/quick checks only. All prior branches
+are pushed. The user explicitly requested autonomous iteration through completion without steering.
 `fix/r10-evidence-audit` supplied partial/generalization/evidence fixes through `ce420878` and the
 still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` supplied recording,
 translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
