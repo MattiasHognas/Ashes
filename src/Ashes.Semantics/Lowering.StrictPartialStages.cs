@@ -10,7 +10,14 @@ public sealed partial class Lowering
     // free names resolve in its lexical scope. The original stays available at its usual ABI.
     private sealed record StrictStage(string Prefix, string Resume, int Arity, Expr PrefixBody, Expr ResumeBody)
     {
-        public bool Used { get; set; }
+        public bool Used { get; private set; }
+        public StrictStage? Forwarded { get; init; }
+
+        public void MarkUsed()
+        {
+            Used = true;
+            Forwarded?.MarkUsed();
+        }
     }
 
     private readonly HashSet<(string Name, int Position)> _strictPartialSources = [];
@@ -91,8 +98,34 @@ public sealed partial class Lowering
         private int _next;
         private bool _changed;
 
-        private StrictStage? StageFor(string name, Expr value, ImmutableDictionary<string, StrictStage> visible) =>
-            value is Expr.Var alias ? visible.GetValueOrDefault(alias.Name) : discovery._strictPartialSources.Contains((name, AstSpans.GetOrDefault(value).Start)) ? discovery.DescribeStrictStage(value, _next++) : null;
+        private StrictStage? StageFor(string name, Expr value, ImmutableDictionary<string, StrictStage> visible)
+        {
+            if (value is Expr.Var alias) return visible.GetValueOrDefault(alias.Name);
+            if (discovery._strictPartialSources.Contains((name, AstSpans.GetOrDefault(value).Start)))
+                return discovery.DescribeStrictStage(value, _next++);
+            if (visible.IsEmpty || value is not Expr.Lambda) return null;
+
+            // A curried wrapper may return another function's partial. Use that declaration's
+            // prefix/resume pair so the source call runs at the wrapper's saturation point.
+            List<Expr.Lambda> parameters = [];
+            while (value is Expr.Lambda lambda)
+            {
+                parameters.Add(lambda);
+                visible = visible.Remove(lambda.ParamName);
+                value = lambda.Body;
+            }
+            List<Expr> arguments = [];
+            if (CollectCallArgs(value, arguments) is not Expr.Var root ||
+                !visible.TryGetValue(root.Name, out StrictStage? callee) || arguments.Count != callee.Arity)
+                return null;
+            Expr prefix = new Expr.Var(callee.Prefix);
+            foreach (Expr argument in arguments) prefix = CopySpan(value, new Expr.Call(prefix, argument));
+            for (int index = parameters.Count - 1; index >= 0; index--)
+                prefix = CopyLambdaSpans(parameters[index], parameters[index] with { Body = prefix });
+            int id = _next++;
+            return new StrictStage($"$partial_prefix_{id}", $"$partial_resume_{id}", parameters.Count,
+                prefix, new Expr.Var(callee.Resume)) { Forwarded = callee };
+        }
 
         private Expr RewritePartial(string name, Expr value, ImmutableDictionary<string, StrictStage> visible)
         {
@@ -103,7 +136,7 @@ public sealed partial class Lowering
             {
                 return value;
             }
-            stage.Used = true;
+            stage.MarkUsed();
             _changed = true;
             Expr evaluated = new Expr.Var(stage.Prefix);
             foreach (Expr argument in arguments)

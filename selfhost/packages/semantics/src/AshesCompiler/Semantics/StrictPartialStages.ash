@@ -115,6 +115,23 @@ let strictPartial (stage: StrictStage) names expression =
             else expression
         | _ -> expression
 
+// Make the wrapper's evaluation boundary explicit so its own binding can receive a
+// declaration-site prefix and resume pair. The introduced names are compiler-private.
+let forwardedBody (stage: StrictStage) names expression =
+    match spine(expression)([]) with
+        | (ExprVar(name), args) ->
+            if contains(names)(name) && length(args) == stage.arity
+            then
+                let packed = "$partial_forwarded_environment"
+                in
+                    let argument = "$partial_forwarded_argument"
+                    in
+                        None
+                        |> ExprLambda(argument)(apply(apply(ExprVar(stage.resume))(ExprVar(packed)))(ExprVar(argument)))
+                        |> nest(packed)(foldLeft(apply)(ExprVar(stage.prefix))(args))
+            else expression
+        | _ -> expression
+
 let nextAliases names name rhs =
     match stripExprAt(rhs) with
         | ExprVar(reference) ->
@@ -154,7 +171,11 @@ let recursive rewrite stage names expression =
                     in
                         ExprLetRecursive(name)(inner(rhs))(inner(body))(sugar)(annotation)(reqs)
                 | ExprLambda(name, body, annotation) ->
-                    ExprLambda(name)(rewrite(stage)(hide(names)(name))(body))(annotation)
+                    let visible = hide(names)(name)
+                    in
+                        ExprLambda(name)(body
+                        |> rewrite(stage)(visible)
+                        |> forwardedBody(stage)(visible))(annotation)
                 | ExprIf(condition, yes, no) ->
                     no
                     |> child
