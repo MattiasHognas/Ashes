@@ -404,6 +404,44 @@ behavioural check for all of them, then stage 2, its behavioural check, and stag
 This section is the handoff: a session that starts fresh reads it first. Keep it current with each
 integration, and replace it when round 10 has run.
 
+**Queued checkpoint (2026-11-21 03:24):** integration is frozen at `da06e40d` while main's
+`work/r10pre/named-native/` job builds/runs the combined named semantics/IR driver (session 28490).
+The coordinator records this update on `fix/r10-handoff-queue` in its own worktree so the running
+source is unchanged. Cherry-pick this documentation checkpoint onto integration after the reader
+finishes. No shared round 10 has run.
+
+The previous `policy-preflight-fixed` result remains valid: source inference 10,092 items / 184
+modules, focused native policy tests all pass. Queued, pushed implementation commits:
+
+| Branch | Commits waiting after current reader | Status |
+| --- | --- | --- |
+| `fix/r10-evidence-boundaries` | `947fb5d0`, `0918689b` | BATCH READY: callback aggregate selectors and recursive sibling/cycle demand summaries. Focused source inference explicit `ok`, 1,991 items / 44 modules, 39.297s. Native tests pending. `822513dd` is already integrated as `e34a9ad7` and native-proven. |
+| `fix/r10-callback-evidence` | `cd1c9795`, `5b452baf`, `5df945b3`, `961e5983` | Ordinary callback/selected-field checking, finalized scheme identity, analyzer cleanup, direct recursive evidence propagation. Focused stage-0 poison negatives and returned/ignored/delayed positives pass. One confirmed remaining interaction: trait-free recursive peers returning a callback falsely force its evidence at the binding; worker is fixing joint formal-use summaries. `f5b85d06` is already integrated as `d397fa37`. |
+| `fix/r10-ir-ownership-audit` | `37bf8d78`, `85a4e368` | Two concrete correctness repairs: finish the TMC spine before ownership publication and loop-input release; do not apply runtime pointer retain to scalar pattern fields. Source formatting passes. Semantics-manifest inference reached the previously documented `ResultReachTests.ash:34:69` ConsoleIO mismatch; native checks required. |
+
+Active workers: `lowering_evidence` in `r10-callback-evidence` finishes the recursive callback
+interaction; `tmc_repair` in `r10-ir-ownership-audit` audits remaining ownership deltas, 40-minute
+brief from `da06e40d`. The completed inference boundary worktree is clean. Two active agents,
+no agent load. All commits above are pushed; main integrates only between reader jobs.
+
+Ownership audit details: `LoopPlacement.finishTcoManagedPlacement` previously published the base
+tail and released loop inputs before Bindings/RecursiveGroups closed the returned TMC spine,
+then published ownership again. Regression order changes from `[published,released,closed,published]`
+to stage 0's `[closed,published,released]`. Separately `retainUnplacedAggregateMarkersOf` could
+emit `IsReferenceCounted` and real `RcDup` on the `Int` field in `Add(a+1,b)`, mistaking legal integer
+bits for a pointer. Both are non-leak gate blockers until validated.
+
+The two generic collection fixture differences appear to use safe alternative placement: the
+direct constructor loop has arena nodes and only stack restoration at backedges; the helper loop
+acquires the normalized successor before dropping the old owned graph. Extra deep-copy helpers
+are unreferenced. Do not regenerate fixtures or treat old bootstrap54 execution as proof of changed
+lowering. The extra active-flag guards and remaining borrow/result modes still need classification.
+
+Next load batch after integrating completed slices: focused policy native test including aggregate
+and recursive cases, fresh full stage-0 C#/LSP/e2e/format checks, then updated native semantics/IR and
+no-reuse checks. Scripts are in `r10-fixture-candidates/work/policy-shared-checks.sh` and
+`named-native-checks.sh`; avoid overwriting prior output folders. New native results may add blockers.
+
 **Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
 unless one blocks something. The inference content for round 10 is complete; all agent effort goes
 to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
