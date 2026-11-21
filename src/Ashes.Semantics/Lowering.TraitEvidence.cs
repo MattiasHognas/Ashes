@@ -1078,26 +1078,11 @@ public sealed partial class Lowering
         Expr value,
         TraitDictionaryFunctionInfo info,
         bool threadRecursiveSelf = false,
-        bool threadDictionaryFunctions = false,
-        bool rewriteMethodReferences = true)
+        bool threadDictionaryFunctions = false)
     {
-        Dictionary<(string Trait, string Method), string> methodParameters = [];
-        HashSet<(string Trait, string Method)> ambiguousMethodParameters = [];
-        foreach (TraitDictionaryShape dictionary in info.Dictionaries)
-        {
-            CollectTraitMethodParameterNames(
-                dictionary,
-                methodParameters,
-                ambiguousMethodParameters);
-        }
-
-        // Operators are resolved while lowering, when their inferred operand type is available.
-        // Rewriting every operator of a supplied trait here would incorrectly route concrete
-        // operations through a generic dictionary (for example Int exponent arithmetic inside a
-        // Multiply(a)-constrained power function).
-        Expr body = rewriteMethodReferences
-            ? RewriteTraitMethodReferences(value, methodParameters)
-            : value;
+        // Select evidence for operators and qualified methods once argument types are known.
+        // A constrained body can also call the same method at unrelated concrete types.
+        Expr body = value;
         if (threadRecursiveSelf)
         {
             body = RewriteRecursiveTraitSelfReferences(body, info);
@@ -1264,27 +1249,6 @@ public sealed partial class Lowering
         _ => null,
     };
 
-    private static void CollectTraitMethodParameterNames(
-        TraitDictionaryShape shape,
-        IDictionary<(string Trait, string Method), string> names,
-        ISet<(string Trait, string Method)> ambiguous)
-    {
-        foreach (TraitMethodSymbol method in shape.Methods)
-        {
-            (string QualifiedName, string Name) key = (shape.Trait.QualifiedName, method.Name);
-            if (!ambiguous.Contains(key)
-                && !names.TryAdd(key, TraitMethodParameterName(shape, method.Name)))
-            {
-                names.Remove(key);
-                ambiguous.Add(key);
-            }
-        }
-        foreach (TraitDictionaryShape supertrait in shape.Supertraits)
-        {
-            CollectTraitMethodParameterNames(supertrait, names, ambiguous);
-        }
-    }
-
     private static string TraitMethodParameterName(TraitDictionaryShape shape, string method) =>
         $"__trait_{shape.ConstraintOrdinal}_{shape.Path}_{shape.Trait.Name}_{method}";
 
@@ -1293,25 +1257,6 @@ public sealed partial class Lowering
 
     private static string TraitSuperDictionaryParameterName(TraitDictionaryShape shape, int ordinal) =>
         $"__trait_{shape.ConstraintOrdinal}_{shape.Path}_super_{ordinal}";
-
-    private Expr RewriteTraitMethodReferences(
-        Expr expression,
-        IReadOnlyDictionary<(string Trait, string Method), string> methodParameters)
-    {
-        Expr Rewrite(Expr current)
-        {
-            if (current is Expr.QualifiedVar reference
-                && TryGetTraitMethod(reference, out TraitSymbol trait, out TraitMethodSymbol method)
-                && methodParameters.TryGetValue((trait.QualifiedName, method.Name), out string? parameterName))
-            {
-                Expr replacement = new Expr.Var(parameterName);
-                AstSpans.Set(replacement, AstSpans.GetOrDefault(reference));
-                return replacement;
-            }
-            return MapChildExpressions(current, Rewrite);
-        }
-        return Rewrite(expression);
-    }
 
     private Expr RewriteTraitDictionaryFunctionReferences(
         Expr expression,

@@ -4689,10 +4689,7 @@ public sealed partial class Lowering
         Expr Transform(Expr value) => TransformTraitDictionaryValue(
             value,
             info,
-            threadDictionaryFunctions: true,
-            rewriteMethodReferences: !let.Name.StartsWith(
-                "__trait_validate_implementation_",
-                StringComparison.Ordinal));
+            threadDictionaryFunctions: true);
 
         if (let.Value is not Expr.Call)
         {
