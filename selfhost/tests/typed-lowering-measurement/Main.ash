@@ -79,43 +79,58 @@ let printMeasurement mode stitchMillis inferMillis (measurement: CoreLoweringMea
                         | _ -> Unit)
 
 let measureStitched path mode stitchMillis (stitched: StitchedSyntaxProject) =
-    (let started = clock(Unit)
+    (let _ = Ashes.IO.writeErrorLine("project load and stitch complete")
     in
-        let identified = identifyStitchedProject(stitched)
+        let _ = Ashes.IO.writeErrorLine("inference start")
         in
-            let environment =
-                "standalone"
-                |> emptyTypeEnvironmentForPackage
-                |> withIntrinsicBuiltinSignatures
+            let started = clock(Unit)
             in
-                match inferIdentifiedStitchedProjectFrom(environment)(stitched)(identified) with
-                    | ProgramInferenceResult { error = Some(error), errorLocation = location } -> Ashes.IO.panic("infer-error: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
-                    | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
-                        let inferMillis = clock(Unit) - started
-                        in
-                            let measured =
-                                if mode == "typed"
-                                then
-                                    identified.program
-                                    |> identifiedProgramSyntax
-                                    |> measureCoreProgramLowering(clock)(Some(nodeTypes))(path)("")
-                                else measureCoreProgramLowering(clock)(None)(path)("")(stitched.program)
-                            in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
+                let identified = identifyStitchedProject(stitched)
+                in
+                    let environment =
+                        "standalone"
+                        |> emptyTypeEnvironmentForPackage
+                        |> withIntrinsicBuiltinSignatures
+                    in
+                        match inferIdentifiedStitchedProjectFrom(environment)(stitched)(identified) with
+                            | ProgramInferenceResult { error = Some(error), errorLocation = location } -> Ashes.IO.panic("infer-error: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+                            | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
+                                let inferMillis = clock(Unit) - started
+                                in
+                                    let _ = Ashes.IO.writeErrorLine("inference complete")
+                                    in
+                                        let _ = Ashes.IO.writeErrorLine("first lowering and optional replay start")
+                                        in
+                                            let measured =
+                                                if mode == "typed"
+                                                then
+                                                    identified.program
+                                                    |> identifiedProgramSyntax
+                                                    |> measureCoreProgramLowering(clock)(Some(nodeTypes))(path)("")
+                                                else measureCoreProgramLowering(clock)(None)(path)("")(stitched.program)
+                                            in
+                                                let _ =
+                                                    Ashes.IO.writeErrorLine(if measured.replayed
+                                                    then "first lowering and replay complete"
+                                                    else "first lowering complete, replay skipped")
+                                                in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
 
 let run path mode =
-    (let started = clock(Unit)
+    (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
     in
-        match loadProject(Ashes.IO.Path.Unix)(path) with
-            | Error(error) -> Ashes.IO.panic("load-error: " + Ashes.Trait.Show.show(error))
-            | Ok(layout) ->
-                match Unit
-                |> loadShipped
-                |> stitchProject(Ashes.IO.Path.Unix)(layout) with
-                    | Error(error) ->
-                        match projectStitchParseDiagnostics(error) with
-                            | Some(diagnostics) -> Ashes.IO.panic("parse-error: " + Ashes.Trait.Show.show(diagnostics))
-                            | None -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
-                    | Ok(stitched) -> measureStitched(path)(mode)(clock(Unit) - started)(stitched))
+        let started = clock(Unit)
+        in
+            match loadProject(Ashes.IO.Path.Unix)(path) with
+                | Error(error) -> Ashes.IO.panic("load-error: " + Ashes.Trait.Show.show(error))
+                | Ok(layout) ->
+                    match Unit
+                    |> loadShipped
+                    |> stitchProject(Ashes.IO.Path.Unix)(layout) with
+                        | Error(error) ->
+                            match projectStitchParseDiagnostics(error) with
+                                | Some(diagnostics) -> Ashes.IO.panic("parse-error: " + Ashes.Trait.Show.show(diagnostics))
+                                | None -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
+                        | Ok(stitched) -> measureStitched(path)(mode)(clock(Unit) - started)(stitched))
 
 match Ashes.IO.args with
     | path :: mode :: [] when mode == "typed" || mode == "legacy" -> run(path)(mode)

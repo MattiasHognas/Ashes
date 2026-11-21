@@ -18,6 +18,8 @@ systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 timeout 3600 \
     "$OUT/measure" selfhost/packages/cli/ashes.json typed >"$OUT/typed.tsv" 2>"$OUT/typed.err"
 ```
 
+Progress markers in stderr bracket project loading and stitching, inference, and the lowering measurement. The lowering API runs the first pass and optional replay in one call. Its completion marker reports whether replay ran. All progress writes occur outside the reported timing intervals.
+
 A successful run exits zero and prints a TSV header and one data row. A project, parse, inference or lowering error terminates the run with a diagnostic. A lowering failure can still produce a partial counter row, so check the exit status before using the data. Keep the stage-0 and driver source revisions with the output.
 
 | Columns | Meaning |
