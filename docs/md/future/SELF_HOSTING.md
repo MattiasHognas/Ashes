@@ -433,6 +433,8 @@ The arithmetic batch is BATCH READY through `e944cdfc`, pending integration afte
 
 Worker/signals slice `49cd9475` is committed on `fix/r10-external-next`, pending integration and runtime validation. It installs SIGTERM/SIGINT handling before forking, shares the Parallel worker cap, returns worker indices, records child PIDs and parent-death behavior, and routes `RequestServerStop` to the supervisor. Direct generated-child signal and one-worker-cap tests are in progress; the peer still implements draining and task accounting. No graceful-stop acceptance claim follows from these unexecuted changes. `fix/r10-server-drain` is pushed with setter/contract prerequisites `920168b8` and `df918941` (duplicates of `3502ed04` and `0a59931f`; integrate each source change once).
 
+Worker tests `f87ab65b` add actual forked-index and SIGTERM stop children. Its source preflight rejected a wrongly nested `RequestServerStop` match: formatter success did not establish correct opcode dispatch structure. Fix `9dc76556` uses a typed accessor and restores the exact previous dispatch tail; the worker compared it against the parent, excluding comments, with no difference. Test refinement `97867ec6` uses a real `wait(NULL)` in the supervisor so child output precedes parent output, avoiding scheduling-dependent parent death. Both repairs are committed and need the main-owned source-inference retry plus native execution. The agent's single source preflight was consumed; no extra agent load was authorized. The peer drain/accounting work continues.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
