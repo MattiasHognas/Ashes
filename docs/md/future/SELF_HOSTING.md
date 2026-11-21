@@ -429,6 +429,15 @@ does not prove that interaction. Two active agents, no agent load. All commits a
 main integrates only between reader jobs. The ownership handoff lists seven unchanged fixtures
 for current-stage backend execution in normal/poison modes, with expected stdout, in
 `r10-ir-ownership-audit/work/PROGRESS.md`.
+Standalone peer coverage is now `f9bd8d0a`, depending on the two e2e fixtures from the callback
+worker. The existing `0918689b` fixed-point pass already propagates trait-free formal-use summaries;
+the new witnesses and delayed `[Eq@2,Seed@1]` assertion need native execution before claiming parity.
+
+Performance observation during the native build: a bounded `dotnet-stack` sample at about
+20 minutes shows stage 0 still in `AddBindingFtv` → `VariablesHeldBesideFunction` →
+`SubstitutePhantomResultVariables` → `ResolveCallPhantomResultLayout`, not LLVM. Full snapshot:
+`r10-fixture-candidates/work/named-native-stack.txt`. Preserve this for typed-lowering performance
+work; a sample is not a whole-run profile. The build continues under its existing 45-minute cap.
 
 Ownership audit details: `LoopPlacement.finishTcoManagedPlacement` previously published the base
 tail and released loop inputs before Bindings/RecursiveGroups closed the returned TMC spine,
