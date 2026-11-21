@@ -515,7 +515,10 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** none. Integrated-head checks at `fc50661a` finished on 2026-11-21:
+**Checks in flight:** coordinator current-source lowering diagnostic driver, under
+`work/r10pre/lowering-diagnostic/`: print the escaping recursive `Not` result (bug 2), then
+lower the two-equality-site reproducer (bug 3). This is a focused driver, not the shared round.
+Integrated-head checks at `fc50661a` finished on 2026-11-21:
 solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
 known leaks plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
 0 failed, 72 skipped. Logs and source commit are in `work/r10pre/resume-integrated/`.
