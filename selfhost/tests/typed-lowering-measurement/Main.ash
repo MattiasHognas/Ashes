@@ -107,7 +107,7 @@ let measureStitched path mode stitchMillis (stitched: StitchedSyntaxProject) =
                                                     identified.program
                                                     |> identifiedProgramSyntax
                                                     |> measureCoreProgramLowering(clock)(Some(nodeTypes))(path)("")
-                                                else measureCoreProgramLowering(clock)(None)(path)("")(stitched.program)
+                                                else measureRawCoreProgramLowering(clock)(nodeTypes)(path)("")(stitched.program)
                                             in
                                                 let _ =
                                                     Ashes.IO.writeErrorLine(if measured.replayed

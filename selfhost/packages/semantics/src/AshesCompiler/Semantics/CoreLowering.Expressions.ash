@@ -2841,7 +2841,7 @@ let registerConcreteSource name value isRecursive state =
                     if scheme.constraints != []
                     then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
                     else
-                        match recordedOperatorGenericScheme(nodeIdentityOf(value))(state) with
+                        match recordedOperatorGenericScheme(name)(nodeIdentityOf(value))(state) with
                             | Some(recorded) ->
                                 registerConcreteCandidateScheme(name)(value)(recorded)(scheme)(slot)(isRecursive)(inPlaceScopeOf(name)(value)(state))(state)
                             | None ->

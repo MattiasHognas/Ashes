@@ -30,6 +30,8 @@ export (
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
     value recordedOperatorGenericScheme,
+    value rawOperatorDeclarationSchemes,
+    value withRawOperatorDeclarationSchemes,
     value recordedSettledType,
     value recordedSettledTypeAt,
     value recordedSettledDictionariesAt,
@@ -317,11 +319,32 @@ let operatorGenericScheme (recorded: TypeScheme) (state: CoreLoweringState) =
                         else None
                 | _ -> None
 
+// Raw source has no stable expression IDs. Top-level declarations have unique names, so retain
+// their operator-polymorphic schemes from validation without enabling expression-table reads.
+let rawOperatorDeclarationSchemes (table: NodeTypeTable) =
+    Ashes.Collection.Map.foldLeft(given (schemes) ->
+        given (_node) ->
+            given (entry) ->
+                match entry with
+                    | (name, TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
+                        if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                        then Ashes.Collection.Map.setStr(name)(scheme)(schemes)
+                        else schemes)(Ashes.Collection.Map.empty)(table.declarations)
+
+let withRawOperatorDeclarationSchemes schemes state =
+    (let registry = stateConcreteRegistry(state)
+    in withStateConcreteRegistry((registry with rawDeclarationSchemes = schemes))(state))
+
 // The operator-generic scheme the standalone inference recorded for the top-level binding whose
 // value has the identity `node`.
-let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
+let recordedOperatorGenericScheme name (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
-        | None -> None
+        | None ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(name)(registry.rawDeclarationSchemes) with
+                    | Some(scheme) -> operatorGenericScheme(scheme)(state)
+                    | None -> None
         | Some(table) ->
             match nodeDeclarationAt(node)(table) with
                 | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)

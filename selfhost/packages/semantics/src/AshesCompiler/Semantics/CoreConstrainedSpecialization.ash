@@ -63,11 +63,12 @@ type CoreConcreteCopy =
 type CoreConcreteRegistry =
     | nextIdentity: Int
     | candidates: MapTree(Str, CoreConcreteCandidate)
+    | rawDeclarationSchemes: MapTree(Str, TypeScheme)
     | copies: MapTree(Int, List(CoreConcreteCopy))
     | inferenceBindings: List((Str, TypeScheme))
     | openSchemes: MapTree(Str, Maybe(TypeScheme))
 
-let emptyCoreConcreteRegistry unit = CoreConcreteRegistry(nextIdentity = 0, candidates = Ashes.Collection.Map.empty, copies = Ashes.Collection.Map.empty, inferenceBindings = [], openSchemes = Ashes.Collection.Map.empty)
+let emptyCoreConcreteRegistry unit = CoreConcreteRegistry(nextIdentity = 0, rawDeclarationSchemes = Ashes.Collection.Map.empty, candidates = Ashes.Collection.Map.empty, copies = Ashes.Collection.Map.empty, inferenceBindings = [], openSchemes = Ashes.Collection.Map.empty)
 
 let registeredOpenSchemes (name: Str) (scheme: TypeScheme) (open: MapTree(Str, Maybe(TypeScheme))) =
     if schemeIsClosed(scheme)

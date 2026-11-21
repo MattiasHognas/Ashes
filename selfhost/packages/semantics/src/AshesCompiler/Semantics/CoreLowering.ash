@@ -32,6 +32,8 @@ import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Expressions
 import AshesCompiler.Semantics.CoreLowering.Program
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.untranslatableRecordedTypes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.withRawOperatorDeclarationSchemes
 // Raw executable callers have no identified inference result. Preserve their established
 // lowering diagnostics except for an unresolved requirement needed during binding evaluation.
 let validateRawBindingEvidence environment (program: ProgramSyntax) lower =
@@ -48,9 +50,11 @@ let validateRawBindingEvidence environment (program: ProgramSyntax) lower =
                 match inferenceErrorDiagnostic([])(program.items)(builtins)(location)(error) with
                     | Some((_code, message)) -> failedCoreLowering(CoreImmediateEvidenceDiagnostic(message))
                     | None -> failedCoreLowering(CoreImmediateEvidenceDiagnostic("A trait requirement is needed while evaluating this binding. Add a type annotation to determine its instance."))
-            | _ -> lower(program))
+            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                lower(rawOperatorDeclarationSchemes(table))(program)
+            | _ -> lower(Ashes.Collection.Map.empty)(program))
 
-let lowerValidatedCoreProgram (program: ProgramSyntax) =
+let lowerValidatedCoreProgram schemes (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -62,6 +66,7 @@ let lowerValidatedCoreProgram (program: ProgramSyntax) =
                 |> initialState
                 |> (given (state: CoreLoweringState) ->
                     state
+                    |> withRawOperatorDeclarationSchemes(schemes)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items)))
                 |> withProgramParameterOwnership(program)
@@ -102,7 +107,7 @@ let lowerCoreNumberedProgram (program: ProgramSyntax) (nodeTypes: NodeTypeTable)
 // `constructorLayouts` needs a real entry for `"Unit"` too whenever any supplied builtin can
 // return it (`finishBuiltinUnit` allocates a builtin's `Unit` result through an ordinary
 // constructor layout, not a hardcoded shape — the same path a user's own zero-field ADT uses).
-let lowerValidatedCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program: ProgramSyntax) (constructorLayouts: List(CoreConstructorLayout)) (builtinLayouts: List(CoreBuiltinLayout)) =
+let lowerValidatedCoreProgramWithSourceAndContext schemes (filePath: Str) (source: Str) (program: ProgramSyntax) (constructorLayouts: List(CoreConstructorLayout)) (builtinLayouts: List(CoreBuiltinLayout)) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -117,6 +122,7 @@ let lowerValidatedCoreProgramWithSourceAndContext (filePath: Str) (source: Str) 
                     |> withStateSourceContext(source
                     |> createSourceContext(filePath)
                     |> Some)
+                    |> withRawOperatorDeclarationSchemes(schemes)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items)))
                 |> withProgramParameterOwnership(program)
@@ -125,7 +131,8 @@ let lowerValidatedCoreProgramWithSourceAndContext (filePath: Str) (source: Str) 
 
 // The empty name stands for the trailing expression; spans start out in its region.
 let lowerCoreProgramWithSourceAndContext path source program constructors builtins =
-    validateRawBindingEvidence(None)(program)(given (validated) -> lowerValidatedCoreProgramWithSourceAndContext(path)(source)(validated)(constructors)(builtins))
+    validateRawBindingEvidence(None)(program)(given (schemes) ->
+        given (validated) -> lowerValidatedCoreProgramWithSourceAndContext(schemes)(path)(source)(validated)(constructors)(builtins))
 
 let withSourceRegions (regions: SourceRegions) (state: CoreLoweringState) =
     state
@@ -133,7 +140,7 @@ let withSourceRegions (regions: SourceRegions) (state: CoreLoweringState) =
     |> withStateSourceRegions(regions.regionOfName)
     |> withStateSourceRegionOf("")
 
-let lowerProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
+let lowerProgramWithRegionsAndSchemes schemes (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -146,12 +153,15 @@ let lowerProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions
                 |> (given (state: CoreLoweringState) ->
                     state
                     |> withSourceRegions(regions)
+                    |> withRawOperatorDeclarationSchemes(schemes)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items))
                     |> withStateReuseEnabled(reuseEnabled))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
+
+let lowerProgramWithRegionsAndReuse reuseEnabled regions program = lowerProgramWithRegionsAndSchemes(Ashes.Collection.Map.empty)(reuseEnabled)(regions)(program)
 
 // As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
 // `reuseEnabled` false (`--debug-disable-reuse`) no match arm publishes a reuse token and no
@@ -165,13 +175,13 @@ let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source:
 // lower gives way to the program as written, whose own result, error included, stands.
 // As lowerCoreProgramWithSourceAndReuse for a stitched program whose spans resolve in their own
 // files' texts.
-let lowerValidatedCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) (program: ProgramSyntax) =
+let lowerValidatedCoreProgramWithRegionsAndReuse (reuseEnabled: Bool) (regions: SourceRegions) schemes (program: ProgramSyntax) =
     match mergeMutualRecursionGroups(program) with
-        | None -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
+        | None -> lowerProgramWithRegionsAndSchemes(schemes)(reuseEnabled)(regions)(program)
         | Some(merged) ->
-            match lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(merged) with
+            match lowerProgramWithRegionsAndSchemes(schemes)(reuseEnabled)(regions)(merged) with
                 | CoreLoweringResult { error = None } as lowered -> lowered
-                | _failed -> lowerProgramWithRegionsAndReuse(reuseEnabled)(regions)(program)
+                | _failed -> lowerProgramWithRegionsAndSchemes(schemes)(reuseEnabled)(regions)(program)
 
 let lowerCoreProgramWithRegionsAndReuse reuseEnabled regions program =
     regions
@@ -239,7 +249,7 @@ let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSy
 // Recursive top-level bindings and call-site trait-evidence forwarding
 // (rewriteTraitConstrainedReference) are not yet wired — a deliberately narrower first slice of
 // the trait-dictionary physical-lowering epic.
-let lowerValidatedCoreProgramWithEnvironment (environment: TypeEnvironment) (program: ProgramSyntax) =
+let lowerValidatedCoreProgramWithEnvironment (environment: TypeEnvironment) schemes (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -251,6 +261,7 @@ let lowerValidatedCoreProgramWithEnvironment (environment: TypeEnvironment) (pro
                 |> initialState
                 |> (given (state: CoreLoweringState) ->
                     state
+                    |> withRawOperatorDeclarationSchemes(schemes)
                     |> withStateTopLevelNames(allTopLevelBindingNames(items)(Ashes.Collection.Map.empty))
                     |> withStateSpecializationCandidates(reuseSpecializationCandidates(items)))
                 |> withProgramParameterOwnership(program)
@@ -434,7 +445,7 @@ let measuredSeed (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str)
 // As lowerCoreProgramWithSourceAndReuse with reuse on, or, given recorded node types, as
 // lowerCoreNumberedProgramWithSourceAndReuse, timing the discovery pass and the replay pass with
 // `clock` and counting what each kept; the lowered program itself is not built.
-let measureCoreProgramLowering clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+let measureCoreProgramLoweringWithSchemes schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -444,9 +455,15 @@ let measureCoreProgramLowering clock (nodeTypes: Maybe(NodeTypeTable)) (filePath
             in
                 match program
                 |> measuredSeed(nodeTypes)(filePath)(source)
+                |> withRawOperatorDeclarationSchemes(schemes)
                 |> lowerProgramPassesMeasured(clock)(items)(trailingBody)(None) with
                     | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, first = passCountsOf(first), replay = passCountsOf(replayed))
                     | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], first = passCountsOf(first), replay = noPassCounts)
+
+let measureCoreProgramLowering clock nodeTypes path source program = measureCoreProgramLoweringWithSchemes(Ashes.Collection.Map.empty)(clock)(nodeTypes)(path)(source)(program)
+
+let measureRawCoreProgramLowering clock table path source program =
+    measureCoreProgramLoweringWithSchemes(rawOperatorDeclarationSchemes(table))(clock)(None)(path)(source)(program)
 
 // Translates every type the standalone inference recorded into lowering's terms against the
 // program's registered types: how many translated, and each node whose type did not, with the

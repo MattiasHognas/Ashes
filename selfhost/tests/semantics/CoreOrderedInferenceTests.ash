@@ -243,7 +243,7 @@ let recursive hasEntryInstruction path opcode lines =
         | [] -> false
         | line :: rest -> Ashes.Text.startsWith(line)("    " + opcode + " ") && Ashes.Text.contains(line)(path) || hasEntryInstruction(path)(opcode)(rest)
 
-let checkTypedEntryCopyIr path lowered =
+let checkEntryCopyIr mode path lowered =
     match lowered with
         | CoreLoweringResult { program = Some(ir), error = None } ->
             let lines = formatIr(ir)(LoweredIr)(None)
@@ -251,26 +251,31 @@ let checkTypedEntryCopyIr path lowered =
                 if hasEntryInstruction(path)("AddInt")(lines) && hasEntryInstruction(path)("AddFloat")(lines)
                 then Unit
                 else Ashes.IO.panic("entry-frame loop lost an arithmetic instantiation")
-        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("typed entry-frame loop failed: " + Ashes.Trait.Show.show(error))
-        | _ -> Ashes.IO.panic("typed entry-frame loop produced no program")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("entry-frame loop failed in " + mode + " lowering: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("entry-frame loop produced no program in " + mode + " lowering")
 
-let checkTypedEntryCopy shipped path =
+let checkEntryCopy shipped path =
     match Ashes.IO.File.readText(path) with
         | Error(message) -> Ashes.IO.panic(message)
         | Ok(source) ->
             match stitchWithShippedModules("regression")(path)(source)(shipped) with
                 | Error(error) -> Ashes.IO.panic("entry-frame stitching failed: " + Ashes.Trait.Show.show(error))
                 | Ok(stitched) ->
-                    let identified = identifyStitchedProject(stitched)
+                    let _ =
+                        stitched.program
+                        |> lowerCoreProgramWithSource(path)(source)
+                        |> checkEntryCopyIr("raw")(path)
                     in
-                        match inferIdentifiedStitchedProjectFrom("standalone"
-                        |> emptyTypeEnvironmentForPackage
-                        |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
-                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("entry-frame inference failed: " + Ashes.Trait.Show.show(error))
-                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
-                                table
-                                |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))
-                                |> checkTypedEntryCopyIr(path)
+                        let identified = identifyStitchedProject(stitched)
+                        in
+                            match inferIdentifiedStitchedProjectFrom("standalone"
+                            |> emptyTypeEnvironmentForPackage
+                            |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                                | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("entry-frame inference failed: " + Ashes.Trait.Show.show(error))
+                                | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                    table
+                                    |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))
+                                    |> checkEntryCopyIr("typed")(path)
 
 let checkStitchedLibraryContext unit =
     match Ashes.IO.Directory.entries("lib/Ashes") with
@@ -290,7 +295,7 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/forwarded_partial_runs_callee_prefix_before_next_binding.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/partial_uses_ambient_evidence_during_binding_evaluation.ash"))
                 |> (given (_) -> checkRawImmediateEvidence(shipped)("tests/partial_requires_open_evidence_before_returning_function.ash"))
-                |> (given (_) -> checkTypedEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
+                |> (given (_) -> checkEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
