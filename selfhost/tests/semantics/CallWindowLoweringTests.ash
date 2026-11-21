@@ -317,6 +317,32 @@ let expectBorrowedCallAfterRenamedReloadMatchesStageZero unit =
     |> withoutLocations
     |> withFunctionLocalLabels)
 
+// The final spine must have its own reference before releasing the list the producer consumed.
+// The result-mode word describes that spine, and is written only once on this return path.
+let recursive resultExitEvents (lines: List(Str)) =
+    match lines with
+        | [] -> []
+        | line :: rest ->
+            let events = resultExitEvents(rest)
+            in
+                if Ashes.Text.startsWith(Ashes.Text.trim(line))("tmc_close_done_")
+                then "closed" :: events
+                else
+                    if Ashes.Text.startsWith(Ashes.Text.trim(line))("independent_result_not_requested_")
+                    then "published" :: events
+                    else
+                        if Ashes.Text.startsWith(Ashes.Text.trim(line))("rc_tco_exit_drop_inactive_")
+                        then "released" :: events
+                        else events
+
+let expectProducerPublishesClosedSpineBeforeExitRelease unit =
+    match "aggregate_borrowing_owner_kept_by_callee"
+    |> loweredFixtureLines
+    |> functionLines("[SourceFunction from bump]")
+    |> resultExitEvents with
+        | "closed" :: "published" :: "released" :: [] -> Unit
+        | events -> test.fail("expected spine closure, result publication and loop release in order, got " + Ashes.Text.join(", ")(events))
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
@@ -331,6 +357,7 @@ let runCallWindowLoweringTests unit =
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
+    |> expectProducerPublishesClosedSpineBeforeExitRelease
     |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag

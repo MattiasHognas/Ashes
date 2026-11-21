@@ -174,9 +174,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
 // A recursive member's result meets the callers the same way a plain lambda's does: a
 // reference-counted result is copied into the arena when the caller asked for one.
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
-    match (prepared, lowered
-    |> closeTmcChainPrepared(prepared)
-    |> unifySelfCallResults) with
+    match (prepared, lowered |> unifySelfCallResults) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with

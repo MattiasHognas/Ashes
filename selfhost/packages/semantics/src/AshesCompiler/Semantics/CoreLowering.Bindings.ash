@@ -44,7 +44,7 @@ export (
     value beginCurryStage,
     value noteLetBoundFunction,
     value linkCurryStage,
-    value closeTmcChainPrepared,
+    value closeTmcChain,
     value adoptDeferredSelfCallResults,
     value unifySelfCallResults,
     value reserveTcoExitTransferSlot,
@@ -194,15 +194,6 @@ let closeTmcChain (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: 
                                 match freshLabel("tmc_close_done")(emptyState) with
                                     | FreshLabel { state = doneState, label = doneLabel } -> emitTmcChainClose(destSlot)(resultSlot)(bodyTemp)(bodyType)(joinSlot)(emptyLabel)(doneLabel)(doneState)
         | None -> (state, bodyTemp)
-
-// `closeTmcChain` applied to a lowered body, so a caller can close the spine without restructuring
-// the ownership steps that follow it. A failed body passes through untouched.
-let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
-    match lowered with
-        | LoweredCoreValue { error = Some(_error) } -> lowered
-        | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            match closeTmcChain(label)(bodyTemp)(bodyType)(state) with
-                | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
 
 let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(element)(state) with
@@ -602,10 +593,6 @@ let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
             else withStateCurryStage(None)(state)
         | None -> state
 
-let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: LoweredCoreValue) =
-    match prepared with
-        | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
-
 let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (state: CoreLoweringState) =
     match pairs with
         | [] -> (state, None)
@@ -939,13 +926,8 @@ let copyEscapingCapture (stackAllocate: Bool) (binding: CoreBinding) (captureTem
                         then (state, captureTemp)
                         else emitLocatedDeepCopy(captureTemp)(captureType)(state)
 
-// A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
-// the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
-// ownership step without disturbing the shape of the function below it.
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
-    match lowered
-    |> closeTmcChainLowered(label)
-    |> unifySelfCallResults with
+    match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
             match bodyState
