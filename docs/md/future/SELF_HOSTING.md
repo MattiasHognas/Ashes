@@ -437,7 +437,7 @@ Branches on `origin`:
 | Branch | Role |
 | --- | --- |
 | `main` | Last merge: #1159 (`f6e28970`). |
-| `selfhost/round10` | The integration branch; everything below is cherry-picked onto it. |
+| `selfhost/round10` | The integration branch; integrated batches and held changes are distinguished below. |
 | `fix/parity-bugs-4`, `fix/csharp-red-tests` | Validated on 2026-11-21; all except the TMC fix integrated (table below). |
 | `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
 | `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
@@ -456,7 +456,8 @@ Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works
 | `typed-nodes` | (`work/check/infer`) | Holds an inference tool binary used for quick type checks. |
 | `main-baseline` | detached at `main` | For running a check against `main` (its C# failure list: see below). |
 
-Binaries (*local*, in `step-f-round3/artifacts/`): stage 0 `stage0-b58/ashes` (built from the
+Binaries (*local*): newest checked stage 0 is `step-f-round3/work/r10pre/resume-integrated/s0/ashes`
+(integration `fc50661a`, 2026-11-21). Under `step-f-round3/artifacts/`: stage 0 `stage0-b58/ashes` (built from the
 head after strict imports; rebuild with `dotnet build src/Ashes.Cli/Ashes.Cli.csproj -c Release -o
 artifacts/stage0-bNN`, stage 0 embeds `lib/Ashes`, so rebuild it after any stdlib edit); stage 1
 `selfhost-dev/s1-f-bootstrap54-debug` (round 9, before every round-10 batch); stage 2
@@ -514,14 +515,22 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks in flight:** integrated-head build, format, C# and LSP checks are next, under
-`work/r10pre/resume-integrated/`. Pre-integration checks finished; logs are under each waiting branch's
+**Checks in flight:** none. Integrated-head checks at `fc50661a` finished on 2026-11-21:
+solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
+known leaks plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
+0 failed, 72 skipped. Logs and source commit are in `work/r10pre/resume-integrated/`.
+No shared round-10 build has run: the bug gate remains open.
+
+Pre-integration checks finished; logs are under each waiting branch's
 `work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
 the 10 known leak tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
 57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
 list its 18 additional failures are 12 IR/explain mismatches, five plateau failures, and a crash
 in `Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau` (exit 245).
 That one test passes on the saved main baseline (`work/r10pre/baseline-qualified-callee.log`).
+The isolated check on integration base `a5bf718f` plus only the held TMC patch (`7f3d3e00`)
+also crashes, confirming the patch introduces it; exact log:
+`r10-tmc-regressions/work/coordinator/qualified-callee.log`. Its test-project build is clean.
 The TMC fix is held for rework; do not count it as integrated or its regression as leak-only.
 The old strict-import compile has no recorded
 completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
@@ -533,7 +542,7 @@ There is no ASH048 result to act on. Whole-compiler compilation remains pending 
 | Branch (worktree) | Commits | What | Load work before or after integrating |
 | --- | --- | --- | --- |
 | `fix/parity-bugs-4` (`parity-bugs`) | 3d4ff885 held; ada43aa6, d641e842, e91443e7 integrated as 7d866873, bed9e5ab, 7bff6f17 | The TMC fix resolves the projects crash but introduces the qualified-callee crash above; it needs rework in both compilers. The independent suite expectations and known-module diagnostic are integrated. | C# and e2e completed; shared stage-1 validation pending. Review the 12 additional IR/explain mismatches after fixing the crash. |
-| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed; the two IR fixtures below remain open. | Full C# validation matched expectations; integrated-head checks and shared stage-1 validation pending. |
+| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed ([record](SELF_HOSTING_LOG.md#round-10-stage-0-fixture-repairs)); the two IR fixtures below remain open. | Full C# validation and integrated-head checks matched expectations; shared stage-1 validation pending. |
 
 The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 

@@ -11,6 +11,16 @@ preceded the port.
 
 ## Completed work
 
+### Round 10 stage-0 fixture repairs
+
+On 2026-11-21, integration commits `79b1af42`, `4ecfbf74`, `4bc951f3`, and `207d1ec9`
+closed 27 stale C# failures: LLVM 23 ELF snapshot hashes, project-fixture source context,
+the generic-variant-loop ToSpace decline expectation, and the reviewed lowered-IR/explain oracles.
+The full C# suite on integration `fc50661a` has exactly the remaining 10 known leak failures and
+two separately tracked IR fixtures (3,061 passed, 12 failed, 2 skipped). Build and format pass;
+LSP 88/88 and stage-0 e2e 1,273 passed, 0 failed, 72 skipped. Logs are local to the integration
+worktree under `work/r10pre/resume-integrated/`.
+
 ### Package and test foundations
 
 - [x] **PKG-1** Define pure-Ashes `frontend`, `formatter`, and `semantics` packages with the required dependency
