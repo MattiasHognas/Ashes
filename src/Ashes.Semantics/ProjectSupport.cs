@@ -2007,7 +2007,7 @@ public static class ProjectSupport
 
         int end = layout.ModuleOffsets[^1].EndOffset;
         if (end != layout.Source.Length - 1 || layout.Source[end] != ')'
-            || !entries.Any(entry => entry.Code == DiagnosticCodes.ParseError
+            || !entries.Any(entry => string.Equals(entry.Code, DiagnosticCodes.ParseError, StringComparison.Ordinal)
                 && combinedIndex.ToUtf16Offset(entry.Start) == end))
         {
             return false;
