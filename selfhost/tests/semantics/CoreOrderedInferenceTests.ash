@@ -291,6 +291,12 @@ let checkSocketHelperIr mode path lowered =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " socket helper failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(mode + " socket helper produced no program")
 
+let checkListEqualityLowered mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(_program), error = None } -> Unit
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " list equality failed for " + path + ": " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " list equality produced no program for " + path)
+
 let checkRawAndTypedIr verify shipped path =
     match Ashes.IO.File.readText(path) with
         | Error(message) -> Ashes.IO.panic(message)
@@ -339,6 +345,8 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/list_equality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/mutual_recursive_tree_rewrite_checks_empty_aliases.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
 let checkExpressionBoundary unit =

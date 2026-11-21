@@ -3868,6 +3868,10 @@ let testRunLaterSiblingBesideFreshTupleArm shipped unit = assertSharedProgramPri
 
 let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgramPrintsExactly(shipped)("constrained_partial_uses_declared_arithmetic_methods")("-1 17")
 
+let testListEqualityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
+
+let testMutualTreeRewriteChecksEmptyAliases shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursive_tree_rewrite_checks_empty_aliases")("prefixx x")
+
 let testRunMutualShowDictionariesAtCalls shipped unit = assertSharedProgramPrintsExactly(shipped)("mutually_recursive_show_functions_keep_dictionary_at_call_sites")("42 true")
 
 let testRunForwardedPartialPrefix shipped unit = assertSharedProgramPrintsExactly(shipped)("forwarded_partial_runs_callee_prefix_before_next_binding")("entered|bound|v=42 v=true")
@@ -6304,6 +6308,8 @@ let run shipped =
     |> testRunLaterSiblingBesideFreshTupleArm(shipped)
     |> testRunConstrainedPartialDeclaredArithmetic(shipped)
     |> testRunMutualShowDictionariesAtCalls(shipped)
+    |> testListEqualityUsesAmbientElementDictionary(shipped)
+    |> testMutualTreeRewriteChecksEmptyAliases(shipped)
     |> testRunForwardedPartialPrefix(shipped)
     |> testRunAmbientEvidenceInPartialPrefix(shipped)
     |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
