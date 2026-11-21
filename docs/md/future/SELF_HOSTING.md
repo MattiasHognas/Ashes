@@ -401,14 +401,17 @@ behavioural check for all of them, then stage 2, its behavioural check, and stag
 
 ### Current round: round 10 (resumed 2026-11-21)
 
-**Round 10 has not run.** The non-leak gate remains blocked. Integration is `selfhost/round10` at the `90a4a8e7` handoff checkpoint, based on `main` after #1159 (`f6e28970`). Two evidence-selection bugs block the shared native build and bootstrap.
+**Round 10 has not run.** Integration is `selfhost/round10`, based on `main` after #1159 (`f6e28970`). The paired trait-selection repairs and follow-up eager-evidence/hover fixes are integrated and await central validation. The non-leak gate is not yet clear; no shared-native binary has been produced by the expanded attempts.
 
 | Active work | Revision, evidence and next proof |
 | --- | --- |
-| Mixed concrete and abstract qualified trait calls | In unchanged measurement function `reportSites`, the generic dictionary displaced the concrete `Show` instance. C# repair `43b26d44` passes focused recursive and async closure controls. |
-| First-class method selected by its expected result | Inside a generic scope, `let concreteMaker : Unit -> Int = Seed.first` returned 1 instead of 17. C# follow-up `f25bb10b` passes the poison control (`17/17/yes`) and retains ASH010 for ambiguous eager selection. |
-| Full reference running | Main is reading frozen `r10-report-show` / `fix/r10-report-show` at `f25bb10b` using `ASHES_CHECKOUT` and `policy-shared-checks.sh`. Results go to `step-f-round3/work/r10pre/report-reference/`. Both C# commits are pushed and await paired integration. |
-| Stage-1 counterpart | `r10-recursive-show-capture` / `fix/r10-recursive-show-capture` owns both selection paths, including captured and custom methods. Integrate the paired implementations between readers, then retry the preserved shared-native input. |
+| Mixed concrete and abstract qualified trait calls | In unchanged measurement `reportSites`, the generic dictionary displaced concrete `Show` instances. C# `43b26d44` → `a964e98d` passes recursive and poison async closure controls. Stage-1 type-directed dispatch `f40b94cf` → `13dbe9b2` is integrated. |
+| First-class method selected by its expected result | Annotated `Seed.first : Unit -> Int` returned 1 instead of 17 in a generic scope. C# `f25bb10b` → `d8ad60c6` passes `17/17/yes`; the stage-1 counterpart is in `13dbe9b2`. Strict ambiguous eager selection still rejects with ASH010. |
+| Eager evidence regression | Full reference at `f25bb10b` exposed the unchanged local eager Seed fixture as ASH010. `bf922c7b` now unifies the consumed dictionary method's actual arrow with its requested signature; poison output is again `Int|true Bool|true`. Stage-1 replay identity and exact raw/numbered/native controls are integrated. |
+| Recursive hover metadata | Reference LSP had one failing sweep: a recursive use exposed hidden dictionary parameters. `10f57493` → `eacb6cd9` and analyzer correction `4e0f844d` → `30905b28` record the source signature `List<a> -> Int requires {Area(a)}` by definition identity. Runtime ABI is unchanged. Central LSP confirmation remains pending. |
+| Current validation queue | All workers handed back; all branches are pushed. Main next runs `source-preflight.sh` on the integrated CLI and measurement projects, then full reference validation of the final batch and the unchanged preserved shared input. Stage-1 controls `2323a40d` → `270d8385` and `1903fc50` → `11dca35f` cover custom methods, async capture, result-directed methods and eager enclosing evidence. The worker source check caught a stale pair pattern after adding replay identity; that pattern is corrected but needs an explicit central `ok`. |
+
+`work/r10pre/report-reference/` is complete: build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **87/88** (hover), e2e **1,321 passed / 1 failed / 80 skipped** (local eager Seed). This snapshot predates the two follow-up repairs above. The frozen corrected worker CLI is `r10-logical-hover/src/Ashes.Cli/bin/Release/net10.0/ashes`; it passed focused positives and the strict ambiguity negative. Whole-suite and current native acceptance are still required.
 
 [Verbatim checkpoint history and commit mappings](SELF_HOSTING_LOG.md#round-10-shared-native-and-trait-selection-checkpoints-2026-11-21)
 
