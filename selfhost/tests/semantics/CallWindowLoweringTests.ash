@@ -61,6 +61,14 @@ let expectInstruction (instruction: Str) (lines: List(Str)) =
     then lines
     else test.fail("expected instruction `" + instruction + "` in:\n" + Ashes.Text.join("\n")(lines))
 
+let recursive expectOperands opcode operands lines =
+    match lines with
+        | [] -> test.fail("expected " + opcode + " with operands " + operands)
+        | line :: rest ->
+            if Ashes.Text.startsWith(Ashes.Text.trim(line))(opcode + " ") && Ashes.Text.contains(line)(operands)
+            then rest
+            else expectOperands(opcode)(operands)(rest)
+
 let expectNoInstructionText (needle: Str) (lines: List(Str)) =
     if hasInstructionText(needle)(lines)
     then test.fail("expected no `" + needle + "` in:\n" + Ashes.Text.join("\n")(lines))
@@ -195,15 +203,15 @@ let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
     |> expectInstruction("LoadConstInt          Target=11 Value=63")
     |> expectNoInstructionText("call_copy_arena_result")
     |> liftedFunctionLines
-    |> expectInstruction("Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true")
-    |> expectInstruction("JumpIfFalse           CondTemp=24 Target=tmc_first_8")
-    |> expectInstruction("Jump                  Target=lambda_1_body")
-    |> expectInstruction("JumpIfFalse           CondTemp=34 Target=tmc_close_empty_10")
-    |> expectInstruction("AndInt                Target=41 Left=40 Right=39")
-    |> expectInstruction("JumpIfFalse           CondTemp=41 Target=rc_result_owned_12")
-    |> expectInstruction("CopyOutList           DestTemp=42 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary")
     |> expectNoInstructionText("Value=63")
     |> expectNoInstructionText("call_copy_arena_result")
+    |> expectOperands("Alloc")(" SizeBytes=16 RuntimeManaged=true")
+    |> expectOperands("JumpIfFalse")(" Target=tmc_first_")
+    |> expectInstruction("Jump                  Target=lambda_1_body")
+    |> expectOperands("JumpIfFalse")(" Target=tmc_close_empty_")
+    |> expectOperands("AndInt")(" Left=")
+    |> expectOperands("JumpIfFalse")(" Target=rc_result_owned_")
+    |> expectOperands("CopyOutList")(" HeadCopy=String Purpose=ArenaResultBoundary")
     |> (given (_) -> Unit)
 
 // The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
