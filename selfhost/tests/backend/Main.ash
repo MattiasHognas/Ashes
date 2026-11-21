@@ -5279,34 +5279,10 @@ let testRcReleaseInstrumentation unit =
                 |> Ashes.Text.contains(text)
                 |> test.assertEqual(expected))
 
-let testForkedServerWorkerIndex unit =
-    (let build name context =
-        let entry =
-            handBuiltEntryFunction(name)([
-                0
-                |> LoadConstInt(0)
-                |> irOf,
-                2
-                |> LoadConstInt(1)
-                |> irOf,
-                1
-                |> CreateForkWorkersTask(2)(0)
-                |> irOf,
-                2
-                |> RunTask(3)
-                |> irOf,
-                false
-                |> GetAdtField(4)(3)(0)
-                |> irOf,
-                "parent"
-                |> JumpIfFalse(4)
-                |> irOf,
-                irOf(PrintInt(4)),
-                irOf(Label("parent")),
-                irOf(Return(0))
-            ])(0)(5)
-        in codegenEntryFunction(name)(context)(entry)([])
-    in assertProgramPrints(build)("forkedServerWorkerIndex")("selfhost_backend_server_worker_index")("1"))
+let testForkedServerWorkerIndex shipped unit =
+    (let source = "import Ashes.Net.Tcp.Server\nimport Ashes.Task\nexternal type WaitStatus\nexternal waitChild(FfiBuffer(WaitStatus)) -> u32 = \"wait@libc.so.6\"\nmatch Ashes.Task.run(Ashes.Net.Tcp.Server.forkWorkers(0)(2)) with\n    | Ok(0) -> let pid = waitChild([]) in Ashes.IO.print(pid != 0u32 && pid != 4294967295u32)\n    | Ok(index) -> Ashes.IO.print(index)\n    | Error(message) -> Ashes.IO.print(message)"
+    in
+        assertProgramPrintsLinesWithImports([("wait", "libc.so.6")])(codegenOptimizedShippedSource(shipped)(source))("forkedServerWorkerIndex")("selfhost_backend_server_worker_index")(["1", "true"]))
 
 let testServerStopSignals unit =
     (let build name context =
@@ -6261,7 +6237,7 @@ let run shipped =
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
     |> testRcReleaseInstrumentation
-    |> testForkedServerWorkerIndex
+    |> testForkedServerWorkerIndex(shipped)
     |> testServerStopSignals
     |> testServerDrainTimeoutSetting
     |> testReallocatedPoisonedCell
