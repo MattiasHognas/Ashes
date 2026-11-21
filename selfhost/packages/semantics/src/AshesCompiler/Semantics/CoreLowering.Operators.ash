@@ -766,8 +766,7 @@ let hasActiveTraitEvidence (traitName: Str) (typeArgument: SemanticType) (state:
         | entries ->
             match sortedTraitMethodNames(traitName)(state) with
                 | [] -> false
-                | methodName :: _rest ->
-                    activeTraitMethod(traitName)(typeArgument)(methodName)(state)(entries) != None activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) != None
+                | methodName :: _rest -> activeTraitMethod(traitName)(typeArgument)(methodName)(state)(entries) != None
 
 let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
     match implementation with
