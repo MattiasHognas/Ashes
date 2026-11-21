@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ProjectSyntaxStitching
@@ -3823,17 +3824,27 @@ let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assert
 
 // `codegenShippedSource` with `IrOptimizer` run in between, as the real compile pipeline does for
 // a program using the standard library.
-let codegenOptimizedShippedSource shipped source name context =
+let codegenOptimizedShippedSourceWithDump dumpPath shipped source name context =
     match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
         | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
         | Ok(StitchedSyntaxProject { program = program }) ->
             match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
                 | CoreLoweringResult { program = Some(lowered), error = None } ->
-                    lowered
-                    |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
-                    |> codegenProgram(name)(context)
+                    let _ =
+                        match dumpPath with
+                            | None -> Unit
+                            | Some(path) ->
+                                match Ashes.IO.File.writeText(path)(Ashes.Text.join("\n")(formatIr(lowered)(LoweredIr)(None)) + "\n") with
+                                    | Ok(_) -> Unit
+                                    | Error(message) -> test.fail("could not write " + path + ": " + message)
+                    in
+                        lowered
+                        |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+                        |> codegenProgram(name)(context)
                 | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
                 | _ -> test.fail("lowering produced no program")
+
+let codegenOptimizedShippedSource shipped source name context = codegenOptimizedShippedSourceWithDump(None)(shipped)(source)(name)(context)
 
 // The end-to-end regression programs shared with stage 0 under `tests/` (relative to the
 // repository root the suite runs from), compiled verbatim: their leading `// expect:` directive
@@ -3883,7 +3894,13 @@ let testRecursiveAwaitingHelperRemainsCallable shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))("recursiveAwaitingHelperRemainsCallable")("selfhost_backend_recursive_awaiting_helper")("62")
 
 let testCompileConcurrentHttpServerForReplay shipped unit =
-    compileTestExecutable([])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/concurrent_http_server.ash.source"))("concurrentHttpServer")("selfhost_backend_concurrent_http_server")
+    (let executable = "selfhost_backend_concurrent_http_server"
+    in
+        let build =
+            "selfhost/tests/backend/fixtures/concurrent_http_server.ash.source"
+            |> sharedTestSource
+            |> codegenOptimizedShippedSourceWithDump(Some(executable + ".lowered.ir"))(shipped)
+        in compileTestExecutable([])(build)("concurrentHttpServer")(executable))
 
 let annotatedCallbackSource rounds =
     (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
