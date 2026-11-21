@@ -264,6 +264,8 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/mutually_recursive_show_functions_keep_dictionary_at_call_sites.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/higher_order_constrained_alias_uses_later_constructor_argument.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_uses_declared_arithmetic_methods.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/captured_partial_separates_early_and_residual_requirements.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/generalized_partial_runs_callee_prefix_before_next_binding.ash"))
                 |> (given (_) -> checkTypedEntryCopy(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))

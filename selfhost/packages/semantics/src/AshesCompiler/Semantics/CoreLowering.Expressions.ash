@@ -15,6 +15,7 @@ import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Syntax.callArgumentsPipe
 import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.RecursiveTraitEvidence
+import AshesCompiler.Semantics.StrictPartialStages.scheduleStrictLocal
 import AshesCompiler.Semantics.CoreConstrainedSpecialization
 import AshesCompiler.Semantics.CoreConstrainedBindings
 import AshesCompiler.Semantics.OperatorConstraintOrigins.mayOriginateOperatorConstraint
@@ -2993,10 +2994,12 @@ let nameCarriesOperatorConstraint (state: CoreLoweringState) (name: Str) =
 // A plan needs a generalized `Eq`, `Ord` or `Not` requirement on the binding's scheme. With no
 // written `requires`, the scheme's requirements are the ones its value produced, so a value that
 // can produce none of the three has no plan and the inference that would say so is not run.
+let mentionsStandardMethod value = exprReadsName("Show")(value) || exprReadsName("Ashes.Trait.Show")(value) || exprReadsName("Hash")(value) || exprReadsName("Ashes.Trait.Hash")(value)
+
 let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraintSyntax)) (state: CoreLoweringState) =
     match requirements with
         | [] ->
-            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false && mentionsUserDeclaredTrait(value)(programTraitDefinitions(state))(state) == false
+            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false && mentionsUserDeclaredTrait(value)(programTraitDefinitions(state))(state) == false && !mentionsStandardMethod(value)
         | _ -> false
 
 let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
@@ -3032,7 +3035,7 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
 let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation requirements (state: CoreLoweringState) =
     let (candidate, forwardsRequirements) =
         match lambdaParts(value) with
-            | Some(_parts) -> (written || !constrainedPlanCannotApply(value)(requirements)(state), written)
+            | Some(_parts) -> (written || !constrainedPlanCannotApply(value)(requirements)(state), written || mentionsStandardMethod(value))
             | None ->
                 let partial = !isRecursive && constrainedPartialApplication(value)(state)
                 in (partial, partial)
@@ -3451,7 +3454,7 @@ let lowerConstrainedNestedBody name provisional scheme outerBindings lower body 
         |> restoreBindings(replaceConstrainedScheme(name)(logical)(state.bindings))
         |> lower(body))
 
-let lowerPossiblyConstrainedLet name value body annotation requirements lower (state: CoreLoweringState) =
+let lowerScheduledConstrainedLet name value body annotation requirements lower (state: CoreLoweringState) =
     match constrainedAliasBinding(value)(state) with
         | Some(binding) ->
             lowerArenaBracketedNestedLetWith(name)(value)(body)(lowerConstrainedNestedBody(name)(false)(binding.scheme)(state.bindings)(lower))(given (_value) ->
@@ -3470,6 +3473,11 @@ let lowerPossiblyConstrainedLet name value body annotation requirements lower (s
                                 match nestedOperatorGenericLetScheme(name)(lambdaValue)(state) with
                                     | Some(recorded) -> lowerNestedOperatorGenericLet(name)(lambdaValue)(body)(recorded)(lower)(state)
                                     | None -> lowerLet(name)(lambdaValue)(body)(lower)(state)
+
+let lowerPossiblyConstrainedLet name value body annotation requirements lower state =
+    match scheduleStrictLocal(name)(value)(body)(annotation)(requirements) with
+        | Some(staged) -> lower(staged)(state)
+        | None -> lowerScheduledConstrainedLet(name)(value)(body)(annotation)(requirements)(lower)(state)
 
 let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
     match constrainedBindingPlan(name)(true)(value)(annotation)(requirements)(state) with

@@ -80,6 +80,7 @@ import AshesCompiler.Semantics.CoreLowering.Matches
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Expressions
+import AshesCompiler.Semantics.StrictPartialStages.scheduleStrictProgram
 export (
     value allTopLevelBindingNames,
     value lowerProgramPasses,
@@ -2254,12 +2255,16 @@ let replayProgramWithProofs items trailingBody environment seed firstState first
                                 | (retainedProofs, _ordered) -> emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed)
                 else emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed)
 
-let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
+let lowerScheduledProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                 | ([], []) -> first
                 | (pending, equalityGoals) -> replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
+
+let lowerProgramPasses items trailing environment seed =
+    match scheduleStrictProgram(items)(trailing) with
+        | (scheduled, body) -> lowerScheduledProgramPasses(scheduled)(body)(environment)(seed)
 
 // The two passes lowerProgramPasses runs, each with the time `clock` reads around it in
 // milliseconds, and how many trait goals and structural equality goals the first left open.
@@ -2278,7 +2283,7 @@ let recursive goalKeysOf (goals: List((Str, SemanticType))) =
         | [] -> []
         | (key, _goalType) :: rest -> key :: goalKeysOf(rest)
 
-let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
+let lowerScheduledProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
     (let started = clock(Unit)
     in
         match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
@@ -2290,6 +2295,10 @@ let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreL
                         | (pending, equalityGoals) ->
                             let replayed = replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
                             in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
+
+let lowerProgramPassesMeasured clock items trailing environment seed =
+    match scheduleStrictProgram(items)(trailing) with
+        | (scheduled, body) -> lowerScheduledProgramPassesMeasured(clock)(scheduled)(body)(environment)(seed)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

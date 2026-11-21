@@ -374,7 +374,7 @@ public sealed partial class Lowering
         }
     }
 
-    private Program ElaborateInferredTraitBindings(Program program)
+    private Program ElaborateInferredTraitBindings(Program program, bool scheduleStrictStages = true)
     {
         var discoveryDiagnostics = new Diagnostics();
         var discovery = new Lowering(
@@ -391,6 +391,8 @@ public sealed partial class Lowering
             isTraitValidationSubpass: false);
         CopySourceContextTo(discovery);
         _ = discovery.Lower(program);
+        Program staged = scheduleStrictStages ? discovery.ScheduleStrictPartialStages(program) : program;
+        if (!ReferenceEquals(staged, program)) return ElaborateInferredTraitBindings(staged, scheduleStrictStages: false);
         if (discoveryDiagnostics.StructuredErrors.Count > 0)
         {
             // The discovery pass is the only one that still sees which operations justify each written
@@ -633,6 +635,7 @@ public sealed partial class Lowering
         IReadOnlyList<TraitConstraint> encounteredRequirements,
         bool needsLateTypeHint = false)
     {
+        NoteStrictPartialBinding(binding, scheme);
         if (_collectInferredTraitElaboration
             && !_topLevelBindingNames.Contains(binding.Name)
             && binding.Value is Expr.Var)
