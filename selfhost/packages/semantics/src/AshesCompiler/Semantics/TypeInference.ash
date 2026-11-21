@@ -11,6 +11,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.EvidenceDemand
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
@@ -19,6 +20,8 @@ import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
 export (
     type TypeEnvironment(..),
+    type EvidenceBindingInference(..),
+    value inferEvidenceBinding,
     type ExternalFunctionInferenceDefinition(..),
     type ConstructorInferenceDefinition(..),
     type ConstructorFieldGroup(..),
@@ -200,6 +203,8 @@ type TypeEnvironment =
     // the negation of `x`. Program inference turns it on; an environment built for lowering
     // leaves it off, so its speculative inference is unchanged.
     | programInferenceRules: Bool
+    | evidenceProfiles: MapTree(Str, List(Int))
+    | inFunctionBody: Bool
     // When present, mirrors `bindings` and `constructors` by name. Only an environment that
     // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
     // program inference does, an environment built for lowering does not.
@@ -254,6 +259,7 @@ type TypeInferenceError =
     | UnjustifiedWrittenTraitRequirement(Str, List(SemanticType))
     | AmbiguousTraitRequirement(Str, List(SemanticType))
     | UndeterminedTraitRequirement(Str, List(SemanticType))
+    | ImmediateTraitEvidenceRequired(Str, List(SemanticType))
     | NoTraitImplementation(Str, List(SemanticType))
     | ExternalFunctionRequiresDirectCall(Str)
     | NonExhaustiveMatch(Str)
@@ -367,7 +373,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, evidenceProfiles = Ashes.Collection.Map.empty, inFunctionBody = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -411,6 +417,11 @@ let indexConstructorBinding (definition: ConstructorInferenceDefinition) (index:
                 )
             )
 
+let shadowEvidenceProfile name (environment: TypeEnvironment) =
+    match Ashes.Collection.Map.getStr(name)(environment.evidenceProfiles) with
+        | Some(_old) -> Ashes.Collection.Map.setStr(name)([])(environment.evidenceProfiles)
+        | None -> environment.evidenceProfiles
+
 let addTypeBinding name scheme (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes, lookupIndex = index } ->
@@ -418,7 +429,7 @@ let addTypeBinding name scheme (environment: TypeEnvironment) =
                 match schemes with
                     | Some(open) -> Some(scheme :: open)
                     | None -> None
-            in environment with bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
+            in environment with evidenceProfiles = shadowEvidenceProfile(name)(environment), bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
@@ -647,7 +658,7 @@ let withProgramInferenceRules (environment: TypeEnvironment) =
         |> indexConstructorBindings(environment.constructors)
     )
 
-let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false, lookupIndex = None, generalizationSchemes = None
+let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false, inFunctionBody = false, lookupIndex = None, generalizationSchemes = None
 
 // Between two top-level declarations every binding in scope is generalized, so none holds a free
 // type variable: a declaration's generalization only has to look at what it adds itself.
@@ -1008,12 +1019,17 @@ let recordNodeType (node: Int) (result: TypeInferenceResult) =
             result with supply = withNodeNote(NodeTypeNote(node)(semanticType))(supply)
         | _ -> result
 
+let withEvidenceSite node demands (supply: TypeVariableSupply) =
+    match demands with
+        | [] -> supply
+        | _ -> supply with evidenceSites = (node, demands) :: supply.evidenceSites
+
 let noteOperator (environment: TypeEnvironment) (node: Int) (traitName: Str) operandType (result: TypeInferenceResult) =
     if recordsAt(environment)(node)
     then
         match result with
             | TypeInferenceResult { supply = supply, error = None } ->
-                result with supply = withNodeNote(NodeOperatorNote(node)(traitName)(operandType))(supply)
+                result with supply = supply |> withNodeNote(NodeOperatorNote(node)(traitName)(operandType)) |> withEvidenceSite(node)([(TraitConstraint(traitName = traitName, typeArguments = [operandType]), 0)])
             | _ -> result
     else result
 
@@ -1090,33 +1106,44 @@ let recursive dictionaryRequirements (quantified: List((Int, Str))) (arguments: 
             then TraitConstraint(traitName = traitName, typeArguments = instantiatedTypes(arguments)(typeArguments)) :: dictionaryRequirements(quantified)(arguments)(rest)
             else dictionaryRequirements(quantified)(arguments)(rest)
 
-// Notes at `node` the instantiation `instantiate(scheme)(before)` made.
-let noteInstantiationAt (environment: TypeEnvironment) (node: Int) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
+// Keep each scheme ordinal attached to its original requirement before renaming: the normal
+// instantiation canonicalizes again, and two occurrences of one trait can change sort order.
+let recursive instantiateDemandRequirements arguments constraints =
+    match constraints with
+        | [] -> []
+        | TraitConstraint { traitName = name, typeArguments = types } :: rest -> TraitConstraint(traitName = name, typeArguments = instantiatedTypes(arguments)(types)) :: instantiateDemandRequirements(arguments)(rest)
+
+let noteReferenceAt name (environment: TypeEnvironment) node (scheme: TypeScheme) (before: TypeVariableSupply) requirements (after: TypeVariableSupply) =
     if recordsAt(environment)(node)
     then
-        match scheme.quantified with
-            | [] -> after
-            | quantified ->
-                let arguments = instantiationArguments(quantified)(before.nextId)
+        let arguments = instantiationArguments(scheme.quantified)(before.nextId)
+        in
+            let demands =
+                match scheme.constraints with
+                    | [] -> []
+                    | constraints ->
+                        let stages =
+                            match Ashes.Collection.Map.getStr(name)(environment.evidenceProfiles) with
+                                | Some(profile) -> profile
+                                | None -> []
+                        in
+                            scheme.body
+                            |> functionArgumentCount
+                            |> zipEvidenceStages(instantiateDemandRequirements(arguments)(constraints))(stages)
+            in
+                let noted = withEvidenceSite(node)(demands)(after)
                 in
-                    withNodeNote(scheme.constraints
-                    |> dictionaryRequirements(quantified)(arguments)
-                    |> NodeInstantiationNote(node)(arguments)(requirements))(after)
+                    match scheme.quantified with
+                        | [] -> noted
+                        | quantified ->
+                            withNodeNote(NodeInstantiationNote(node)(arguments)(requirements)(dictionaryRequirements(quantified)(arguments)(scheme.constraints))(demands))(noted)
     else after
 
-// Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
-let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
-    if recordsAt(environment)(before.currentNode)
-    then
-        match scheme.quantified with
-            | [] -> after
-            | quantified ->
-                let arguments = instantiationArguments(quantified)(before.nextId)
-                in
-                    withNodeNote(scheme.constraints
-                    |> dictionaryRequirements(quantified)(arguments)
-                    |> NodeInstantiationNote(before.currentNode)(arguments)(requirements))(after)
-    else after
+let noteInstantiationAt environment node scheme before requirements after = noteReferenceAt("")(environment)(node)(scheme)(before)(requirements)(after)
+
+let noteReferenceInstantiation name environment scheme (before: TypeVariableSupply) requirements after = noteReferenceAt(name)(environment)(before.currentNode)(scheme)(before)(requirements)(after)
+
+let noteInstantiation environment scheme before requirements after = noteReferenceInstantiation("")(environment)(scheme)(before)(requirements)(after)
 
 // Unary `-x` reaches inference as `0 - x`: the parser has no negation node. A subtraction whose
 // left operand is the literal zero is therefore the operand's own negation, at the operand's type.
@@ -1606,8 +1633,8 @@ let callArgumentEnvironment function (environment: TypeEnvironment) =
 // The environment a lambda's body is inferred in: a lambda is a function of its own, so its body
 // is outside any enclosing `async` body.
 let lambdaBodyEnvironment (environment: TypeEnvironment) =
-    if environment.inAsyncBody
-    then environment with inAsyncBody = false
+    if environment.inAsyncBody || environment.inFunctionBody == false
+    then environment with inAsyncBody = false, inFunctionBody = true
     else environment
 
 // Whether a call is of `Ashes.Task.fork` outside an `async` body, which stage 0 rejects at the
@@ -3307,6 +3334,98 @@ let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(Tr
         |> reduceRequirements(16)(environment)
         |> canonicalizeTraitConstraints
     else constraints
+
+type EvidenceBindingInference =
+    | scheme: TypeScheme
+    | environment: TypeEnvironment
+    | supply: TypeVariableSupply
+    | error: Maybe(TypeInferenceError)
+
+let recursive resolvedDemands (environment: TypeEnvironment) substitution demands =
+    match demands with
+        | [] -> []
+        | (constraint, stage) :: rest ->
+            let reduced =
+                [constraint]
+                |> applyInferenceConstraints(substitution)
+                |> requirementsLeftToWrite(environment)
+            in
+                rest
+                |> resolvedDemands(environment)(substitution)
+                |> append(zipEvidenceStages(reduced)([])(stage))
+
+let recursive requiredStage (environment: TypeEnvironment) requirement demands =
+    match demands with
+        | [] -> -1
+        | (other, stage) :: rest ->
+            let later = requiredStage(environment)(requirement)(rest)
+            in
+                if (later < 0 || stage < later) && (other == requirement || traitConstraintImplies(requirement)(other)(environment))
+                then stage
+                else later
+
+let recursive bindingStages environment requirements demands =
+    match requirements with
+        | [] -> []
+        | requirement :: rest -> requiredStage(environment)(requirement)(demands) :: bindingStages(environment)(rest)(demands)
+
+let recursive openImmediateRequirements demands =
+    match demands with
+        | [] -> []
+        | (TraitConstraint { typeArguments = arguments } as constraint, stage) :: rest ->
+            if stage == 0 && freeTypeVariables(SemTuple(arguments)) != []
+            then constraint :: openImmediateRequirements(rest)
+            else openImmediateRequirements(rest)
+
+// A local strictly evaluated value has one evidence type through the entire enclosing
+// invocation. Hold those variables out of its local quantifier; its surrounding lambda can
+// then generalize them, after its body has related them to the parameter and result.
+let inferEvidenceBinding (name: Str) (value: Expr) (semanticType: SemanticType) selected (base: TypeEnvironment) (scope: TypeEnvironment) substitution (supply: TypeVariableSupply) =
+    (let demands =
+        if base.programInferenceRules && selected != []
+        then
+            supply.evidenceSites
+            |> demandStagesForValue(identifiedNode(value))(value)
+            |> resolvedDemands(base)(substitution)
+        else []
+    in
+        let immediate = openImmediateRequirements(demands)
+        in
+            let ambient = inferenceEnvironmentSchemes(base)
+            in
+                let boundary =
+                    match immediate with
+                        | [] -> ambient
+                        | _ -> TypeScheme(quantified = [], body = SemTuple([]), constraints = immediate) :: ambient
+                in
+                    let scheme = generalizeUnderSubstitution(boundary)(substitution)(semanticType)(selected)
+                    in
+                        let bound = addTypeBinding(name)(scheme)(scope)
+                        in
+                            let stages = bindingStages(base)(scheme.constraints)(demands)
+                            in
+                                let next =
+                                    match stages with
+                                        | [] -> bound
+                                        | _ -> bound with evidenceProfiles = Ashes.Collection.Map.setStr(name)(stages)(bound.evidenceProfiles)
+                                in
+                                    let noted =
+                                        if base.programInferenceRules && stages != [] && identifiedNode(value) >= 0
+                                        then
+                                            withNodeNote(NodeEvidenceProfileNote(identifiedNode(value))(stages))(supply)
+                                        else supply
+                                    in
+                                        let error =
+                                            match immediate with
+                                                | TraitConstraint { traitName = traitName, typeArguments = args } :: _rest ->
+                                                    if base.inFunctionBody
+                                                    then None
+                                                    else
+                                                        args
+                                                        |> ImmediateTraitEvidenceRequired(traitName)
+                                                        |> Some
+                                                | [] -> None
+                                        in EvidenceBindingInference(scheme = scheme, environment = next, supply = noted, error = error))
 
 let recursive implementationHeadMatches typeArguments (implementations: List(TraitImplementationInferenceDefinition)) =
     match implementations with
@@ -5336,7 +5455,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
+                                            noteReferenceInstantiation(name)(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | ExprQualifiedVar(moduleName, name) ->
@@ -5466,24 +5585,12 @@ and inferWith expression environment substitution supply ambientRow =
                         valueSupply
                     ) with
                         | TypeInferenceResult { semanticType = checkedValue, substitution = checkedSubstitution, supply = checkedSupply, constraints = selectedConstraints, error = None } ->
-                            let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
-                            in
-                                let scheme =
-                                    generalizeUnderSubstitution(
-                                        inferenceEnvironmentSchemes(environment),
-                                        checkedSubstitution,
-                                        resolvedValue,
-                                        selectedConstraints
-                                    )
-                                in
-                                    let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
-                                    in
-                                        match scheme with
-                                            | TypeScheme { quantified = quantified } ->
-                                                addConstraints(
-                                                    retainedOuterRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
-                                                    inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
-                                                )
+                            match inferEvidenceBinding(name)(value)(applySubstitution(checkedSubstitution)(checkedValue))(selectedConstraints)(environment)(environment)(checkedSubstitution)(checkedSupply) with
+                                | EvidenceBindingInference { scheme = scheme, environment = bodyEnvironment, supply = boundSupply, error = None } ->
+                                    ambientRow
+                                    |> inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(boundSupply))
+                                    |> addConstraints(retainedOuterRequirements(environment)(scheme.quantified)(checkedSubstitution)(selectedConstraints))
+                                | EvidenceBindingInference { error = Some(error) } -> inferenceFailure(checkedValue)(checkedSubstitution)(checkedSupply)(error)
                         | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) ->
@@ -5519,32 +5626,12 @@ and inferWith expression environment substitution supply ambientRow =
                                                     unifiedSupply
                                                 ) with
                                                     | TypeInferenceResult { semanticType = checkedType, substitution = checkedSubstitution, supply = checkedSupply, constraints = selectedConstraints, error = None } ->
-                                                        let resolvedType =
-                                                            applySubstitution(
-                                                                checkedSubstitution,
-                                                                checkedType
-                                                            )
-                                                        in
-                                                            let scheme =
-                                                                generalizeUnderSubstitution(
-                                                                    inferenceEnvironmentSchemes(environment),
-                                                                    checkedSubstitution,
-                                                                    resolvedType,
-                                                                    selectedConstraints
-                                                                )
-                                                            in
-                                                                match scheme with
-                                                                    | TypeScheme { quantified = quantified } ->
-                                                                        addConstraints(
-                                                                            retainedOuterRequirements(environment)(quantified)(checkedSubstitution)(selectedConstraints),
-                                                                            inferWith(
-                                                                                body,
-                                                                                addTypeBinding(name)(scheme)(environment),
-                                                                                checkedSubstitution,
-                                                                                noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply),
-                                                                                ambientRow
-                                                                            )
-                                                                        )
+                                                        match inferEvidenceBinding(name)(value)(applySubstitution(checkedSubstitution)(checkedType))(selectedConstraints)(environment)(environment)(checkedSubstitution)(checkedSupply) with
+                                                            | EvidenceBindingInference { scheme = scheme, environment = bodyEnvironment, supply = boundSupply, error = None } ->
+                                                                ambientRow
+                                                                |> inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(boundSupply))
+                                                                |> addConstraints(retainedOuterRequirements(environment)(scheme.quantified)(checkedSubstitution)(selectedConstraints))
+                                                            | EvidenceBindingInference { error = Some(error) } -> inferenceFailure(checkedType)(checkedSubstitution)(checkedSupply)(error)
                                                     | failure -> failure
                                             | failure -> failure
                                 | failure -> failure
@@ -6089,19 +6176,8 @@ let inferTopLevelBindingLocated name value annotation requirements environment s
                 | TypeInferenceResult { semanticType = checkedValue, substitution = checkedSubstitution, supply = checkedSupply, constraints = selectedConstraints, error = None } ->
                     let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
                     in
-                        let scheme =
-                            generalizeUnderSubstitution(
-                                inferenceEnvironmentSchemes(environment),
-                                checkedSubstitution,
-                                resolvedValue,
-                                selectedConstraints
-                            )
-                        in
-                            TopLevelBindingInferenceResult(environment = addTypeBinding(
-                                name,
-                                scheme,
-                                environment
-                            ), semanticType = resolvedValue, substitution = checkedSubstitution, supply = checkedSupply, error = None)
+                        match inferEvidenceBinding(name)(value)(resolvedValue)(selectedConstraints)(environment)(environment)(checkedSubstitution)(checkedSupply) with
+                            | EvidenceBindingInference { environment = bound, supply = boundSupply, error = bindError } -> TopLevelBindingInferenceResult(environment = bound, semanticType = resolvedValue, substitution = checkedSubstitution, supply = boundSupply, error = bindError)
                 | TypeInferenceResult { semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } ->
                     TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(
                         error

@@ -14,6 +14,7 @@ import RecordFieldInferenceTests
 import ResultInferenceTests
 import CapabilityInferenceTests
 import RecordedInferenceCoverageTests
+import ImmediateEvidenceInferenceTests
 import TraitInferenceTests
 import TraitEvidenceAbiTests
 import TraitEvidenceArgumentTests
@@ -114,6 +115,7 @@ let run unit =
     |> (given (_) -> ResultInferenceTests.runResultInferenceTests(Unit))
     |> (given (_) -> CapabilityInferenceTests.runCapabilityInferenceTests(Unit))
     |> (given (_) -> RecordedInferenceCoverageTests.runRecordedInferenceCoverageTests(Unit))
+    |> (given (_) -> ImmediateEvidenceInferenceTests.runImmediateEvidenceInferenceTests(Unit))
     |> (given (_) -> TraitInferenceTests.runTraitInferenceTests(Unit))
     |> (given (_) -> TraitEvidenceAbiTests.runTraitEvidenceAbiTests(Unit))
     |> (given (_) -> TraitEvidenceArgumentTests.runTraitEvidenceArgumentTests(Unit))

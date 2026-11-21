@@ -801,6 +801,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | UnjustifiedWrittenTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Written requires clause includes unjustified requirement '" + requirementText(placements)(traitName)(types) + "'.")
         | AmbiguousTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Trait requirement '" + requirementText(placements)(traitName)(types) + "' is ambiguous because its type variable does not occur in the binding type.")
         | UndeterminedTraitRequirement(traitName, types) -> coded(invalidTraitDeclarationCode)("Trait requirement '" + requirementText(placements)(traitName)(types) + "' is ambiguous: its type cannot be determined from context, so no evidence can be supplied for it.")
+        | ImmediateTraitEvidenceRequired(traitName, types) -> coded(invalidTraitDeclarationCode)("Trait requirement '" + requirementText(placements)(traitName)(types) + "' is needed while evaluating this binding. Add a type annotation to determine its instance.")
         | NoTraitImplementation(traitName, types) -> missingImplementationDiagnostic(placements)(traitName)(types)
         | NonExhaustiveMatch(message) -> uncoded(message)
         | UnreachableMatchArm(message) -> uncoded(message)

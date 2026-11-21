@@ -20,6 +20,7 @@ export (
     value nodeTypeAt,
     value nodeOperatorAt,
     value nodeInstantiationAt,
+    value nodeEvidenceStagesAt,
     value nodeBindingsAt,
     value nodeDeclarationAt,
     value settledInstantiationArguments,
@@ -50,11 +51,15 @@ type NodeInstantiation =
     | arguments: List((Int, SemanticType))
     | requirements: List(TraitConstraint)
     | dictionaries: List(TraitConstraint)
+    // Instantiated requirements paired with the defining scheme's source demand stages.
+    | evidenceDemands: List((TraitConstraint, Int))
 
 type NodeTypeTable =
     | types: MapTree(Int, SemanticType)
     | operators: MapTree(Int, NodeOperator)
     | instantiations: MapTree(Int, NodeInstantiation)
+    // Per canonical scheme requirement at the source RHS of a binding.
+    | evidenceStages: MapTree(Int, List(Int))
     // The names a node brings into scope: at a `let` its binding, at an arm guard or body the arm's pattern
     // variables.
     | bindings: MapTree(Int, List((Str, TypeScheme)))
@@ -64,13 +69,15 @@ type NodeTypeTable =
     | typeCount: Int
     | repeatedCount: Int
 
-let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, declarations = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
+let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, evidenceStages = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, declarations = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
 
 let nodeTypeAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.types)
 
 let nodeOperatorAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.operators)
 
 let nodeInstantiationAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.instantiations)
+
+let nodeEvidenceStagesAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.evidenceStages)
 
 let nodeBindingsAt (node: Int) (table: NodeTypeTable) =
     match Ashes.Collection.Map.getInt(node)(table.bindings) with
@@ -161,6 +168,11 @@ let recursive resolveRequirements (substitution: MapTree(Int, SemanticType)) (re
         | [] -> []
         | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail -> TraitConstraint(traitName = traitName, typeArguments = resolveTypes(substitution)(typeArguments)) :: resolveRequirements(substitution)(tail)
 
+let recursive resolveDemands substitution demands =
+    match demands with
+        | [] -> []
+        | (TraitConstraint { traitName = name, typeArguments = arguments }, stage) :: rest -> (TraitConstraint(traitName = name, typeArguments = resolveTypes(substitution)(arguments)), stage) :: resolveDemands(substitution)(rest)
+
 let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable) (note: NodeTypeNote) =
     match note with
         | NodeTypeNote(node, semanticType) ->
@@ -177,13 +189,17 @@ let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable)
                         table with operators = Ashes.Collection.Map.setInt(node)(
                             NodeOperator(traitName = traitName, operandType = resolvedOperand, instance = operatorInstanceOf(traitName)(resolvedOperand))
                         )(table.operators)
-        | NodeInstantiationNote(node, arguments, requirements, dictionaries) ->
+        | NodeInstantiationNote(node, arguments, requirements, dictionaries, demands) ->
             match Ashes.Collection.Map.getInt(node)(table.instantiations) with
                 | Some(_younger) -> table
                 | None ->
                     table with instantiations = Ashes.Collection.Map.setInt(node)(
-                        NodeInstantiation(arguments = resolveArguments(substitution)(arguments), requirements = resolveRequirements(substitution)(requirements), dictionaries = resolveRequirements(substitution)(dictionaries))
+                        NodeInstantiation(arguments = resolveArguments(substitution)(arguments), requirements = resolveRequirements(substitution)(requirements), dictionaries = resolveRequirements(substitution)(dictionaries), evidenceDemands = resolveDemands(substitution)(demands))
                     )(table.instantiations)
+        | NodeEvidenceProfileNote(node, stages) ->
+            match Ashes.Collection.Map.getInt(node)(table.evidenceStages) with
+                | Some(_younger) -> table
+                | None -> table with evidenceStages = Ashes.Collection.Map.setInt(node)(stages)(table.evidenceStages)
         | NodeDeclarationNote(node, name, scheme) ->
             table with declarations = Ashes.Collection.Map.setInt(node)(
                 (name, applySchemeSubstitutionMap(substitution)(scheme))

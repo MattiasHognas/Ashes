@@ -163,6 +163,7 @@ type PendingRecursiveBinding =
 
 type ResolvedRecursiveBinding =
     | name: Str
+    | value: Expr
     | semanticType: SemanticType
     | constraints: List(TraitConstraint)
 
@@ -330,7 +331,7 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
                                         valueSupply
                                     ) with
                                         | TypeInferenceResult { semanticType = annotatedType, substitution = annotatedSubstitution, supply = annotatedSupply, constraints = selectedConstraints, error = None } ->
-                                            let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = selectedConstraints)
+                                            let resolvedBinding = ResolvedRecursiveBinding(name = name, value = value, semanticType = annotatedType, constraints = selectedConstraints)
                                             in
                                                 inferRecursiveBindings(
                                                     groupType,
@@ -401,23 +402,21 @@ let recursive recursiveOpenPrintArgument bindings outerEnvironment substitution 
                 | Some(argument) -> Some(argument)
                 | None -> recursiveOpenPrintArgument(tail)(outerEnvironment)(substitution)
 
-let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
+let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment supply =
     match bindings with
-        | [] -> resultEnvironment
-        | ResolvedRecursiveBinding { name = name, semanticType = semanticType, constraints = constraints } :: tail ->
+        | [] -> (resultEnvironment, supply, None)
+        | ResolvedRecursiveBinding { name = name, value = value, semanticType = semanticType, constraints = constraints } :: tail ->
             let resolvedType = applySubstitution(substitution)(semanticType)
             in
-                let resolvedConstraints = applyInferenceConstraints(substitution)(constraints)
+                let selected =
+                    constraints
+                    |> applyInferenceConstraints(substitution)
+                    |> simplifyTraitConstraints(outerEnvironment)
+                    |> requirementsLeftToWrite(outerEnvironment)
                 in
-                    let scheme =
-                        resolvedConstraints
-                        |> simplifyTraitConstraints(outerEnvironment)
-                        |> requirementsLeftToWrite(outerEnvironment)
-                        |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(outerEnvironment))(substitution)(resolvedType)
-                    in
-                        resultEnvironment
-                        |> addTypeBinding(name)(scheme)
-                        |> generalizeRecursiveBindings(tail)(outerEnvironment)(substitution)
+                    match inferEvidenceBinding(name)(value)(resolvedType)(selected)(outerEnvironment)(resultEnvironment)(substitution)(supply) with
+                        | EvidenceBindingInference { error = Some(error) } -> (resultEnvironment, supply, Some(ProgramExpressionError(error)))
+                        | EvidenceBindingInference { environment = next, supply = noted, error = None } -> generalizeRecursiveBindings(tail)(outerEnvironment)(substitution)(next)(noted)
 
 let inferRecursiveGroup bindings state =
     match state with
@@ -453,14 +452,8 @@ let inferRecursiveGroup bindings state =
                                                     |> ProgramExpressionError
                                                 ))
                                             | None ->
-                                                let finalEnvironment =
-                                                    generalizeRecursiveBindings(
-                                                        resolved,
-                                                        outerEnvironment,
-                                                        defaultedSubstitution,
-                                                        outerEnvironment
-                                                    )
-                                                in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                                match generalizeRecursiveBindings(resolved)(outerEnvironment)(defaultedSubstitution)(outerEnvironment)(resolvedSupply) with
+                                                    | (finalEnvironment, finalSupply, error) -> ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = finalSupply, nextTypeSymbolId = nextTypeSymbolId, error = error)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)

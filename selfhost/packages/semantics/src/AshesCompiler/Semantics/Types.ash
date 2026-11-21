@@ -76,7 +76,8 @@ type NodeTypeNote =
     // A reference to a generic binding: the type each quantified variable of its scheme took here,
     // the trait requirements of the scheme at those types, and those of them that mention a
     // quantified variable, in the scheme's order: the dictionaries the reference passes.
-    | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint), List(TraitConstraint))
+    | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint), List(TraitConstraint), List((TraitConstraint, Int)))
+    | NodeEvidenceProfileNote(Int, List(Int))
     // A name a node brings into scope and its scheme. The node is the `let` for a binding and the
     // arm body for a pattern variable.
     | NodeBindingNote(Int, Str, TypeScheme)
@@ -93,10 +94,11 @@ type TypeVariableSupply =
     | nextId: Int
     | currentNode: Int
     | notes: List(NodeTypeNote)
+    | evidenceSites: List((Int, List((TraitConstraint, Int))))
     deriving {Eq, Show}
 
 let initialTypeVariableSupply : Unit -> TypeVariableSupply =
-    given (_unit) -> TypeVariableSupply(nextId = 0, currentNode = -1, notes = [])
+    given (_unit) -> TypeVariableSupply(nextId = 0, currentNode = -1, notes = [], evidenceSites = [])
 
 // A supply that starts above a block of ids some statically embedded `TypeScheme` already
 // quantifies over. Such a scheme is written before any supply runs, so its quantified ids are fixed
@@ -104,7 +106,7 @@ let initialTypeVariableSupply : Unit -> TypeVariableSupply =
 // `(id, SemVariable(id))` and `applySubstitution` recurses on that self-mapping forever. Starting
 // past the reservation is the guarantee; leaving a gap and hoping no program grows into it is not.
 let typeVariableSupplyFrom : Int -> TypeVariableSupply =
-    given (nextId) -> TypeVariableSupply(nextId = nextId, currentNode = -1, notes = [])
+    given (nextId) -> TypeVariableSupply(nextId = nextId, currentNode = -1, notes = [], evidenceSites = [])
 
 // The id an inference supply starts above. Two blocks are minted before any supply runs and must
 // never be reissued: `CoreBuiltinLowering`'s builtin signatures quantify over
@@ -124,7 +126,7 @@ let currentNodeOf (supply: TypeVariableSupply) = supply.currentNode
 
 let withNodeNote (note: NodeTypeNote) (supply: TypeVariableSupply) = supply with notes = note :: supply.notes
 
-let withoutNodeNotes (supply: TypeVariableSupply) = supply with notes = []
+let withoutNodeNotes (supply: TypeVariableSupply) = supply with notes = [], evidenceSites = []
 
 let recursive anyType : (SemanticType -> Bool) -> List(SemanticType) -> Bool =
     given (predicate) ->
