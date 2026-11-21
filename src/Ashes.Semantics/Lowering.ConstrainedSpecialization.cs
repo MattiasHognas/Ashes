@@ -259,6 +259,7 @@ public sealed partial class Lowering
     // substitution will have settled them by its end.
     private void RecordConstrainedCallTypes(Expr rootExpression, int argumentCount, TypeRef calleeType)
     {
+        NoteCallDemands(calleeType, argumentCount);
         if (!_collectInferredTraitElaboration
             || !ConstrainedSpecializationEnabled
             || _elementSpecializationDepth != 0

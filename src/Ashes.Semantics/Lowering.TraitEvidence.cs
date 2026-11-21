@@ -390,11 +390,15 @@ public sealed partial class Lowering
             emitTraitDictionaries: false,
             isTraitValidationSubpass: false);
         CopySourceContextTo(discovery);
-        _ = discovery.Lower(program);
+        IrProgram discoveredProgram = discovery.Lower(program);
         Program staged = scheduleStrictStages ? discovery.ScheduleStrictPartialStages(program) : program;
         if (!ReferenceEquals(staged, program)) return ElaborateInferredTraitBindings(staged, scheduleStrictStages: false);
         if (discoveryDiagnostics.StructuredErrors.Count > 0)
         {
+            if (discovery._immediateEvidenceError)
+            {
+                _failedImmediateEvidenceProgram = discoveredProgram;
+            }
             // The discovery pass is the only one that still sees which operations justify each written
             // requires clause, so take its boundary findings rather than letting this pass re-derive
             // them. Re-deriving them reads bodies whose evidence dictionary emission has already
@@ -1506,7 +1510,8 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type)? TryLowerTraitDictionaryFunctionCall(
         Expr rootExpression,
         IReadOnlyList<Expr> arguments,
-        TextSpan span)
+        TextSpan span,
+        TypeRef? expectedType)
     {
         (int Temp, TypeRef Type)? explicitCall = TryLowerExplicitTraitDictionaryFunctionCall(rootExpression, arguments, span);
         if (explicitCall is not null) return explicitCall;
@@ -1518,6 +1523,7 @@ public sealed partial class Lowering
         }
         ((int functionTemp, TypeRef functionType) function, IReadOnlyList<TraitConstraint> instantiatedConstraints) =
             LowerTraitDictionaryCallRoot(rootExpression);
+        PreconstrainCallResultType(function.functionType, arguments.Count, expectedType);
         RecordConstrainedCallTypes(rootExpression, arguments.Count, function.functionType);
         bool evidenceNeedsLaterArgumentTypes = TraitEvidenceNeedsLaterArgumentTypes(instantiatedConstraints);
         (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? loweredArguments = LowerTraitDictionaryRealArguments(

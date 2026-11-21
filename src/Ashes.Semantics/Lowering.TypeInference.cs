@@ -267,7 +267,9 @@ public sealed partial class Lowering
 
     private InstantiatedTypeScheme InstantiateScheme(TypeScheme scheme)
     {
-        return TraitTypeOperations.Instantiate(scheme, NewTypeVar);
+        InstantiatedTypeScheme instance = TraitTypeOperations.Instantiate(scheme, NewTypeVar, out IReadOnlyDictionary<int, TypeRef> renaming);
+        InstantiateDemands(scheme, instance.Body, renaming);
+        return instance;
     }
 
     // Apply an instantiation substitution (mapping old TVar IDs to fresh TypeRefs) to a type.

@@ -1014,6 +1014,10 @@ public sealed partial class Lowering
         if (_enableInferredTraitElaboration)
         {
             program = ElaborateInferredTraitBindings(program);
+            if (_failedImmediateEvidenceProgram is { } failed)
+            {
+                return failed;
+            }
         }
 
         // External opaque names must be known before constructor fields are resolved, so an ADT field
@@ -4136,6 +4140,7 @@ public sealed partial class Lowering
         int depth0Before = _depth0LambdaCount;
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
 
+        int firstDemand = _traitDemands.Count;
         PushTraitConstraintScope();
         (int valueTemp, TypeRef valueType) value = LowerSequentialLetValueWithAffineArming(
             let,
@@ -4157,7 +4162,8 @@ public sealed partial class Lowering
             value.valueType,
             inferredRequirements,
             writtenRequirements,
-            needsLateTraitTypeHint);
+            needsLateTraitTypeHint,
+            firstDemand);
 
         LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
         RegisterElementSpecializationCandidate(let.Name, let, let.Value, scheme, abstractElementTmcDeclinesBefore);
@@ -4193,7 +4199,8 @@ public sealed partial class Lowering
         TypeRef valueType,
         IReadOnlyList<TraitConstraint> inferredRequirements,
         IReadOnlyList<TraitConstraint> writtenRequirements,
-        bool needsLateTraitTypeHint)
+        bool needsLateTraitTypeHint,
+        int firstDemand)
     {
         bool hasInferredElaboration = _inferredTraitBindingElaborations.ContainsKey(
             TraitBindingKey(binding));
@@ -4205,6 +4212,7 @@ public sealed partial class Lowering
             binding.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(binding.Name));
         TypeScheme scheme = GeneralizeBindingType(Prune(valueType), schemeRequirements);
+        scheme = FinishBindingDemands(binding, valueType, scheme, firstDemand);
         RegisterTraitDictionarySchemeForLet(binding, scheme);
         RecordInferredTraitBindingElaboration(
             binding,
@@ -12003,7 +12011,7 @@ public sealed partial class Lowering
         {
             return reuse;
         }
-        return TryLowerTraitDictionaryFunctionCall(rootExpression, arguments, GetSpan(call));
+        return TryLowerTraitDictionaryFunctionCall(rootExpression, arguments, GetSpan(call), request.ExpectedType);
     }
 
     private (int, TypeRef)? LowerCallTryParallelAndReuseForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)

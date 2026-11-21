@@ -737,7 +737,7 @@ public sealed partial class Lowering
         }
         (TypeRef current, List<int> argumentTemps) = consumed;
         ApplyExpectedTraitMethodType(current, request.ExpectedType);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint, arguments.Count == 0 ? 1 : 0);
         TraitConstraint prunedConstraint = PruneTraitConstraint(constraint);
         ActiveTraitImplementationMethod? activeMethod = FindActiveTraitImplementationMethod(
             method,
@@ -896,7 +896,7 @@ public sealed partial class Lowering
         Unify(leftType, rightType);
         TypeRef operandType = Prune(leftType);
         TraitConstraint constraint = new(trait, [operandType]);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint);
         if (ShouldUsePrimitiveOperatorSpecialization(traitName, operandType))
         {
             return null;
@@ -978,7 +978,7 @@ public sealed partial class Lowering
 
         TypeRef pruned = Prune(operandType);
         TraitConstraint constraint = new(trait, [pruned]);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint);
         if (ShouldUsePrimitiveOperatorSpecialization(traitName, pruned))
         {
             return null;
