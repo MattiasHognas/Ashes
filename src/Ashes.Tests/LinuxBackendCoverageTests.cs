@@ -7074,7 +7074,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildLoopParameterTheBodyNeverReadsProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            sample.Stdout.ShouldBe($"{rounds * 9}\n");
             samples.Add(sample);
         }
 
@@ -7252,7 +7252,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildExitCellOfRecordsPassedToCallProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            sample.Stdout.ShouldBe($"{rounds * 9}\n");
             samples.Add(sample);
         }
 
