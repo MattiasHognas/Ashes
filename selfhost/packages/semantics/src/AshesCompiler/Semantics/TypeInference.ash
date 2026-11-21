@@ -2555,9 +2555,14 @@ let resolveResultSymbolId environment =
     match environment with
         | TypeEnvironment { constructors = constructors } -> standardTypeSymbolId("Result")(constructors)(2)
 
-let resolveTaskSymbolId environment =
-    match environment with
-        | TypeEnvironment { constructors = constructors } -> standardTypeSymbolId("Task")(constructors)(3)
+// Task has no data constructor. Obtain its identity from the same type context
+// as a written Task annotation, including when querying in Core layout space.
+let resolveTaskSymbolId (environment: TypeEnvironment) =
+    (let context = environment.typeResolutionContext
+    in
+        match Ashes.Collection.Map.getStr("Task")(context.definitionsByName) with
+            | Some(NominalTypeDefinition(symbol, "Task", 2, _provenance)) -> symbol
+            | _ -> standardTypeSymbolId("Task")(environment.constructors)(3))
 
 let recursive allPatternNamesPresent : List(Str) -> List(Str) -> Bool =
     given (names) ->
@@ -2592,6 +2597,17 @@ let unifyIn (environment: TypeEnvironment) left right =
     if environment.programInferenceRules
     then unifyFlatRows(left)(right)
     else unify(left)(right)
+
+let unifyAwaitOperand environment actual expected =
+    match actual with
+        | SemNamed(_id, name, _arguments) ->
+            if name == "Task"
+            then unifyIn(environment)(actual)(expected)
+            else
+                UnificationResult(substitution = [], error = expected
+                |> TypeMismatch(actual)
+                |> Some)
+        | _ -> unifyIn(environment)(actual)(expected)
 
 // The root callee of a call chain `f(a)(b)`: what the innermost call applies.
 let recursive callChainRoot expression =
@@ -4370,7 +4386,7 @@ and inferAwait task environment substitution supply ambientRow =
                             in
                                 match mergeUnificationIn(environment)(
                                     taskSubstitution,
-                                    unifyIn(environment)(applySubstitution(taskSubstitution)(taskType))(expectedTask),
+                                    unifyAwaitOperand(environment)(applySubstitution(taskSubstitution)(taskType))(expectedTask),
                                     successSupply,
                                     expectedTask
                                 ) with

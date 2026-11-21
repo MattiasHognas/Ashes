@@ -1,4 +1,8 @@
 import AshesCompiler.Frontend.Parser
+import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Semantics.CoreLowering.Emit.initialState
+import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
+import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreConstrainedBindings
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
@@ -100,11 +104,53 @@ let checkSchemeBoundary unit =
                 | TypeScheme { body = SemFunction(SemVariable(9), SemInt, None), constraints = TraitConstraint { typeArguments = SemVariable(9) :: [] } :: TraitConstraint { typeArguments = SemInt :: [] } :: [] } -> Unit
                 | _ -> Ashes.IO.panic("scheme substitution crossed its quantified boundary"))
 
+// Planning uses Core's live type layouts. Task has no constructor to supply
+// its symbol, and a coroutine still takes the dictionary of its source lambda.
+let checkAsyncPlan unit =
+    (let source = "let job : a -> Task(Str, Str) requires {Show(a)} = given value -> async(let render unit = Show.show(value) in match await Ashes.Task.sleep(1) with | Ok(_) -> render(Unit) | Error(message) -> message) in job"
+    in
+        match source
+        |> parse
+        |> stripExprAt with
+            | ExprLet(name, value, _body, _parameters, annotation, requirements) ->
+                match Unit
+                |> initialState
+                |> constrainedBindingPlan(name)(false)(value)(annotation)(requirements) with
+                    | Some(CoreConstrainedInference { scheme = TypeScheme { body = SemFunction(SemVariable(parameter), SemNamed(0, "Task", SemString :: SemString :: []), _row), constraints = TraitConstraint { traitName = "Show", typeArguments = SemVariable(methodParameter) :: [] } :: [] } as scheme, error = None }) ->
+                        if parameter == methodParameter && !schemeHoldsVariable(parameter)(scheme)
+                        then Unit
+                        else Ashes.IO.panic("async planning detached Show from the generalized value parameter")
+                    | _ -> Ashes.IO.panic("async lost its constrained declaration before closure lowering")
+            | _ -> Ashes.IO.panic("async constrained declaration did not parse"))
+
+// An opaque Task uses the environment's nominal identity. Core shares a
+// layout symbol across named types, so another two-field type is not a task.
+let checkAwaitQueryIdentity unit =
+    (let types = [SemString, SemInt]
+    in
+        let inferAwaited =
+            given (name) ->
+                let environment =
+                    Unit
+                    |> emptyTypeEnvironment
+                    |> addInferenceTypeDefinition(77)("Task")(2)
+                    |> addTypeBinding("pending")(TypeScheme(quantified = [], body = SemNamed(77)(name)(types), constraints = []))
+                in
+                    1000
+                    |> typeVariableSupplyFrom
+                    |> inferExpressionFrom(parse("await pending"))(environment)([])
+        in
+            match (inferAwaited("Task"), inferAwaited("Other")) with
+                | (TypeInferenceResult { semanticType = SemNamed(_id, "Result", SemString :: SemInt :: []), error = None }, TypeInferenceResult { error = Some(ExpectedTaskType(SemNamed(77, "Other", _arguments))) }) -> Unit
+                | _ -> Ashes.IO.panic("await lost the environment's Task identity"))
+
 let runCoreConstrainedBindingsTests unit =
     (let environment = standardTraitEnvironment(Unit)
     in
         Unit
         |> (given (_) -> checkRecursiveInference(environment))
+        |> checkAsyncPlan
+        |> checkAwaitQueryIdentity
         |> (given (_) -> checkBoundaryRequirements(environment))
         |> (given (_) -> checkLayouts(environment))
         |> (given (_) -> checkDistinctDictionaries(environment))

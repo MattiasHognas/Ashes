@@ -12,6 +12,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreConstrainedSpecialization
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
+import AshesCompiler.Semantics.StandardTraits.withAsyncTaskBuilders
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
@@ -476,7 +477,9 @@ let coverageEnvironmentOf layouts builtinLayouts =
         | TypeEnvironment { typeResolutionContext = context } ->
             let empty = emptyTypeEnvironment(Unit)
             in
-                extendCoverageEnvironment((empty with bindings = append(standardTraitQueryBindings)(constrainedBuiltinBindings(builtinLayouts)), typeResolutionContext = context))(layouts)
+                (empty with bindings = append(standardTraitQueryBindings)(constrainedBuiltinBindings(builtinLayouts)), typeResolutionContext = addTypeDefinition(0)("Task")(2)(context))
+                |> withAsyncTaskBuilders(0)
+                |> (given (environment) -> extendCoverageEnvironment(environment)(layouts))
 
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     (let coverageEnvironment =
