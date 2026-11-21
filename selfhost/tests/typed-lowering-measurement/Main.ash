@@ -1,5 +1,7 @@
 import Ashes.Collection.List.reverse as reverseList
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
+import AshesCompiler.Semantics.StitchedSources.stitchedRegionOfName
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectInference
@@ -9,6 +11,7 @@ import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.ShippedModuleStitching
 import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.Types.SemanticType
 let isAshSourceName name = Ashes.Text.length(name) > 4 && Ashes.Text.substring(name)(Ashes.Text.length(name) - 4)(4) == ".ash"
 
 let recursive readShippedModules root names loaded =
@@ -78,7 +81,53 @@ let printMeasurement mode stitchMillis inferMillis (measurement: CoreLoweringMea
                         | (_, Some(error)) -> Ashes.IO.panic("replay-lowering-error: " + Ashes.Trait.Show.show(error))
                         | _ -> Unit)
 
-let measureStitched path mode stitchMillis (stitched: StitchedSyntaxProject) =
+let recursive regionPath (regions: List(StitchedModuleRegion)) index =
+    match regions with
+        | [] -> "<unknown region>"
+        | region :: rest ->
+            if index == 0
+            then region.sourcePath
+            else regionPath(rest)(index - 1)
+
+let activeMethodText (entry: (Str, SemanticType, Str, Str)) =
+    match entry with
+        | (traitName, operand, method, binding) -> traitName + "." + method + "(" + Ashes.Trait.Show.show(operand) + ")=" + binding
+
+let recursive reportSites regions sites =
+    match sites with
+        | [] -> Unit
+        | (ObservedPendingGoal { key = key, structural = structural, region = region, node = node, operand = operand, activeMethods = methods }, resolved) :: rest ->
+            let kind =
+                if structural
+                then "equality"
+                else "trait"
+            in
+                let _ =
+                    Ashes.IO.writeErrorLine(kind + " goal " + key + " source=" + regionPath(regions)(region) + " node=" + Ashes.Trait.Show.show(node) + " operand=" + Ashes.Trait.Show.show(operand) + " resolved=" + Ashes.Trait.Show.show(resolved) + " active_methods=" + "[" + Ashes.Text.join(", ")(Ashes.Collection.List.map(activeMethodText)(methods)) + "]")
+                in reportSites(regions)(rest)
+
+let reportTraversal regions (measurement: CoreLoweringMeasurement) =
+    (let first = measurement.first
+    in
+        let replay = measurement.replay
+        in
+            let (traversals, retained) =
+                match measurement.retainedRelowerings with
+                    | Some(count) -> (3, count)
+                    | None ->
+                        (if measurement.replayed
+                        then 2
+                        else 1, 0)
+            in
+                let _ = Ashes.IO.writeErrorLine("lowering traversals=" + Ashes.Text.fromInt(traversals) + " body_relowerings_first=" + Ashes.Text.fromInt(first.relowerings) + " body_relowerings_retained=" + Ashes.Text.fromInt(retained) + " body_relowerings_emit_replay=" + Ashes.Text.fromInt(replay.relowerings))
+                in
+                    let _ =
+                        match measurement.equalityGoalKeys with
+                            | [] -> Unit
+                            | keys -> Ashes.IO.writeErrorLine("structural equality keys: " + Ashes.Text.join(" ")(keys))
+                    in reportSites(regions)(measurement.goalDetails))
+
+let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProject) =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch complete")
     in
         let _ = Ashes.IO.writeErrorLine("inference start")
@@ -101,21 +150,31 @@ let measureStitched path mode stitchMillis (stitched: StitchedSyntaxProject) =
                                     in
                                         let _ = Ashes.IO.writeErrorLine("first lowering and optional replay start")
                                         in
-                                            let measured =
-                                                if mode == "typed"
+                                            let regions =
+                                                if details
                                                 then
-                                                    identified.program
-                                                    |> identifiedProgramSyntax
-                                                    |> measureCoreProgramLowering(clock)(Some(nodeTypes))(path)("")
-                                                else measureRawCoreProgramLowering(clock)(nodeTypes)(path)("")(stitched.program)
+                                                    stitched
+                                                    |> stitchedRegionOfName
+                                                    |> Some
+                                                else None
                                             in
-                                                let _ =
-                                                    Ashes.IO.writeErrorLine(if measured.replayed
-                                                    then "first lowering and replay complete"
-                                                    else "first lowering complete, replay skipped")
-                                                in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
+                                                let program =
+                                                    if mode == "typed"
+                                                    then identifiedProgramSyntax(identified.program)
+                                                    else stitched.program
+                                                in
+                                                    let measured =
+                                                        measureStitchedLowering(mode == "typed")(regions)(given (_) -> Ashes.IO.writeErrorLine("first lowering complete, replay starting"))(clock)(nodeTypes)(path)(program)
+                                                    in
+                                                        let _ =
+                                                            Ashes.IO.writeErrorLine(if measured.replayed
+                                                            then "first lowering and replay complete"
+                                                            else "first lowering complete, replay skipped")
+                                                        in
+                                                            let _ = reportTraversal(stitched.moduleRegions)(measured)
+                                                            in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
 
-let run path mode =
+let run details path mode =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
     in
         let started = clock(Unit)
@@ -130,8 +189,9 @@ let run path mode =
                             match projectStitchParseDiagnostics(error) with
                                 | Some(diagnostics) -> Ashes.IO.panic("parse-error: " + Ashes.Trait.Show.show(diagnostics))
                                 | None -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
-                        | Ok(stitched) -> measureStitched(path)(mode)(clock(Unit) - started)(stitched))
+                        | Ok(stitched) -> measureStitched(details)(path)(mode)(clock(Unit) - started)(stitched))
 
 match Ashes.IO.args with
-    | path :: mode :: [] when mode == "typed" || mode == "legacy" -> run(path)(mode)
-    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json> <legacy|typed>")
+    | path :: mode :: [] when mode == "typed" || mode == "legacy" -> run(false)(path)(mode)
+    | path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> run(true)(path)(mode)
+    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json> <legacy|typed> [--goal-details]")

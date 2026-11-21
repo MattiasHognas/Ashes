@@ -1101,7 +1101,10 @@ let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: Semant
 // constant of the method's own result type. A deferring pass exists to resolve types, and its
 // instructions are discarded, so the constant is never run.
 let deferTraitGoal (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
-    (let recorded = withStatePendingTraitGoals((key, operandType) :: statePendingTraitGoals(state))(state)
+    (let recorded =
+        state
+        |> withStatePendingTraitGoals((key, operandType) :: statePendingTraitGoals(state))
+        |> observePendingGoal(false)(key)(operandType)
     in
         match resultType with
             | SemString -> lowerString("")(recorded)
@@ -1239,7 +1242,10 @@ let emitDeferredCoreAdd binary = emitDeferredCoreArithmetic(AddInt)(binary)
 // by lowering again with that type pinned at the site.
 let recordEqualityGoal (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
     match traitGoalKey("Eq")(methodName + ":structural")(state) with
-        | Some(key) -> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))(state)
+        | Some(key) ->
+            state
+            |> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))
+            |> observePendingGoal(true)(key)(operandType)
         | None -> state
 
 let emitDeferredCoreEquality (methodName: Str) kind binary =

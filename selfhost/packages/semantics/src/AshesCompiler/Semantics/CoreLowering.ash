@@ -412,6 +412,9 @@ type CoreLoweringMeasurement =
     | pendingGoals: Int
     | equalityGoals: Int
     | pendingGoalKeys: List(Str)
+    | equalityGoalKeys: List(Str)
+    | retainedRelowerings: Maybe(Int)
+    | goalDetails: List((ObservedPendingGoal, SemanticType))
     | first: CorePassCounts
     | replay: CorePassCounts
 
@@ -450,7 +453,7 @@ let measuredSeed (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str)
 // As lowerCoreProgramWithSourceAndReuse with reuse on, or, given recorded node types, as
 // lowerCoreNumberedProgramWithSourceAndReuse, timing the discovery pass and the replay pass with
 // `clock` and counting what each kept; the lowered program itself is not built.
-let measureCoreProgramLoweringWithSchemes schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+let measureCoreProgramLoweringObserved regionOfName replayStarting schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -461,9 +464,22 @@ let measureCoreProgramLoweringWithSchemes schemes clock (nodeTypes: Maybe(NodeTy
                 match program
                 |> measuredSeed(nodeTypes)(filePath)(source)
                 |> withRawOperatorDeclarationSchemes(schemes)
-                |> lowerProgramPassesMeasured(clock)(items)(trailingBody)(None) with
-                    | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, first = passCountsOf(first), replay = passCountsOf(replayed))
-                    | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], first = passCountsOf(first), replay = noPassCounts)
+                |> (given (seed) ->
+                    match regionOfName with
+                        | None -> seed
+                        | Some(regions) -> withPendingGoalObservation(regions)(seed))
+                |> lowerProgramPassesMeasuredWithProgress(replayStarting)(clock)(items)(trailingBody)(None) with
+                    | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, equalityGoalKeys = equalityGoalKeys, retainedRelowerings = retained, goalDetails = details } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, equalityGoalKeys = equalityGoalKeys, retainedRelowerings = retained, goalDetails = details, first = passCountsOf(first), replay = passCountsOf(replayed))
+                    | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = [], first = passCountsOf(first), replay = noPassCounts)
+
+let measureCoreProgramLoweringWithSchemes schemes clock nodeTypes path source program =
+    measureCoreProgramLoweringObserved(None)(given (_) -> Unit)(schemes)(clock)(nodeTypes)(path)(source)(program)
+
+let measureStitchedLowering useNodeTypes regionOfName replayStarting clock table path program =
+    if useNodeTypes
+    then measureCoreProgramLoweringObserved(regionOfName)(replayStarting)(Ashes.Collection.Map.empty)(clock)(Some(table))(path)("")(program)
+    else
+        measureCoreProgramLoweringObserved(regionOfName)(replayStarting)(rawOperatorDeclarationSchemes(table))(clock)(None)(path)("")(program)
 
 let measureCoreProgramLowering clock nodeTypes path source program = measureCoreProgramLoweringWithSchemes(Ashes.Collection.Map.empty)(clock)(nodeTypes)(path)(source)(program)
 

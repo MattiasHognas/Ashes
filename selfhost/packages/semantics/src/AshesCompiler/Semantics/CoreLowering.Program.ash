@@ -87,6 +87,7 @@ export (
     value lowerProgramPasses,
     type CoreProgramPassMeasurement(..),
     value lowerProgramPassesMeasured,
+    value lowerProgramPassesMeasuredWithProgress,
     value registeredProgramState,
     value buildProgram,
     value withProgramParameterOwnership,
@@ -2236,6 +2237,11 @@ let emitProgramWithProofs items trailingBody environment proofs seed =
     |> lowerProgramWithCapabilities(items)(trailingBody)(environment)
     |> refuseUnansweredGoals
 
+let observedRelowerings state =
+    match stateTypeObservation(state) with
+        | Some(observation) -> observation.relowerings
+        | None -> 0
+
 let replayProgramWithProofs items trailingBody environment seed firstState firstError pending equalityGoals =
     match traitGoalMap(resolvedTraitGoals(pending)(firstState)(Ashes.Collection.Map.empty))(equalityGoals) with
         | (proofs, ordered) ->
@@ -2253,15 +2259,20 @@ let replayProgramWithProofs items trailingBody environment seed firstState first
                             match retained
                             |> structuralEqualityGoals
                             |> traitGoalMap(resolvedTraitGoals(statePendingTraitGoals(retained))(retained)(Ashes.Collection.Map.empty)) with
-                                | (retainedProofs, _ordered) -> emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed)
-                else emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed)
+                                | (retainedProofs, _ordered) ->
+                                    (retained
+                                    |> observedRelowerings
+                                    |> Some, emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed))
+                else (None, emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed))
 
 let lowerScheduledProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                 | ([], []) -> first
-                | (pending, equalityGoals) -> replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
+                | (pending, equalityGoals) ->
+                    match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
+                        | (_retained, emitted) -> emitted
 
 let lowerProgramPasses items trailing environment seed =
     match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
@@ -2277,6 +2288,9 @@ type CoreProgramPassMeasurement =
     | pendingGoals: Int
     | equalityGoals: Int
     | pendingGoalKeys: List(Str)
+    | equalityGoalKeys: List(Str)
+    | retainedRelowerings: Maybe(Int)
+    | goalDetails: List((ObservedPendingGoal, SemanticType))
 
 // The site keys of a pass's pending trait goals.
 let recursive goalKeysOf (goals: List((Str, SemanticType))) =
@@ -2284,7 +2298,34 @@ let recursive goalKeysOf (goals: List((Str, SemanticType))) =
         | [] -> []
         | (key, _goalType) :: rest -> key :: goalKeysOf(rest)
 
-let lowerScheduledProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
+let recursive indexGoalKeys goals keys =
+    match goals with
+        | [] -> keys
+        | (key, _operand) :: rest ->
+            keys
+            |> Ashes.Collection.Map.setStr(key)(true)
+            |> indexGoalKeys(rest)
+
+let recursive measuredSites sites deferred equalities state =
+    match sites with
+        | [] -> []
+        | (ObservedPendingGoal { key = key, structural = structural, operand = operand } as site) :: rest ->
+            let keys =
+                if structural
+                then equalities
+                else deferred
+            in
+                match Ashes.Collection.Map.getStr(key)(keys) with
+                    | None -> measuredSites(rest)(deferred)(equalities)(state)
+                    | Some(_) -> (site, resolveType(state)(operand)) :: measuredSites(rest)(deferred)(equalities)(state)
+
+let measuredGoalDetails pending equalityGoals state =
+    match stateTypeObservation(state) with
+        | Some(CoreTypeObservation { goalSites = Some(sites) }) ->
+            measuredSites(sites)(indexGoalKeys(pending)(Ashes.Collection.Map.empty))(indexGoalKeys(equalityGoals)(Ashes.Collection.Map.empty))(state)
+        | _ -> []
+
+let lowerScheduledProgramPassesMeasured replayStarting clock items trailingBody environment (seed: CoreLoweringState) =
     (let started = clock(Unit)
     in
         match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
@@ -2292,14 +2333,25 @@ let lowerScheduledProgramPassesMeasured clock items trailingBody environment (se
                 let firstDone = clock(Unit)
                 in
                     match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
-                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [])
+                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = [])
                         | (pending, equalityGoals) ->
-                            let replayed = replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
-                            in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
+                            let beforeProgress = clock(Unit)
+                            in
+                                let _ = replayStarting(Unit)
+                                in
+                                    let afterProgress = clock(Unit)
+                                    in
+                                        match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
+                                            | (retained, replayed) ->
+                                                let elapsed = beforeProgress - firstDone + clock(Unit) - afterProgress
+                                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = elapsed, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending), equalityGoalKeys = goalKeysOf(equalityGoals), retainedRelowerings = retained, goalDetails = measuredGoalDetails(pending)(equalityGoals)(firstState)))
+
+let lowerProgramPassesMeasuredWithProgress replayStarting clock items trailing environment seed =
+    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
+        | (scheduled, body) -> lowerScheduledProgramPassesMeasured(replayStarting)(clock)(scheduled)(body)(environment)(seed)
 
 let lowerProgramPassesMeasured clock items trailing environment seed =
-    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
-        | (scheduled, body) -> lowerScheduledProgramPassesMeasured(clock)(scheduled)(body)(environment)(seed)
+    lowerProgramPassesMeasuredWithProgress(given (_) -> Unit)(clock)(items)(trailing)(environment)(seed)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

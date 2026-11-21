@@ -18,6 +18,7 @@ export (
     value regionFilePath,
     value regionSourceText,
     value stitchedSourceRegions,
+    value stitchedRegionOfName,
 )
 
 // The file a region's path names.
@@ -115,13 +116,15 @@ let recursive definitionRegions (placements: List(StitchedDefinitionPlacement)) 
                     |> definitionRegions(rest)(moduleIndexes)
                 | None -> definitionRegions(rest)(moduleIndexes)(regionOfName)
 
+let stitchedRegionOfName (stitched: StitchedSyntaxProject) =
+    match moduleRegionIndexes(stitched.moduleRegions)(0)(Ashes.Collection.Map.empty)(0) with
+        | (moduleIndexes, entryRegion) ->
+            Ashes.Collection.Map.empty
+            |> definitionRegions(stitched.definitionPlacements)(moduleIndexes)
+            |> Ashes.Collection.Map.setStr("")(entryRegion)
+
 // The source regions of a stitched program: every module region's text, and the region each
 // top-level definition's spans resolve in, with the trailing expression in the entry module's.
 let stitchedSourceRegions (stitched: StitchedSyntaxProject) (entryPath: Str) (entrySource: Str) =
     match regionTexts(entryPath)(entrySource)(stitched.moduleRegions)(0)([])([]) with
-        | (texts, itemRegions) ->
-            match moduleRegionIndexes(stitched.moduleRegions)(0)(Ashes.Collection.Map.empty)(0) with
-                | (moduleIndexes, entryRegion) ->
-                    SourceRegions(context = createStitchedSourceContext(texts)(itemRegions)(entryPath), regionOfName = Ashes.Collection.Map.empty
-                    |> definitionRegions(stitched.definitionPlacements)(moduleIndexes)
-                    |> Ashes.Collection.Map.setStr("")(entryRegion))
+        | (texts, itemRegions) -> SourceRegions(context = createStitchedSourceContext(texts)(itemRegions)(entryPath), regionOfName = stitchedRegionOfName(stitched))

@@ -18,14 +18,16 @@ systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 timeout 3600 \
     "$OUT/measure" selfhost/packages/cli/ashes.json typed >"$OUT/typed.tsv" 2>"$OUT/typed.err"
 ```
 
-Progress markers in stderr bracket project loading and stitching, inference, and the lowering measurement. The lowering API runs the first pass and optional replay in one call. Its completion marker reports whether replay ran. All progress writes occur outside the reported timing intervals.
+Progress markers on stderr bracket project loading and stitching, inference, and lowering. If discovery requests replay, the driver reports the transition before replay begins. Progress writes are excluded from the reported timing intervals. The final stderr summary gives the number of traversals (one discovery, optionally one retained discovery and one replay emission) and the body re-lowering counters for each. As in the TSV, each counter describes the lowering state kept by its traversal.
+
+Add `--goal-details` after the mode to capture lexical evidence when a site is deferred. The report on stderr includes the stitched source region, the start and end offsets in the goal key, trait and method, numbered node ID where available, original and settled operand types, and the active trait-method bindings at that occurrence. Structural equality keys also appear on stderr without this option. Detailed collection adds work inside lowering, so use the same option for both modes when comparing times.
 
 A successful run exits zero and prints a TSV header and one data row. A project, parse, inference or lowering error terminates the run with a diagnostic. A lowering failure can still produce a partial counter row, so check the exit status before using the data. Keep the stage-0 and driver source revisions with the output.
 
 | Columns | Meaning |
 | --- | --- |
 | `mode`, `stitch_ms`, `infer_ms` | Selected lowering mode, time to load/parse/stitch, and time to identify and infer. |
-| `first_ms`, `replay_ms`, `replayed` | Measured first traversal and replay durations and whether replay ran. The API exposes a Boolean. Replay time includes any retained-program traversal required before emission. |
+| `first_ms`, `replay_ms`, `replayed` | Measured first traversal and replay durations and whether replay ran. The TSV keeps its Boolean replay indicator. Replay time includes any retained-program traversal required before emission. |
 | `pending_traits`, `equality_goals` | Trait goals and structural equality goals left by the first traversal. |
 | `first_*`, `replay_*` | For each observed pass, operators answered from recorded types, deferred operators, function bodies lowered again, calls using recorded expected results, and calls retried after that recorded expectation failed. Absent replay has zero counters. |
 | `pending_keys` | Space-separated pending trait site keys. Empty when there are no keys. |

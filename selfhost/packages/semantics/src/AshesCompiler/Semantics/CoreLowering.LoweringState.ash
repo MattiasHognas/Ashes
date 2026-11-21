@@ -52,6 +52,9 @@ export (
     type CoreHeapQueryFacts(..),
     type CoreHeapQueryContext(..),
     type CoreTypeObservation(..),
+    type ObservedPendingGoal(..),
+    value withPendingGoalObservation,
+    value observePendingGoal,
     type CoreTraitGoalProof(..),
     type CoreProgramState(..),
     type CoreFunctionState(..),
@@ -829,7 +832,16 @@ let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = em
 // What a lowering asked to observe its types records for a comparison with the standalone
 // inference: the bindings in scope where the trailing expression is lowered, and every binary
 // operator site lowered, by its span, with its trait and left operand type, most recent first.
+type ObservedPendingGoal =
+    | key: Str
+    | structural: Bool
+    | region: Int
+    | node: Maybe(Int)
+    | operand: SemanticType
+    | activeMethods: List((Str, SemanticType, Str, Str))
+
 type CoreTypeObservation =
+    | goalSites: Maybe(List(ObservedPendingGoal))
     | topLevelScope: List(CoreBinding)
     | operators: List((Maybe(TextSpan), Str, SemanticType))
     // How many operator sites took their operand type from the recorded node types where lowering
@@ -1401,7 +1413,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -3217,3 +3229,24 @@ let stateMayRunAsParallelWorker (state: CoreLoweringState) =
 let withStateMayRunAsParallelWorker value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with mayRunAsParallelWorker = value))
+
+let withPendingGoalObservation regionOfName (state: CoreLoweringState) =
+    (let configured =
+        state
+        |> withStateSourceRegions(regionOfName)
+        |> withStateSourceRegionOf("")
+    in
+        let group = configured.programState
+        in
+            match group.typeObservation with
+                | None -> configured
+                | Some(observation) -> configured with programState = (group with typeObservation = Some((observation with goalSites = Some([])))))
+
+let observePendingGoal structural key operand (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(CoreTypeObservation { goalSites = Some(sites) } as observation) ->
+                let site = ObservedPendingGoal(key = key, structural = structural, region = stateCurrentItem(state), node = state.currentNode, operand = operand, activeMethods = stateActiveTraitMethods(state))
+                in state with programState = (group with typeObservation = Some((observation with goalSites = Some(Ashes.Internal.deepCopy(site) :: sites))))
+            | _ -> state)
