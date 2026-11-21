@@ -8,7 +8,10 @@ public sealed partial class Lowering
     // Source applications count from the declaration, including each curried parameter.
     // A returned formal can be applied again by the caller after this source stage.
     private sealed record CallbackUse(int Parameter, CallbackPath Path, int Applied, int Stage, bool Returned);
-    private sealed record CallbackOrigin(int Parameter, CallbackPath Path, Expr? Value, ImmutableDictionary<string, CallbackOrigin>? Scope);
+    private sealed record CallbackOrigin(int Parameter, CallbackPath Path, Expr? Value, ImmutableDictionary<string, CallbackOrigin>? Scope)
+    {
+        public Expr? Peer { get; init; }
+    }
 
     private readonly Dictionary<TypeScheme, Expr> _schemeCallbackSources = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<TypeRef, Expr> _instantiatedCallbackSources = new(ReferenceEqualityComparer.Instance);
@@ -81,7 +84,7 @@ public sealed partial class Lowering
             int applied = AppliedCallbackArguments(use, count);
             foreach (SelectedDemand item in demands)
             {
-                if (item.Path != use.Path)
+                if (use.Path != CallbackPath.Any && item.Path != use.Path)
                 {
                     continue;
                 }
@@ -105,9 +108,19 @@ public sealed partial class Lowering
         {
             return cached;
         }
+        if (_recursiveCallbackPeers.TryGetValue(source, out ImmutableDictionary<string, CallbackOrigin>? peers))
+        {
+            ResolveRecursiveCallbackUses(peers);
+            return _callbackUses[source];
+        }
         HashSet<CallbackUse> uses = [];
         _callbackUses[source] = uses;
-        ImmutableDictionary<string, CallbackOrigin> scope = ImmutableDictionary.Create<string, CallbackOrigin>(StringComparer.Ordinal);
+        CollectSourceCallbackUses(source, ImmutableDictionary.Create<string, CallbackOrigin>(StringComparer.Ordinal), uses);
+        return uses;
+    }
+
+    private void CollectSourceCallbackUses(Expr source, ImmutableDictionary<string, CallbackOrigin> scope, HashSet<CallbackUse> uses)
+    {
         int arity = 0;
         while (source is Expr.Lambda lambda)
         {
@@ -115,7 +128,6 @@ public sealed partial class Lowering
             source = lambda.Body;
         }
         WalkCallbackUses(source, 0, arity, true, scope, uses);
-        return uses;
     }
 
     private void WalkCallbackUses(Expr value, int applied, int depth, bool returned,
@@ -182,11 +194,23 @@ public sealed partial class Lowering
 
     private void WalkCallbackOrigin(CallbackOrigin origin, int applied, int depth, bool returned, HashSet<CallbackUse> uses)
     {
+        if (origin.Peer is not null)
+        {
+            return;
+        }
         if (origin.Value is null)
         {
             if (returned || applied != 0)
             {
                 uses.Add(new CallbackUse(origin.Parameter, origin.Path, applied, depth, returned));
+            }
+        }
+        else if (origin.Path == CallbackPath.Any && origin.Value is Expr.TupleLit or Expr.RecordLit)
+        {
+            foreach (Expr child in EnumerateChildren(origin.Value))
+            {
+                CallbackOrigin nested = CallbackOriginFor(child, origin.Scope!);
+                WalkCallbackOrigin(nested with { Path = CallbackPath.Any }, applied, depth, returned, uses);
             }
         }
         else if (SelectCallbackValue(origin.Value, origin.Path) is { } selected)
@@ -212,6 +236,10 @@ public sealed partial class Lowering
         int count = applied < 0 ? -1 : arguments.Count + applied;
         WalkCallbackUses(root, count, depth, returned, scope, uses);
         Expr? source = root as Expr.Lambda ?? _callbackCallTargets.GetValueOrDefault(root);
+        if (root is Expr.Var named && scope.TryGetValue(named.Name, out CallbackOrigin? local))
+        {
+            source = local.Peer ?? local.Value as Expr.Lambda ?? source;
+        }
         for (int index = 0; index < arguments.Count; index++)
         {
             Expr argument = arguments[index];

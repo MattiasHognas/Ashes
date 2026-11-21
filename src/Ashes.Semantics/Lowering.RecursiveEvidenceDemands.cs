@@ -7,11 +7,86 @@ public sealed partial class Lowering
 {
     private readonly Dictionary<Expr, List<TraitDemand>> _recursiveDemands = new(ReferenceEqualityComparer.Instance);
 
+    private readonly Dictionary<Expr, ImmutableDictionary<string, CallbackOrigin>> _recursiveCallbackPeers = new(ReferenceEqualityComparer.Instance);
+
+    private void RegisterRecursiveCallbackPeers(IReadOnlyList<(string Name, Expr Value)> bindings)
+    {
+        ImmutableDictionary<string, CallbackOrigin>.Builder peers = ImmutableDictionary.CreateBuilder<string, CallbackOrigin>(StringComparer.Ordinal);
+        foreach ((string name, Expr value) in bindings)
+        {
+            peers[name] = new CallbackOrigin(-1, CallbackPath.Root, null, null) { Peer = value };
+        }
+        ImmutableDictionary<string, CallbackOrigin> scope = peers.ToImmutable();
+        foreach ((_, Expr value) in bindings)
+        {
+            _recursiveCallbackPeers[value] = scope;
+        }
+    }
+
+    // Install every provisional profile before walking any body. References crossing a cycle
+    // therefore read the current joint summaries, just like monomorphic recursive type slots.
+    private void ResolveRecursiveCallbackUses(ImmutableDictionary<string, CallbackOrigin> peers)
+    {
+        Dictionary<Expr, HashSet<CallbackUse>> members = new(ReferenceEqualityComparer.Instance);
+        foreach (CallbackOrigin peer in peers.Values)
+        {
+            HashSet<CallbackUse> provisional = [];
+            members[peer.Peer!] = provisional;
+            _callbackUses[peer.Peer!] = provisional;
+        }
+        int acyclicRounds = members.Count;
+        bool changed;
+        do
+        {
+            changed = false;
+            acyclicRounds--;
+            foreach ((Expr member, HashSet<CallbackUse> current) in members)
+            {
+                HashSet<CallbackUse> found = [];
+                CollectSourceCallbackUses(member, peers, found);
+                foreach (CallbackUse use in found)
+                {
+                    changed |= MergeRecursiveCallbackUse(current, use, acyclicRounds < 0);
+                }
+            }
+        }
+        while (changed);
+    }
+
+    private static bool MergeRecursiveCallbackUse(HashSet<CallbackUse> uses, CallbackUse candidate, bool widenPaths)
+    {
+        // Repeating the same application in a later recursive stage cannot move a dictionary
+        // requirement earlier. Keep the earliest stage for each source use.
+        if (widenPaths && candidate.Path != CallbackPath.Root && !uses.Contains(candidate) &&
+            uses.Any(use => use.Parameter == candidate.Parameter && use.Applied == candidate.Applied &&
+                use.Stage == candidate.Stage && use.Returned == candidate.Returned && use.Path != candidate.Path))
+        {
+            // A cycle may repeatedly descend an aggregate. Beyond the group's simple paths,
+            // project this formal onto its nested callbacks as standalone inference does.
+            candidate = candidate with { Path = CallbackPath.Any };
+        }
+        CallbackUse? previous = uses.FirstOrDefault(use => use.Parameter == candidate.Parameter
+            && use.Path == candidate.Path && use.Applied == candidate.Applied && use.Returned == candidate.Returned);
+        if (previous is not null && previous.Stage <= candidate.Stage)
+        {
+            return false;
+        }
+        if (previous is not null)
+        {
+            uses.Remove(previous);
+        }
+        return uses.Add(candidate);
+    }
+
     private (int, TypeRef) LowerLetRecursiveValue(Expr.LetRecursive binding, Expr.Lambda? innerLambda,
         TypeRef recursiveType, LoweredValueRequest request, out bool helperMarkerAdded)
     {
         int first = _traitDemands.Count;
         (int, TypeRef) lowered = LowerLetRecursiveValueCore(binding, innerLambda, recursiveType, request, out helperMarkerAdded);
+        if (_collectInferredTraitElaboration)
+        {
+            RegisterRecursiveCallbackPeers([(binding.Name, binding.Value)]);
+        }
         RememberRecursiveDemands(binding.Value, first);
         return lowered;
     }
@@ -36,7 +111,12 @@ public sealed partial class Lowering
     // stage that executes it across the actual sibling references before generalization.
     private void PropagateRecursiveDemands(RecursiveGroupExpr group, IReadOnlyList<TraitConstraint>[] inferred)
     {
-        if (!_collectInferredTraitElaboration || !inferred.Any(requirements => requirements.Count != 0))
+        if (!_collectInferredTraitElaboration)
+        {
+            return;
+        }
+        RegisterRecursiveCallbackPeers(group.Bindings);
+        if (!inferred.Any(requirements => requirements.Count != 0))
         {
             return;
         }

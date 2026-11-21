@@ -8,12 +8,13 @@ public sealed partial class Lowering
     private sealed record CallbackPath(CallbackPath? Parent, int Index, string? Field)
     {
         public static CallbackPath Root { get; } = new(null, -1, null);
+        public static CallbackPath Any { get; } = new(null, -2, null);
 
-        public CallbackPath At(int index) => new(this, index, null);
-        public CallbackPath At(string field) => new(this, -1, field);
+        public CallbackPath At(int index) => this == Any ? Any : new(this, index, null);
+        public CallbackPath At(string field) => this == Any ? Any : new(this, -1, field);
 
         public CallbackPath Under(CallbackPath prefix) =>
-            Parent is null ? prefix : this with { Parent = Parent.Under(prefix) };
+            this == Any || prefix == Any ? Any : Parent is null ? prefix : this with { Parent = Parent.Under(prefix) };
     }
 
     private sealed record SelectedDemand(CallbackPath Path, TraitDemand Demand);
