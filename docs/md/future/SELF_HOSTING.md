@@ -529,9 +529,37 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Checks next:** one combined validation batch of integration `8da62f16`, using
-`work/r10pre/combined.sh` and `work/r10pre/combined/`: build/format, C#/LSP/e2e, frontend and
-semantics suites (the latter also includes logical-not and ordered-equality regressions).
+**Latest checkpoint (2026-11-21 01:51):** integration is pushed through `c787ed37`.
+The combined batch at `ba570923` passed build, format, LSP 88/88 and stage-0 e2e
+1,281 passed / 0 failed / 80 skipped. C#: 3,045 passed / 32 failed / 2 skipped. Logs:
+`work/r10pre/combined/`. Its orchestration was intentionally stopped after e2e finished, before
+native builds, to include the newly completed ownership batch. No test process was interrupted.
+
+**Correction to the earlier leak classification:** the original ten red C# rows were not all
+leaks. Two stdout assertions expect 3 per iteration while their unchanged programs appear to
+compute 9; the others include structural drop counts and missing reuse coverage. They require
+review and justified fixes, not a leak exemption. The five additional failures are RSS plateau
+checks. `fix/r10-test-oracles` owns this audit; the actual evidence is `combined/csharp.log`.
+
+The five ownership/fixture commits are integrated as `36ea713b`, `5cd2bd73`, `02b1c44e`,
+`04d865e6`, `d0553c44`: corrected TMC field access, reviewed all 23 fixture files, and ported
+shared/unique matched-wrapper field ownership. Whole-compiler inference passed 9,993 items in
+182 modules. Native verification is pending. `dd6d3b39` is integrated as `3bcb1978` (unresolved
+tuple evidence and lexical helper regression). The REST example compiles with fresh stage 0.
+
+Fresh historical checks in `r10-fixture-candidates/work/historical/`: the borrowed-association
+list regression passes stage 0 and bootstrap54 with poison enabled. The original escaping partial
+application `step-f-stage0-alias-evidence2/work/fx/v1.ash` crashes with stage 0 (exit 139; jump to
+0x3e8) but passes bootstrap54. Stage-0 correction `9bb94357` is integrated as `c787ed37`, still
+unverified; the worker must provide the stage-1 counterpart or precise existing-equivalence proof.
+
+**Checks next:** `r10-fixture-candidates/work/native.sh`, output
+`work/r10pre/native-reviewed/`: fresh stage 0, format, the escaping-partial poison regression,
+reviewed C# fixtures, frontend, combined semantics/95-fixture IR capture, semantics without reuse,
+and logical-not lifetime. The driver renderer is
+`r10-ownership-parity/work/render-parity-capture.sh`; it uses the integration source at rendering.
+Actual mismatching IR goes to `work/r10-shared-capture/actual/`. This remains preflight, not the
+shared round-10 compiler build.
 The first disposable fixture build stopped on MA0006 in `ProjectSupport.cs`; worker commit
 `70e40f45` corrects the ordinal comparison (integration `d30f72dc`). The worker also supplied
 `f808164a`, fixing explicit module-qualifier collisions with imported bare values; its three-file
@@ -543,8 +571,8 @@ Do not repeat heavyweight driver builds for each individual fix.
 
 TMC repair validation completed at `d3493f6e` (`r10-tmc-regressions/work/coordinator/repaired/`):
 build, format, qualified-callee and dedup pass. Full C#: 3,041 passed, 32 failed, 2 skipped;
-15 leak/plateau failures and 17 IR/explain fixtures, no runtime crash. The fixture differences
-need review; the five additional non-blocking leak rows remain deferred, not forgotten.
+15 non-fixture failures and 17 IR/explain fixtures, no runtime crash in that suite. The fixture
+differences are now reviewed; the ten original non-fixture failures require the audit above.
 The integration lowering diagnostic build (`work/r10pre/lowering-diagnostic/`, source `319fbe06`)
 failed before producing a binary: `OwnershipSummary.ash:255:243 ASH048 Constructor 'Consumed' is
 declared in module 'AshesCompiler.Semantics.OwnershipSummary', which this module does not import.`
@@ -555,13 +583,13 @@ Parser evidence: `work/r10pre/parse-recovery.log` reproduces EOF instead of Int 
 frontend; the worker's `work/parse-recovery-fixed/run.log` confirms its fix reports Int at 21..22.
 Integrated-head checks at `fc50661a` finished on 2026-11-21:
 solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
-known leaks plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
+previously misclassified non-fixture rows plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
 0 failed, 72 skipped. Logs and source commit are in `work/r10pre/resume-integrated/`.
 No shared round-10 build has run: the bug gate remains open.
 
 Pre-integration checks finished; logs are under each waiting branch's
 `work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
-the 10 known leak tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
+the 10 original non-fixture tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
 57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
 list its 18 additional failures are 12 IR/explain mismatches, five plateau failures, and a crash
 in `Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau` (exit 245).
@@ -586,9 +614,9 @@ The combined source is on origin at `8da62f16`. Lowering-evidence integration is
 `12c7bf89`, `be8f6f28`; imports/parser/diagnostics integration is `1089a9ae`, `bbf05bac`,
 `8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
 
-**Active workers:** two GPT-6.2 Astra workers, each with a fresh worktree from `8da62f16`,
-self-contained `work/BRIEF.md`, 50-minute batch budget, no load work and no pushes:
-- `tmc_repair` resumed in `r10-ownership-parity`: missing match uniqueness port and IR parity.
+**Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
+- `tmc_repair` resumed in `r10-test-oracles`, from `c787ed37`, 45 minutes: classify and repair the
+  15 non-fixture C# failures. Previous ownership/fixture batch is integrated; native parity pending.
 - `imports_diagnostics` resumed in `r10-remaining-correctness`: REST example and bootstrap36 audit.
 `lowering_evidence` is idle. All three first batches handed back clean and are integrated; their
 old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
@@ -596,7 +624,8 @@ old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
 **Gate status:** 0/2/3/5/6 and the alias/trait portion of 7 have implementations integrated and
 await combined validation. The Unicode provenance blocker is fixed in source. The selector-only
 portion of 7 no longer reproduces on bootstrap54 (regression prints 42); inline declaring-name
-regression still needs stage-1 verification. Active implementation work is 1/4/8/9/10 below.
+regression still needs stage-1 verification. Bugs 1/4 have implementations integrated, bug 8's real
+example compiles, and bugs 9/10 plus the corrected C# failure audit still require work.
 
 **Original bug descriptions and remaining validation**:
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
@@ -636,7 +665,10 @@ regression still needs stage-1 verification. Active implementation work is 1/4/8
 9. The 30 of 95 `ir-program-parity` fixtures (stage 1 against the shared fixtures): decide each
    after `fix/csharp-red-tests` regenerated the stage-0 side.
 10. Re-check the "Open work recorded at bootstrap36" list above with small programs.
-Leaks stay out: 150 leak-only rows and the 10 leak C# tests.
+11. Audit the misclassified C# failures above: correct proven stale stdout/IR expectations and fix
+    actual compiler defects; only demonstrated leak-only failures can be deferred.
+Leaks stay out: 150 leak-only behaviour rows and demonstrated leak-only C# failures. The old blanket
+exemption for ten C# rows was based on incorrect classification and must not be used.
 
 **Paused, not a bug:** `fix/parallel-codegen` (CG-17, LNK-14), paused by the user for the bug
 work; design notes in the CG-17 checklist entry.
