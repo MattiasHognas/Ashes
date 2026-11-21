@@ -107,7 +107,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
             ownedRead = false,
-            patternOwner = None,
+            patternFact = None,
             closedScheme = false
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
@@ -283,7 +283,7 @@ let preparedSelfBinding environmentSize prepared =
                 scheme = emptyScheme(semanticType),
                 location = CoreSelf(label)(environmentSize),
                 ownedRead = false,
-                patternOwner = None,
+                patternFact = None,
                 closedScheme = false
             )
 

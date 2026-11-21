@@ -284,22 +284,15 @@ let isNullaryConstructorPatternName (name: Str) state =
         | Some(_) -> true
         | None -> false
 
-// The pattern owner fact a binder under the span key `key` carries inside the active loop body:
-// the loop function's classified fact for that binder, when it needs a protective reference. A
+// The classified fact of the binder under the span key `key` in the active loop body. A
 // binder the syntax tree carries no span for (key -1) matches no fact, nor does any binder of a
 // function that may run under a live handler post (stage 0 tracks no pattern owner there).
-let patternOwnerFactFor (key: Int) (state: CoreLoweringState) =
+let patternFactFor (key: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(_frame), Some(loop)) ->
             if key < 0 || ordinaryRcPlacementAllowed(state) == false
             then None
-            else
-                match lookupPatternBindingFact(key)(loop.patternFacts) with
-                    | Some(fact) ->
-                        if patternFactRequiresProtection(fact)
-                        then Some(fact)
-                        else None
-                    | None -> None
+            else lookupPatternBindingFact(key)(loop.patternFacts)
         | _ -> None
 
 let bindPreparedPatternName (name: Str) (key: Int) (state: CoreLoweringState) =
@@ -307,9 +300,9 @@ let bindPreparedPatternName (name: Str) (key: Int) (state: CoreLoweringState) =
         | FreshType { state = typedState, semanticType = semanticType } ->
             match freshLocal(typedState) with
                 | FreshLocal { state = localState, local = local } ->
-                    match patternOwnerFactFor(key)(localState) with
+                    match patternFactFor(key)(localState) with
                         | Some(fact) ->
-                            addPatternOwnerBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(fact)(localState)
+                            addPatternBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(fact)(localState)
                         | None ->
                             addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(localState)
 
@@ -955,7 +948,7 @@ type ArmOwner =
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
-        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(_fact), scheme = TypeScheme { body = bindingType } } ->
+        | CoreBinding { location = CoreLocal(slot), patternFact = Some(fact), scheme = TypeScheme { body = bindingType } } when patternFactRequiresProtection(fact) ->
             bindingType
             |> ArmPatternOwner(slot)
             |> Some
@@ -1900,7 +1893,6 @@ let letAliasesOwnedBinding (value: Expr) (state: CoreLoweringState) =
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | Some(CoreBinding { ownedRead = true }) -> true
-                | Some(CoreBinding { patternOwner = Some(_fact) }) -> true
                 | _ -> false
         | _ -> false
 
@@ -2426,7 +2418,7 @@ let recursive slotAtOrdinal (ordinal: Int) (slots: List(Int)) =
 let recursive patternOwnerSitesOf (frame: CoreTcoLoopFrame) (insertCount: Int) (heldByTuple: Bool) (sites: List(PatternOwnerSite)) (bindings: List(CoreBinding)) =
     match bindings with
         | [] -> sites
-        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest ->
+        | CoreBinding { location = CoreLocal(slot), patternFact = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest when patternFactRequiresProtection(fact) ->
             match slotAtOrdinal(fact.rootParameterOrdinal)(frame.parameterSlots) with
                 | Some(rootSlot) -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(PatternOwnerSite(siteSlot = slot, siteRootSlot = rootSlot, siteInsertCount = insertCount, siteType = bindingType, siteFact = fact, siteHeldByTuple = heldByTuple) :: sites)(rest)
                 | None -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(sites)(rest)

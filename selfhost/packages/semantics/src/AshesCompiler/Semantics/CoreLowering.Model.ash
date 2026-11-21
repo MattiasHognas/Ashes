@@ -268,5 +268,5 @@ type CoreBinding =
     | scheme: TypeScheme
     | location: CoreBindingLocation
     | ownedRead: Bool
-    | patternOwner: Maybe(PatternBindingFact)
+    | patternFact: Maybe(PatternBindingFact)
     | closedScheme: Bool

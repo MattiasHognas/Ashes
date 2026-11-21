@@ -194,7 +194,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
             ownedRead = false,
-            patternOwner = None,
+            patternFact = None,
             closedScheme = false
         ) :: capturedScope(captures)(0)
     in

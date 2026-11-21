@@ -368,6 +368,20 @@ let expectInlinePatternFieldNeverRetained unit =
     |> expectNoInstructionText("RuntimeManaged=true")
     |> (given (_) -> Unit)
 
+// Each of hop's two nonempty arms transfers its matched list tail. The second argument in the
+// last arm is an unrelated integer whose spelling happens to match the first arm's tail.
+let expectPatternTransfersUseTheirLexicalBinding unit =
+    match Ashes.IO.File.readText("tests/tail_call_scalar_shadowing_another_arms_list_tail.ash") with
+        | Error(message) -> test.fail(message)
+        | Ok(source) ->
+            match source
+            |> dumpSource
+            |> functionLines("[ClosureHelper from hop]")
+            |> Ashes.Collection.List.filter(given (line) ->
+                Ashes.Text.startsWith(Ashes.Text.trim(line))("RcDup") && Ashes.Text.contains(line)("RuntimeManaged=true MayBeEmpty=true")) with
+                | _firstTail :: _secondTail :: [] -> Unit
+                | _ -> test.fail("expected one nullable retain per transferred list tail")
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
@@ -384,6 +398,7 @@ let runCallWindowLoweringTests unit =
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
     |> expectProducerPublishesClosedSpineBeforeExitRelease
     |> expectInlinePatternFieldNeverRetained
+    |> expectPatternTransfersUseTheirLexicalBinding
     |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag

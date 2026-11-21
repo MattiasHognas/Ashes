@@ -615,16 +615,10 @@ let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
                 | _ -> None
 
 // The loop parameter slot a pattern binding was extracted from, by its recorded fact.
-let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    match patternOwnerBinding(name)(state) with
-        | Some(PatternBindingFact { rootParameterOrdinal = ordinal }) -> parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
-        | None ->
-            match patternFactsNamed(name)(loop.patternFacts) with
-                | PatternBindingFact { rootParameterOrdinal = ordinal } :: _rest ->
-                    if ordinal >= 0
-                    then parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
-                    else None
-                | [] -> None
+let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match patternBindingFact(name)(state) with
+        | Some(PatternBindingFact { rootParameterOrdinal = ordinal }) when ordinal >= 0 -> parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
+        | _ -> None
 
 // A read of a loop parameter the frame places on the reference-counted heap by now, or of a
 // pattern binding extracted from such a parameter (stage 0 tracks the binding as a
@@ -635,7 +629,7 @@ let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
                 | None ->
-                    match patternBindingRootSlot(name)(frame)(loop)(state) with
+                    match patternBindingRootSlot(name)(frame)(state) with
                         | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state)
                         | None -> false
         | _ -> false
@@ -652,7 +646,7 @@ let argumentRootSlotOf (argument: Expr) (state: CoreLoweringState) =
         | (Some(frame), Some(loop), ExprVar(name)) ->
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(slot) -> Some(slot)
-                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+                | None -> patternBindingRootSlot(name)(frame)(state)
         | _ -> None
 
 // The root parameter slot of an argument that is a pattern binding extracted from a loop
@@ -663,7 +657,7 @@ let patternBindingArgumentRootSlot (argument: Expr) (state: CoreLoweringState) =
         | (Some(frame), Some(loop), ExprVar(name)) ->
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(_slot) -> None
-                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+                | None -> patternBindingRootSlot(name)(frame)(state)
         | _ -> None
 
 // One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.

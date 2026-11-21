@@ -398,7 +398,7 @@ let lowerRecordFieldAccess receiverName fieldName state =
                 | None -> failure(state)(UnknownLoweringBinding(receiverName + "." + fieldName))
                 | Some(binding) ->
                     state
-                    |> lowerBoundVariable((binding with ownedRead = false, patternOwner = None))
+                    |> lowerBoundVariable((binding with ownedRead = false, patternFact = None))
                     |> finishRecordFieldAccess(receiverName)(fieldName)
 
 let finishUpdatedRecordField expectedType reversedTemps reversedTypes lowered =

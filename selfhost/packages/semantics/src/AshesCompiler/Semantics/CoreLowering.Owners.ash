@@ -99,6 +99,7 @@ export (
     value liveRuntimeOwnerSlot,
     value mayBeEmptyList,
     value emitTransferRetain,
+    value patternBindingFact,
     value patternOwnerBinding,
     value patternOwnerFlag,
     value duplicatePatternOwnerTemp,
@@ -107,7 +108,7 @@ export (
     value lowerUnconstrainedBoundVariable,
     value addBinding,
     value addOwnedBinding,
-    value addPatternOwnerBinding,
+    value addPatternBinding,
     value restoreBindings,
     value restoreLoweredBindings,
     value pendingOperatorTypes,
@@ -1066,15 +1067,20 @@ let emitTransferRetain (temp: Int) (semanticType: SemanticType) (state: CoreLowe
             |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
             |> success(duplicate)(semanticType)
 
-// The pattern owner fact a name reads, when its binding is one.
-let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
+// The fact belongs to this lexical binding, including when a later binder shadows its name.
+let patternBindingFact (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
-        | Some(CoreBinding { patternOwner = Some(fact) }) -> Some(fact)
+        | Some(CoreBinding { patternFact = fact }) -> fact
+        | None -> None
+
+let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
+    match patternBindingFact(name)(state) with
+        | Some(fact) when patternFactRequiresProtection(fact) -> Some(fact)
         | _ -> None
 
 let patternOwnerFlag (fact: Maybe(PatternBindingFact)) =
     match fact with
-        | Some(_fact) -> true
+        | Some(fact) -> patternFactRequiresProtection(fact)
         | None -> false
 
 // Stage 0's `DuplicatePerceusPatternOwnerForAggregate`: a tail self-call argument or aggregate
@@ -1184,7 +1190,7 @@ and lowerUnconstrainedBoundVariable binding state =
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
-                | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = ownedRead, patternOwner = patternOwner } ->
+                | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = ownedRead, patternFact = patternOwner } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             if transfersSlot(slot)(tempState)
@@ -1207,21 +1213,20 @@ and lowerUnconstrainedBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternOwner = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
-// A pattern binding that owns a protective reference of its own (stage 0's
-// `TrackPerceusPatternBindingOwners`): read like an owned binding, and carrying its fact.
-let addPatternOwnerBinding name scheme location (fact: PatternBindingFact) state =
+// Remember the exact binder's classification even when it needs no protective reference.
+let addPatternBinding name scheme location (fact: PatternBindingFact) state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = Some(fact), closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -2579,7 +2584,7 @@ let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | None -> true
-                | Some(CoreBinding { location = CoreLocal(_slot), patternOwner = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
                 | _ -> false
         | _ -> false
 
@@ -3128,7 +3133,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead, closedScheme = closedScheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternOwner = None, closedScheme = closedScheme)
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =

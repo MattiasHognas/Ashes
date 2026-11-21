@@ -2210,7 +2210,7 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
 let armPatternRootIsPlaced (body: Expr) (state: CoreLoweringState) =
     match (tailForwardedVariable(body), stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(name), Some(frame), Some(loop)) ->
-            match patternBindingRootSlot(name)(frame)(loop)(state) with
+            match patternBindingRootSlot(name)(frame)(state) with
                 | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state) || rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
                 | None -> false
         | _ -> false
