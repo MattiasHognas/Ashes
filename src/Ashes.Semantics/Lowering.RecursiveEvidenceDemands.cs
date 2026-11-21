@@ -79,13 +79,27 @@ public sealed partial class Lowering
     }
 
     private (int, TypeRef) LowerLetRecursiveValue(Expr.LetRecursive binding, Expr.Lambda? innerLambda,
-        TypeRef recursiveType, LoweredValueRequest request)
+        TypeRef recursiveType, LoweredValueRequest request, ResolvedBindingSignature? signature)
     {
+        // A recursive call sees the implementation closure with its leading evidence parameters.
+        // Its source reference denotes the logical signature, including through closure captures.
+        TextSpan definition = AstSpans.GetLetRecursiveNameOrDefault(binding);
+        bool recordSignature = _configuration.CollectHoverTypes && IsValidSpan(definition)
+            && signature?.Type is not null;
+        if (recordSignature)
+        {
+            _recursiveHoverSignatures[definition] = new TypeScheme([], signature!.Type!, signature.Requirements);
+        }
+
         int first = _traitDemands.Count;
         (int, TypeRef) lowered = LowerLetRecursiveValueCore(binding, innerLambda, recursiveType, request);
         if (_collectInferredTraitElaboration)
         {
             RegisterRecursiveCallbackPeers([(binding.Name, binding.Value)]);
+        }
+        if (recordSignature)
+        {
+            _recursiveHoverSignatures.Remove(definition);
         }
         RememberRecursiveDemands(binding.Value, first);
         return lowered;

@@ -6872,27 +6872,13 @@ public sealed partial class Lowering
             CountSourceLambdaParameters(letRecursive.Value),
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
-        // A recursive call sees the implementation closure with its leading evidence parameters.
-        // Its source reference denotes the logical signature, including through closure captures.
-        TextSpan definition = AstSpans.GetLetRecursiveNameOrDefault(letRecursive);
-        bool recordSignature = _configuration.CollectHoverTypes && usesTraitDictionary && IsValidSpan(definition)
-            && signature.Type is not null;
-        if (recordSignature)
-        {
-            _recursiveHoverSignatures[definition] = new TypeScheme([], signature.Type!, signature.Requirements);
-        }
-
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
         PushTraitConstraintScope();
         (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
             runtimeBinding,
             innerLambda,
             recursiveType,
-            request.WithoutExpectedType());
-        if (recordSignature)
-        {
-            _recursiveHoverSignatures.Remove(definition);
-        }
+            request.WithoutExpectedType(), usesTraitDictionary ? signature : null);
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
         (inferredRequirements, needsLateTraitTypeHint) = NormalizeRecursiveTraitRequirements(
