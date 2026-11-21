@@ -342,6 +342,7 @@ type HandlerOperationTypePreparation =
     | error: Maybe(TypeInferenceError)
 
 type HandlerParameterInference =
+    | names: List(Str)
     | environment: TypeEnvironment
     | substitution: List((Int, SemanticType))
     | supply: TypeVariableSupply
@@ -1092,37 +1093,6 @@ let noteInstantiationAt (environment: TypeEnvironment) (node: Int) (scheme: Type
                     |> dictionaryRequirements(quantified)(arguments)
                     |> NodeInstantiationNote(node)(arguments)(requirements))(after)
     else after
-
-// The names a pattern binds, read off its shape. An or-pattern's alternatives bind the same
-// names, so the first one speaks for all.
-let recursive patternVariableNames pattern (names: List(Str)) =
-    match pattern with
-        | PatternAt(_span, inner) -> patternVariableNames(inner)(names)
-        | PatternVar(name) -> name :: names
-        | PatternCons(head, tail) ->
-            names
-            |> patternVariableNames(head)
-            |> patternVariableNames(tail)
-        | PatternTuple(elements) -> patternVariableNamesIn(elements)(names)
-        | PatternConstructor(_name, arguments) -> patternVariableNamesIn(arguments)(names)
-        | PatternRecord(_name, fields) -> patternFieldVariableNames(fields)(names)
-        | PatternAs(inner, name) -> name :: patternVariableNames(inner)(names)
-        | PatternOr(first :: _rest) -> patternVariableNames(first)(names)
-        | _ -> names
-and patternVariableNamesIn patterns (names: List(Str)) =
-    match patterns with
-        | [] -> names
-        | head :: tail ->
-            names
-            |> patternVariableNames(head)
-            |> patternVariableNamesIn(tail)
-and patternFieldVariableNames (fields: List((Str, Pattern))) (names: List(Str)) =
-    match fields with
-        | [] -> names
-        | (_field, pattern) :: tail ->
-            names
-            |> patternVariableNames(pattern)
-            |> patternFieldVariableNames(tail)
 
 // Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
 let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
@@ -4289,7 +4259,7 @@ and prepareHandlerOperationType operation capabilityType parameters substitution
                                 ))
 and inferHandlerParameters patterns parameterTypes environment substitution supply names =
     match (patterns, parameterTypes) with
-        | ([], []) -> HandlerParameterInference(environment = environment, substitution = substitution, supply = supply, error = None)
+        | ([], []) -> HandlerParameterInference(names = names, environment = environment, substitution = substitution, supply = supply, error = None)
         | (pattern :: patternTail, parameterType :: typeTail) ->
             match inferPattern(pattern)(environment)(substitution)(supply)(names) with
                 | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
@@ -4314,15 +4284,15 @@ and inferHandlerParameters patterns parameterTypes environment substitution supp
                                 unifiedNames
                             )
                         | PatternInferenceResult { semanticType = _failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
-                            HandlerParameterInference(environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(
+                            HandlerParameterInference(names = names, environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(
                                 error
                             ))
                 | PatternInferenceResult { semanticType = _failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } ->
-                    HandlerParameterInference(environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(
+                    HandlerParameterInference(names = names, environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(
                         error
                     ))
         | _ ->
-            HandlerParameterInference(environment = environment, substitution = substitution, supply = supply, error = Some(
+            HandlerParameterInference(names = names, environment = environment, substitution = substitution, supply = supply, error = Some(
                 InvalidHandler("operation arm parameter count does not match its signature")
             ))
 and inferHandlerOperationArms arms handledCapabilities handlerResult environment substitution supply ambientRow accumulatedConstraints =
@@ -4362,7 +4332,7 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                                         operationSupply,
                                         []
                                     ) with
-                                        | HandlerParameterInference { environment = armEnvironment, substitution = parameterSubstitution, supply = parameterSupply, error = None } ->
+                                        | HandlerParameterInference { names = parameterNames, environment = armEnvironment, substitution = parameterSubstitution, supply = parameterSupply, error = None } ->
                                             let resumeType =
                                                 SemFunction(
                                                     applySubstitution(parameterSubstitution)(operationResultType),
@@ -4378,7 +4348,7 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                                                         parameterSubstitution,
                                                         parameterSupply
                                                         |> noteBinding(environment)(identifiedNode(body))("resume")(resumeScheme)
-                                                        |> noteBindingsIn(environment)(identifiedNode(body))(patternVariableNamesIn(parameters)([]))(armEnvironment),
+                                                        |> noteBindingsIn(environment)(identifiedNode(body))(parameterNames)(armEnvironment),
                                                         ambientRow
                                                     ) with
                                                         | TypeInferenceResult { semanticType = armType, substitution = armSubstitution, supply = armSupply, constraints = armConstraints, error = None } ->
