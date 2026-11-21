@@ -3912,6 +3912,9 @@ let testRunSharedTcoNonTailSelfCallInOperatorOperand shipped unit =
     |> showAsFromInt
     |> codegenOptimizedShippedSource(shipped))("selfhostBackendRunSharedTcoOperatorOperand")("selfhost_backend_shared_tco_operator_operand_e2e")("2 2 2 4 1 1")
 
+let testRecursiveAwaitingHelperPreservesDeclaredResults shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_preserves_declared_results.ash"))("recursiveAwaitingHelperPreservesDeclaredResults")("selfhost_backend_recursive_helper_declared_results")("43")
+
 let testRunSharedTcoLetAliasOfRcParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_alias_of_rc_parameter.ash"))("selfhostBackendRunSharedTcoLetAlias")("selfhost_backend_shared_tco_let_alias_e2e")("xxxxx|abcdefghij|Abc.DeAd.1bc|---|A.B.C.D.E.A.B.C.D.E.A.B.C.D.E")
 
@@ -6242,6 +6245,7 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunSharedTcoNonTailSelfCallInOperatorOperand(shipped)
     |> testRunSharedTcoLetAliasOfRcParameter(shipped)
+    |> testRecursiveAwaitingHelperPreservesDeclaredResults(shipped)
     |> testRunTcoScalarLoopFixture(shipped)
     |> testRunTcoListWalkFixture(shipped)
     |> testRunOwnershipFixtures(shipped)

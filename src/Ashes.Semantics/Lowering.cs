@@ -6936,9 +6936,27 @@ public sealed partial class Lowering
             ?? ResolveInferredTraitBindingTypeHint(binding.Name, binding.Value);
         if (seedType is not null && !usesTraitDictionary)
         {
-            Unify(recursiveType, seedType);
+            int helperArity = Lookup(binding.Name)?.CoroutineHelperArity ?? 0;
+            Unify(recursiveType, helperArity == 0 ? seedType : CoroutineHelperFactoryType(seedType, helperArity));
         }
         return seedType;
+    }
+
+    // The declaration describes the logical function, while its recursive slot contains
+    // the factory. Only its fully applied body is represented by a transparent task.
+    private TypeRef CoroutineHelperFactoryType(TypeRef source, int arity)
+    {
+        if (arity == 0)
+        {
+            return CreateStringTaskType(source);
+        }
+        if (Prune(source) is TypeRef.TFun function)
+        {
+            return function with { Ret = CoroutineHelperFactoryType(function.Ret, arity - 1) };
+        }
+        TypeRef.TFun arrow = new(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() };
+        Unify(source, arrow);
+        return arrow with { Ret = CoroutineHelperFactoryType(arrow.Ret, arity - 1) };
     }
 
     private sealed record RecursiveTraitEvidenceElaboration(
