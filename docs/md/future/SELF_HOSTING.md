@@ -560,6 +560,30 @@ and logical-not lifetime. The driver renderer is
 `r10-ownership-parity/work/render-parity-capture.sh`; it uses the integration source at rendering.
 Actual mismatching IR goes to `work/r10-shared-capture/actual/`. This remains preflight, not the
 shared round-10 compiler build.
+
+Follow-up checkpoint at `1f25140b`: stage-0 dictionary-capture correction builds and passes format;
+the original partial-application program runs 1,000 rounds with poison and prints `passed`.
+All 207 reviewed IR/explain fixture tests pass, and the self-hosted frontend suite passes. Logs:
+`work/r10pre/native-reviewed/`. The semantics compile was cancelled shortly after starting to
+include the finished stage-1 port; no result is claimed from that compile. The port is `ba8967ed`,
+missing higher-order dictionary regression `e59f4a0c`, structural capture regression `3c7a11ff`,
+and original escaping-partial e2e regression `1f25140b`. The two incorrect arithmetic oracles are
+fixed in `38c67f01`: both original programs compute 9 per round; memory assertions are retained.
+
+Next continuation is `r10-fixture-candidates/work/native-continuation.sh`, logs
+`work/r10pre/native-port/`, with full C#/LSP validation after the dictionary fix, one compiler
+inference preflight, then the combined semantics/parity and no-reuse builds. It reuses the fresh
+`native-reviewed/s0/ashes` (compiler sources unchanged since that build). The 16 short controlled
+IR compiles requested by the oracle worker completed at `r10-test-oracles/work/oracles/`.
+Architecture documents generic-variant reservation before persistent specialization; the oracle
+worker is separating production placement assertions from the documented differential path.
+
+`imports_diagnostics` handed back clean at `e1a90ca3`, now integrated. `lowering_evidence` resumed
+in new `r10-evidence-audit`, branch `fix/r10-evidence-audit` from `38c67f01`, 40-minute budget.
+It added the original escaping-partial regression and is investigating a newly reproduced issue:
+a generalized constrained partial binding used at Int and Str is rejected by bootstrap54, while
+stage 0 accepts it but evaluates an effectful supplied argument twice. Preserve strict evaluation;
+do not copy that stage-0 defect into the stage-1 port. Current-source proof and fixes are pending.
 The first disposable fixture build stopped on MA0006 in `ProjectSupport.cs`; worker commit
 `70e40f45` corrects the ordinal comparison (integration `d30f72dc`). The worker also supplied
 `f808164a`, fixing explicit module-qualifier collisions with imported bare values; its three-file
@@ -617,8 +641,8 @@ The combined source is on origin at `8da62f16`. Lowering-evidence integration is
 **Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
 - `tmc_repair` resumed in `r10-test-oracles`, from `c787ed37`, 45 minutes: classify and repair the
   15 non-fixture C# failures. Previous ownership/fixture batch is integrated; native parity pending.
-- `imports_diagnostics` resumed in `r10-remaining-correctness`: REST example and bootstrap36 audit.
-`lowering_evidence` is idle. All three first batches handed back clean and are integrated; their
+- `lowering_evidence` resumed in `r10-evidence-audit`: remaining constrained-binding/evidence audit.
+`imports_diagnostics` is idle. All three first batches handed back clean and are integrated; their
 old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
 
 **Gate status:** 0/2/3/5/6 and the alias/trait portion of 7 have implementations integrated and
@@ -667,6 +691,9 @@ example compiles, and bugs 9/10 plus the corrected C# failure audit still requir
 10. Re-check the "Open work recorded at bootstrap36" list above with small programs.
 11. Audit the misclassified C# failures above: correct proven stale stdout/IR expectations and fix
     actual compiler defects; only demonstrated leak-only failures can be deferred.
+12. Generalized constrained partial application: preserve polymorphism and evaluate supplied
+    arguments once, before the dictionary lambda. Fresh stage-0 double evaluation is a correctness
+    bug; stage-1 current-source acceptance still needs proof (bootstrap54 rejects the second type).
 Leaks stay out: 150 leak-only behaviour rows and demonstrated leak-only C# failures. The old blanket
 exemption for ten C# rows was based on incorrect classification and must not be used.
 
