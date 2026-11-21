@@ -360,13 +360,7 @@ let recursive rewriteItem stage names item =
 
 let recursive rewriteItems stage names items reversed trailing =
     match items with
-        | [] ->
-            (reverse(reversed), match trailing with
-                | Some(body) ->
-                    body
-                    |> rewrite(stage)(names)
-                    |> Some
-                | None -> None)
+        | [] -> (reverse(reversed), rewrite(stage)(names)(trailing))
         | item :: rest ->
             match rewriteItem(stage)(names)(item) with
                 | (after, changed) -> rewriteItems(stage)(after)(rest)(changed :: reversed)(trailing)
@@ -382,10 +376,7 @@ let recursive declaresStage item =
 
 let recursive usesPrefix name items trailing =
     match items with
-        | [] ->
-            match trailing with
-                | Some(expr) -> exprReadsName(name)(expr)
-                | None -> false
+        | [] -> exprReadsName(name)(trailing)
         | item :: rest ->
             foldItemNodes(given (used) ->
                 given (_id) ->
