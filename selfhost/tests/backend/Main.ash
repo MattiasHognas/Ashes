@@ -3514,7 +3514,7 @@ let recursive assertStdoutLines process expectedLines =
                     |> test.assertEqual(line)
                     |> (given (_) -> assertStdoutLines(process)(rest))
 
-let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
+let compileTestExecutable libraries buildModule name executablePath =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
@@ -3526,14 +3526,18 @@ let assertProgramPrintsLinesWithImports libraries buildModule name executablePat
                         | Ok(_) ->
                             match Ashes.IO.File.makeExecutable(executablePath) with
                                 | Error(message) -> test.fail(message)
-                                | Ok(_) ->
-                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
-                                        | Error(message) -> test.fail(message)
-                                        | Ok(process) ->
-                                            expectedLines
-                                            |> assertStdoutLines(process)
-                                            |> Ashes.IO.Process.waitForExit
-                                            |> test.assertEqual(0)
+                                | Ok(_) -> Unit
+
+let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
+    (let _ = compileTestExecutable(libraries)(buildModule)(name)(executablePath)
+    in
+        match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+            | Error(message) -> test.fail(message)
+            | Ok(process) ->
+                expectedLines
+                |> assertStdoutLines(process)
+                |> Ashes.IO.Process.waitForExit
+                |> test.assertEqual(0))
 
 let assertProgramPrintsLines buildModule name executablePath expectedLines = assertProgramPrintsLinesWithImports([])(buildModule)(name)(executablePath)(expectedLines)
 
@@ -3842,6 +3846,9 @@ let testSocketCaptureTeardown shipped unit =
         in
             let _ = run("socket_capture_close")(["true", "true"])
             in run("socket_capture_cancel")(["true"]))
+
+let testCompileConcurrentHttpServerForReplay shipped unit =
+    compileTestExecutable([])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/concurrent_http_server.ash.source"))("concurrentHttpServer")("selfhost_backend_concurrent_http_server")
 
 let annotatedCallbackSource rounds =
     (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
@@ -6309,6 +6316,7 @@ let run shipped =
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
     |> testSocketCaptureTeardown(shipped)
+    |> testCompileConcurrentHttpServerForReplay(shipped)
     |> testRcDupDrop
     |> testIsReferenceCounted
     |> testImmortalNullary
