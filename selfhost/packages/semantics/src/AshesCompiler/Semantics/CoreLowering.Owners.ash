@@ -1296,7 +1296,7 @@ let generalizeResolvedType (outerBindings: List(CoreBinding)) (state: CoreLoweri
 let takePendingOwnerPlan (state: CoreLoweringState) =
     match statePendingOwnerPlan(state) with
         | Some(plan) -> (plan, withStatePendingOwnerPlan(None)(state))
-        | None -> (OwnedReleasePlan(deepUnique = false, constructorName = None), state)
+        | None -> (OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None), state)
 
 let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (valueType: SemanticType) (state: CoreLoweringState) =
     match runtimeTempStateOf(valueTemp)(state) with
@@ -1801,9 +1801,9 @@ let backEdgeArgumentSurvivesReset (semanticType: SemanticType) (state: CoreLower
 let recursive shareOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
         | [] -> []
-        | (candidate, semanticType, OwnedReleasePlan { constructorName = constructorName } as plan) :: rest ->
+        | (candidate, semanticType, plan) :: rest ->
             if candidate == slot
-            then (candidate, semanticType, OwnedReleasePlan(deepUnique = false, constructorName = constructorName)) :: rest
+            then (candidate, semanticType, (plan with deepUnique = false)) :: rest
             else (candidate, semanticType, plan) :: shareOwnerReleasePlan(slot)(rest)
 
 // The type an owner slot's value was adopted with, from its release plan.
@@ -2784,7 +2784,7 @@ let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
                     match constructorApplicationOf(value)([])(state) with
                         | Some((CoreConstructorLayout { name = name }, _arguments)) -> Some(name)
                         | None -> None
-                in lowered with state = withStatePendingOwnerPlan(Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName)))(state)
+                in lowered with state = withStatePendingOwnerPlan(Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName, matchFieldTransfer = None)))(state)
 
 // Stage 0's `LowerEscapingResult`: a body that is itself a fresh string producer, or whose
 // terminal arms build a fresh runtime-manageable constructor, list, tuple, or record tree, is

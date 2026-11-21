@@ -116,12 +116,12 @@ let checkNone n =
         in
             let types = prepareDropperTypes([definition(name)(SemInt)(named)])
             in
-                match synthesizeOwnedAggregateReleaseIndexed(0)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(types)(emptyDropperLabelCache)(1)(0)(0)(0) with
+                match synthesizeOwnedAggregateReleaseIndexed(0)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(types)(emptyDropperLabelCache)(1)(0)(0)(0) with
                     | (None, context) ->
                         if Ashes.Collection.Map.size(context.facts) != 1
                         then test.fail("None lost completed facts")
                         else
-                            match synthesizeOwnedAggregateReleaseIndexed(0)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(withDropperQueryContext(context)(types))(emptyDropperLabelCache)(1)(0)(0)(0) with
+                            match synthesizeOwnedAggregateReleaseIndexed(0)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(withDropperQueryContext(context)(types))(emptyDropperLabelCache)(1)(0)(0)(0) with
                                 | (None, reused) -> Ashes.Collection.Map.size(reused.facts) == 1 && contextNodeCount(reused) == contextNodeCount(context)
                                 | _ -> false
                     | _ -> false)

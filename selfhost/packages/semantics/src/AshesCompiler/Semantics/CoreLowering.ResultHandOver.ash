@@ -595,7 +595,7 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | (Some(synthesis), _queryContext) -> spliceInlineReleaseWith(emit)(synthesis)(state)
                 | (None, queryContext) ->
                     // A type only the normalization helper expresses is released through its own

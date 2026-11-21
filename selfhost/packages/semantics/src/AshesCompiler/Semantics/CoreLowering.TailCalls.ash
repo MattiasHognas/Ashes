@@ -10,6 +10,7 @@ import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.StructuralDroppers.OwnedReleasePlan
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingEachTemp
 import AshesCompiler.Semantics.IrOrigins
@@ -287,10 +288,15 @@ let recursive iterationOwnedDrops (depth: Int) (state: CoreLoweringState) (owner
                 | _ -> iterationOwnedDrops(depth)(state)(rest)
         | _ :: rest -> iterationOwnedDrops(depth)(state)(rest)
 
-let recursive ownedDropSlots (drops: List((Int, Str))) =
+let recursive ownedDropSlots (state: CoreLoweringState) (drops: List((Int, Str))) =
     match drops with
         | [] -> []
-        | (slot, _typeName) :: rest -> slot :: ownedDropSlots(rest)
+        | (slot, _typeName) :: rest ->
+            match state
+            |> stateOwnerReleasePlans
+            |> lookupOwnerReleasePlan(slot) with
+                | Some((_type, OwnedReleasePlan { matchFieldTransfer = Some((flagSlot, _fields)) })) -> slot :: flagSlot :: ownedDropSlots(state)(rest)
+                | _ -> slot :: ownedDropSlots(state)(rest)
 
 // The reset placeholder (stage 0's `TcoResetPending`), resolved once the whole body is lowered
 // so the argument types are as concrete as the function's own body makes them.
@@ -1219,7 +1225,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                         |> (given (reset: CoreTcoReset) ->
                             state
                             |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
-                            |> append(ownedDropSlots(reset.ownedDrops))
+                            |> append(ownedDropSlots(state)(reset.ownedDrops))
                             |> append(frame.parameterSlots)
                             |> append(listActiveSlotsOf(frame.listActiveSlots))
                             |> TcoResetPending(reset.resetId)(temps
