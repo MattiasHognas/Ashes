@@ -45,7 +45,10 @@ public sealed partial class Lowering
 
     private void InstantiateDemands(TypeScheme scheme, TypeRef type, IReadOnlyDictionary<int, TypeRef> substitution)
     {
-        if (_collectInferredTraitElaboration) InstantiateSelectedDemands(scheme, type, substitution);
+        if (_collectInferredTraitElaboration)
+        {
+            InstantiateSelectedDemands(scheme, type, substitution);
+        }
         if (_collectInferredTraitElaboration && _schemeCallbackSources.TryGetValue(scheme, out Expr? source))
         {
             _instantiatedCallbackSources[type] = source;
@@ -62,10 +65,15 @@ public sealed partial class Lowering
 
     private TypeScheme FinishBindingDemands(Expr.Let binding, TypeRef type, TypeScheme scheme, int first)
     {
-        if (!_collectInferredTraitElaboration) return scheme;
-        RegisterCallbackSource(binding.Value, type, scheme);
-        RegisterSelectedDemands(binding.Value, type, scheme);
-        if (scheme.Constraints.Count == 0) return scheme;
+        if (!_collectInferredTraitElaboration)
+        {
+            return scheme;
+        }
+        if (scheme.Constraints.Count == 0)
+        {
+            RegisterCallbackSource(binding.Value, type, scheme);
+            return scheme;
+        }
 
         // A plain alias has the same latent uses as the function it stores.
         if (binding.Value is Expr.Var or Expr.QualifiedVar)
@@ -112,7 +120,12 @@ public sealed partial class Lowering
         {
             scheme = new TypeScheme(scheme.Quantified.Where(variable => !held.Contains(variable.Id)).ToArray(), scheme.Body, retained);
         }
-        if (summary.Count != 0) _schemeDemands[scheme] = summary;
+        RegisterCallbackSource(binding.Value, type, scheme);
+        RegisterSelectedDemands(binding.Value, type, scheme);
+        if (summary.Count != 0)
+        {
+            _schemeDemands[scheme] = summary;
+        }
         return scheme;
     }
 
