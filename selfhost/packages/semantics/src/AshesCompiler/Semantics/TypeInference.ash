@@ -203,6 +203,8 @@ type TypeEnvironment =
     // the negation of `x`. Program inference turns it on; an environment built for lowering
     // leaves it off, so its speculative inference is unchanged.
     | programInferenceRules: Bool
+    // A handler continuation yields the operation result to its perform site.
+    | implicitResume: Bool
     | evidenceProfiles: MapTree(Str, List(Int))
     | evidenceFlows: MapTree(Str, EvidenceCallFlow)
     | inFunctionBody: Bool
@@ -374,7 +376,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, evidenceProfiles = Ashes.Collection.Map.empty, evidenceFlows = Ashes.Collection.Map.empty, inFunctionBody = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, currentUnit = 0, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, implicitResume = false, evidenceProfiles = Ashes.Collection.Map.empty, evidenceFlows = Ashes.Collection.Map.empty, inFunctionBody = false, lookupIndex = None, inAsyncBody = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -435,7 +437,7 @@ let addTypeBinding name scheme (environment: TypeEnvironment) =
                 match schemes with
                     | Some(open) -> Some(scheme :: open)
                     | None -> None
-            in environment with evidenceFlows = shadowEvidenceFlow(name)(environment), evidenceProfiles = shadowEvidenceProfile(name)(environment), bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
+            in environment with implicitResume = environment.implicitResume && name != "resume", evidenceFlows = shadowEvidenceFlow(name)(environment), evidenceProfiles = shadowEvidenceProfile(name)(environment), bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
 
 let addParameterTypeBinding node name scheme environment =
     (let bound = addTypeBinding(name)(scheme)(environment)
@@ -2673,6 +2675,10 @@ let callSiteFailure function functionType argumentType argumentSubstitution (env
                     |> applySubstitution(argumentSubstitution)
                     |> unifyIn(environment)(parameter) with
                         | UnificationResult { error = Some(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail))) } -> failure
+                        | UnificationResult { error = Some(TypeMismatch(parameterType, actualType)) } when environment.implicitResume && callChainLength(function) == 0 && callRootName(function) == Some("resume") ->
+                            failure with error = Some(parameterType
+                            |> TypeMismatch(actualType)
+                            |> InferenceUnificationError)
                         | UnificationResult { error = Some(mismatch) } ->
                             failure with error = Some(function
                             |> callRootName
@@ -4590,7 +4596,7 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                                                 in
                                                     match inferWith(
                                                         body,
-                                                        addTypeBinding("resume")(resumeScheme)(armEnvironment),
+                                                        (addTypeBinding("resume")(resumeScheme)(armEnvironment) with implicitResume = true),
                                                         parameterSubstitution,
                                                         parameterSupply
                                                         |> noteBinding(environment)(identifiedNode(body))("resume")(resumeScheme)

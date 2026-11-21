@@ -490,8 +490,8 @@ let expectInvalidHandlers unit =
                                     )], body = [badResumeArm]
                                     |> ExprHandle(handlerClockCall)
                                     |> Some)) with
-                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
-                                        | _ -> test.fail("resume arguments should match operation results")
+                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemString, SemInt)))) } -> Unit
+                                        | ProgramInferenceResult { error = actual } -> test.fail("resume arguments should match operation results: " + Ashes.Trait.Show.show(actual))
                                 in
                                     let returnOnly = (None, "return", [PatternVar("value")], ExprVar("value"))
                                     in
