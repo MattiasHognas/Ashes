@@ -17,6 +17,7 @@ import Ashes.Number.UInt
 export (
     type RcRegionRuntime,
     value defineRcRegionRuntime,
+    value rcReleaseFunction,
     value emitIsReferenceCountedIn,
     value emitLiveCellsCount,
 )
@@ -29,9 +30,17 @@ type RcRegionRuntime =
     | freeLists: LLVMValueRef
     | allocFn: LLVMValueRef
     | freeFn: LLVMValueRef
+    | poisonReleaseFn: Maybe(LLVMValueRef)
     | liveCellsGlobal: Maybe(LLVMValueRef)
     // Whether each thread bumps its own stretch of the range (a program with worker threads).
     | perThread: Bool
+
+// Scratch buffers share the allocator but have no RC header. Only final RC releases may
+// select the payload-poisoning entry point.
+let rcReleaseFunction (runtime: RcRegionRuntime) =
+    match runtime.poisonReleaseFn with
+        | Some(release) -> release
+        | None -> runtime.freeFn
 
 let regionConst i64 value =
     constInt(i64)(Ashes.Number.UInt.fromInt64(value))(false)
@@ -361,8 +370,10 @@ let emitAllocBody context builder i64 ptrType (runtime: RcRegionRuntime) libcMal
 
 // `void __ashes_rc_free(ptr block)`: a small block of the range goes onto the free list of its
 // size, a large one's pages back to the kernel, and any other block back to libc.
-let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree freeType =
-    (let function_ = runtime.freeFn
+// An RC cell stores its payload length at header offset 8. The separate allocator
+// prefix before that header holds the bin size and the free-list link.
+let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree freeType functionToEmit poison =
+    (let function_ = functionToEmit
     in
         let entryBlock = appendBasicBlock(context)(function_)("entry")
         in
@@ -397,6 +408,18 @@ let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree
                                                             |> buildICmp(builder)(intPredicateUle)(blockBytes)(regionConst(i64)(largestListedBlockBytes))
                                                             |> (given (listed) -> buildCondBr(builder)(listed)(listedBlock)(pagedBlock))
                                                             |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
+                                                            |> (given (_) ->
+                                                                if poison
+                                                                then
+                                                                    let payload = wordPointer(builder)(ptrType)(i64)(address)(16)("rc_poison_ptr")
+                                                                    in
+                                                                        let size =
+                                                                            buildLoad(builder)(i64)(wordPointer(builder)(ptrType)(i64)(address)(8)("rc_poison_size_ptr"))("rc_poison_size")
+                                                                        in
+                                                                            let _ =
+                                                                                buildMemSet(builder)(payload)(constInt(int8Type(context))(221u64)(false))(size)(1u32)
+                                                                            in Unit
+                                                                else Unit)
                                                             |> (given (_) -> freeListSlot(builder)(i64)(runtime)(blockBytes)("rc_free_list_slot"))
                                                             |> (given (listSlot) ->
                                                                 Unit
@@ -434,6 +457,12 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
             else freeListsGlobal(module_)(i64),
             allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType),
             freeFn = internalFunction(module_)("__ashes_rc_free")(freeType),
+            poisonReleaseFn = match Ashes.IO.Environment.get("ASHES_RC_POISON") with
+                | Ok(Some("1")) ->
+                    freeType
+                    |> internalFunction(module_)("__ashes_rc_release_poison")
+                    |> Some
+                | _ -> None,
             liveCellsGlobal = if leakCheck
             then
                 "__ashes_rc_live"
@@ -445,5 +474,11 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
     in
         mallocType
         |> emitAllocBody(context)(builder)(i64)(ptrType)(runtime)(libcMalloc)
-        |> (given (_) -> emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType))
+        |> (given (_) -> emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType)(runtime.freeFn)(false))
+        |> (given (_) ->
+            match runtime.poisonReleaseFn with
+                | Some(release) ->
+                    let _ = emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType)(release)(true)
+                    in Unit
+                | None -> Unit)
         |> (given (_) -> runtime))

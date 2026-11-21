@@ -816,7 +816,7 @@ let codegenInstructionKind cx builder kind state =
                                         | BigIntToString(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed))(tempEnv), terminated)
+                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(managed))(tempEnv), terminated)
                                         | BigIntToInt(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
@@ -824,11 +824,11 @@ let codegenInstructionKind cx builder kind state =
                                         | BigIntFromString(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
+                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BigIntBinary(target, left, right, operation, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
+                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
                                         | BigIntCompare(target, left, right) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
@@ -926,7 +926,7 @@ let codegenInstructionKind cx builder kind state =
                                             let result =
                                                 localSlots
                                                 |> lookupIndexedInt(resvEndSlot)
-                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
+                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
                                             in (bindTemp(target)(result)(tempEnv), terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
@@ -1281,7 +1281,7 @@ let codegenInstructionKind cx builder kind state =
                                                     let _ =
                                                         tempEnv
                                                         |> lookupTemp(cx)(sourceTemp)
-                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
+                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(rcReleaseFunction(externals.rcRegion))(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
                                                     in (tempEnv, false)
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other

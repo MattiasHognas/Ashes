@@ -158,6 +158,7 @@ export (
     value builderModule,
     value builderFunction,
     value buildStore,
+    value buildMemSet,
     value buildLoad,
     value setVolatile,
     value buildCall,
@@ -298,6 +299,7 @@ external LLVMGetEntryBasicBlock(LLVMValueRef) -> LLVMBasicBlockRef = "LLVMGetEnt
 external LLVMGetFirstInstruction(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetFirstInstruction@libLLVM.so"
 external LLVMPositionBuilder(LLVMBuilderRef, LLVMBasicBlockRef, LLVMValueRef) -> void = "LLVMPositionBuilder@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
+external LLVMBuildMemSet(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, u32) -> LLVMValueRef = "LLVMBuildMemSet@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 external LLVMSetVolatile(LLVMValueRef, Bool) -> void = "LLVMSetVolatile@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
@@ -662,6 +664,8 @@ let buildEntryAlloca builder type_ name =
             in slot))
 
 let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
+
+let buildMemSet builder pointer value length alignment = LLVMBuildMemSet(builder)(pointer)(value)(length)(alignment)
 
 let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
 

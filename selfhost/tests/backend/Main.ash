@@ -5198,6 +5198,72 @@ let buildRcClosureDropModule name context =
         |> (given (entryFunction) -> handBuiltProgram(entryFunction)([closureFunction]))
         |> codegenProgram(name)(context))
 
+// Inspect the same-size cache through its next allocation. AllocAdt writes the new
+// tag and header but leaves the field for its caller to initialize.
+let buildReallocatedPoisonedCell name context =
+    [
+        42
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        None
+        |> RcDrop(1)("Cell")(0)(true)(false)
+        |> irOf,
+        false
+        |> AllocAdt(2)(1)(1)(true)
+        |> irOf,
+        false
+        |> GetAdtField(3)(2)(0)
+        |> irOf,
+        irOf(PrintInt(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        irOf(Return(0))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(4))
+    |> (given (entryFunction) -> codegenEntryFunction(name)(context)(entryFunction)([]))
+
+let testReallocatedPoisonedCell unit =
+    match Ashes.IO.Environment.get("ASHES_RC_POISON") with
+        | Ok(Some("1")) -> assertProgramPrints(buildReallocatedPoisonedCell)("poisonedCell")("selfhost_backend_poisoned_cell_e2e")("-2459565876494606883")
+        | _ -> Unit
+
+let testRcReleaseInstrumentation unit =
+    (let expected =
+        match Ashes.IO.Environment.get("ASHES_RC_POISON") with
+            | Ok(Some("1")) -> true
+            | _ -> false
+    in
+        let context = contextCreate(Unit)
+        in
+            match buildRcDupDropModule("rcReleaseInstrumentation")(context) with
+                | (module_, builder) ->
+                    let rendered = printModuleToString(module_)
+                    in
+                        let _ = disposeBuilder(builder)
+                        in
+                            let _ = disposeModule(module_)
+                            in
+                                let _ = contextDispose(context)
+                                in
+                                    match rendered with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(text) ->
+                                            let _ =
+                                                "call void @__ashes_rc_release_poison("
+                                                |> Ashes.Text.contains(text)
+                                                |> test.assertEqual(expected)
+                                            in
+                                                "ptr align 1 %rc_poison_ptr, i8 -35, i64 %rc_poison_size"
+                                                |> Ashes.Text.contains(text)
+                                                |> test.assertEqual(expected))
+
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
 let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["true", "false", "false", "5"])
@@ -6010,6 +6076,8 @@ let run shipped =
     |> testCopyOutListScopedInline
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
+    |> testRcReleaseInstrumentation
+    |> testReallocatedPoisonedCell
     |> testRcDupDrop
     |> testIsReferenceCounted
     |> testImmortalNullary
