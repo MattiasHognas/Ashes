@@ -738,6 +738,10 @@ public sealed partial class Lowering
                 GetSpan(group.Bindings[i].Value),
                 suppressDiagnostics: SuppressSourceConstraintDiagnostics(group.Bindings[i].Name));
             schemes[i] = GeneralizeBindingType(Prune(schemeType), requirements);
+            if (usesTraitDictionary[i])
+            {
+                RegisterTraitDictionaryScheme(schemes[i], _traitDictionaryFunctions[group.Bindings[i].Name]);
+            }
             RecordInferredTraitBindingElaboration(
                 (group.Bindings[i].Name, AstSpans.GetOrDefault(group.Bindings[i].Value).Start),
                 schemes[i],
