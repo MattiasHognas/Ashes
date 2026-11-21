@@ -761,10 +761,13 @@ let recursive activeTraitMethod (traitName: Str) (typeArgument: SemanticType) (m
             else activeTraitMethod(traitName)(typeArgument)(methodName)(state)(rest)
 
 let hasActiveTraitEvidence (traitName: Str) (typeArgument: SemanticType) (state: CoreLoweringState) =
-    match sortedTraitMethodNames(traitName)(state) with
+    match stateActiveTraitMethods(state) with
         | [] -> false
-        | methodName :: _rest ->
-            activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) != None
+        | entries ->
+            match sortedTraitMethodNames(traitName)(state) with
+                | [] -> false
+                | methodName :: _rest ->
+                    activeTraitMethod(traitName)(typeArgument)(methodName)(state)(entries) != None activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) != None
 
 let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
     match implementation with
@@ -1750,11 +1753,14 @@ let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
             in
                 let resolvedRight = resolveType(state)(rightType)
                 in
-                    if isSubtractOperator(operator) && isCoreZeroExpression(left) && isUserTypeOperand(resolvedRight)
+                    if isSubtractOperator(operator) && isCoreZeroExpression(left) && (isUserTypeOperand(resolvedRight) || hasActiveTraitEvidence("Negate")(resolvedRight)(state))
                     then emitCoreTraitUnaryDispatch("Negate")("negate")(resolvedRight)(lower)(rightTemp)(resolvedRight)(state)
                     else
-                        match (arithmeticTraitMethod(operator), isUserTypeOperand(resolvedLeft) && resolvedLeft == resolvedRight) with
-                            | (Some((traitName, methodName)), true) -> emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
+                        match arithmeticTraitMethod(operator) with
+                            | Some((traitName, methodName)) ->
+                                if resolvedLeft == resolvedRight && (isUserTypeOperand(resolvedLeft) || hasActiveTraitEvidence(traitName)(resolvedLeft)(state))
+                                then emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
+                                else emitPreparedCoreBinary(operator)(lower)(binary)
                             | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
         | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
 
@@ -1882,7 +1888,10 @@ let finishCoreBitwiseNotOrTrait lower lowered =
         | LoweredCoreValue { state = state, temp = operand, semanticType = semanticType, error = None } ->
             match resolveType(state)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named -> emitCoreTraitUnaryDispatch("BitwiseNot")("bitwiseNot")(named)(lower)(operand)(named)(state)
-                | _ -> finishCoreBitwiseNot(lowered)
+                | resolved ->
+                    if hasActiveTraitEvidence("BitwiseNot")(resolved)(state)
+                    then emitCoreTraitUnaryDispatch("BitwiseNot")("bitwiseNot")(resolved)(lower)(operand)(resolved)(state)
+                    else finishCoreBitwiseNot(lowered)
         | failed -> failed
 
 let lowerCoreBitwiseNot operand lower state =

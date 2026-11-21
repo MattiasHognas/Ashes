@@ -2887,23 +2887,18 @@ let lowerNestedOperatorGenericLet name value body (recorded: TypeScheme) lower (
         match collectPendingBorrowedOwners(name)(value)(state) with
             | CoreLoweringState { bindings = outerBindings } as collected -> lowerArenaBracketedNestedLetWith(name)(value)(body)(lowerBody)(lower)(outerBindings)(collected))
 
-// These mapped operators already have typed active-evidence dispatch in Core.
-// Arithmetic/bitwise fallback operators keep their existing inference path until
-// their dictionary dispatch is implemented, rather than emitting a generic body
-// containing a provisional primitive operation.
+// These operator requirements select dictionary lowering for an unannotated lambda.
+// Inferred arithmetic bindings use their existing concrete-copy specialization.
 let recursive constrainedOperatorsSupported constraints =
     match constraints with
         | [] -> true
         | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not") && constrainedOperatorsSupported(rest)
 
-// A written `requires` may also name `Show` or `Hash`: their methods dispatch through the active
-// requirement's evidence (`emitCoreTraitUnaryDispatch`) as the mapped operators' do. An inferred
-// requirement still needs one of the operators above, so a binding that only shows its argument and
-// says nothing keeps its monomorphic lowering.
+// Written requirements and partial applications preserve their declared method ABI.
 let recursive writtenConstraintsSupported constraints =
     match constraints with
         | [] -> true
-        | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not" || name == "Show" || name == "Hash") && writtenConstraintsSupported(rest)
+        | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not" || name == "Show" || name == "Hash" || name == "Add" || name == "Subtract" || name == "Multiply" || name == "Divide" || name == "Remainder" || name == "Negate" || name == "BitAnd" || name == "BitOr" || name == "BitXor" || name == "ShiftLeft" || name == "ShiftRight" || name == "BitwiseNot") && writtenConstraintsSupported(rest)
 
 let constrainedPlanSupported (written: Bool) constraints =
     if written
