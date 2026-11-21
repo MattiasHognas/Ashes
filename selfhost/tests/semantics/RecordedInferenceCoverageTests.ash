@@ -195,11 +195,39 @@ let checkDerivedTree unit =
             | (Error(message), _) -> Ashes.IO.panic(message)
             | (_, Error(message)) -> Ashes.IO.panic(message))
 
+let checkGuardScope table found _node _span expression =
+    match expression with
+        | ExprMatch(_scrutinee, (_pattern, body, Some(guard)) :: _, _) ->
+            match (table
+            |> nodeBindingsAt(nodeIdentityOf(guard))
+            |> bindingType("word"), table
+            |> nodeBindingsAt(nodeIdentityOf(body))
+            |> bindingType("word")) with
+                | (Some(SemString), Some(SemString)) -> true
+                | _ -> Ashes.IO.panic("or-pattern binder should have the same type in its guard and its body")
+        | _ -> found
+
+let checkGuardedOrPattern unit =
+    (let source = "type Choice = | First(Str) | Second(Str)\nmatch First(\"a\") with | First(word) | Second(word) when true -> word | _ -> \"fallback\""
+    in
+        match parseProgram(source) with
+            | ProgramParseResult { program = parsed, diagnostics = [] } ->
+                match identifyProgram(0)(parsed) with
+                    | (program, _count) ->
+                        match inferProgram(program) with
+                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                if foldProgramNodes(checkGuardScope(table))(false)(program)
+                                then Unit
+                                else Ashes.IO.panic("missing guarded or-pattern")
+                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("guard inference failed: " + Ashes.Trait.Show.show(error))
+            | _ -> Ashes.IO.panic("guarded or-pattern fixture did not parse"))
+
 let runRecordedInferenceCoverageTests unit =
     unit
     |> checkHandlerBindings
     |> checkPrimitiveComplements
     |> checkArmBodyShadowing
+    |> checkGuardedOrPattern
     |> checkRecordInstantiations
     |> checkTypeTranslation
     |> checkRigidScope

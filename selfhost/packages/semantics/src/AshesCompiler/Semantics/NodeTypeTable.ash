@@ -55,7 +55,7 @@ type NodeTypeTable =
     | types: MapTree(Int, SemanticType)
     | operators: MapTree(Int, NodeOperator)
     | instantiations: MapTree(Int, NodeInstantiation)
-    // The names a node brings into scope: at a `let` its binding, at an arm body the arm's pattern
+    // The names a node brings into scope: at a `let` its binding, at an arm guard or body the arm's pattern
     // variables.
     | bindings: MapTree(Int, List((Str, TypeScheme)))
     // A top-level binding's name and scheme, keyed by the root node of its value.

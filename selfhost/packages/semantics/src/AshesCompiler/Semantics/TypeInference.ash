@@ -1043,6 +1043,16 @@ let recursive noteBindingsIn (environment: TypeEnvironment) (node: Int) (names: 
                     | None -> noteBindingsIn(environment)(node)(rest)(scope)(supply)
     else supply
 
+// Pattern variables enter scope before the guard and remain available in the chosen arm's body.
+let noteMatchBindings environment guard body names scope supply =
+    (let withBody =
+        noteBindingsIn(environment)(identifiedNode(body))(names)(scope)(supply)
+    in
+        match guard with
+            | Some(condition) ->
+                noteBindingsIn(environment)(identifiedNode(condition))(names)(scope)(withBody)
+            | None -> withBody)
+
 // `instantiate` mints one variable per quantified variable, in order, from `firstId`.
 let recursive instantiationArguments (quantified: List((Int, Str))) (firstId: Int) =
     match quantified with
@@ -4756,7 +4766,7 @@ and inferMatchCases cases armIndex scrutineeType resultType environment substitu
                                         environment,
                                         matchedEnvironment,
                                         matchedSubstitution,
-                                        noteBindingsIn(environment)(identifiedNode(body))(patternNames)(matchedEnvironment)(matchedSupply),
+                                        noteMatchBindings(environment)(guard)(body)(patternNames)(matchedEnvironment)(matchedSupply),
                                         ambientRow,
                                         accumulatedConstraints
                                     )
