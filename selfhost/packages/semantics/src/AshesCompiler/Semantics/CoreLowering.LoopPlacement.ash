@@ -1269,7 +1269,7 @@ let recursive retainUnplacedAggregateMarkersOf (sites: List(PatternOwnerSite)) (
     match sites with
         | [] -> state
         | site :: rest ->
-            if patternOwnerSiteIn(site)(placed)
+            if resultSurvivesReset(site.siteType)(state) || patternOwnerSiteIn(site)(placed)
             then retainUnplacedAggregateMarkersOf(rest)(placed)(state)
             else
                 state

@@ -343,6 +343,31 @@ let expectProducerPublishesClosedSpineBeforeExitRelease unit =
         | "closed" :: "published" :: "released" :: [] -> Unit
         | events -> test.fail("expected spine closure, result publication and loop release in order, got " + Ashes.Text.join(", ")(events))
 
+// Add(a, b) rebuilds Add(a + 1, b). Both fields are numbers, even when their bits happen
+// to fall inside the reference-counted address range. The Name arm still stores a string.
+let recursive scalarFieldInstructions (inside: Bool) (lines: List(Str)) =
+    match lines with
+        | [] -> test.fail("missing Add arm in bump")
+        | line :: rest ->
+            let instruction = Ashes.Text.trim(line)
+            in
+                if inside
+                then
+                    if Ashes.Text.startsWith(instruction)("AllocAdt")
+                    then []
+                    else instruction :: scalarFieldInstructions(true)(rest)
+                else
+                    scalarFieldInstructions(Ashes.Text.startsWith(instruction)("AddInt"))(rest)
+
+let expectInlinePatternFieldNeverRetained unit =
+    "record_head_list_producer"
+    |> loweredFixtureLines
+    |> functionLines("[SourceFunction from bump]")
+    |> scalarFieldInstructions(false)
+    |> expectNoInstructionText("IsReferenceCounted")
+    |> expectNoInstructionText("RuntimeManaged=true")
+    |> (given (_) -> Unit)
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
@@ -358,6 +383,7 @@ let runCallWindowLoweringTests unit =
     |> expectSelfRecursiveCallKeepsWindowOpen
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
     |> expectProducerPublishesClosedSpineBeforeExitRelease
+    |> expectInlinePatternFieldNeverRetained
     |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
