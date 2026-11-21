@@ -771,7 +771,7 @@ let rejectsUnjustifiedWrittenBindingRequirement unit =
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal", _extraTypes))) } -> Unit
                 | _ -> test.fail("written requires clauses should not introduce unjustified evidence"))
 
-let rejectsAmbiguousWrittenBindingRequirement unit =
+let rejectsUnjustifiedWrittenRequirementBeforeAmbiguity unit =
     (let binding =
         LetBindingSyntax(name = "ambiguous", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(
             TypeNamed("Int")
@@ -780,8 +780,8 @@ let rejectsAmbiguousWrittenBindingRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousTraitRequirement("Equal", _ambiguousTypes))) } -> Unit
-            | _ -> test.fail("written requirement variables should occur in the binding type"))
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal", _extraTypes))) } -> Unit
+            | _ -> test.fail("an unjustified written requirement should be reported before ambiguity"))
 
 let rejectsInvalidWrittenBindingRequirements unit =
     (let unknown =
@@ -865,7 +865,7 @@ let expectWrittenBindingRequirements unit =
     |> expectValidWrittenBindingRequirement
     |> rejectsMissingWrittenBindingRequirement
     |> rejectsUnjustifiedWrittenBindingRequirement
-    |> rejectsAmbiguousWrittenBindingRequirement
+    |> rejectsUnjustifiedWrittenRequirementBeforeAmbiguity
     |> rejectsInvalidWrittenBindingRequirements
     |> rejectsNestedMissingWrittenBindingRequirement
     |> acceptsRecursiveWrittenBindingRequirement

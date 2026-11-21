@@ -3522,7 +3522,7 @@ let recursive retainedOuterRequirements (environment: TypeEnvironment) (quantifi
                 else retainedOuterRequirements(environment)(quantified)(substitution)(rest)
     else []
 
-let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
+let inferSettledBindingRequirements selected semanticType environment substitution supply =
     match bindingRequirementAmbiguity(if appliesProgramInferenceRules(environment)
     then
         selected
@@ -3537,56 +3537,61 @@ let validateSettledBindingRequirements requirements inferred written selected se
                 AmbiguousTraitRequirement(traitName)(typeArguments)
             )
         | None ->
-            match requirements with
-                | [] ->
-                    if environment.programInferenceRules
-                    then
-                        match settleBuiltinArguments(environment)(selected)(substitution) with
-                            | (_defaulted, Some(openArgument)) ->
-                                inferenceFailure(
-                                    semanticType,
-                                    substitution,
-                                    supply,
-                                    NoTraitImplementation("$PrintArgument")([openArgument])
-                                )
-                            | (defaulted, None) ->
-                                selected
-                                |> applyInferenceConstraints(defaulted)
-                                |> requirementsLeftToWrite(environment)
-                                |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
-                    else
+            if environment.programInferenceRules
+            then
+                match settleBuiltinArguments(environment)(selected)(substitution) with
+                    | (_defaulted, Some(openArgument)) ->
+                        inferenceFailure(
+                            semanticType,
+                            substitution,
+                            supply,
+                            NoTraitImplementation("$PrintArgument")([openArgument])
+                        )
+                    | (defaulted, None) ->
                         selected
+                        |> applyInferenceConstraints(defaulted)
                         |> requirementsLeftToWrite(environment)
-                        |> bindingSignatureSuccess(semanticType)(substitution)(supply)
-                | _ ->
-                    match if appliesProgramInferenceRules(environment)
-                    then firstSuppliedWrittenRequirement(environment)(written)
-                    else None with
-                        | Some(TraitConstraint { traitName = suppliedTrait, typeArguments = suppliedArguments }) ->
-                            inferenceFailure(
-                                semanticType,
-                                substitution,
-                                supply,
-                                UnjustifiedWrittenTraitRequirement(suppliedTrait)(suppliedArguments)
-                            )
-                        | None ->
-                            validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
+                        |> bindingSignatureSuccess(applySubstitution(defaulted)(semanticType))(defaulted)(supply)
+            else
+                selected
+                |> requirementsLeftToWrite(environment)
+                |> bindingSignatureSuccess(semanticType)(substitution)(supply)
+
+let validateSettledBindingRequirements requirements inferred written semanticType environment substitution supply =
+    match requirements with
+        | [] -> inferSettledBindingRequirements(inferred)(semanticType)(environment)(substitution)(supply)
+        | _ ->
+            match if appliesProgramInferenceRules(environment)
+            then firstSuppliedWrittenRequirement(environment)(written)
+            else None with
+                | Some(TraitConstraint { traitName = suppliedTrait, typeArguments = suppliedArguments }) ->
+                    inferenceFailure(
+                        semanticType,
+                        substitution,
+                        supply,
+                        UnjustifiedWrittenTraitRequirement(suppliedTrait)(suppliedArguments)
+                    )
+                | None ->
+                    match validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply) with
+                        | TypeInferenceResult { error = Some(_) } as failure -> failure
+                        | TypeInferenceResult { constraints = checked } ->
+                            match bindingRequirementAmbiguity(checked)(semanticType)(environment)(substitution) with
+                                | Some((traitName, typeArguments)) ->
+                                    typeArguments
+                                    |> AmbiguousTraitRequirement(traitName)
+                                    |> inferenceFailure(semanticType)(substitution)(supply)
+                                | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(checked)
 
 let validateBindingRequirementSet requirements inferred written semanticType environment substitution supply =
-    (let selected =
-        match requirements with
-            | [] -> inferred
-            | _ -> written
-    in
-        match failedBindingRequirement(environment)(inferred) with
-            | Some(TraitConstraint { traitName = failedTrait, typeArguments = failedArguments }) ->
-                inferenceFailure(
-                    semanticType,
-                    substitution,
-                    supply,
-                    failedRequirementError(failedTrait)(failedArguments)
-                )
-            | None -> validateSettledBindingRequirements(requirements)(inferred)(written)(selected)(semanticType)(environment)(substitution)(supply))
+    match failedBindingRequirement(environment)(inferred) with
+        | Some(TraitConstraint { traitName = failedTrait, typeArguments = failedArguments }) ->
+            inferenceFailure(
+                semanticType,
+                substitution,
+                supply,
+                failedRequirementError(failedTrait)(failedArguments)
+            )
+        | None -> validateSettledBindingRequirements(requirements)(inferred)(written)(semanticType)(environment)(substitution)(supply)
 
 let finishInferenceBindingSignature requirements context checkedType inferredConstraints environment substitution supply =
     match resolveBindingRequirements(requirements)(context)(environment)([]) with
