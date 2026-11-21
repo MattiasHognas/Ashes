@@ -854,6 +854,36 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void Qualified_alias_cannot_expose_a_hidden_value_via_a_flattened_local()
+    {
+        const string source = """
+            import Library as Lib
+            module Library =
+                export (
+                    value visible,
+                )
+                let hidden = 3
+                let visible = hidden + 1
+
+            let Library_hidden = 7
+            let publicResult = Lib.visible
+            Lib.hidden
+            """;
+        ParsedImportHeader header = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            header.SourceWithoutImports, header.ImportNames, "<memory>", header.ImportSelectors);
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics, moduleAliases: header.ImportAliases, constructorModulesByName: layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+
+        _ = lowering.Lower(program);
+
+        diagnostics.StructuredErrors.Select(error => error.Message).ShouldBe(["Module 'Library' does not export 'hidden'."]);
+    }
+
+    [Test]
     public void A_module_can_use_its_own_constructor_after_multibyte_source_text()
     {
         const string library = "type Item = | Known\nlet label = \"日本語の文字列\"\nlet item = Known\n";
