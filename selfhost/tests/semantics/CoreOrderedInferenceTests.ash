@@ -215,6 +215,7 @@ let checkStitchedLibraryContext unit =
             in
                 Unit
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/logical_not_inferred_predicates.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
 let checkExpressionBoundary unit =

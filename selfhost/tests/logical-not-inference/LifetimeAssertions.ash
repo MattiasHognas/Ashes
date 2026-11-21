@@ -17,7 +17,8 @@ let freshBinding n =
                         match bindType(SemBool)(variable)(deferred) with
                             | (bound, None) ->
                                 let proofs =
-                                    traitGoalMap(resolvedTraitGoals(statePendingTraitGoals(bound))(bound)([]))(Ashes.Collection.Map.empty)
+                                    match traitGoalMap(resolvedTraitGoals(statePendingTraitGoals(bound))(bound)(Ashes.Collection.Map.empty))([]) with
+                                        | (shared, _ordered) -> shared
                                 in
                                     let pinned =
                                         entered
@@ -33,6 +34,29 @@ let freshBinding n =
                                             | _ -> false
                             | _ -> false
                 | _ -> false)
+
+// Replaying a site lowered at two types consumes its proofs in lowering order.
+// The open occurrence between them must advance without borrowing its neighbor's type.
+let checkOrderedProofs unit =
+    (let entered = seed(10)
+    in
+        match traitGoalKey("Eq")("equal")(entered) with
+            | None -> Ashes.IO.panic("test site has no span")
+            | Some(key) ->
+                match traitGoalMap(resolvedTraitGoals([(key, SemString), (key, SemVariable(42)), (key, SemInt)])(entered)(Ashes.Collection.Map.empty))([]) with
+                    | (proofs, true) ->
+                        match entered
+                        |> withStateProvenTraitGoals(proofs)
+                        |> pinProvenTraitGoal("Eq")("equal")(SemVariable(20)) with
+                            | (first, SemInt) ->
+                                match pinProvenTraitGoal("Eq")("equal")(SemVariable(21))(first) with
+                                    | (second, SemVariable(21)) ->
+                                        match pinProvenTraitGoal("Eq")("equal")(SemVariable(22))(second) with
+                                            | (_third, SemString) -> Unit
+                                            | _ -> Ashes.IO.panic("last occurrence lost its proof")
+                                    | _ -> Ashes.IO.panic("unsettled occurrence borrowed another proof")
+                            | _ -> Ashes.IO.panic("first occurrence lost its proof")
+                    | _ -> Ashes.IO.panic("conflicting proofs were shared"))
 
 let checkSpecial unit =
     (let entered =
@@ -69,6 +93,7 @@ let recursive rounds n =
 
 Unit
 |> checkSpecial
+|> checkOrderedProofs
 |> (given (_) ->
     match Ashes.IO.args with
         | "1000" :: [] -> rounds(1000)

@@ -145,7 +145,9 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) ->
                 withStateTraitMethodLabels(stateTraitMethodLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
-                withStatePendingTraitGoals(statePendingTraitGoals(bodyState))(current))
+                current
+                |> withStatePendingTraitGoals(statePendingTraitGoals(bodyState))
+                |> withStateProvenTraitGoals(stateProvenTraitGoals(bodyState)))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingEqualityGoals(statePendingEqualityGoals(bodyState))(current))
             |> (given (current: CoreLoweringState) ->

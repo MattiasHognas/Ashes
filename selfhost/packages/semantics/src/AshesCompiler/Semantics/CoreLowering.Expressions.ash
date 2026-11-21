@@ -988,18 +988,6 @@ let restoreConstrainedCall (original: CoreLoweringState) lowered =
     match lowered with
         | LoweredCoreValue { state = state } -> lowered with state = (state with bindings = original.bindings)
 
-// Whether a plan's evidence, or any evidence it is built from, is a hidden parameter the body
-// being lowered does not carry: the dictionary cannot be built here whatever the plan says.
-let recursive constrainedPlanLacksEvidence (plan: TraitEvidencePlan) (state: CoreLoweringState) =
-    match plan with
-        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = argument :: [] }) -> !hasActiveTraitEvidence(traitName)(argument)(state)
-        | TraitEvidenceParameter(_constraint) -> false
-        | TraitEvidenceInstance(_constraint, _implementation, requirements, supertraits) -> constrainedPlansLackEvidence(requirements)(state) || constrainedPlansLackEvidence(supertraits)(state)
-and constrainedPlansLackEvidence (plans: List(TraitEvidencePlan)) (state: CoreLoweringState) =
-    match plans with
-        | [] -> false
-        | plan :: rest -> constrainedPlanLacksEvidence(plan)(state) || constrainedPlansLackEvidence(rest)(state)
-
 // A constrained call's dictionary sites are named by their slot: one call asks for one dictionary
 // per requirement, all under the call's own span.
 let constrainedGoalMethod (index: Int) = "dictionary" + Ashes.Text.fromInt(index)

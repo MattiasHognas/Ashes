@@ -1962,26 +1962,56 @@ let registeredProgramState items state =
                 | Error(error) -> Error(error)
                 | Ok(typed) -> registerProgramExternals(items)(typed)
 
-// The goals a pass recorded whose type its own substitution has since resolved to a concrete one.
-// A pass lowers the whole program, so by its end the substitution answers what the goal's own site
-// could not.
-let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: CoreLoweringState) (resolved: List((Str, SemanticType))) =
+// Pending goals are stored newest first. Prepending each resolved occurrence leaves
+// each site's list in lowering order, including holes for occurrences that stayed open.
+let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: CoreLoweringState) (sites: MapTree(Str, List(Maybe(SemanticType)))) =
     match pending with
-        | [] -> resolved
+        | [] -> sites
         | (key, goalType) :: rest ->
-            let goalResolvedType = resolveType(state)(goalType)
+            let resolved = resolveType(state)(goalType)
             in
-                match freeTypeVariables(goalResolvedType) with
-                    | [] -> resolvedTraitGoals(rest)(state)((key, goalResolvedType) :: resolved)
-                    | _variables -> resolvedTraitGoals(rest)(state)(resolved)
+                let proof =
+                    match freeTypeVariables(resolved) with
+                        | [] -> Some(resolved)
+                        | _ -> None
+                in
+                    let later =
+                        match Ashes.Collection.Map.getStr(key)(sites) with
+                            | Some(entries) -> entries
+                            | None -> []
+                    in
+                        sites
+                        |> Ashes.Collection.Map.setStr(key)(proof :: later)
+                        |> resolvedTraitGoals(rest)(state)
 
-let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree(Str, SemanticType)) =
-    match entries with
-        | [] -> proven
-        | (key, goalType) :: rest ->
-            proven
-            |> Ashes.Collection.Map.setStr(key)(goalType)
-            |> traitGoalMap(rest)
+// A site that proved just one type uses it on every visit. Only sites that actually
+// proved different types consume one entry per visit, as in a shared implementation
+// body lowered for several different dictionaries.
+let recursive traitGoalProofForSite entries first all =
+    match (entries, first) with
+        | ([], None) -> None
+        | ([], Some(proven)) -> Some(SharedTraitGoalProof(proven))
+        | (None :: rest, _) -> traitGoalProofForSite(rest)(first)(all)
+        | (Some(proven) :: rest, None) -> traitGoalProofForSite(rest)(Some(proven))(all)
+        | (Some(proven) :: rest, Some(earlier)) ->
+            if proven == earlier
+            then traitGoalProofForSite(rest)(first)(all)
+            else Some(OrderedTraitGoalProofs(all))
+
+let traitGoalMap sites equalityGoals =
+    (let initial =
+        Ashes.Collection.List.foldLeft(given (proofs) ->
+            given (entry) ->
+                match entry with
+                    | (key, value) -> Ashes.Collection.Map.setStr(key)(SharedTraitGoalProof(value))(proofs))(Ashes.Collection.Map.empty)(equalityGoals)
+    in
+        Ashes.Collection.Map.foldLeft(given (acc) ->
+            given (key) ->
+                given (entries) ->
+                    match (acc, traitGoalProofForSite(entries)(None)(entries)) with
+                        | ((proofs, ordered), None) -> (proofs, ordered)
+                        | ((proofs, _ordered), Some(OrderedTraitGoalProofs(_entries) as proof)) -> (Ashes.Collection.Map.setStr(key)(proof)(proofs), true)
+                        | ((proofs, ordered), Some(proof)) -> (Ashes.Collection.Map.setStr(key)(proof)(proofs), ordered))((initial, false))(sites))
 
 // A successful discovery pass validated every body. Final emission only needs
 // lambda bodies reachable from executed code or an escaping value. References inside
@@ -2197,22 +2227,39 @@ let refuseUnansweredGoals (lowered: LoweredCoreValue) =
                     |> failure(state)
         | failed -> failed
 
+let emitProgramWithProofs items trailingBody environment proofs seed =
+    seed
+    |> withStateProvenTraitGoals(proofs)
+    |> withStateTraitGoalsPinned(true)
+    |> lowerProgramWithCapabilities(items)(trailingBody)(environment)
+    |> refuseUnansweredGoals
+
+let replayProgramWithProofs items trailingBody environment seed firstState firstError pending equalityGoals =
+    match traitGoalMap(resolvedTraitGoals(pending)(firstState)(Ashes.Collection.Map.empty))(equalityGoals) with
+        | (proofs, ordered) ->
+            let replayItems =
+                match firstError with
+                    | None -> validatedReplayItems(items)(trailingBody)
+                    | Some(_error) -> items
+            in
+                // A pruned body could have consumed an occurrence of a shared site. Keep
+                // unused bodies out of emission, and number the retained traversal afresh.
+                if ordered && length(replayItems) != length(items)
+                then
+                    match lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)(seed) with
+                        | LoweredCoreValue { state = retained } ->
+                            match retained
+                            |> structuralEqualityGoals
+                            |> traitGoalMap(resolvedTraitGoals(statePendingTraitGoals(retained))(retained)(Ashes.Collection.Map.empty)) with
+                                | (retainedProofs, _ordered) -> emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed)
+                else emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed)
+
 let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                 | ([], []) -> first
-                | (pending, equalityGoals) ->
-                    let replayItems =
-                        match firstError with
-                            | None -> validatedReplayItems(items)(trailingBody)
-                            | Some(_error) -> items
-                    in
-                        seed
-                        |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
-                        |> withStateTraitGoalsPinned(true)
-                        |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
-                        |> refuseUnansweredGoals
+                | (pending, equalityGoals) -> replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
 
 // The two passes lowerProgramPasses runs, each with the time `clock` reads around it in
 // milliseconds, and how many trait goals and structural equality goals the first left open.
@@ -2241,18 +2288,8 @@ let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreL
                     match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                         | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [])
                         | (pending, equalityGoals) ->
-                            let replayItems =
-                                match firstError with
-                                    | None -> validatedReplayItems(items)(trailingBody)
-                                    | Some(_error) -> items
-                            in
-                                let replayed =
-                                    seed
-                                    |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
-                                    |> withStateTraitGoalsPinned(true)
-                                    |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
-                                    |> refuseUnansweredGoals
-                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
+                            let replayed = replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals)
+                            in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

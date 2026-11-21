@@ -52,6 +52,7 @@ export (
     type CoreHeapQueryFacts(..),
     type CoreHeapQueryContext(..),
     type CoreTypeObservation(..),
+    type CoreTraitGoalProof(..),
     type CoreProgramState(..),
     type CoreFunctionState(..),
     type CoreOwnerState(..),
@@ -839,6 +840,10 @@ type CoreTypeObservation =
     // How many calls lowered against a recorded expected type failed and were lowered again without it.
     | tableFallbacks: Int
 
+type CoreTraitGoalProof =
+    | SharedTraitGoalProof(SemanticType)
+    | OrderedTraitGoalProofs(List(Maybe(SemanticType)))
+
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
     | constructorIndex: CoreConstructorLookupIndex
@@ -971,7 +976,7 @@ type CoreProgramState =
     | closureDropperLabels: List((Str, Str))
     // Stage 0's `_provenAmbiguousTraitGoalTypes`: the operand types a first pass proved for those
     // sites, read by the pass that lowers with them pinned.
-    | provenTraitGoals: MapTree(Str, SemanticType)
+    | provenTraitGoals: MapTree(Str, CoreTraitGoalProof)
     // Stage 0's `_provenCallResultTypes` for the calls between the members of a recursive group: the
     // result type the group's first lowering settled for a call to a member whose result was still
     // open there, by call site, pinned at the same site when the group is lowered again.

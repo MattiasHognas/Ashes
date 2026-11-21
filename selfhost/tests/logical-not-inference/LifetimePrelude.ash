@@ -1,3 +1,4 @@
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
@@ -8,8 +9,12 @@ type CoreFunctionState =
     | traitGoalsPinned: Bool
     | active: Bool
 
+type CoreTraitGoalProof =
+    | SharedTraitGoalProof(SemanticType)
+    | OrderedTraitGoalProofs(List(Maybe(SemanticType)))
+
 type CoreProgramState =
-    | provenTraitGoals: MapTree(Str, SemanticType)
+    | provenTraitGoals: MapTree(Str, CoreTraitGoalProof)
 
 type CoreLoweringState =
     | substitution: MapTree(Int, SemanticType)
