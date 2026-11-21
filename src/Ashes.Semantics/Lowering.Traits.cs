@@ -632,13 +632,8 @@ public sealed partial class Lowering
         };
     }
 
-    // A bare (uncalled) trait-method reference. Direct application is handled by
-    // TryLowerTraitDirectCall/LowerTraitMethodCall; a first-class method value used as an ordinary
-    // value (for example passed to List.map) eta-expands to a lambda that applies the method,
-    // mirroring BuildOperationEtaLambda for capability operations, so evidence resolution happens
-    // through the normal call path at the eventual application site instead of being fabricated
-    // here. A zero-arity method (Default.default is not itself a function) has nothing to
-    // eta-expand over and resolves directly.
+    // Resolve a method value directly when its expected type supplies evidence.
+    // Otherwise eta-expand function-valued methods so application can supply it.
     private (int, TypeRef) LowerBareTraitMethodReference(
         Expr.QualifiedVar reference,
         TraitSymbol trait,
@@ -654,6 +649,19 @@ public sealed partial class Lowering
             isDefinition: false);
 
         int arity = CountArrows(method.Scheme.Body);
+        if (arity > 0 && request.ExpectedType is { } expected)
+        {
+            // The contextual arrow can select a result-directed method before it is
+            // called. An eta wrapper would see just its parameters when lowering the
+            // body and could select an unrelated ambient result dictionary.
+            Unify(signature, expected);
+            TraitConstraint contextual = PruneTraitConstraint(hoverConstraint);
+            if (IsConcreteTraitConstraint(contextual)
+                || FindActiveTraitDictionaryParameter(contextual, exactOnly: true) is not null)
+            {
+                return LowerTraitMethodCall(trait, method, [], span, request);
+            }
+        }
         return arity == 0
             ? LowerTraitMethodCall(trait, method, [], span, request)
             : LowerExpr(BuildTraitMethodEtaLambda(reference, arity), request).AsPair();
