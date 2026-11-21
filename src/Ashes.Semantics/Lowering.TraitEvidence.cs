@@ -1419,6 +1419,15 @@ public sealed partial class Lowering
         {
             return null;
         }
+        // The method result can be the only occurrence of the trait parameter.
+        // Choosing a supplied dictionary also fixes that result to its supplied type.
+        if (active.Metadata.Constraint is { } supplied)
+        {
+            for (int i = 0; i < constraint.TypeArgs.Count; i++)
+            {
+                Unify(constraint.TypeArgs[i], supplied.TypeArgs[i]);
+            }
+        }
         string methodName = TraitMethodParameterName(active.Metadata.Shape, method.Name);
         if (Lookup(methodName) is null && Lookup(active.ParameterName) is not null)
         {
