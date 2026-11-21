@@ -401,7 +401,7 @@ behavioural check for all of them, then stage 2, its behavioural check, and stag
 
 ### Current round: round 10 (resumed 2026-11-21)
 
-**Round 10 has not run.** The integration branch is `selfhost/round10`, pushed at `c15807b7` with compiler source through `b438d259`. It branches from `main` after #1159 (`f6e28970`). The focused native policy suite on this integration reports an unexpected immediate-evidence diagnostic. Resolve it and clear the other non-leak correctness checks below before starting the shared bootstrap.
+**Round 10 has not run.** The integration branch is `selfhost/round10`, with compiler source pushed through `e948b6f2`. It branches from `main` after #1159 (`f6e28970`). The focused native policy suite reports an unexpected immediate-evidence diagnostic for a callback stored in a tuple. Resolve it and clear the other non-leak correctness checks below before starting the shared bootstrap.
 
 #### Orientation and responsibilities
 
@@ -417,9 +417,10 @@ All worktree names below are relative to `.claude/worktrees/`. Generated scripts
 | Worktree / branch | Responsibility or evidence |
 | --- | --- |
 | `step-f-round3` / `selfhost/round10` | Coordinator validation, shared rounds and results. |
-| `r10-phantom-query` / `fix/r10-phantom-query` | Active bounded C# and Ashes query optimization from `b438d259`. Preserve layout results, quantified variables and self-exclusions. A stack sample from a 23-minute failed build reached `AddBindingFtv` through `VariablesHeldBesideFunction`. Speedup requires measurement. |
-| `r10-handoff-consolidation` / `fix/r10-handoff-consolidation` | This documentation handoff. |
-| `r10-callback-evidence`, `r10-evidence-boundaries`, `r10-ir-ownership-audit` / corresponding `fix/*` | Completed callback, standalone inference and ownership batches. Their progress files identify witnesses, source checks and outstanding native checks. |
+| `r10-phantom-query` / `fix/r10-phantom-query` | BATCH READY `66b8d0d3`, integrated as `e948b6f2`: candidate-directed phantom-variable query in both compilers. Three focused poison programs had byte-identical lowered IR and expected output; compiler-source inference passed 10,131 items / 184 modules. No measured speedup claim. Worker `lowering_evidence` is idle for fresh validation failures. |
+| `r10-handoff-consolidation` / `fix/r10-handoff-consolidation` | Completed and integrated as `da3848ad` / `02d8cd30`. |
+| `r10-evidence-boundaries` / `fix/r10-evidence-boundaries` | Active `tmc_repair`: diagnose stored-tuple demand-stage failure from the native run. Existing commits through `f9bd8d0a` are integrated. |
+| `r10-callback-evidence`, `r10-ir-ownership-audit` / corresponding `fix/*` | Completed callback and ownership batches, integrated through `0db26650` and `30935ec4`. Their progress files identify witnesses, source checks and outstanding native checks. |
 | `r10-type-coverage`, `r10-test-oracles`, `r10-remaining-correctness` | Coverage inventory, C# oracle evidence and bootstrap36 historical reproducers. |
 | `r10-fixture-candidates` | Coordinator scripts and preserved fixture/stack evidence under `work/`; `parallel-codegen` / `fix/parallel-codegen` is separately paused. |
 
@@ -427,13 +428,15 @@ All worktree names below are relative to `.claude/worktrees/`. Generated scripts
 
 | Source | What was observed |
 | --- | --- |
-| `c15807b7`, `work/r10pre/policy-combined/` | Stage 0 built, standalone compiler-source inference printed `ok` (10,127 items, 184 modules), driver formatting and native policy compilation passed. Execution exited 1 with `ImmediateTraitEvidenceRequired("Eq", [SemVariable(2070)])` where the test expected `Seed`. The diagnostic's source case and which requirement should be immediate need isolation. Inspect `summary.txt` and `policy-run.log`. |
+| `c15807b7`, `work/r10pre/policy-combined/` | Stage 0 built, standalone compiler-source inference printed `ok` (10,127 items, 184 modules), driver formatting and poison native policy compilation passed. Execution exited 1 with `ImmediateTraitEvidenceRequired("Eq", [SemVariable(2070)])` where the test expected `Seed`. Gdb isolated the second `checkAggregateEvidence` case: `let stored = (pick, Unit); let check = invoke(stored)`. The preceding inline-tuple case passed. Eq should stay latent until the returned comparator is called. Trace: `r10-fixture-candidates/work/policy-failure-gdb.txt`. |
 | `fe385315`, `work/r10pre/policy-preflight-fixed/` | Prior focused native cases passed, including the immediate-demand RHS location. This predates the aggregate/recursive-peer additions. |
 | `f4c4cc6f`, `work/r10pre/coverage-batch/` | Last completed full stage-0 gates before this checkpoint. Build and format passed, C# 3,073 passed / 5 RSS failed / 2 skipped, LSP 88/88, e2e 1,291 passed / 1 failed / 80 skipped. The strict-prefix ordering case subsequently passed a fresh focused stage-0 poison check. The integrated full rerun belongs under `work/r10pre/policy-shared/`. |
 | `4a6478c7`, `work/r10pre/native-port/` | Last broad native IR result: 35 of 95 differed. Full dumps are in `work/r10-shared-capture/actual/`. The semantics suite stopped at the match-arm diagnostic assertion, since corrected. The no-reuse attempt was cancelled. |
 | `da06e40d`, `work/r10pre/named-native/` | Named harness compilation stopped after 23 minutes at arm 38 (`Unit` versus `List(SemanticStitchUnit)`). The coordinator renderer now evaluates each group and explicitly discards its result. This attempt produced neither case results nor a newer IR matrix. |
 
 Use `work/r10pre/policy-preflight.sh <new-output>` for a fresh stage 0, source inference and poison-built native policy driver. Require an explicit `ok` from inference even when its exit code is zero. The current stage 0 is `work/r10pre/policy-combined/s0/ashes`. The standalone inference binary used by that script is named in the script. For full solution build/format, C#, LSP and stage-0 e2e use `../r10-fixture-candidates/work/policy-shared-checks.sh <new-output>`. Read each phase's exit code and failure rows in its own log.
+
+Main is starting the full stage-0 checks at source `e948b6f2`, output `work/r10pre/policy-shared/`, independently of the open stage-1 policy failure. Do not mutate integration while this job reads it. The earlier chained run stopped at policy failure and never entered its C#/e2e phases.
 
 Once the source is ready, run `../r10-fixture-candidates/work/named-native-checks.sh <absolute-stage0-path> <new-output>` from integration using the coordinator's capped runner. It uses `render-named-capture.sh`, builds a poison-instrumented `--debug -O0` harness and executes all named groups individually from the repository root so they can read the checked-in programs. It then compares 95 lowered-IR fixtures. Case logs, the selected groups and mismatching IR are in `<new-output>/cases/`, `cases-list.txt` and `actual/`. Build and run the separate `--debug-disable-reuse` variant as well. Preserve prior result directories.
 
