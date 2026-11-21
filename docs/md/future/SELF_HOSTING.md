@@ -443,6 +443,12 @@ explicit helper export. `f5b85d06` fixes the export and is integrated; `822513dd
 immediate-evidence diagnostic's RHS location and adds its exact-offset regression, also integrated.
 The native phase did not run on that failed attempt. Retry uses
 `work/r10pre/policy-preflight-fixed/`, preserving the initial logs.
+The corrected preflight at `fe385315` passed: fresh stage 0; explicit inference `ok` for
+10,092 items / 184 modules; focused native policy driver built with `--debug -O0` in 30.12s
+and all immediate-evidence tests passed, including RHS location. The broad native check is next:
+`r10-fixture-candidates/work/named-native-checks.sh`, using this stage 0, logs
+`work/r10pre/named-native/`. It builds with poison and runs every named semantics group separately,
+then captures the 95 IR fixtures. No-reuse and full stage-0 suites remain separate checks.
 `fix/r10-evidence-audit` supplied partial/generalization/evidence fixes through `ce420878` and the
 still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` supplied recording,
 translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
