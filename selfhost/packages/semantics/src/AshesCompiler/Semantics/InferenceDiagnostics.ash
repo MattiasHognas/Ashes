@@ -534,6 +534,11 @@ let unificationDiagnostic (placements: List(StitchedDefinitionPlacement)) (error
         | TypeArityMismatch(_left, _right) -> None
 
 // Stage 0's context for the argument of a call chain at `ordinal`, counted from 1.
+let branchTypeDiagnostic placements mismatch code context =
+    match unificationDiagnostic(placements)(mismatch) with
+        | Some((_code, message)) -> coded(code)(message + " Context: " + context + ".")
+        | None -> None
+
 let callArgumentContext (ordinal: Int) (callee: Maybe(Str)) =
     match callee with
         | Some(name) -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of call to '" + name + "'."
@@ -748,6 +753,8 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
             |> unknownValueDiagnostic(placements)(builtins)(location)
             |> unimportedNameOr("Constructor")(name)
         | InferenceUnificationError(unification) -> unificationDiagnostic(placements)(unification)
+        | IfBranchTypeMismatch(mismatch) -> branchTypeDiagnostic(placements)(mismatch)(typeMismatchCode)("in if branches")
+        | MatchArmTypeMismatch(mismatch, armIndex) -> branchTypeDiagnostic(placements)(mismatch)("ASH004")("in match arm " + Ashes.Text.fromInt(armIndex))
         | InferenceTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicatePatternBinding(name) -> uncoded("Duplicate binding '" + name + "' in pattern.")
         | UnknownPatternConstructor(name) ->

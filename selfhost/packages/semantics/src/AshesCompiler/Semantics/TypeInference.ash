@@ -264,6 +264,8 @@ type TypeInferenceError =
     // first, the argument's position in its call chain counted from 1, and the chain's root callee
     // when it is a name.
     | CallArgumentMismatch(UnificationError, Int, Maybe(Str))
+    | IfBranchTypeMismatch(UnificationError)
+    | MatchArmTypeMismatch(UnificationError, Int)
     // A call chain passing more arguments than its root takes: the root callee when it is a name,
     // the arguments it takes, the arguments passed, and the type the extra argument was applied to.
     | CallChainArityMismatch(Maybe(Str), Int, Int, SemanticType)
@@ -2691,6 +2693,14 @@ let mergeUnificationIn (environment: TypeEnvironment) currentSubstitution result
                 InferenceUnificationError(error)
             )
 
+let branchMismatch armIndex (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceUnificationError(TypeMismatch(_, _) as mismatch)) } ->
+            result with error = Some(if armIndex == 0
+            then IfBranchTypeMismatch(mismatch)
+            else MatchArmTypeMismatch(mismatch)(armIndex))
+        | _ -> result
+
 let inferRecordFieldDefinition receiverType fieldName (definition: ConstructorInferenceDefinition) substitution supply constraints =
     match instantiate(definition.scheme)(supply) with
         | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
@@ -4736,7 +4746,7 @@ and inferPattern pattern environment substitution supply names =
                 names,
                 UnsupportedInferencePattern("pattern case is not implemented yet")
             )
-and inferMatchCases cases scrutineeType resultType environment substitution supply ambientRow accumulatedConstraints =
+and inferMatchCases cases armIndex scrutineeType resultType environment substitution supply ambientRow accumulatedConstraints =
     match cases with
         | [] ->
             addConstraints(
@@ -4765,6 +4775,7 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                                         guard,
                                         body,
                                         tail,
+                                        armIndex,
                                         scrutineeType,
                                         resultType,
                                         environment,
@@ -4788,12 +4799,13 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                                 failedSupply,
                                 error
                             )
-and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
+and inferMatchGuard guard body tail armIndex scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match guard with
         | None ->
             inferMatchBody(
                 body,
                 tail,
+                armIndex,
                 scrutineeType,
                 resultType,
                 environment,
@@ -4816,6 +4828,7 @@ and inferMatchGuard guard body tail scrutineeType resultType environment pattern
                             inferMatchBody(
                                 body,
                                 tail,
+                                armIndex,
                                 scrutineeType,
                                 resultType,
                                 environment,
@@ -4827,7 +4840,7 @@ and inferMatchGuard guard body tail scrutineeType resultType environment pattern
                             )
                         | failure -> failure
                 | failure -> failure
-and inferMatchBody body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
+and inferMatchBody body tail armIndex scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match inferWith(body)(patternEnvironment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
             match mergeUnificationIn(environment)(
@@ -4841,6 +4854,7 @@ and inferMatchBody body tail scrutineeType resultType environment patternEnviron
                 | TypeInferenceResult { semanticType = _unifiedResult, substitution = resultSubstitution, supply = resultSupply, constraints = _unificationConstraints, error = None } ->
                     inferMatchCases(
                         tail,
+                        armIndex + 1,
                         scrutineeType,
                         resultType,
                         environment,
@@ -4849,7 +4863,7 @@ and inferMatchBody body tail scrutineeType resultType environment patternEnviron
                         ambientRow,
                         appendConstraints(accumulatedConstraints)(bodyConstraints)
                     )
-                | failure -> failure
+                | failure -> branchMismatch(armIndex)(failure)
         | failure -> failure
 and inferBinaryTrait traitName returnsBool left right environment substitution supply ambientRow =
     match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
@@ -5594,7 +5608,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                             branchUnification,
                                                             elseSupply,
                                                             thenType
-                                                        )
+                                                        ) |> branchMismatch(0)
                                                     )
                                             | failure -> failure
                                     | failure -> failure
@@ -5759,6 +5773,7 @@ and inferWith expression environment substitution supply ambientRow =
                             checkMatchCoverage(cases)(scrutineeType)(environment)(
                                 inferMatchCases(
                                     cases,
+                                    1,
                                     scrutineeType,
                                     resultType,
                                     environment,

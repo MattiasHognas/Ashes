@@ -240,7 +240,7 @@ let rejectBranchMismatch unit =
     match Unit
     |> emptyTypeEnvironment
     |> inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong"))) with
-        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(IfBranchTypeMismatch(TypeMismatch(_left, _right))) } -> Unit
         | _ -> test.fail("if branches should have one type")
 
 let rejectUnknownValue unit =
