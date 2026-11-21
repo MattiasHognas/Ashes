@@ -82,6 +82,7 @@ import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Expressions
 import AshesCompiler.Semantics.StrictPartialStages.scheduleStrictProgram
 export (
+    value failedCoreLowering,
     value allTopLevelBindingNames,
     value lowerProgramPasses,
     type CoreProgramPassMeasurement(..),
