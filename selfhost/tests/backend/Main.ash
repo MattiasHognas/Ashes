@@ -5279,6 +5279,65 @@ let testRcReleaseInstrumentation unit =
                 |> Ashes.Text.contains(text)
                 |> test.assertEqual(expected))
 
+let testForkedServerWorkerIndex unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                0
+                |> LoadConstInt(0)
+                |> irOf,
+                2
+                |> LoadConstInt(1)
+                |> irOf,
+                1
+                |> CreateForkWorkersTask(2)(0)
+                |> irOf,
+                2
+                |> RunTask(3)
+                |> irOf,
+                false
+                |> GetAdtField(4)(3)(0)
+                |> irOf,
+                "parent"
+                |> JumpIfFalse(4)
+                |> irOf,
+                irOf(PrintInt(4)),
+                irOf(Label("parent")),
+                irOf(Return(0))
+            ])(0)(5)
+        in codegenEntryFunction(name)(context)(entry)([])
+    in assertProgramPrints(build)("forkedServerWorkerIndex")("selfhost_backend_server_worker_index")("1"))
+
+let testServerStopSignals unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                0
+                |> LoadConstInt(0)
+                |> irOf,
+                1
+                |> LoadConstInt(1)
+                |> irOf,
+                1
+                |> CreateForkWorkersTask(2)(0)
+                |> irOf,
+                2
+                |> RunTask(3)
+                |> irOf,
+                false
+                |> GetAdtField(4)(3)(0)
+                |> irOf,
+                irOf(RequestServerStop(5)),
+                irOf(PrintInt(4)),
+                irOf(RequestServerStop(6)),
+                "s0"
+                |> LoadConstStr(7)
+                |> irOf,
+                irOf(PanicStr(7))
+            ])(0)(8)
+        in codegenEntryFunction(name)(context)(entry)([IrStringLiteral(label = "s0", value = "second stop returned")])
+    in assertProgramPrints(build)("serverStopSignals")("selfhost_backend_server_stop_signals")("0"))
+
 let testServerDrainTimeoutSetting unit =
     (let build name context =
         let entry =
@@ -6202,6 +6261,8 @@ let run shipped =
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
     |> testRcReleaseInstrumentation
+    |> testForkedServerWorkerIndex
+    |> testServerStopSignals
     |> testServerDrainTimeoutSetting
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
