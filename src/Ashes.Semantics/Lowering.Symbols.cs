@@ -1049,11 +1049,20 @@ public sealed partial class Lowering
     /// </summary>
     private string? FindUnimportedDeclaringModule(TypeSymbol type, TextSpan referenceSpan)
     {
-        if (_visibleModulesByModule is null
-            || type.IsBuiltin
-            || referenceSpan.Start == 0
-            || _typeDeclarationSpans.Contains(referenceSpan)
+        if (type.IsBuiltin
             || !_typeProvenanceBySymbol.TryGetValue(type, out TraitDeclarationProvenance? declaring))
+        {
+            return null;
+        }
+
+        return FindUnimportedDeclaringModule(declaring, referenceSpan);
+    }
+
+    private string? FindUnimportedDeclaringModule(TraitDeclarationProvenance declaring, TextSpan referenceSpan)
+    {
+        if (_visibleModulesByModule is null
+            || referenceSpan.Start == 0
+            || _typeDeclarationSpans.Contains(referenceSpan))
         {
             return null;
         }
@@ -1101,8 +1110,16 @@ public sealed partial class Lowering
     /// </summary>
     private void ReportUnimportedType(TypeSymbol type)
     {
+        if (!type.IsBuiltin && _typeProvenanceBySymbol.TryGetValue(type, out TraitDeclarationProvenance? declaring))
+        {
+            ReportUnimportedType(type.Name, declaring);
+        }
+    }
+
+    private void ReportUnimportedType(string name, TraitDeclarationProvenance declaring)
+    {
         if (_typeReferenceSpan is not { } referenceSpan
-            || FindUnimportedDeclaringModule(type, referenceSpan) is not { } declaringModule
+            || FindUnimportedDeclaringModule(declaring, referenceSpan) is not { } declaringModule
             || !_reportedUnimportedNameSpans.Add(referenceSpan))
         {
             return;
@@ -1110,7 +1127,7 @@ public sealed partial class Lowering
 
         ReportDiagnostic(
             referenceSpan,
-            $"Type '{type.Name}' is declared in module '{declaringModule}', which this module does not import.",
+            $"Type '{name}' is declared in module '{declaringModule}', which this module does not import.",
             DiagnosticCodes.UnimportedModuleName);
     }
 
@@ -1248,8 +1265,9 @@ public sealed partial class Lowering
     public TypeRef ResolveTypeName(string name, IReadOnlyList<TypeRef>? typeArgs = null)
     {
         typeArgs ??= [];
-        if (_typeAliases.ContainsKey(name))
+        if (_typeAliases.TryGetValue(name, out TypeAliasDecl? alias))
         {
+            ReportUnimportedType(name, ResolveDeclarationProvenance(GetSpan(alias)));
             return ResolveTypeAlias(name, typeArgs);
         }
         if (BuiltinRegistry.TryGetPrimitiveType(name, out var primitiveType))
