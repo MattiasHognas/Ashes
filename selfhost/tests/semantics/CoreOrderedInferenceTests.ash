@@ -346,6 +346,7 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/list_equality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/list_inequality_uses_ambient_element_dictionary.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkListEqualityLowered)(shipped)("tests/mutual_recursive_tree_rewrite_checks_empty_aliases.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 

@@ -3891,14 +3891,18 @@ let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgr
 
 let testListEqualityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
 
-let testNumberedListEqualityUsesAmbientElementDictionary shipped unit =
-    (let fixture = "list_equality_uses_ambient_element_dictionary"
-    in
-        let build =
-            "tests/" + fixture + ".ash"
-            |> sharedTestSource
-            |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
-        in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)("yes no"))
+let assertNumberedFixturePrints shipped fixture expected =
+    (let build =
+        "tests/" + fixture + ".ash"
+        |> sharedTestSource
+        |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
+    in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)(expected))
+
+let testNumberedListEqualityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
+
+let testListInequalityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
+
+let testNumberedListInequalityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
 
 let testMutualTreeRewriteChecksEmptyAliases shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursive_tree_rewrite_checks_empty_aliases")("prefixx x")
 
@@ -6340,6 +6344,8 @@ let run shipped =
     |> testRunMutualShowDictionariesAtCalls(shipped)
     |> testListEqualityUsesAmbientElementDictionary(shipped)
     |> testNumberedListEqualityUsesAmbientElementDictionary(shipped)
+    |> testListInequalityUsesAmbientElementDictionary(shipped)
+    |> testNumberedListInequalityUsesAmbientElementDictionary(shipped)
     |> testMutualTreeRewriteChecksEmptyAliases(shipped)
     |> testRunForwardedPartialPrefix(shipped)
     |> testRunAmbientEvidenceInPartialPrefix(shipped)
