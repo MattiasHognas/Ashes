@@ -3874,6 +3874,9 @@ let testSocketCaptureTeardown shipped unit =
             let _ = run("socket_capture_close")(["true", "true"])
             in run("socket_capture_cancel")(["true"]))
 
+let testSocketHelperTeardown shipped unit =
+    assertProgramPrintsLinesWithImports([("dup", "libc.so.6"), ("close", "libc.so.6")])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))("socketHelperTeardown")("selfhost_backend_socket_helper_teardown")(["true", "true"])
+
 let testAwaitingHelperKeepsOwnedBackedgeValues shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_helper_keeps_owned_backedge_values")("2=1=seed")
 
 let testRecursiveAwaitingHelperRemainsCallable shipped unit =
@@ -6359,6 +6362,7 @@ let run shipped =
     |> testReallocatedPoisonedCell
     |> testExplicitTaskFrameDropper
     |> testSocketCaptureTeardown(shipped)
+    |> testSocketHelperTeardown(shipped)
     |> testAwaitingHelperKeepsOwnedBackedgeValues(shipped)
     |> testRecursiveAwaitingHelperRemainsCallable(shipped)
     |> testCompileConcurrentHttpServerForReplay(shipped)

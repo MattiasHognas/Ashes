@@ -2,6 +2,9 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoroutineSocketFrame.socketStaysInTask
+import AshesCompiler.Semantics.CoreLowering.CoroutineHelpers.helperRewrite
+import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
@@ -828,6 +831,51 @@ let expectSocketsReleasedOnlyByOwningFrames unit =
                         |> hasFrameDropper
                         |> test.assertEqual(false))
 
+let checkHelperSocketProof expected source =
+    match parseExpression(source) with
+        | ExpressionParseResult { expression = expression, diagnostics = [] } ->
+            expression
+            |> socketStaysInTask("socket")
+            |> test.assertEqual(expected)
+        | _ -> test.fail("helper socket proof example did not parse")
+
+let expectHelperSocketBorrowBoundaries unit =
+    (let prefix = "Ok(let recursive next n = match await Ashes.Net.Tcp.close(socket) with | Ok(_) -> n | Error(_) -> n in "
+    in
+        let _ = checkHelperSocketProof(true)(prefix + "next(0))")
+        in
+            let _ = checkHelperSocketProof(false)(prefix + "next)")
+            in
+                let _ = checkHelperSocketProof(false)("Ok(let recursive next s n = match await Ashes.Task.sleep(1) with | Ok(_) -> s | Error(_) -> s in next(socket)(0))")
+                in checkHelperSocketProof(false)("Ok(let recursive next n = match await Ashes.Net.Tcp.close(socket) with | Ok(_) -> n | Error(_) -> n in async(next(0)))"))
+
+let expectHelperNodeProvenance unit =
+    (let function = ExprLambda("unused")(ExprAwait(ExprVar("task")))(None)
+    in
+        let use = ExprNode(1)(ExprVar("helper"))
+        in
+            let arg = ExprNode(2)(ExprInt(7))
+            in
+                let call =
+                    callArgumentsInline
+                    |> ExprCall(use)(arg)(false)
+                    |> ExprNode(3)
+                in
+                    let continuation =
+                        false
+                        |> ExprList([call])
+                        |> ExprNode(4)
+                    in
+                        match helperRewrite("helper")(function)(continuation)(None)(0) with
+                            | None -> test.fail("the awaiting helper was not transformed")
+                            | Some(rewritten) ->
+                                let has id =
+                                    foldExpressionNodes(given (seen) ->
+                                        given (node) ->
+                                            given (_span) ->
+                                                given (_expr) -> seen || node == id)(false)(rewritten)
+                                in test.assertEqual(true)(!has(1) && has(2) && has(3) && has(4)))
+
 let expectRecursiveAwaitingHelperSuspends unit =
     (let source = "let job n = async(let recursive loop k total = if k <= 0 then total else match await Ashes.Task.sleep(1) with | Ok(_tick) -> loop(k - 1)(total + 1) | Error(_e) -> total in loop(n)(0))\njob"
     in
@@ -844,6 +892,8 @@ let expectRecursiveAwaitingHelperSuspends unit =
 
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectHelperNodeProvenance
+    |> expectHelperSocketBorrowBoundaries
     |> expectRecursiveAwaitingHelperSuspends
     |> expectSocketsReleasedOnlyByOwningFrames
     |> expectBytesUpdatesReuseFreshBuffers

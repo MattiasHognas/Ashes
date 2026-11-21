@@ -265,6 +265,19 @@ let checkHelperSignatureIr mode path lowered =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " declared helper failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(mode + " declared helper produced no program")
 
+let checkSocketHelperIr mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(ir), error = None } ->
+            let lines = formatIr(ir)(LoweredIr)(None)
+            in
+                let text = Ashes.Text.join("\n")(lines)
+                in
+                    if hasEntryInstruction(path)("Suspend")(lines) && Ashes.Text.contains(text)("Target=__async_loop_") && Ashes.Text.contains(text)("FrameDropperLabel=")
+                    then Unit
+                    else Ashes.IO.panic(mode + " awaiting socket helper lost its parent frame obligation")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " socket helper failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " socket helper produced no program")
+
 let checkRawAndTypedIr verify shipped path =
     match Ashes.IO.File.readText(path) with
         | Error(message) -> Ashes.IO.panic(message)
@@ -308,6 +321,8 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawImmediateEvidence(shipped)("tests/partial_requires_open_evidence_before_returning_function.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkEntryCopyIr)(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_preserves_declared_results.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/awaiting_helper_keeps_owned_backedge_values.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
