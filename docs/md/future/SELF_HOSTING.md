@@ -404,6 +404,36 @@ behavioural check for all of them, then stage 2, its behavioural check, and stag
 This section is the handoff: a session that starts fresh reads it first. Keep it current with each
 integration, and replace it when round 10 has run.
 
+**Integrated checkpoint (2026-11-21 03:38):** the queued source batches below are now integrated
+through `b12affe3` and pushed: callback `cd1c9795`/`5b452baf`/`5df945b3`/`961e5983`/`0db26650`
+became `abebebf6`/`d9089104`/`3cc24de0`/`e2f8459b`/`acd6c19d`; inference
+`947fb5d0`/`0918689b`/`f9bd8d0a` became `d699a4bf`/`22d615b3`/`421e904b`; ownership
+`37bf8d78`/`85a4e368` became `a997de25`/`b12affe3`. Both callback/inference workers handed back
+clean; focused standalone source checks pass, while their combined native cases remain unverified.
+
+The `da06e40d` named-native build **failed after 23 minutes**, before any suite execution:
+`Unit vs List<SemanticStitchUnit>, in match arm 38`. This is a generated harness error:
+`runModuleReferenceRewritingTests` intentionally returns the checked unit list, discarded by the
+original sequential suite. The new named dispatcher had required identical result types across
+all test groups. Corrected coordinator renderer `r10-fixture-candidates/work/render-named-capture.sh`
+evaluates each test and discards its result, preserving the suite's behavior. The test body and
+compiler were not changed for this harness repair. The failed attempt supplies no new IR capture.
+Future named runs use this renderer, configurable output folders and a per-run `actual/` directory.
+
+The guard review found a confirmed correctness counterexample: an `Int` local shadowing another
+match arm's list-tail name inherits that arm's RC-transfer fact. Old-family IR retains integer 7;
+bootstrap54's generated program crashes with exit 139. C# correctly emits two genuine tail retains
+and prints 7. `30935ec4` stores the fact on the actual `CoreBinding` and removes spelling-based
+fallbacks while preserving protective-owner eligibility; its source preflight is running.
+This repair is being integrated before the next checks. Main will run fresh policy/source preflight,
+then C#/LSP/e2e/format, followed by corrected named-native and no-reuse validation. No round 10 yet.
+The lexical-binding repair is integrated as `b438d259`. `lowering_evidence` resumes in fresh
+`r10-phantom-query`, branch `fix/r10-phantom-query` from that head, for a 25-minute bounded
+candidate-directed phantom-variable query optimization in both compilers. It must preserve all
+layout decisions, self/quantifier exclusions and mutable-type correctness; no typed-lowering
+policy change is authorized by this task. Main will measure any improvement. `tmc_repair` finishes
+the guard repair's source check in `r10-ir-ownership-audit`; no more than two workers.
+
 **Queued checkpoint (2026-11-21 03:24):** integration is frozen at `da06e40d` while main's
 `work/r10pre/named-native/` job builds/runs the combined named semantics/IR driver (session 28490).
 The coordinator records this update on `fix/r10-handoff-queue` in its own worktree so the running
