@@ -273,7 +273,7 @@ let expectCompleteInstructionInventory unit =
     |> (given (_) ->
         ioInstructions
         |> length
-        |> test.assertEqual(82))
+        |> test.assertEqual(81))
     |> (given (_) ->
         ownershipInstructions
         |> length
