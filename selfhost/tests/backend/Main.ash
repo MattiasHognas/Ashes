@@ -11,6 +11,9 @@ import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
+import AshesCompiler.Frontend.ModuleInterface.buildModuleInterface
+import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ModuleReferenceRewriting.rewriteStitchedModuleReferences
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
@@ -3898,12 +3901,55 @@ let assertNumberedFixturePrints shipped fixture expected =
         |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
     in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)(expected))
 
+// The archived direct-lowering input carries an already flattened Names_collect declaration.
+// Supply its one qualified export to the same reference rewriter used by module stitching.
+let resolveArchivedCallee (unit: SemanticStitchUnit) =
+    match buildStitchedSemanticProject([unit]) with
+        | Ok(StitchedSemanticProject { scopes = scope :: [] } as project) ->
+            let boundary = Ashes.Collection.List.length(scope.definitions)
+            in
+                match resolveStitchedUnqualified(unit.name)(boundary)(StitchedValue)("Names_collect")(project) with
+                    | Some(StitchedDefinition { compilerName = "Names_collect" } as target) ->
+                        let exported = target with sourceName = "collect", qualifiedName = "Names.collect", moduleName = "Names", exported = true
+                        in
+                            let members = Ashes.Collection.Map.setStr("collect")([exported])(Ashes.Collection.Map.empty)
+                            in
+                                let qualified = Ashes.Collection.Map.setStr("Names")([members])(scope.qualifiedImportsByQualifier)
+                                in
+                                    let mappedScope = scope with qualifiedImportsByQualifier = qualified
+                                    in
+                                        let resolved = rewriteStitchedModuleReferences((project with scopes = [mappedScope]))(unit)
+                                        in resolved.program
+                    | _ -> test.fail("missing flattened Names_collect declaration")
+        | _ -> test.fail("could not index archived lowering input")
+
+let buildArchivedQualifiedCallee name context =
+    (let path = "selfhost/tests/backend/fixtures/qualified_callee_fifty_rounds.ash.source"
+    in
+        let source = sharedTestSource(path)
+        in
+            match parseProgram(source) with
+                | ProgramParseResult { program = program, diagnostics = [] } ->
+                    match buildModuleInterface(name)([])(program) with
+                        | Ok(interface) ->
+                            let unit = SemanticStitchUnit(name = name, packageId = "app", sourcePath = path, imports = [], interface = interface, program = program, isEntry = true)
+                            in
+                                match unit
+                                |> resolveArchivedCallee
+                                |> lowerCoreProgramWithSource(path)(source) with
+                                    | CoreLoweringResult { program = Some(lowered), error = None } ->
+                                        lowered
+                                        |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+                                        |> codegenProgram(name)(context)
+                                    | CoreLoweringResult { error = error } -> test.fail("archived callee lowering failed: " + Ashes.Trait.Show.show(error))
+                        | Error(_error) -> test.fail("could not index archived source declarations")
+                | _ -> test.fail("could not parse archived callee source"))
+
 let testOriginalTmcAccumulators shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("tmc_dedup_with_grown_seen_accumulator")("p1,p2,p3")
     in
         let _ = assertSharedProgramPrintsExactly(shipped)("qualified_module_call_fresh_list_argument_released")("21")
-        in
-            assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/qualified_callee_fifty_rounds.ash.source"))("qualifiedCalleeFiftyRounds")("selfhost_backend_qualified_callee_fifty_rounds")("300"))
+        in assertProgramPrintsLine(true)(buildArchivedQualifiedCallee)("qualifiedCalleeFiftyRounds")("selfhost_backend_qualified_callee_fifty_rounds")("300"))
 
 let testOriginalOperatorEvidence shipped unit =
     (let _ = assertSharedProgramPrintsExactly(shipped)("logical_not_inferred_predicates")("true|true|1")
