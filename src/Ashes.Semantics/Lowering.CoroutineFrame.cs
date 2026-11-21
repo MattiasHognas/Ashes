@@ -298,27 +298,72 @@ public sealed partial class Lowering
     private void EmitCoroutineFrameDropperBody(IReadOnlyList<CoroutineFrameSlot> owned)
     {
         int taskSlot = NewLocal(); // slot 0: the task pointer, in the coroutine's own parameter position
-        NewLocal(); // slot 1: unused argument (implicit)
+        int closingSocketSlot = NewLocal();
         int taskTemp = NewTemp();
         Emit(new IrInst.LoadLocal(taskTemp, taskSlot));
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int invalidSocket = zeroTemp;
+        if (owned.Any(slot => IsOwnedFrameSocket(slot) && slot.Kind == CoroutineFrameSlotKind.Capture))
+        {
+            // Capture words are always initialized. Descriptor zero is valid when stdin was closed.
+            invalidSocket = NewTemp();
+            Emit(new IrInst.LoadConstInt(invalidSocket, -1));
+        }
+        EmitCoroutineSocketHandoff(owned, taskTemp, closingSocketSlot, zeroTemp, invalidSocket);
 
         foreach (CoroutineFrameSlot slot in owned)
         {
             int valueTemp = NewTemp();
             Emit(new IrInst.LoadMemOffset(valueTemp, taskTemp, slot.OffsetBytes));
             int presentTemp = NewTemp();
-            Emit(new IrInst.CmpIntNe(presentTemp, valueTemp, zeroTemp));
+            int cleared = IsOwnedFrameSocket(slot) && slot.Kind == CoroutineFrameSlotKind.Capture ? invalidSocket : zeroTemp;
+            Emit(new IrInst.CmpIntNe(presentTemp, valueTemp, cleared));
             string clearedLabel = NewLabel("frame_slot_cleared");
             Emit(new IrInst.JumpIfFalse(presentTemp, clearedLabel));
             EmitCoroutineFrameSlotDrop(slot, valueTemp);
-            Emit(new IrInst.StoreMemOffset(taskTemp, slot.OffsetBytes, zeroTemp));
+            Emit(new IrInst.StoreMemOffset(taskTemp, slot.OffsetBytes, cleared));
             Emit(new IrInst.Label(clearedLabel));
         }
 
         Emit(new IrInst.Return(zeroTemp));
     }
+
+    // A nested awaited operation can close a captured socket. Relinquish its frame cleanup
+    // before the OS can reuse the descriptor. A zero argument requests normal frame teardown.
+    private void EmitCoroutineSocketHandoff(
+        IReadOnlyList<CoroutineFrameSlot> owned, int taskTemp, int closingSocketSlot, int zeroTemp, int invalidSocket)
+    {
+        int request = NewTemp();
+        Emit(new IrInst.LoadLocal(request, closingSocketSlot));
+        string teardown = NewLabel("frame_teardown");
+        Emit(new IrInst.JumpIfFalse(request, teardown));
+        foreach (CoroutineFrameSlot slot in owned)
+        {
+            if (!IsOwnedFrameSocket(slot))
+            {
+                continue;
+            }
+
+            int socket = NewTemp();
+            int value = NewTemp();
+            int matches = NewTemp();
+            Emit(new IrInst.LoadMemOffset(socket, request, 0));
+            Emit(new IrInst.LoadMemOffset(value, taskTemp, slot.OffsetBytes));
+            Emit(new IrInst.CmpIntEq(matches, value, socket));
+            string next = NewLabel("frame_other_socket");
+            Emit(new IrInst.JumpIfFalse(matches, next));
+            int cleared = slot.Kind == CoroutineFrameSlotKind.Capture ? invalidSocket : zeroTemp;
+            Emit(new IrInst.StoreMemOffset(taskTemp, slot.OffsetBytes, cleared));
+            Emit(new IrInst.Label(next));
+        }
+        Emit(new IrInst.Return(zeroTemp));
+        Emit(new IrInst.Label(teardown));
+    }
+
+    private static bool IsOwnedFrameSocket(CoroutineFrameSlot slot) =>
+        slot.Ownership == CoroutineFrameSlotOwnership.FrameOwnedResource
+        && slot.Type is TypeRef.TNamedType { Symbol.Name: "Socket" };
 
     private void EmitCoroutineFrameSlotDrop(CoroutineFrameSlot slot, int valueTemp)
     {

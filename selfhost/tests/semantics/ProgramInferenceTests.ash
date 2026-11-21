@@ -160,6 +160,9 @@ let rejectWrongAliasArity unit =
             | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceTypeResolutionError(TypeNameArityMismatch("Pair", 1, 0)))) } -> Unit
             | _ -> test.fail("type alias arity should be checked"))
 
+// The second call meets the group's monomorphic `bad`, now `Int -> ...`, with a Str: the mismatch
+// is reported as the call's argument mismatch, as stage 0 words it ("in argument #1 of call to
+// 'bad'").
 let rejectPolymorphicRecursion unit =
     (let body =
         ExprLambda(
@@ -178,7 +181,7 @@ let rejectPolymorphicRecursion unit =
         let binding = LetBindingSyntax(name = "bad", value = body, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
         in
             match inferProgram(ProgramSyntax(items = [TopLevelLet(binding)(true)], body = None)) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(CallArgumentMismatch(TypeMismatch(_left, _right), 1, Some("bad")))) } -> Unit
                 | _ -> test.fail("recursive bindings should remain monomorphic inside their group"))
 
 let expectConstructors unit =

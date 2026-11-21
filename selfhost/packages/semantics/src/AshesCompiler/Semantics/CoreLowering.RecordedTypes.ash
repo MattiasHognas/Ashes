@@ -18,6 +18,9 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.concreteConstrainedArguments
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.preparePureConcreteScheme
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 export (
@@ -29,7 +32,15 @@ export (
     value recordedClosedTypeAt,
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
+    value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
+    value rawOperatorDeclarationSchemes,
+    value withRawOperatorDeclarationSchemes,
+    value recordedSettledType,
+    value recordedSettledTypeAt,
+    value recordedSettledDictionariesAt,
+    value recordedDeclarationAt,
+    value recordedNestedOperatorGenericScheme,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -251,6 +262,68 @@ let recordedCopyInstantiation (reference: Int) (source: Int) (functionType: Sema
                             | _ -> []
                 | _ -> []
 
+// The argument nodes and the callee come from the same numbered call. An
+// unnumbered replacement argument has no entry and keeps speculative inference.
+let recursive recordedArgumentsMatch expected arguments table state =
+    match (expected, arguments) with
+        | ([], []) -> true
+        | (parameter :: rest, argument :: tail) ->
+            match nodeTypeAt(nodeIdentityOf(argument))(table) with
+                | Some(recorded) -> instantiatedRecordedType(state)(recorded) == parameter && recordedArgumentsMatch(rest)(tail)(table)(state)
+                | None -> false
+        | _ -> false
+
+// An inferred arrow can still have a bare row variable at a pure use. The
+// source may choose the empty row only when that variable was quantified by
+// its declaration; preparePureConcreteScheme checks this on the original type.
+let recursive copyRowsAllowPureInstance arity called =
+    if arity == 0
+    then true
+    else
+        match called with
+            | SemFunction(_parameter, result, None) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemRow([], None))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemVariable(_open))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | _ -> false
+
+let recordedCopyAtInstance arity arguments substitutions definition called table state =
+    (let applied = applySubstitution(substitutions)(definition)
+    in
+        if definition == applied || applied != called || !copyRowsAllowPureInstance(arity)(called)
+        then None
+        else
+            let quantified =
+                Ashes.Collection.List.map(given (entry) ->
+                    match entry with
+                        | (id, _actual) -> (id, ""))(substitutions)
+            in
+                match preparePureConcreteScheme(TypeScheme(quantified = quantified, body = definition, constraints = []))(arity) with
+                    | Some(pureScheme) ->
+                        let instance = applySubstitution(substitutions)(pureScheme.body)
+                        in
+                            match concreteConstrainedArguments(arity)(instance) with
+                                | Some(parameters) ->
+                                    if recordedArgumentsMatch(parameters)(arguments)(table)(state)
+                                    then
+                                        match translateRecordedTypeAsIs(state)(instance) with
+                                            | Ok(translated) -> Some(translated)
+                                            | Error(_message) -> None
+                                    else None
+                                | None -> None
+                    | None -> None)
+
+// Validate the original effect rows before translation: lowering drops rows
+// from function types. Both the named source body and the numbered use must
+// agree at this reference's own instantiation, including its result layout.
+let recordedConcreteCallType reference source arity arguments (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match (nodeInstantiationAt(reference)(table), nodeTypeAt(source)(table), nodeTypeAt(reference)(table)) with
+                | (Some(NodeInstantiation { arguments = substitutions }), Some(definition), Some(useType)) ->
+                    recordedCopyAtInstance(arity)(arguments)(instantiatedArguments(state)(substitutions))(definition)(instantiatedRecordedType(state)(useType))(table)(state)
+                | _ -> None
+
 // The operator traits whose operators lowering holds monomorphic: it emits their integer form over
 // open operands and settles it once the type is known, so it gives a binding using them no
 // requirement and no dictionary.
@@ -297,22 +370,132 @@ let recursive translateRecordedRequirements (state: CoreLoweringState) (requirem
                 | Ok(translated) -> translateRecordedRequirements(state)(rest)(TraitConstraint(traitName = traitName, typeArguments = translated) :: reversed)
                 | Error(message) -> Error(message)
 
-// The scheme the standalone inference recorded for the top-level binding whose value has the
-// identity `node`, as lowering writes it, when it quantifies every variable it holds and requires
-// an operator trait lowering holds monomorphic at a quantified variable: a binding the inference
-// generalizes where lowering's own inference does not.
-let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
+// A scheme the standalone inference recorded, as lowering writes it, when it quantifies every
+// variable it holds and requires an operator trait lowering holds monomorphic at a quantified
+// variable: a binding the inference generalizes where lowering's own inference does not.
+let operatorGenericScheme (recorded: TypeScheme) (state: CoreLoweringState) =
+    match recorded with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
+            match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                | (Ok(translatedBody), Ok(translatedConstraints)) ->
+                    let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
+                    in
+                        if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
+                        then Some(scheme)
+                        else None
+                | _ -> None
+
+// Raw source has no stable expression IDs. Top-level declarations have unique names, so retain
+// their operator-polymorphic schemes from validation without enabling expression-table reads.
+let rawOperatorDeclarationSchemes (table: NodeTypeTable) =
+    Ashes.Collection.Map.foldLeft(given (schemes) ->
+        given (_node) ->
+            given (entry) ->
+                match entry with
+                    | (name, TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
+                        if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                        then Ashes.Collection.Map.setStr(name)(scheme)(schemes)
+                        else schemes)(Ashes.Collection.Map.empty)(table.declarations)
+
+let withRawOperatorDeclarationSchemes schemes state =
+    (let registry = stateConcreteRegistry(state)
+    in withStateConcreteRegistry((registry with rawDeclarationSchemes = schemes))(state))
+
+// The operator-generic scheme the standalone inference recorded for the top-level binding whose
+// value has the identity `node`.
+let recordedOperatorGenericScheme name (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(name)(registry.rawDeclarationSchemes) with
+                    | Some(scheme) -> operatorGenericScheme(scheme)(state)
+                    | None -> None
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)
+                | None -> None
+
+// A recorded type, read through the instantiation of the body being lowered, with the variables the
+// program's uses settle replaced by their settled types, as lowering writes it, when that leaves no
+// variable. A body lowering holds at one type while the inference generalized it reads its
+// quantified variables this way.
+let recordedSettledType (recorded: SemanticType) (state: CoreLoweringState) =
+    match recorded
+    |> instantiatedRecordedType(state)
+    |> applySubstitutionMap(stateSettledNodeVariables(state))
+    |> translateRecordedTypeAsIs(state) with
+        | Ok(translated) ->
+            if freeTypeVariables(translated) == []
+            then Some(translated)
+            else None
+        | Error(_message) -> None
+
+let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) (state: CoreLoweringState) =
+    match requirements with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            match recordedSettledType(argument)(state) with
+                | Some(settled) -> (traitName, Some(settled)) :: settledRecordedRequirements(rest)(state)
+                | None -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+        | TraitConstraint { traitName = traitName } :: rest -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+
+// The dictionaries the reference with this identity was recorded to pass, in the scheme's order,
+// each with its type argument closed through the instantiation of the body being lowered and the
+// variables the program's uses settle, or None when that leaves it open or it does not map.
+let recordedSettledDictionariesAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeInstantiationAt(node)(table) with
+                | Some(NodeInstantiation { dictionaries = dictionaries }) -> settledRecordedRequirements(dictionaries)(state)
+                | None -> []
+        | None -> []
+
+// The type recorded for the node with this identity, closed by the variables the program's uses
+// settle.
+let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) -> recordedSettledType(recorded)(state)
+                | None -> None
+        | None -> None
+
+// The name and scheme the standalone inference gave the top-level binding whose value is the node
+// with this identity, as lowering writes it. The scheme keeps the inference's quantified variable
+// ids, so a reader instantiates it before unifying it with lowering's own types. None when nothing
+// is recorded there or a type in the scheme does not map.
+let recordedDeclarationAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
+                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                        | (Ok(translatedBody), Ok(translatedConstraints)) -> Some((name, TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)))
+                        | _ -> None
+                | None -> None
+        | None -> None
+
+let recursive recordedSchemeForValue (name: Str) (valueType: SemanticType) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (candidate, scheme) :: rest ->
+            if candidate == name && scheme.body == valueType
+            then Some(scheme)
+            else recordedSchemeForValue(name)(valueType)(rest)
+
+// The operator-generic scheme the standalone inference recorded for `name` at the `let` node
+// `node` below top level, when the type recorded for the value node `valueNode` is the scheme's
+// body: the binding the `let` introduces, not a parameter or pattern variable of the same name.
+let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | None -> None
         | Some(table) ->
-            match nodeDeclarationAt(node)(table) with
-                | Some((_name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
-                    match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
-                        | (Ok(translatedBody), Ok(translatedConstraints)) ->
-                            let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
-                            in
-                                if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
-                                then Some(scheme)
-                                else None
-                        | _ -> None
+            match nodeTypeAt(valueNode)(table) with
+                | Some(valueType) ->
+                    match table
+                    |> nodeBindingsAt(node)
+                    |> recordedSchemeForValue(name)(valueType) with
+                        | Some(recorded) -> operatorGenericScheme(recorded)(state)
+                        | None -> None
                 | None -> None

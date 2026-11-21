@@ -126,6 +126,7 @@ import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
 import AshesCompiler.Backend.IrCodegen.ForeignStrings
 import AshesCompiler.Backend.IrCodegen.Tasks
+import AshesCompiler.Backend.IrCodegen.Server
 import AshesCompiler.Backend.IrCodegen.Parallel
 import AshesCompiler.Semantics.TaskStructLayout.TaskStateKind
 import Ashes.Number.UInt
@@ -345,6 +346,7 @@ type CodegenContext =
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
     | programArgsGlobal: LLVMValueRef
+    | serverRuntime: Maybe(ServerRuntime)
     | externalSymbols: List(ExternalSymbolDeclaration)
     | capabilityHandlerGlobals: MapTree(Int, LLVMValueRef)
     | nullaryCellGlobals: MapTree(Int, LLVMValueRef)
@@ -382,6 +384,7 @@ type ModuleCodegen =
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
     | moduleProgramArgsGlobal: LLVMValueRef
+    | moduleServerRuntime: Maybe(ServerRuntime)
     // Whether any function in the module reads the program arguments, so only such a module's
     // entry walks argv.
     | moduleUsesProgramArgs: Bool
@@ -571,6 +574,11 @@ let recursive floatArguments context builder (cx: CodegenContext) (tempEnv: MapT
         | [] -> []
         | argument :: rest ->
             buildBitCast(builder)(lookupTemp(cx)(argument)(tempEnv))(doubleType(context))("libm_argument") :: floatArguments(context)(builder)(cx)(tempEnv)(rest)
+
+let requireServerRuntime (state: Maybe(ServerRuntime)) =
+    match state with
+        | Some(server) -> server
+        | None -> Ashes.IO.panic("codegen: missing server runtime")
 
 let codegenInstructionKind cx builder kind state =
     match state with
@@ -816,7 +824,7 @@ let codegenInstructionKind cx builder kind state =
                                         | BigIntToString(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed))(tempEnv), terminated)
+                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(managed))(tempEnv), terminated)
                                         | BigIntToInt(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
@@ -824,11 +832,11 @@ let codegenInstructionKind cx builder kind state =
                                         | BigIntFromString(target, value, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
+                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(memcpyFn)(memcpyType)(managed))(tempEnv), terminated)
                                         | BigIntBinary(target, left, right, operation, managed) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
-                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
+                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(managed)(operation)(lookupTemp(cx)(left)(tempEnv)))(tempEnv), terminated)
                                         | BigIntCompare(target, left, right) ->
                                             (bindTemp(target)(tempEnv
                                             |> lookupTemp(cx)(right)
@@ -926,7 +934,7 @@ let codegenInstructionKind cx builder kind state =
                                             let result =
                                                 localSlots
                                                 |> lookupIndexedInt(resvEndSlot)
-                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
+                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(rcReleaseFunction(externals.rcRegion))(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
                                             in (bindTemp(target)(result)(tempEnv), terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
@@ -1281,7 +1289,7 @@ let codegenInstructionKind cx builder kind state =
                                                     let _ =
                                                         tempEnv
                                                         |> lookupTemp(cx)(sourceTemp)
-                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
+                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(rcReleaseFunction(externals.rcRegion))(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
                                                     in (tempEnv, false)
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other
@@ -1674,9 +1682,14 @@ let codegenInstructionKind cx builder kind state =
                                             let taskRef =
                                                 emitCreateCompletedTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(result)(tempEnv))("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
-                                        | CreateTask(target, closure, stateStructSize, captureCount, _frameDropper, _loopResetEligible) ->
+                                        | CreateTask(target, closure, stateStructSize, captureCount, frameDropper, _loopResetEligible) ->
                                             let taskRef =
-                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)("t" + Ashes.Text.fromInt(target))
+                                                emitCreateTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(closure)(tempEnv))(stateStructSize)(captureCount)(match frameDropper with
+                                                    | Some(label) ->
+                                                        liftedFunctions
+                                                        |> lookupIndexedStr(label)
+                                                        |> Some
+                                                    | None -> None)("t" + Ashes.Text.fromInt(target))
                                             in (bindTemp(target)(taskRef)(tempEnv), terminated)
                                         | RunTask(target, task) ->
                                             let resultRef =
@@ -1713,6 +1726,20 @@ let codegenInstructionKind cx builder kind state =
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CreateTcpCloseTask(target, first) ->
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | RequestServerStop(target) ->
+                                            (bindTemp(target)(cx.serverRuntime
+                                            |> requireServerRuntime
+                                            |> emitRequestServerStop(builder)(i64))(tempEnv), terminated)
+                                        | SetDrainTimeout(target, milliseconds) ->
+                                            match cx.serverRuntime with
+                                                | Some(server) ->
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
+                                                    let _ =
+                                                        buildStore(builder)(lookupTemp(cx)(milliseconds)(tempEnv))(server.serverTimeout)
+                                                    in
+                                                        (bindTemp(target)(constInt(i64)(0u64)(false))(tempEnv), terminated)
+                                                | None -> Ashes.IO.panic("codegen: missing drain timeout global")
                                         | CreateTcpListenTask(target, first) ->
                                             (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | CreateForkWorkersTask(target, first, second) ->
@@ -1757,8 +1784,6 @@ let codegenInstructionKind cx builder kind state =
                                         | ParallelJoin(resultTarget, descTemp) ->
                                             (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
                                         | ParallelCleanup(descTemp) ->
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                             let _ =
                                                 emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
                                             in (tempEnv, terminated)
@@ -1789,6 +1814,8 @@ let codegenInstructionKind cx builder kind state =
                                         | ParallelQueueCleanup(descTemp) ->
                                             match parallelRuntime with
                                                 | Some(runtime) ->
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                                     let _ =
                                                         tempEnv
                                                         |> lookupTemp(cx)(descTemp)
@@ -1966,8 +1993,6 @@ let reopenAfterTerminator (cx: CodegenContext) builder kind state =
         | ((tempEnv, true), _) ->
             match cx with
                 | CodegenContext { context = context, function_ = function_ } ->
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                     let _ =
                         "fallthrough"
                         |> appendBasicBlock(context)(function_)
@@ -2101,13 +2126,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
+                                            // A program with worker threads reserves its reference-counted range here, on the
+                                            // main thread before any worker exists, by allocating and releasing one block.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                             else Unit
                                         in
-                                            // A program with worker threads reserves its reference-counted range here, on the
-                                            // main thread before any worker exists, by allocating and releasing one block.
                                             let _ =
                                                 if isEntry && arena.arenaThreadSlots
                                                 then
@@ -2144,6 +2169,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                                 closureFunctionType = closureFnType,
                                                                 envpGlobal = mc.moduleEnvpGlobal,
                                                                 programArgsGlobal = mc.moduleProgramArgsGlobal,
+                                                                serverRuntime = mc.moduleServerRuntime,
                                                                 externalSymbols = mc.moduleExternalSymbols,
                                                                 capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
                                                                 nullaryCellGlobals = mc.moduleNullaryCellGlobals,
@@ -2249,6 +2275,42 @@ let recursive instructionsUseRunTask instructions =
         | IrInstruction { instruction = SpawnTask(_target, _task) } :: _ -> true
         | IrInstruction { instruction = ForkScopedTask(_target, _owner, _task) } :: _ -> true
         | _ :: rest -> instructionsUseRunTask(rest)
+
+let recursive instructionsHaveFrameDroppers instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CreateTask(_, _, _, _, Some(_label), _) } :: _ -> true
+        | _ :: rest -> instructionsHaveFrameDroppers(rest)
+
+let recursive functionsHaveFrameDroppers functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsHaveFrameDroppers(instructions) || functionsHaveFrameDroppers(rest)
+
+let recursive instructionsForkWorkers instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CreateForkWorkersTask(_, _, _) } :: _ -> true
+        | _ :: rest -> instructionsForkWorkers(rest)
+
+let recursive functionsForkWorkers functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsForkWorkers(instructions) || functionsForkWorkers(rest)
+
+let recursive instructionsUseServer instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SetDrainTimeout(_, _) } :: _ -> true
+        | IrInstruction { instruction = CreateForkWorkersTask(_, _, _) } :: _ -> true
+        | IrInstruction { instruction = RequestServerStop(_) } :: _ -> true
+        | IrInstruction { instruction = CreateTcpAcceptTask(_, _) } :: _ -> true
+        | _ :: rest -> instructionsUseServer(rest)
+
+let recursive functionsUseServer functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseServer(instructions) || functionsUseServer(rest)
 
 let recursive functionsUseRunTask functions =
     match functions with
@@ -2443,63 +2505,88 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                 in
                                                                     let liftedFunctions = indexStrEntries(declaredFunctions)
                                                                     in
-                                                                        let mc =
-                                                                            ModuleCodegen(
-                                                                                moduleRef = module_,
-                                                                                moduleContext = context,
-                                                                                moduleTypes = types,
-                                                                                moduleExternals = externals,
-                                                                                moduleStringLiteralGlobals = stringLiteralGlobals,
-                                                                                moduleLiftedFunctions = liftedFunctions,
-                                                                                moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
-                                                                                moduleClosureFunctionType = closureFnType,
-                                                                                moduleEnvpGlobal = envpGlobal,
-                                                                                moduleProgramArgsGlobal = programArgsGlobal,
-                                                                                moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
-                                                                                moduleExternalSymbols = []
-                                                                                |> collectExternalSymbols(entryFunction :: functions)
-                                                                                |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
-                                                                                moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
-                                                                                |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
-                                                                                |> indexIntEntries,
-                                                                                moduleNullaryCellGlobals = []
-                                                                                |> collectNullaryCellTags(entryFunction :: functions)
-                                                                                |> defineNullaryCellGlobals(module_)(types.i64)
-                                                                                |> indexIntEntries,
-                                                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                                                                moduleArenaRuntime = arena,
-                                                                                moduleCopyRuntime = if usesCopy
-                                                                                then
-                                                                                    arena
-                                                                                    |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
-                                                                                    |> Some
-                                                                                else None,
-                                                                                moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
-                                                                                then
-                                                                                    types.ptrType
-                                                                                    |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
-                                                                                    |> Some
-                                                                                else None,
-                                                                                moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
-                                                                                then
-                                                                                    closureFnType
-                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(functionsUseTls(entryFunction :: functions))
-                                                                                    |> Some
-                                                                                else None,
-                                                                                moduleParallelRuntime = if functionsUseParallel(entryFunction :: functions)
-                                                                                then
-                                                                                    entryFunction :: functions
-                                                                                    |> functionsForkParallel
-                                                                                    |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)
-                                                                                    |> Some
-                                                                                else None,
-                                                                                moduleBuilder = builder
-                                                                            )
+                                                                        let server =
+                                                                            if functionsUseServer(entryFunction :: functions)
+                                                                            then
+                                                                                types.i64
+                                                                                |> defineServerRuntime(module_)
+                                                                                |> Some
+                                                                            else None
                                                                         in
-                                                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                                                            let needsForkWorkers = functionsForkWorkers(entryFunction :: functions)
                                                                             in
-                                                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                                                in (module_, mc.moduleBuilder))
+                                                                                let parallel =
+                                                                                    if needsForkWorkers || functionsUseParallel(entryFunction :: functions)
+                                                                                    then
+                                                                                        entryFunction :: functions
+                                                                                        |> functionsForkParallel
+                                                                                        |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)(needsForkWorkers)
+                                                                                        |> Some
+                                                                                    else None
+                                                                                in
+                                                                                    let workers =
+                                                                                        if needsForkWorkers
+                                                                                        then
+                                                                                            match (server, parallel) with
+                                                                                                | (Some(runtime), Some(cap)) ->
+                                                                                                    cap
+                                                                                                    |> defineForkWorkers(module_)(context)(builder)(types.i64)(runtime)
+                                                                                                    |> Some
+                                                                                                | _ -> Ashes.IO.panic("codegen: missing fork worker state")
+                                                                                        else None
+                                                                                    in
+                                                                                        let mc =
+                                                                                            ModuleCodegen(
+                                                                                                moduleRef = module_,
+                                                                                                moduleContext = context,
+                                                                                                moduleTypes = types,
+                                                                                                moduleExternals = externals,
+                                                                                                moduleStringLiteralGlobals = stringLiteralGlobals,
+                                                                                                moduleLiftedFunctions = liftedFunctions,
+                                                                                                moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
+                                                                                                moduleClosureFunctionType = closureFnType,
+                                                                                                moduleEnvpGlobal = envpGlobal,
+                                                                                                moduleProgramArgsGlobal = programArgsGlobal,
+                                                                                                moduleServerRuntime = server,
+                                                                                                moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
+                                                                                                moduleExternalSymbols = []
+                                                                                                |> collectExternalSymbols(entryFunction :: functions)
+                                                                                                |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
+                                                                                                moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
+                                                                                                |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
+                                                                                                |> indexIntEntries,
+                                                                                                moduleNullaryCellGlobals = []
+                                                                                                |> collectNullaryCellTags(entryFunction :: functions)
+                                                                                                |> defineNullaryCellGlobals(module_)(types.i64)
+                                                                                                |> indexIntEntries,
+                                                                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                                                                moduleArenaRuntime = arena,
+                                                                                                moduleCopyRuntime = if usesCopy
+                                                                                                then
+                                                                                                    arena
+                                                                                                    |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
+                                                                                                then
+                                                                                                    types.ptrType
+                                                                                                    |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
+                                                                                                then
+                                                                                                    closureFnType
+                                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(server)(workers)(functionsUseTls(entryFunction :: functions))(functionsHaveFrameDroppers(entryFunction :: functions))
+                                                                                                    |> Some
+                                                                                                else None,
+                                                                                                moduleParallelRuntime = parallel,
+                                                                                                moduleBuilder = builder
+                                                                                            )
+                                                                                        in
+                                                                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                                                                            in
+                                                                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                                                                in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)

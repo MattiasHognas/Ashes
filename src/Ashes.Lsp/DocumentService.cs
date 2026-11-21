@@ -720,7 +720,8 @@ public static partial class DocumentService
             diag,
             context.ImportedStdModules,
             context.ModuleAliases,
-            context.ConstructorModules);
+            context.ConstructorModules,
+            new LoweringConfiguration(AllowFlattenedQualifiedValues: false));
         if (context.Layout is not null)
         {
             lowering.SetSourceContext(context.Layout.Value);

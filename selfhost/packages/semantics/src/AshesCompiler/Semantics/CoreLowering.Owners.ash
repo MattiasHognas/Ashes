@@ -99,6 +99,7 @@ export (
     value liveRuntimeOwnerSlot,
     value mayBeEmptyList,
     value emitTransferRetain,
+    value patternBindingFact,
     value patternOwnerBinding,
     value patternOwnerFlag,
     value duplicatePatternOwnerTemp,
@@ -107,12 +108,13 @@ export (
     value lowerUnconstrainedBoundVariable,
     value addBinding,
     value addOwnedBinding,
-    value addPatternOwnerBinding,
+    value addPatternBinding,
     value restoreBindings,
     value restoreLoweredBindings,
     value pendingOperatorTypes,
     value sealedOperatorTypes,
     value pendingOperatorScheme,
+    value resolvedAmbientAnswer,
     value generalizeResolvedType,
     value tailForwardedVariable,
     value isTailForwardedBindingResult,
@@ -127,6 +129,7 @@ export (
     value withRefreshedHeapLayoutFacts,
     value withDroppedHeapLayoutFacts,
     value heapFactsOf,
+    value heapResourceOf,
     value lookupOwnerReleasePlan,
     value locateSynthesizedFunction,
     value spliceInlineRelease,
@@ -1065,15 +1068,20 @@ let emitTransferRetain (temp: Int) (semanticType: SemanticType) (state: CoreLowe
             |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
             |> success(duplicate)(semanticType)
 
-// The pattern owner fact a name reads, when its binding is one.
-let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
+// The fact belongs to this lexical binding, including when a later binder shadows its name.
+let patternBindingFact (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
-        | Some(CoreBinding { patternOwner = Some(fact) }) -> Some(fact)
+        | Some(CoreBinding { patternFact = fact }) -> fact
+        | None -> None
+
+let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
+    match patternBindingFact(name)(state) with
+        | Some(fact) when patternFactRequiresProtection(fact) -> Some(fact)
         | _ -> None
 
 let patternOwnerFlag (fact: Maybe(PatternBindingFact)) =
     match fact with
-        | Some(_fact) -> true
+        | Some(fact) -> patternFactRequiresProtection(fact)
         | None -> false
 
 // Stage 0's `DuplicatePerceusPatternOwnerForAggregate`: a tail self-call argument or aggregate
@@ -1183,7 +1191,7 @@ and lowerUnconstrainedBoundVariable binding state =
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
-                | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = ownedRead, patternOwner = patternOwner } ->
+                | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = ownedRead, patternFact = patternOwner } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             if transfersSlot(slot)(tempState)
@@ -1206,21 +1214,20 @@ and lowerUnconstrainedBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternOwner = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
-// A pattern binding that owns a protective reference of its own (stage 0's
-// `TrackPerceusPatternBindingOwners`): read like an owned binding, and carrying its fact.
-let addPatternOwnerBinding name scheme location (fact: PatternBindingFact) state =
+// Remember the exact binder's classification even when it needs no protective reference.
+let addPatternBinding name scheme location (fact: PatternBindingFact) state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = Some(fact), closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -1256,10 +1263,25 @@ let recursive sealedOperatorTypes sealed acc =
         | [] -> acc
         | (_label, _target, semanticType) :: rest -> sealedOperatorTypes(rest)(semanticType :: acc)
 
-let recursive pendingTraitGoalTypes goals acc =
+let recursive resolvedAmbientAnswer operand candidates state =
+    match candidates with
+        | [] -> None
+        | (binding, candidate) :: rest ->
+            if resolveType(state)(candidate) == operand
+            then Some(ProvenAmbientMethod(binding))
+            else resolvedAmbientAnswer(operand)(rest)(state)
+
+// A local eager result stays monomorphic while it is unresolved. Once the body
+// has unified it with a dictionary in scope at the original use, replay can
+// build it per invocation; this obligation no longer restricts the enclosing scheme.
+let recursive pendingTraitGoalTypes state goals acc =
     match goals with
         | [] -> acc
-        | (_key, semanticType) :: rest -> pendingTraitGoalTypes(rest)(semanticType :: acc)
+        | (_key, semanticType, []) :: rest -> pendingTraitGoalTypes(state)(rest)(semanticType :: acc)
+        | (_key, semanticType, candidates) :: rest ->
+            match resolvedAmbientAnswer(resolveType(state)(semanticType))(candidates)(state) with
+                | Some(_proof) -> pendingTraitGoalTypes(state)(rest)(acc)
+                | None -> pendingTraitGoalTypes(state)(rest)(semanticType :: acc)
 
 // The types a generalization must hold back, in the environment position that keeps them out of
 // the quantifier: a deferred operator's operand, and the operand of a trait goal this pass could
@@ -1272,7 +1294,7 @@ let pendingOperatorScheme state =
                 quantified = [],
                 body = []
                 |> resolvedPendingOperatorTypes(state)([]
-                |> pendingTraitGoalTypes(goals)
+                |> pendingTraitGoalTypes(state)(goals)
                 |> sealedOperatorTypes(sealed)
                 |> pendingOperatorTypes(pending))
                 |> SemTuple,
@@ -1296,7 +1318,7 @@ let generalizeResolvedType (outerBindings: List(CoreBinding)) (state: CoreLoweri
 let takePendingOwnerPlan (state: CoreLoweringState) =
     match statePendingOwnerPlan(state) with
         | Some(plan) -> (plan, withStatePendingOwnerPlan(None)(state))
-        | None -> (OwnedReleasePlan(deepUnique = false, constructorName = None), state)
+        | None -> (OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None), state)
 
 let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (valueType: SemanticType) (state: CoreLoweringState) =
     match runtimeTempStateOf(valueTemp)(state) with
@@ -1801,9 +1823,9 @@ let backEdgeArgumentSurvivesReset (semanticType: SemanticType) (state: CoreLower
 let recursive shareOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
         | [] -> []
-        | (candidate, semanticType, OwnedReleasePlan { constructorName = constructorName } as plan) :: rest ->
+        | (candidate, semanticType, plan) :: rest ->
             if candidate == slot
-            then (candidate, semanticType, OwnedReleasePlan(deepUnique = false, constructorName = constructorName)) :: rest
+            then (candidate, semanticType, (plan with deepUnique = false)) :: rest
             else (candidate, semanticType, plan) :: shareOwnerReleasePlan(slot)(rest)
 
 // The type an owner slot's value was adopted with, from its release plan.
@@ -2578,7 +2600,7 @@ let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | None -> true
-                | Some(CoreBinding { location = CoreLocal(_slot), patternOwner = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
                 | _ -> false
         | _ -> false
 
@@ -2784,7 +2806,7 @@ let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
                     match constructorApplicationOf(value)([])(state) with
                         | Some((CoreConstructorLayout { name = name }, _arguments)) -> Some(name)
                         | None -> None
-                in lowered with state = withStatePendingOwnerPlan(Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName)))(state)
+                in lowered with state = withStatePendingOwnerPlan(Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName, matchFieldTransfer = None)))(state)
 
 // Stage 0's `LowerEscapingResult`: a body that is itself a fresh string producer, or whose
 // terminal arms build a fresh runtime-manageable constructor, list, tuple, or record tree, is
@@ -3127,7 +3149,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead, closedScheme = closedScheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternOwner = None, closedScheme = closedScheme)
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =

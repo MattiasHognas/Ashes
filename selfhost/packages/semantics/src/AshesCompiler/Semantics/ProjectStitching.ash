@@ -18,6 +18,7 @@ import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ProjectDependencyGraph
+import AshesCompiler.Semantics.ProjectDiagnostics.ProjectDiagnostic
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectManifest
 import AshesCompiler.Semantics.ProjectSyntaxStitching
@@ -27,6 +28,7 @@ export (
     value shippedPackageIdentity,
     value projectPackageIdentity,
     value stitchProject,
+    value projectStitchParseDiagnostics,
 )
 
 type ProjectStitchError =
@@ -145,3 +147,18 @@ let stitchProject (style: Style) (layout: ProjectLayout) (shipped: List(ShippedM
     match buildProjectCompilationPlanWithShipped(style)(layout)(shipped) with
         | Error(error) -> Error(ProjectStitchPlanError(error))
         | Ok(plan) -> stitchPlannedProject(style)(layout)(plan)
+
+let recursive projectParseDiagnosticPairs (diagnostics: List(ProjectDiagnostic)) =
+    match diagnostics with
+        | [] -> []
+        | ProjectDiagnostic { sourcePath = sourcePath, diagnostic = diagnostic } :: rest -> (sourcePath, diagnostic) :: projectParseDiagnosticPairs(rest)
+
+// The parse diagnostics a project was rejected with, each with the path of the file it is in;
+// None for every other stitching failure.
+let projectStitchParseDiagnostics (error: ProjectStitchError) =
+    match error with
+        | ProjectStitchPlanError(ProjectCompilationParseError(diagnostics)) ->
+            diagnostics
+            |> projectParseDiagnosticPairs
+            |> Some
+        | _ -> None

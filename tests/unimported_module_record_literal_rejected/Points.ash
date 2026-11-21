@@ -1,0 +1,3 @@
+type Point =
+    | x: Int
+    | y: Int

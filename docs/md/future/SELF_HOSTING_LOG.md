@@ -11,6 +11,692 @@ preceded the port.
 
 ## Completed work
 
+### Round 10 shared native and trait selection checkpoints, 2026-11-21
+
+These entries preserve the state at the time of each checkpoint. [Current handoff](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21)
+
+**Round 10 has not run.** Integration is `selfhost/round10`, implementation through `ff71eb10`, based on `main` after #1159 (`f6e28970`). Final helper source preflight passed **10,248 items / 188 modules** and measurement preflight **7,919 items / 137 modules**. The unchanged 220-group native harness now builds and passes every non-leak case in normal and poison modes. Its original HTTP server also passes the traced concurrent replay in both modes. The latest dictionary fixes passed all non-leak reference checks; expanded native regressions, no-reuse and typed counters remain pending. The bootstrap gate is not clear.
+
+| Last completed check | Result and outstanding proof |
+| --- | --- |
+| Full stage 0 reference, `cbbbc830` | Build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **88/88**, e2e **1,319 passed / 0 failed / 80 skipped** in 5.62 minutes. Logs and current compiler: `work/r10pre/dictionary-shared/` and `s0/ashes`. This includes the new equality, inequality, mutual rewrite and suspension controls. Reference HTTP already passed the current helper source in `http-reference-helper2/`; latest native HTTP passed separately in `http-native8-trace/`. |
+| Broad native suite 5, `1a0b4944` | **96/96** named semantics groups passed, including ordered inference and the raw/typed captured-add checks. **32/95** IR fixtures differed; all 32 dumps are byte-identical to native 4 and its prior audit. The poison harness built in 8.79 minutes. Logs: `work/r10pre/named-native5/`. Its wrapper was interrupted by a coordinator edit after the successful build; the saved binary completed cases/parity via `named-native-run.sh` on the unchanged head. `RUNNER-RESUMED.txt` records this. No-reuse validation remains pending. |
+| Backend native 8 exact, `9f336cd1` | **219/220** groups passed in each of normal and poison modes; build **9:01.15**, peak **19,373,372 KiB**. Logs: `work/r10pre/backend-native8-exact/`. All non-leak cases, including generic captured addition and helper lifetime/callable controls, pass. The only failure is the confirmed annotation-loop leak. Original HTTP replay passed 720 requests plus warmups with zero connected retries and no EBADF in `http-native8-trace/`. Six newly added backend groups await the expanded shared build. |
+| Ownership and task runtime | The 32-fixture static audit found equivalent observable instructions in 30 and distinct allocation strategies with no identified lifetime violation on the two audited paths. All 122 transfer guards read 1 (29 fixtures, 51 slots). All eight ownership programs passed stage-0 controls and stage-1 plain/poison children; native 4 passed **16/16 exact stdout/exit checks**. Recycled-cell poison, explicit frame-dropper, Socket close/cancel and graceful drain completion/deadline passed by backend 5. New transparent-helper lifetime controls remain pending natively. |
+
+**Current work and next load.** The full reference suites finished on frozen `cbbbc830` with only the five known RSS failures. Shared native 2 exposed mixed concrete/generic trait-method selection failures, including a subsequently reduced result-directed first-class wrong-code case. Both agents are repairing these in separate worktrees. No main load reader is active after cancelling the historical host build for the documentation correction. Main next validates the frozen C# worker batch centrally, integrates the paired fixes and retries the preserved shared input before expanded/no-reuse and original host validation. Production CLI/REST and S2 lifetime proof belong to the bootstrap. Record legacy/typed measurements as part of round 10; completing steps 7/8 is subsequent work, not a prerequisite to starting the round. Bootstrap remains gated.
+
+**Gate coverage audit active.** While main's shared-native reader holds `31471a6a` frozen, `lowering_evidence` has a 20-minute final inventory task from that head: map each outstanding original non-leak reproduction, especially bugs 0, 2–4, 8 and 10, to its exact registered native test or remaining round-10 CLI/behaviour command. Distinguish stale handoff wording from missing coverage. If an original small regression has no executable coverage, register it unchanged in the worker's own worktree; no driver builds or sweeps. Main will integrate between readers. `tmc_repair` remains idle. Round 10 needs the known correctness fixes; finishing steps 7/8, parallel compilation and all leaks remains subsequent work.
+
+**Original witness registrations ready.** Pushed `22ac3bb5` on `fix/r10-original-witness-audit`, worktree `r10-original-witness-audit`, adds six named backend groups executing unchanged tracked originals: TMC accumulators, Not/competing Eq, unique/shared matched fields, escaping and lexical dictionary capture, returned association-list element, and numbered generic captured addition (`12 4.5`). These are missing runtime checks, not six observed new compiler bugs. They await integration and the next native build; source formatting/diff checks passed. The worker is finishing the remaining CLI/backedge coverage matrix. No active reader has been disturbed.
+
+The audit worker has now handed back and is idle. Pushed follow-ups `588c98ec` and `ffd2862f` preserve byte-identical archived witnesses in those same six groups: the original competing Eq program (`no`), the 50-round qualified callee (`300`), and the original escaping dictionary program with runtime argument `1000` (`passed`). `r10-original-witness-audit/work/PROGRESS.md` maps every original to current evidence and gives exact remaining commands. A separate compiler-host driver must run its original three prechecks, then lower/render the association-list source against current packages; the guest-only assertion is not that host proof. REST real/mock and module-alias collision checks require the fresh S1/S2 CLI during bootstrap, and are distinct from the successful HTTP scheduler fixture. Diagnostic/rendering and actual stage-2 lifetime checks also remain production-bootstrap obligations. No new compiler bug is inferred from missing validation.
+
+**Shared build 1 import failure repaired.** `work/r10pre/shared-native1/` on `31471a6a` failed exit 1 after **17:33.64**, peak **18,618,684 KiB**, with exactly two ASH048 diagnostics at `CoreProgramLoweringTests.ash:884–885`: `TypeMismatch` lacked a direct import of its declaring `Unification` module. No binary or native cases ran. A 10-minute source-only worker task produced `6bc528b4` → `4861a03b`, adding the one import; canonical formatting and diff checks passed. Original witness registrations `22ac3bb5` → `cce9400a`, `588c98ec` → `71207db5` and `ffd2862f` → `22ff641c` are integrated/pushed. No assertions or compiler behavior changed. Main rerenders the expanded input for shared native 2. Main-owned `original-backedge-check.sh` is prepared and shell-checked: it copies the exact historical host sources, verifies all three precheck modules against current sources, rewrites only package paths, builds under poison and requires successful non-empty lowered IR. It has not run yet.
+
+**Offline REST reference ready.** While shared native 2 reads frozen `ddea44de`, a separately capped 8G quick reference compile of `examples/restful_api/ashes-test.json` completed in **4.35s**; its 4G run exited 0 and printed all 12 `ok - ...` assertions followed by `all tests passed`. Exact output and exits are in `work/r10pre/rest-mock-reference/`. Main-owned `original-cli-checks.sh` is shell-checked and prepared for both fresh S1 and S2: compile the real REST server, compile/run its offline mock with byte-for-byte reference stdout comparison, and compile/run the alias-collision project and selector-only MapTree fixture, requiring exact `42` stdout and exit 0. Those S1/S2 runs remain pending; the live real server is not needed for this offline check.
+
+**Mixed trait-call compiler bug active.** `work/r10pre/shared-native2/` on `ddea44de` failed exit 1 after **9:40.20**, peak **18,830,812 KiB**, with three errors in unchanged measurement `reportSites`: ASH010 lost a declared dictionary, then ASH002 confused `Maybe<Int>` and `SemanticType` at `Show.show` and the caller. No binary or native cases ran. Generated input `work/shared-native.gAD7wCpf/` is preserved. `tmc_repair` and `lowering_evidence` each have 30-minute paired tasks from that head. The C# worker reproduced the exact errors in a tiny program and located eager qualified-method rewriting by spelling, which applies the generic dictionary to concrete calls before operand types are available. The stage-1 worker confirmed the same source pattern. Preserve the valid polymorphic measurement source; fix type-directed evidence selection and verify closure/async capture plus custom trait methods. The original host-driver load reads the integration tree while workers implement; integrate only afterward.
+
+**Coordinator correction.** A failed cherry-pick was not checked before the next documentation edit, leaving conflict markers and duplicate notes in `27566b1f`. The newly started `original-backedge` compiler was stopped by its exact PID before correcting the integration tree; its recorded exit 143 is a coordinator cancellation, not a compiler failure or validation result. The handoff now retains each note once and has no conflict markers. Main will restart this host check after the paired trait-dispatch batch so it exercises the repaired core. Stage-0 worker `43b26d44` is ready: recursive mixed Show prints `Some(7):operand:42|Some(7):operand:true`; a poison async closure prints `Some(3):custom:5|Some(3):custom:false`. The stage-1 worker is finishing type-directed custom/first-class dispatch and auditing result-directed methods. The measurement source remains unchanged.
+
+**Result-directed first-class failure confirmed.** The follow-up custom trait control distinguishes a directly annotated `Seed.first` call (correct `17`), a generic call (correct `yes`), and `let concreteMaker : Unit -> Int = Seed.first` inside the same generic context. The latter wrongly returns **1 instead of 17**, using the Bool dictionary before its expected function result is applied. `tmc_repair` resumed in `r10-report-show` / `fix/r10-report-show` for the small bare-reference fix and a bounded incremental 8G CLI build. `lowering_evidence` is implementing the counterpart and shared controls in `r10-recursive-show-capture` / `fix/r10-recursive-show-capture`, including custom methods and captured evidence. `43b26d44` is pushed but not integrated pending its counterpart. No new language rule or measurement-source workaround is authorized or needed.
+
+**Stage-0 batch frozen for central validation.** `fix/r10-report-show` is clean and pushed through `f25bb10b`, following `43b26d44`. The first-class Seed control now prints **17/17/yes** under poison; the original ambiguous eager partial still rejects with ASH010 saying its `Seed(a)` evidence is needed while evaluating the binding. Release build, scoped formatting and diff checks passed. Main runs full reference checks centrally in that frozen worker checkout, using `ASHES_CHECKOUT` with the main-owned `policy-shared-checks.sh`, results under integration `work/r10pre/report-reference/`. The stage-1 worker continues independently. These two known dictionary-selection defects still gate round 10 until the paired implementation and validation finish. Expanded native cases have not run because both shared builds failed before producing a binary.
+
+
+
+
+**New native-driver build blocker.** At `f653067e`, `work/r10pre/backend-native6/` stopped after **7:11.75**, peak **12,065,760 KiB**, exit 1: `<std:Ashes.Trait>:750:32 ASH010` says `Eq(a)` is ambiguous inside `Eq(List(a)).equalLists`, at `x == y`. No binary or native results exist. Its 220-group generated source is preserved in `source/`; the project is `work/r10-backend-capture/ashes.json`. `tmc_repair` has a 30-minute stage-0 investigation in `r10-eq-ambiguity-stage0` / `fix/r10-eq-ambiguity-stage0`, from that head, with a paired fix or explicit already-correct stage-1 proof required. `lowering_evidence` audited new Ash source in `r10-eq-ambiguity-source` / `fix/r10-eq-ambiguity-source`: both new list equalities have concrete element types, and a reduced early-equality/later-typed-consumer program compiled with the exact failing S0 in 494ms and printed `14`. No source change was justified. Next diagnosis must identify the originating specialization caller and ambient evidence; do not guess the element type or rewrite the source to hide the compiler failure.
+
+**Targeted diagnostic compile next.** Instrumentation-only `51d54d4c` is pushed on `fix/r10-eq-ambiguity-stage0`; both agents handed back and are idle. Its Release CLI at `r10-eq-ambiguity-stage0/src/Ashes.Cli/bin/Release/net10.0/ashes` built with zero warnings/errors. `ASHES_TRACE_AMBIGUOUS_TRAIT=Eq` prints caller origins, selected instance/methods, ambient dictionary availability and discovery/replay proof details only when reporting the selected ambiguous trait. A small known-ambiguous smoke preserved the original ASH010. Main repeats the unchanged native6 compile with that flag and `ASHES_RC_POISON=1` in `work/r10pre/backend-eq-trace/`, recording source/compiler commits, inputs, exit and timing. No substantive repair is claimed yet.
+
+**Composite evidence repair and exact retry.** The diagnostic finished exit 1 in **7:55.78** and located the missing proof at `StrictPartialStages.rewrite`, line 162 (`names == []`), inside its mutual group with `rewriteFields`. The selected outer `Eq(List(a))` instance hid an unavailable child `Eq(a)`; the C# deferral path checked only a top-level parameter. It also wrongly selected an ambient element dictionary for the whole list, giving `yes yes` instead of `yes no` for custom parity equality. Instrumentation `51d54d4c` → `b9a542b6` and repair `02ac5442` → `61d7d4af` are integrated/pushed. The repair recursively checks dependencies/supertraits and requires exact compatible identity when choosing an ambient dictionary for a selected instance. Fresh Release reference probes now print `yes no` and `prefixx x`. Stage 1 already recursively checks missing evidence and composes the element method into its container method; paired raw/numbered/native controls are integrated as `0d9a45ae` → `c3742542` and `71ab79a0` → `a9984163`. All workers handed back. Main next retries the **unchanged 220-group generated harness** using the corrected agent Release CLI in `work/r10pre/backend-native7-exact/`; the runner compares every generated source and case list with native6 before compiling. The expanded 223-group harness and new raw/numbered execution controls remain pending afterward. This distinguishes fixing the original failure from merely changing its calling context.
+
+**Exact retry failed; dictionary capture follow-up active.** `work/r10pre/backend-native7-exact/` on `a4f0df19`, using corrected Release CLI `02ac5442`, failed exit 1 after **7:11.21**, peak **12,344,176 KiB**: `<std:Ashes.Trait>:1:1 ASH001 Undefined variable '__trait_0_root_Eq_equal'`. Every generated source and case list was verified byte-identical to native 6. No binary or case results exist. The original 220-group project remains unchanged. `tmc_repair` resumed for 30 minutes in `r10-eq-ambiguity-stage0` and found a seconds-long reproducer: changing the custom ambient list equality to inequality loses the sibling `equal` method needed to construct the list instance. It is repairing capture/projection from the packed dictionary. `lowering_evidence` has a 25-minute paired stage-1 audit and regression task from the integration head; its new worktree/commit will be recorded on handback. Neither fix nor fresh native acceptance is claimed yet.
+
+**Shared native renderer integrated.** `5b49998d` on pushed `fix/r10-shared-native-runner` is integrated as `a9fdd6c6`. `scripts/selfhost-dev/render-shared-native.sh` creates a separate ignored project with unchanged test bodies/assertions, named semantics/backend dispatch and IR mismatch capture. Rendering and case-list comparisons cover **96 semantics groups, 223 backend groups and 95 IR fixtures**; no native build has used it yet. Later expanded checks can share one compilation per reuse configuration. It does not overwrite the original failing 220-group project.
+
+**Dictionary capture repair integrated; next exact retry.** Both workers handed back and are idle. `0c25ed7c` → `ff71eb10` projects an uncaptured method from the in-scope packed dictionary and captures that dictionary for constrained coroutine/helper operators. It uses the existing borrowed method projection and captured-root lifetime. Fresh Release CLI passes unchanged equality (`yes no`), inequality (`no yes`) and an async/recursive suspension variant with poison (`no yes`, exit 0). Stage 1 already captures all active method names and explicitly destructures the full packed ABI; no production change was justified. Paired raw/numbered inequality controls `74add9e0` → `f23164c7` and suspension control `714cdadc` → `8639bf80` are integrated; both worker branches are pushed. Main now freezes the integration tree for `work/r10pre/backend-native8-exact/`, using the frozen corrected agent CLI and the unchanged 220-group native6 input. No full-build or native-runtime pass is claimed yet. The expanded shared runner will now contain **226 backend groups**, alongside 96 semantics groups and 95 IR fixtures. Main-owned `r10-fixture-candidates/work/shared-native-checks.sh` records each exit, original generated sources and compiler hash; its shell syntax check passed.
+
+**Exact-input native repair verified.** `work/r10pre/backend-native8-exact/` on `9f336cd1` built the unchanged native6 220-group input successfully in **9:01.15**, peak **19,373,372 KiB**. Both normal and poison runs completed **219/220 passed**; their only failure is the previously measured leak-only annotation-loop group. Generic captured addition, owned helper backedges, indirect suspension, annotated/helper callable results, Socket teardown and all other non-leak groups pass. The original HTTP server compiles in both modes; its captured normal IR has exactly one outer `RunTask` and helper loop backedges. Main next runs the actual three-round normal/poison HTTP replay under tracing in `work/r10pre/http-native8-trace/`. Compilation does not establish successful HTTP runtime behavior. Expanded 226-group equality/inequality controls, shared semantics/parity, no-reuse and current full reference suites remain pending; round 10 is still gated.
+
+**Current native HTTP replay passed.** `work/r10pre/http-native8-trace/results.tsv` records **exit 0, 3 completed rounds, 0 connected retries and trace checks 1** for both normal and poison stage-1-generated servers: 720 responses plus warmups, two workers per supervisor and no server EBADF. One normal startup connection was refused before connection establishment (client port 0); there were no connected resets/retries. This closes the observed HTTP runtime failure on the unchanged original server. Main next runs full reference checks on the integrated dictionary repairs in `work/r10pre/dictionary-shared/`. `lowering_evidence` has a 15-minute renderer task from `1ff04448` to include the unchanged typed-lowering measurement module in the shared harness, preserving its timing and 19-column TSV; this avoids another separate driver build. It may run rendering checks only. `tmc_repair` is idle. Expanded native controls, no-reuse, measurement counters and round-10 bootstrap are still pending.
+
+**Ready indirect-suspension control.** `b7601312` on pushed `fix/r10-helper-indirect-await` is awaiting integration after the active reference reader. Its 10-minute worker assignment closed a coverage gap: the earlier `62` fixture used zero iterations for partial/higher-order calls. The new unchanged-after-verification program carries freshly constructed strings through two actual timer suspensions via a partial and three via higher-order `apply`. Corrected Release stage 0 with poison prints exactly `p21|q321`, exit 0. Backend group `testIndirectAwaitingHelperCarriesStringAcrossRestart` checks output, EOF and exit; native normal/poison proof is pending. Existing `62` fixture is unchanged. The helper implementation conservatively retains old overwritten heap references and does not add a general arena rewind; measure and fix remaining leak-only growth after multithreading unless it blocks progress.
+
+The full reference reader is finished and the indirect control is integrated/pushed as `b7601312` → `f1cf0faf`. Main next verifies that one added e2e fixture and runs `http-reference-checks.sh` with `helper-shared2/s0/ashes`, output `work/r10pre/http-reference-helper2/`, before the fresh native backend batch. No active agent or pending implementation handback remains.
+
+**Current reference HTTP and added fixture passed.** `work/r10pre/http-reference-helper2/replay/results.tsv` records exit 0, three completed 120-request rounds, zero connected retries and passing trace checks in each of normal and poison modes. All six supervisors forked exactly two workers and no server EBADF appeared. This is **stage-0** evidence, not stage-1 acceptance. `helper-shared2/indirect-added-e2e.log` records **1 passed / 0 failed** for the newly integrated indirect-suspension fixture, supplementing the prior full 1,314-case pass.
+
+**HTTP blocker.** The original three-reactor server at port 43129 compiled in backend native 5, but `work/r10pre/http-native5-trace/` failed: normal completed three 120-request rounds with **40 connected retries**; poison timed out with **2 retries**. Accepted sockets went unread while handlers read/closed fd 0. The integrated transparent-helper port replaces nested schedulers with task factories, direct suspension and backedges, retaining logical callable adapters. Follow-ups preserve source-node identity, declared results, borrowed/owned successors, unused-formal type checking without runtime captures, and parent ownership of proven-confined Socket arguments. Escaping callbacks/tasks and returned resources remain outside the borrowing proof. Fresh native HTTP proof is pending.
+
+**Latest reference regression repair.** `helper-shared` at `a29f4fbb` passed build/format, C# **3,075 / 5 known RSS failures / 2 skips**, and LSP **88/88**, but e2e finished **1,311 passed / 3 failed / 80 skipped**. The unchanged `async_loop_accumulator`, `awaiting_helper_keeps_owned_backedge_values`, and `recursive_awaiting_helper_remains_callable` exposed physical Task results in source checking. `8390b2a2` → `b4f3ff63` fixes source inference hints and hover metadata to retain the logical scheme, preventing a second Task wrapper on replay. Fresh Release CLI printed `62`; central rerun is pending. All three originals have raw/typed and native controls. Other reference controls print `43` for annotation/shadowing/explicit-Task/alias behavior, reject a wrong declared result as `Bool vs Int`, print `2=1=seed` for owned/borrowed backedges under poison, and print `true`, `true` for Socket close/reuse and cancellation.
+
+**Source proof and artifacts.** `work/r10pre/helper-source6/` on `6876180e` explicitly passed CLI inference **10,248 items / 188 modules** and measurement inference **7,919 items / 137 modules**. The later C# hint repair changes no compiler Ash source. Socket confinement `3aea7458` → `6ea9ba67`, unused-formal typing `91fbdf8f` → `73a7082a`, and HTTP IR capture `5652ed1a` → `bc48802f` are integrated/pushed. The HTTP group retains `selfhost_backend_concurrent_http_server.lowered.ir` from the exact object passed to optimization. Require a sole outer RunTask plus helper backedges, all replies, two children per supervisor, zero connected retries and no server EBADF. Dependency-only `6a1913c5` duplicates integrated `f195681a`; do not integrate it again.
+
+**Measurements and scripts.** Old `typed-measurement1` stopped legacy mode after 16:07.81 without a TSV row; typed mode never ran. Integrated `9432264a` reports exact discovery/retained-discovery/replay traversals, body re-lowerings, and optional `--goal-details` on stderr, preserving the 19-column TSV and timing intervals. Rebuild/run both modes on final source; no zero-replay or performance claim exists. Main scripts in `r10-fixture-candidates/work/`: `source-preflight.sh`, `policy-shared-checks.sh`, `named-native-checks.sh`, `named-backend-checks.sh`, `typed-measurement-checks.sh`, `http-native-replay.sh`, `http-reference-checks.sh`. Reference replay explicitly records producer `stage0`; it is not stage-1 proof. Generated harness source is preserved beside new artifacts. Prepared `round10-bootstrap.sh` checks exit codes and requires a matching `nonleak-gate.commit`; stage 3 needs swap allowed in its parent scope too.
+
+All checkpoint text and commit mappings remain verbatim in the log. [Helper correctness follow-up](SELF_HOSTING_LOG.md#round-10-helper-correctness-follow-up-2026-11-21) · [Earlier native runtime follow-up](SELF_HOSTING_LOG.md#round-10-native-runtime-follow-up-2026-11-21) · [Typed consumer audit](SELF_HOSTING_LOG.md#round-10-checkpoints-2026-11-21)
+
+The table records the 13 first failures from native 2 for historical comparison. Native 3 now passes ten of these groups and reaches new failures in the remaining three, described above. Keep the source programs unchanged. An assertion may be updated only after the reference and actual compiler behavior establish that its oracle is stale. Earlier logs are in `work/r10pre/named-native2/cases/`; current logs are in `work/r10pre/named-native3/cases/`.
+
+| Group (`run…Tests`) | First failure |
+| --- | --- |
+| `CapabilityInference` | Resume arguments should match operation results. |
+| `RecordedInferenceCoverage` | Deriving `Tree` fails before numbering with `UnsupportedDerivedTrait("Tree", "Ashes_Trait_Eq")`. |
+| `TraitInference` | Trait declaration rejected with `UndeterminedTraitRequirement("Equal", ...)`. |
+| `Ir` | Opcode assertion at `IrTests.ash:268`, actual 81. |
+| `CoreLogicalNotInference` | Unknown lowering binding `__ashes_standard_trait_Eq_equal_int`. |
+| `CoreOrderedInference` | Unused comparator retains a provisional body, six functions. |
+| `CoreProgramLowering` | Expected constrained program to fail without environment, but it lowered. |
+| `CoreBuiltinLowering` | Builtin registry consumed an async-owned operation. |
+| `CoreExternalLowering` | Assertion at `CoreExternalLoweringTests.ash:286`. |
+| `CoreTraitDispatchLowering` | Assertion at `CoreTraitDispatchLoweringTests.ash:245`, actual 3. |
+| `CoreCapabilityLowering` | Expected internal resume error, received located ASH020. |
+| `CallWindowLowering` | Expected `Alloc Target=21 SizeBytes=16 RuntimeManaged=true` not found. |
+| `TakenOverRecordLowering` | `taken_over_record_group_settled_by_caller` IR mismatch. |
+
+| Source | What was observed |
+| --- | --- |
+| `b17375b1`, `work/r10pre/policy-stored-fix/` | Fresh stage 0, explicit compiler inference `ok` (10,131 items / 184 modules), formatting, poison native policy build and execution all passed. The native run reached all aggregate, recursive sibling/cycle and exact peer assertions. No broad semantics/IR or bootstrap result is implied. |
+| `c15807b7`, `work/r10pre/policy-combined/` | Stage 0 built, standalone compiler-source inference printed `ok` (10,127 items, 184 modules), driver formatting and poison native policy compilation passed. Execution exited 1 with `ImmediateTraitEvidenceRequired("Eq", [SemVariable(2070)])` where the test expected `Seed`. Gdb isolated the second `checkAggregateEvidence` case: `let stored = (pick, Unit); let check = invoke(stored)`. The preceding inline-tuple case passed. Eq should stay latent until the returned comparator is called. Trace: `r10-fixture-candidates/work/policy-failure-gdb.txt`. |
+| `fe385315`, `work/r10pre/policy-preflight-fixed/` | Prior focused native cases passed, including the immediate-demand RHS location. This predates the aggregate/recursive-peer additions. |
+| `f4c4cc6f`, `work/r10pre/coverage-batch/` | Earlier full stage-0 gates. Build and format passed, C# 3,073 passed / 5 RSS failed / 2 skipped, LSP 88/88, e2e 1,291 passed / 1 failed / 80 skipped. The strict-prefix ordering case subsequently passed a fresh focused stage-0 poison check. The integrated full rerun belongs under `work/r10pre/policy-shared/`. |
+| `4a6478c7`, `work/r10pre/native-port/` | Earlier broad native IR result: 35 of 95 differed. Full dumps are in `work/r10-shared-capture/actual/`. The semantics suite stopped at the match-arm diagnostic assertion, since corrected. The no-reuse attempt was cancelled. |
+| `da06e40d`, `work/r10pre/named-native/` | Named harness compilation stopped after 23 minutes at arm 38 (`Unit` versus `List(SemanticStitchUnit)`). The coordinator renderer now evaluates each group and explicitly discards its result. This attempt produced neither case results nor a newer IR matrix. |
+
+Use `work/r10pre/policy-preflight.sh <new-output>` for a fresh stage 0, source inference and poison-built native policy driver. Require an explicit `ok` from inference even when its exit code is zero. The policy driver used `work/r10pre/policy-combined/s0/ashes`. The standalone inference binary used by that script is named in the script. For full solution build/format, C#, LSP and stage-0 e2e use `../r10-fixture-candidates/work/policy-shared-checks.sh <new-output>`. Read each phase's exit code and failure rows in its own log.
+
+
+Once the source is ready, run `../r10-fixture-candidates/work/named-native-checks.sh <absolute-stage0-path> <new-output>` from integration using the coordinator's capped runner. It uses `render-named-capture.sh`, builds a poison-instrumented `--debug -O0` harness and executes all named groups individually from the repository root so they can read the checked-in programs. It then compares 95 lowered-IR fixtures. Case logs, the selected groups and mismatching IR are in `<new-output>/cases/`, `cases-list.txt` and `actual/`. Build and run the separate `--debug-disable-reuse` variant as well. Preserve prior result directories.
+
+### Round 10 checkpoints, 2026-11-21
+
+These checkpoints preserve the observations and assignments as originally recorded. [Current round](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21)
+
+**Round 10 has not run.** The integration branch is `selfhost/round10`, with source pushed through `14823696`. It branches from `main` after #1159 (`f6e28970`). The expanded native policy suite passes with RC poisoning, including stored tuples and recursive peers. The latest broad native preflight passed 83/96 named semantics groups and differs on 32/95 IR fixtures. Both repair batches for those 13 first failures are now integrated; fresh native validation remains before the shared bootstrap.
+
+**Latest integration.** HTTP double-close and task-capture fixes are `1900e4b8` / `530fbfc0`, with their stage-1 Socket capture port through `54a29c9f`. The reference branch `ccd1f4d0` passed build/format, LSP 88/88 and e2e **1,308 passed / 0 failed / 80 skipped**; C# was **3,074 passed / 6 failed / 2 skipped**: five known RSS leaks and one raw ELF snapshot hash. The hash-only correction `a29dd0de` is justified by the changed networking runtime included by raw `CleanupResource(Function)`; the optimized ordinary lambda remains byte-identical and prints 42. The snapshot needs a focused rerun.
+
+`fix/r10-native-inference` through `8ffb56c6` is integrated through `d1edeae2`: canonical deriving names, handler-resume diagnostic context, trait executable-boundary assertion, generalized recursive-group evidence and joint sibling evidence. `fix/r10-native-oracles` through `d81baacd` is integrated through `14823696`: stale inventory/builtin/diagnostic/ABI/structural assertions and the actual pattern-ownership timing fix `3476b728`. Original programs and shared IR fixtures are preserved. Whole-compiler source inference on `54a29c9f` exposed an unresolved stitched field reference `taskStructLayout.frameDropper`; `49e40055` corrects all corresponding field accesses with typed patterns. The next main preflight must require an explicit inference `ok`, then run fresh native semantics, no-reuse and backend checks.
+
+Both implementation batches are handed back clean and pushed. `lowering_evidence` is auditing the remaining IR differences without load work; `tmc_repair` is available for new validation failures. Current-source static analysis reproduced all 122 guards at value 1 over 51 slots in 29 fixtures (`work/r10pre/named-native2/guard-cfg.tsv`); this does not replace generated-program execution. No shared round or native acceptance is claimed from these source fixes.
+
+**Current checkpoint.** Integrated and pushed: backend ownership fixtures `73daf91b` → `d2175893`, native poison instrumentation `8d0a2285` → `79ac86be`, explicit frame teardown `832133cb` → `9ad285aa`, and socket consume/cancellation callbacks `7121ecdc` → `cfe042f0`. The backend test merge retains all three new groups and was canonically formatted. Source/build/runtime proof of these backend changes is pending. The callbacks do not yet establish typed task-capture ownership.
+
+Main is running build, format, C#, LSP and e2e on the frozen HTTP fix tree `r10-http-worker-count` at pushed `ccd1f4d0`, with output `work/http-shared/` there; build and format passed. Its `aa3e07db` fixes the traced double close and parked-socket cancellation, and `ccd1f4d0` fixes caller ownership when a suspending task captures a parameter. Both await integration with the matching stage-1 port. This reader does not read integration source.
+
+Two workers are active: `lowering_evidence` on `fix/r10-native-inference` / `r10-native-inference` from `9ad285aa`, fixing the capability, recorded-coverage, trait and logical-not native failures; its canonical deriving-name fix `abcd28fd` is committed and pushed. `tmc_repair` continues typed task-capture ownership on `fix/r10-resource-frame-port`; its async-capture consumption counterpart `45ad5281` is pushed and awaiting integration. The other nine failed native groups and remaining IR differences are queued for the next implementation batch. No-reuse and backend runtime checks are still pending.
+
+At `617eb374`, `work/r10pre/policy-shared3/` passed build, format and all 88 LSP tests. C# completed **3,072 passed / 6 failed / 2 skipped**: five known RSS failures plus `Linux_backend_llvm_should_serve_http_concurrently_across_workers` (119 of 120 responses contained the expected status). E2e completed **1,308 passed / 0 failed / 80 skipped** in 5.61min. No reader remains from this run. Worker `lowering_evidence` is investigating the HTTP failure in `r10-http-worker-count` from this head; diagnostic commit `ed211374` preserves raw reply bytes and the client port without retrying EOF or relaxing success. The same rare failure is historically recorded as TR-7; an isolated pass does not establish a fix. Main will build and trace the focused test before broad native validation.
+
+Worker `tmc_repair` handed back the source-only audit in `r10-typed-consumer-audit/work/PROGRESS.md` at `617eb374`. Its first proposed step-7 batch measures current replay keys and then substitutes recorded declaration schemes for an eligible top-level tier, preserving the synthetic pass's boundary requirements and outer substitution. The current lowtypes measurement-driver recipe and exact counter columns are in that progress file. No step-7/8 behavior change has been made, and neither agent ran load work.
+
+The main focused HTTP trace on `ea7827ee` passed: the three workers sent 46, 39 and 36 complete replies (121 including readiness). Logs and syscalls are in `r10-http-worker-count/work/http-trace/`. The current and pre-policy compilers emitted byte-identical server ELF and IR, so this batch did not change that generated program. Diagnostic commits `ed211374` / `ea7827ee` are pushed and awaiting integration.
+
+The main runtime-only HTTP replay then passed three fully traced rounds and 100 server-only traced rounds, but the latter exposed connected-client resets hidden by the existing exception retry. `r10-http-worker-count/work/http-replay/stress.log` and `stress-trace.*` contain concrete double-close evidence: PID 952908 closes fd 5 for client 55246, accepts client 55326 on the recycled fd 5, then closes it before reading; that handler gets EBADF. PID 952913 repeats this for client 57130. Ordinary connections also show duplicate close/EBADF. Worker `lowering_evidence` is locating the extra close in lowering/resource finalization and will fix the actual cause in both compilers. TR-7 remains open until that fix is validated.
+
+Main's corrected broad native run is active at `87af15c7`, output `work/r10pre/named-native2/`, using fresh `policy-shared3/s0/ashes`. Integration is frozen. `tmc_repair` also handed back `73daf91b` on `fix/r10-backend-ownership-fixtures` in `r10-typed-consumer-audit`: the backend suite executes the seven original ownership fixture sources and the scalar-shadowing regression. This test-only commit is pushed, awaiting integration and runtime validation. The worker is now implementing the existing stage-0 poison switch in the stage-1 backend, on `fix/r10-native-poison` in `r10-native-poison` from `87af15c7`; default code generation must remain unchanged.
+
+That native run is now complete: the poison `-O0` harness built in **8:59**, peak **20,094,276 KB**, then **83 of 96 named groups passed**, 13 failed assertions, and **32 of 95 IR fixtures differed**. This is the newest broad result. All 32 names also differed in the prior 35-fixture set; `mutual_recursion_later_sibling_call_requests_arena_result`, `recursive_insert_curried_stage_requests_no_arena_result` and `self_call_inside_constructor_owns_its_result` now match. No-reuse validation remains. Current stage-0 controls for all eight ownership programs passed both plain and poison (**16/16**) in `work/r10pre/ownership-stage0-controls2/`. The first controls attempt only rejected the `.source` extension; the corrected runner supplies those exact file contents via `--expr`.
+
+The HTTP candidate's main replay passed 100 rounds (12,000 requests plus readiness) with **zero connected-client resets and zero EBADF trace lines**, versus 13 connected resets in the old binary's 100-round run. It is preserved as `r10-http-worker-count/work/http-replay/fixed-server`, with `fixed.log` / `fixed-trace.*`. The candidate disarms task-frame resource cleanup after an explicit close; deterministic cancellation and descriptor-reuse regressions are still being added by `lowering_evidence`.
+
+Poison instrumentation `8d0a2285` is committed and pushed, awaiting integration/build/runtime proof. `tmc_repair` is now porting task resource-frame lifecycle support on `fix/r10-resource-frame-port` in `r10-resource-frame-port`. Its first prerequisite, pushed `832133cb`, preserves explicit frame-dropper labels and invokes them exactly once on completion/cancellation. Typed Socket capture ownership and consume/disarm notification remain under implementation with the C# worker; enabling untyped cleanup for every saved value is unsafe. No agent load has run.
+
+The stored-tuple fix `bd915b62` is integrated as `4961ecf3`: conservative unknown-callee demands now retain their selected field prefix, leaving unrelated Eq evidence latent. Its native suite, including the positive stage assertion, passes. The full stage-0 attempt at `c313e129` stopped at whitespace before suites; format-only `e3dc636e` is integrated as `eee4de68`, and subsequent full results are recorded above.
+
+While integration is frozen for the running checks, coordinator handoff updates are committed and pushed on `fix/r10-live-checkpoints` in its own worktree. Cherry-pick new documentation commits after the reader finishes; they do not change compiler source.
+
+The full C# run on `b17375b1` completed with **3,022 passed / 56 failed / 2 skipped**, compared with the prior 3,073 / 5 / 2. LSP passed 88/88; e2e completed **1,308 passed / 0 failed / 80 skipped** in 5.75min. No main reader remains. New C# failures cluster around directly escaping owners, immediately consumed runtime builtins, the Box payload transfer and explain fixtures; two additional RSS failures are not exempt as baseline leaks. Both workers identified the earlier scheme-read change `e946de8f` (integrated `3db7a02e`) as the cause in the Box witness: tail-forwarded ownership remained marked borrowed, preventing adoption by the enclosing binding. Pre/post query-optimization IR is identical for that witness, ruling out `66b8d0d3` there. Do not change the test oracles.
+
+The completed C# repair is in `r10-phantom-query`; its stage-1 counterpart audit is in `r10-root-ownership`, branch `fix/r10-root-ownership` from `b17375b1`. No agent load is running.
+
+`2b76c677` and `8d0891e7` are integrated as `90f0392e` and `d1415230`. Focused Box, direct-text and BigInt IR is restored byte-for-byte against the pre-regression compiler, and the original richer prefix UAF witness still passes with poison. The follow-up records borrowed facts only when the binding has ownership provenance; the heap-result-list and borrowing-callee memory reports match their references. The stage-1 audit required no source edit: its existing `transferSlot` path distinguishes actual outgoing ownership from earlier borrowed reads. Exact direct-text and earlier-read/alias historical IR probes corroborate the current-source reasoning; fresh native confirmation remains required.
+
+Main's `work/r10pre/policy-shared2/` run is complete: build/format passed, C# has the 56 failures above, LSP and e2e passed. The ownership-read repair is integrated; main is starting the full stage-0 retry in `work/r10pre/policy-shared3/`. Do not mutate integration while the reader runs. Then use the fresh `policy-shared3/s0/ashes` for corrected broad native cases. Prior `policy-shared` stopped at formatting, and the earlier chained run stopped at policy failure; neither supplies an additional full C#/e2e result.
+
+### Round 10 preflight history
+
+The archived handoff below preserves the original issue descriptions, branch-to-integration commit mappings, historical counts, and superseded coordinator plans through 2026-11-21. Its timestamps and worker assignments describe earlier runs. For the current source, gate and outstanding checks, use the [live handoff](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21).
+
+<details>
+<summary>Archived preflight checkpoints through c15807b7</summary>
+
+
+This section is the handoff: a session that starts fresh reads it first. Keep it current with each
+integration, and replace it when round 10 has run.
+
+**Integrated checkpoint (2026-11-21 03:38):** the queued source batches below are now integrated
+through `b12affe3` and pushed: callback `cd1c9795`/`5b452baf`/`5df945b3`/`961e5983`/`0db26650`
+became `abebebf6`/`d9089104`/`3cc24de0`/`e2f8459b`/`acd6c19d`; inference
+`947fb5d0`/`0918689b`/`f9bd8d0a` became `d699a4bf`/`22d615b3`/`421e904b`; ownership
+`37bf8d78`/`85a4e368` became `a997de25`/`b12affe3`. Both callback/inference workers handed back
+clean; focused standalone source checks pass, while their combined native cases remain unverified.
+
+The `da06e40d` named-native build **failed after 23 minutes**, before any suite execution:
+`Unit vs List<SemanticStitchUnit>, in match arm 38`. This is a generated harness error:
+`runModuleReferenceRewritingTests` intentionally returns the checked unit list, discarded by the
+original sequential suite. The new named dispatcher had required identical result types across
+all test groups. Corrected coordinator renderer `r10-fixture-candidates/work/render-named-capture.sh`
+evaluates each test and discards its result, preserving the suite's behavior. The test body and
+compiler were not changed for this harness repair. The failed attempt supplies no new IR capture.
+Future named runs use this renderer, configurable output folders and a per-run `actual/` directory.
+
+The guard review found a confirmed correctness counterexample: an `Int` local shadowing another
+match arm's list-tail name inherits that arm's RC-transfer fact. Old-family IR retains integer 7;
+bootstrap54's generated program crashes with exit 139. C# correctly emits two genuine tail retains
+and prints 7. `30935ec4` stores the fact on the actual `CoreBinding` and removes spelling-based
+fallbacks while preserving protective-owner eligibility; its source preflight is running.
+This repair is being integrated before the next checks. Main will run fresh policy/source preflight,
+then C#/LSP/e2e/format, followed by corrected named-native and no-reuse validation. No round 10 yet.
+The lexical-binding repair is integrated as `b438d259`. `lowering_evidence` resumes in fresh
+`r10-phantom-query`, branch `fix/r10-phantom-query` from that head, for a 25-minute bounded
+candidate-directed phantom-variable query optimization in both compilers. It must preserve all
+layout decisions, self/quantifier exclusions and mutable-type correctness; no typed-lowering
+policy change is authorized by this task. Main will measure any improvement. `tmc_repair` finishes
+the guard repair's source check in `r10-ir-ownership-audit`; no more than two workers.
+
+**Queued checkpoint (2026-11-21 03:24):** integration is frozen at `da06e40d` while main's
+`work/r10pre/named-native/` job builds/runs the combined named semantics/IR driver (session 28490).
+The coordinator records this update on `fix/r10-handoff-queue` in its own worktree so the running
+source is unchanged. Cherry-pick this documentation checkpoint onto integration after the reader
+finishes. No shared round 10 has run.
+
+The previous `policy-preflight-fixed` result remains valid: source inference 10,092 items / 184
+modules, focused native policy tests all pass. Queued, pushed implementation commits:
+
+| Branch | Commits waiting after current reader | Status |
+| --- | --- | --- |
+| `fix/r10-evidence-boundaries` | `947fb5d0`, `0918689b` | BATCH READY: callback aggregate selectors and recursive sibling/cycle demand summaries. Focused source inference explicit `ok`, 1,991 items / 44 modules, 39.297s. Native tests pending. `822513dd` is already integrated as `e34a9ad7` and native-proven. |
+| `fix/r10-callback-evidence` | `cd1c9795`, `5b452baf`, `5df945b3`, `961e5983` | Ordinary callback/selected-field checking, finalized scheme identity, analyzer cleanup, direct recursive evidence propagation. Focused stage-0 poison negatives and returned/ignored/delayed positives pass. One confirmed remaining interaction: trait-free recursive peers returning a callback falsely force its evidence at the binding; worker is fixing joint formal-use summaries. `f5b85d06` is already integrated as `d397fa37`. |
+| `fix/r10-ir-ownership-audit` | `37bf8d78`, `85a4e368` | Two concrete correctness repairs: finish the TMC spine before ownership publication and loop-input release; do not apply runtime pointer retain to scalar pattern fields. Source formatting passes. Semantics-manifest inference reached the previously documented `ResultReachTests.ash:34:69` ConsoleIO mismatch; native checks required. |
+
+Active workers: `lowering_evidence` in `r10-callback-evidence` finishes the recursive callback
+interaction; `tmc_repair` has handed back the ownership batch clean and resumed the existing
+`r10-evidence-boundaries` branch at `0918689b`, with a 20-minute brief for the same trait-free
+recursive peer formal-use issue. Exact paired witnesses are
+`recursive_peer_returns_callback_without_invoking_it.ash` and
+`recursive_peer_invokes_callback_during_binding.ash` in the callback worktree. Existing `0918689b`
+does not prove that interaction. Two active agents, no agent load. All commits above are pushed;
+main integrates only between reader jobs. The ownership handoff lists seven unchanged fixtures
+for current-stage backend execution in normal/poison modes, with expected stdout, in
+`r10-ir-ownership-audit/work/PROGRESS.md`.
+Standalone peer coverage is now `f9bd8d0a`, depending on the two e2e fixtures from the callback
+worker. The existing `0918689b` fixed-point pass already propagates trait-free formal-use summaries;
+the new witnesses and delayed `[Eq@2,Seed@1]` assertion need native execution before claiming parity.
+
+Performance observation during the native build: a bounded `dotnet-stack` sample at about
+20 minutes shows stage 0 still in `AddBindingFtv` → `VariablesHeldBesideFunction` →
+`SubstitutePhantomResultVariables` → `ResolveCallPhantomResultLayout`, not LLVM. Full snapshot:
+`r10-fixture-candidates/work/named-native-stack.txt`. Preserve this for typed-lowering performance
+work; a sample is not a whole-run profile. The build continues under its existing 45-minute cap.
+
+Ownership audit details: `LoopPlacement.finishTcoManagedPlacement` previously published the base
+tail and released loop inputs before Bindings/RecursiveGroups closed the returned TMC spine,
+then published ownership again. Regression order changes from `[published,released,closed,published]`
+to stage 0's `[closed,published,released]`. Separately `retainUnplacedAggregateMarkersOf` could
+emit `IsReferenceCounted` and real `RcDup` on the `Int` field in `Add(a+1,b)`, mistaking legal integer
+bits for a pointer. Both are non-leak gate blockers until validated.
+
+The two generic collection fixture differences appear to use safe alternative placement: the
+direct constructor loop has arena nodes and only stack restoration at backedges; the helper loop
+acquires the normalized successor before dropping the old owned graph. Extra deep-copy helpers
+are unreferenced. Do not regenerate fixtures or treat old bootstrap54 execution as proof of changed
+lowering. The extra active-flag guards and remaining borrow/result modes still need classification.
+
+Next load batch after integrating completed slices: focused policy native test including aggregate
+and recursive cases, fresh full stage-0 C#/LSP/e2e/format checks, then updated native semantics/IR and
+no-reuse checks. Scripts are in `r10-fixture-candidates/work/policy-shared-checks.sh` and
+`named-native-checks.sh`; avoid overwriting prior output folders. New native results may add blockers.
+
+**Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
+unless one blocks something. The inference content for round 10 is complete; all agent effort goes
+to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
+and matched origin at `a5eef21e`. The installed Claude CLI supports Opus, but both worker attempts
+stopped on the account's weekly usage limit (reset reported November 22 at 11:00 Stockholm time).
+The user authorized GPT-6.2 Astra as the substitute, and both prepared workers are now running.
+The user reaffirmed the complete goal: stage 2 compiles stage 3 without errors and byte-identically;
+inference replaces discovery/replay and repeated lowering; parallel LLVM/codegen/linking follows.
+Blocking leaks are fixed immediately. After multithreading, **all** remaining compiler and generated
+program leaks must be fixed; this round's leak exclusions are temporary.
+
+**Latest status (2026-11-21, integration `902c0e0b`, pushed):** the user explicitly requested both
+agents work toward full inference coverage. The new evidence and type-table batches are integrated
+but await native validation. Static inventory covers 19 semantic type constructors, 48 expression
+constructors and 14 pattern constructors; this is not a claim of complete tested coverage.
+
+**Newest checkpoint, source `b77ef21e`:** both immediate-evidence batches are integrated and pushed:
+`80e21b10` → `6eb76cf2`, `e946de8f` → `3db7a02e`, `854a6c30` → `2c0486e8`,
+`03875c48` → `f10ccbf2`, `b346b24c` → `ba33aeb2`, `e97feb40` → `0e6a388f`,
+and `4058260d` → `b77ef21e`. Duplicate dependencies were skipped. Both workers handed back clean.
+The standalone policy source check passed 1,950 items / 44 modules; native behavior is unverified.
+Main is running `work/r10pre/policy-preflight.sh`: fresh stage 0, whole-compiler source inference
+with explicit `ok` required, then a focused native policy build/run. Results use the matching folder.
+Do not mutate integration while this job reads it.
+
+One confirmed new gate blocker: stage 0 rejects direct `check = pick(Unit)` but accepts
+`invoke f = f(Unit); check = invoke(pick)`. The source-backed callback-demand port is present in
+standalone inference; stage-0 parity remains. `lowering_evidence` resumed in fresh
+`r10-callback-evidence`, branch `fix/r10-callback-evidence` from `b77ef21e`, to fix it.
+`tmc_repair` resumed in fresh `r10-evidence-boundaries`, branch `fix/r10-evidence-boundaries`
+from the same head, to fix RHS diagnostic locations and audit concrete higher-order boundaries.
+Both have 40-minute self-contained briefs, implementation/quick checks only. All prior branches
+are pushed. The user explicitly requested autonomous iteration through completion without steering.
+The first policy preflight (`367e2f1a`) passed stage-0 build but stopped on
+`UnknownValue("failedCoreLowering")`, `CoreLowering.ash:49:49`: the raw entry point needed an
+explicit helper export. `f5b85d06` fixes the export and is integrated; `822513dd` fixes the
+immediate-evidence diagnostic's RHS location and adds its exact-offset regression, also integrated.
+The native phase did not run on that failed attempt. Retry uses
+`work/r10pre/policy-preflight-fixed/`, preserving the initial logs.
+The corrected preflight at `fe385315` passed: fresh stage 0; explicit inference `ok` for
+10,092 items / 184 modules; focused native policy driver built with `--debug -O0` in 30.12s
+and all immediate-evidence tests passed, including RHS location. The broad native check is next:
+`r10-fixture-candidates/work/named-native-checks.sh`, using this stage 0, logs
+`work/r10pre/named-native/`. It builds with poison and runs every named semantics group separately,
+then captures the 95 IR fixtures. No-reuse and full stage-0 suites remain separate checks.
+`fix/r10-evidence-audit` supplied partial/generalization/evidence fixes through `ce420878` and the
+still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` supplied recording,
+translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
+because `ef95138d` was integrated as `b2f0f591`. Oracle repairs `e8b2074d` and `592c3a8b` are also
+integrated. Every cherry-pick was pushed. Main's next build must include all these batches.
+
+The next stage-0 batch at `f4c4cc6f` completed (`work/r10pre/coverage-batch/`): solution build,
+format and LSP 88/88 pass; C# **3,073 passed / five RSS failures / two skipped**, clearing all
+non-leak C# failures. E2e **1,291 passed / one failed / 80 skipped**; the only failure was the
+known strict-callee ordering regression. The independent strict-prefix split `610c85e3` is now
+integrated as `7115f734`, typo repair `5673913d` as `75f979f8`, and captured-self normalizer
+`5af4e0e1` as `902c0e0b`. The worker's stage-0 poison smokes passed exact ordering and nested
+captured/aliased mixed-constraint behavior; integrated/native stage-1 proof is still pending.
+The fresh-source preflight at `8c8e59a1` (`work/r10pre/prefix-preflight/`) passed the stage-0 build
+and both strict/captured-prefix poison regressions. Whole-compiler inference **failed** at
+`CoreLowering.Program.ash:2267:86`: argument 2 of `lowerScheduledProgramPasses` expected
+`Maybe(Expr)` instead of the normalized trailing `Expr` (10,036 items / 183 modules). The tool
+returned exit 0 despite printing `error`; require an explicit `ok` result when judging this check.
+Worker correction `03875c48` is pushed but not integrated. No main load job is currently running.
+Next: integrate the completed policy batch, rerun source preflight, then the per-module native suite.
+
+The native preflight at `4a6478c7` (`work/r10pre/native-port/`) passed solution build/format,
+C# 3,064 passed / 13 failed / 2 skipped, LSP 88/88 and compiler inference 9,995 items / 182 modules.
+The 13 C# failures were eight structural assertions (now repaired, not yet rerun) and five genuine
+RSS checks (deferred). The combined native semantics/parity driver built in 14.99 minutes.
+Semantics stopped at a stale `PatternInferenceTests` expectation for the newly contextualized match
+diagnostic; corrected in `503dc64f`. Parity captured **35/95 differences**, full actual IR in
+`work/r10-shared-capture/actual/`. Initial analysis: 29 carry extra `rc_transfer_inactive` guards
+for runtime/arena representations, not automatically correctness defects. Six others still need
+classification. The no-reuse rebuild was cancelled after the known diagnostic expectation failed;
+it supplies no result. No load job is currently reading integration; no shared round 10 has run.
+
+Use `r10-type-coverage/work/render-parity-capture.sh` for the next native batch. It renders to
+`work/r10-named-capture/`, adds `case <test-function>`, and writes `cases.txt` (95 module-level
+test functions). Run cases individually under caps to collect all failures rather than stopping
+after the first panic. Keep both normal/no-reuse checks at the agreed gate. Focused drivers can
+use `--debug -O0`; the shared stage-1 build retains the specified `--debug -O2`.
+
+**Semantic decision, resolved by the user:** `r10-evidence-audit/work/early-open-dictionary.ash`
+binds `check = pick(Unit)` before a marker, then uses `check` at Int and Bool. Strict evaluation
+requires an earlier effect once, but that effect depends on the not-yet-selected trait instance.
+Current stage 0 prints `bound|Int|Bool|true true`. The reference does not settle how to select one
+instance. User chose **require concrete evidence at binding; annotate ambiguity**, not making
+affected bindings monomorphic from later top-level uses. Immediate work must have determined or
+available enclosing evidence; requirements used only by the returned function remain generalized.
+Reference change `ec3265c1` is integrated as `62d8e5de` before implementation. Standalone-inference
+and lowering enforcement are active work. The user's positive example keeps Seed.first/inspect
+inside `check x`, so check remains polymorphic with inferred Seed/Eq evidence supplied at each call.
+The independent early-callee effect case has a unique required order:
+`generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
+`entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. The declaration-site split
+preserving lexical captures and the ordinary full-call ABI is integrated and passes the fresh
+stage-0 poison check; native stage-1 proof is pending.
+
+Active workers are now `lowering_evidence` in `r10-evidence-audit` (C# policy and lowering scheduling;
+bounded single-project CLI recovery builds/short smokes authorized) and `tmc_repair` in
+`r10-immediate-evidence`, branch `fix/r10-immediate-evidence` from `f4c4cc6f` (45-minute batch:
+standalone inference metadata/enforcement). Its reference dependency `c3f995b8` duplicates
+`ec3265c1`; skip the duplicate at integration. Metadata contract is a demand stage for each
+canonical scheme requirement ordinal, exposed as `nodeEvidenceStagesAt(rhsRoot)(nodeTypes)`;
+direct method/operator execution demands evidence, reference instantiation alone does not.
+Pending pushed slices on `fix/r10-evidence-audit`: `80e21b10` (C# immediate evidence policy),
+`e946de8f` (borrowed scheme-read ownership; stage-1 equivalent path already exists), `854a6c30`
+(transitive wrapper strictness in both compilers), and `03875c48` (normalized trailing expression).
+`fix/r10-immediate-evidence` has `b346b24c` (standalone policy and stage metadata); its
+`335a3d10` dependency duplicates integrated `75f979f8` and must be skipped. The inference worker
+is finishing higher-order invocation/ignored-callback/returned-callback coverage; the lowering worker
+is wiring validation for raw lowering entry points while reusing validation on checked CLI paths.
+Both use
+GPT-6.2 Astra; no third active worker. Their `work/BRIEF.md` and `work/PROGRESS.md` hold details.
+`imports_diagnostics` is idle. The type-coverage manifest preflight reached an unchanged
+`ResultReachTests` row mismatch in the older standalone tool after fixing a new-test member read;
+compare inference binaries/current-source behavior before treating it as a compiler regression.
+
+**How work is done.** One coordinator session integrates and runs every load job (builds, suites,
+sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
+integration head, and hand back a `BATCH READY` batch with the load work they need listed in their
+worktree's `work/PROGRESS.md`. The coordinator pushes each agent branch and the integration branch
+after every commit, cherry-picks batches onto the integration branch, and updates this section. The
+agent rules are in the `step-f-round3` worktree's `work/coord/rules.md` (machine-local).
+User clarification on 2026-11-21: maximize implementation per batch before coordinator heavy
+validation; immediately assign failures to the next implementation batch. Keep remote branches
+current. The coordinator is authorized to choose validated milestone PRs, merge them, and remove
+local/remote branches no longer needed (preserve still-needed evidence first).
+
+**Orientation for a new session.** Everything below is either on `origin` (branches, this file) or
+on the development machine (marked *local*: git-ignored, under the repository checkout).
+
+Read first, in this order:
+1. This section.
+2. `CLAUDE.md` / `AGENTS.md` at the repository root (build, test and format gates, coding rules).
+3. In this file: "Start here" above it (where things stand, the order of work) and "Type inference
+   before lowering" (steps 7 and 8, the order-dependent rules, what the table gives lowering).
+4. The references the bugs touch: `docs/md/reference/language.md` (sections 13.1 imports, 21.2
+   trait declarations, 21.5 to 21.6 requirements and operators), `docs/md/reference/diagnostics.md`
+   (codes, including ASH048), `docs/md/guide/testing.md` (test directives).
+5. Tools: `selfhost/tests/behaviour/README.md` (the behavioural check), `scripts/selfhost-dev/README.md`
+   (the suite runner `suites.sh`, `--focused`, the probes), `selfhost/README.md` (packages).
+
+Branches on `origin`:
+
+| Branch | Role |
+| --- | --- |
+| `main` | Round-10 baseline: #1159 (`f6e28970`); refresh before the milestone PR. |
+| `selfhost/round10` | The integration branch; integrated batches and held changes are distinguished below. |
+| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Integrated, with the TMC correction from fix/r10-tmc-regressions. |
+| `fix/r10-tmc-regressions`, `fix/r10-import-diagnostics`, `fix/r10-lowering-evidence` | First resumed batches integrated through 8da62f16; combined validation pending. |
+| `fix/r10-ownership-parity`, `fix/r10-remaining-correctness` | Active second batches, both from integration 8da62f16. |
+| `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
+| `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
+
+Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works in its own):
+
+| Worktree | Branch | Use |
+| --- | --- | --- |
+| `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
+| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Completed batch; full C# repair evidence under work/coordinator/repaired/. |
+| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Completed imports/parser/diagnostics batch; focused probes under work/. |
+| `r10-lowering-evidence` | `fix/r10-lowering-evidence` | Completed Not/equality/executable-boundary batch. |
+| `r10-ownership-parity` | `fix/r10-ownership-parity` | Active: owned match-result uniqueness and IR/explain parity (4, 1, 9). |
+| `r10-remaining-correctness` | `fix/r10-remaining-correctness` | Active: REST example and bootstrap36 correctness audit (8, 10). |
+| `r10-fixture-candidates` | detached 8da62f16 | Coordinator-only disposable fixture generation, candidates under work/. |
+| `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
+| `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
+| `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
+| `s2-diff-b` | `fix/s2-crash` | Stage-2 crash notes and gdb scripts in `work/r/`. |
+| `typed-nodes` | (`work/check/infer`) | Holds an inference tool binary used for quick type checks. |
+| `main-baseline` | detached at `main` | For running a check against `main` (its C# failure list: see below). |
+
+Binaries (*local*): newest checked stage 0 is `step-f-round3/work/r10pre/resume-integrated/s0/ashes`
+(integration `fc50661a`, 2026-11-21). Under `step-f-round3/artifacts/`: stage 0 `stage0-b58/ashes` (built from the
+head after strict imports; rebuild with `dotnet build src/Ashes.Cli/Ashes.Cli.csproj -c Release -o
+artifacts/stage0-bNN`, stage 0 embeds `lib/Ashes`, so rebuild it after any stdlib edit); stage 1
+`selfhost-dev/s1-f-bootstrap54-debug` (round 9, before every round-10 batch); stage 2
+`selfhost-dev/s2-f-bootstrap54` with `.map` and `.map.names`; the inference tool
+`work/r10pre/strict/infer/infer` (from the head). Machine rules (caps, `heavy-coord.sh` /
+`heavy-agent.sh` slots, `ulimit -s 1048576`, swap allowed for stage 3) are in
+`step-f-round3/work/coord/rules.md` (*local*) and in the memory index of the coordinating
+assistant.
+
+Scripts and results (*local*, in `step-f-round3/work/`):
+- `step-f/round9.sh`: the template for a round (stage 1, stage 2 with link map, both behavioural
+  checks, crash trace, stage 3 and the byte comparison, suites); round 10 is a copy with the
+  numbers bumped and the typed-lowering steps added.
+- `r10pre/*.sh` and `r10pre/<name>/summary.txt`: the checks run on each batch this round
+  (`decisions`, `parity2`, `crashfix`, `batch3`, `strict`, `suites`); `r10pre/csharp-red-29.txt`
+  lists the 29 non-leak C# tests that were red on `main`.
+- `behaviour/b54-s1/`, `behaviour/b54-s2/`: round 9's behavioural results (`results.tsv`,
+  `summary.txt`); round 10 compares against them.
+- `round9/ir-opt/`: the `IrOptimizer` IR dump from the stage-2 crash hunt (no longer needed).
+- `r10pre/main-csharp-failed.txt`: the 39 C# tests that fail on `main` (`f6e28970`): the 10
+  leak tests (memory plateau and release) plus the 29; rerun the full suite in `main-baseline` to refresh it.
+
+
+**Integration branch:** `selfhost/round10` (from `main` after #1159), worktree `step-f-round3`.
+What it holds beyond `main`, none of it built by stage 1 yet:
+- typed lowering, all behind `ASHES_TYPED_LOWERING=1` (flag-off IR expected byte-identical):
+  node identities, the two `Show.show` goals, operator instance kinds, top-level schemes by node,
+  handler-arm types, requirement reduction, no numeric defaulting; operator-generic copies inside
+  functions, below top level, in place and through inner lambdas, non-tail recursive copies; `!`,
+  `Default`, user trait method and dictionary goals settled from the table; step-8 rules (a) and
+  (b). Expected with the flag on: 0 pending trait goals and no replay pass on the whole compiler.
+- three type-checking decisions in both compilers: a requirement on an outer variable is passed
+  past a local `let`; a trait method that mentions no trait parameter is rejected (ASH010); strict
+  imports (ASH048: a type or constructor is visible unqualified only in its module and modules that
+  import it; shipped `Ashes.*` modules included; trait names in `deriving`, `requires` and
+  `implement` exempt; a value selector does not count); written-requirement diagnostics.
+- stage-1 parity fixes: entry module loaded by path; call parameters typed from argument forms;
+  spans resolved against the import-blanked text (positions after an import header were shifted);
+  parse errors printed with code and position; unknown-qualifier wording; an argument call's
+  result constrained before its row joins the caller's (the `semantics` suite's capability-row
+  error); a lambda argument inferred against its parameter type and row; signature mismatches at
+  the value with the written type first; columns in Unicode scalars.
+- stage-0 fixes: entry-module trait naming; ASH010 on a nested operator-generic `let` used at two
+  types in one lambda; ASH005 on two `(given (xs) -> xs == [])` at different element types; no
+  standard-library cascade after a program error; a retired `Ashes.*` module reported as an
+  unknown standard-library module.
+- the stage-2 use-after-free: `TcoReset.noteSpineFreedSlot` released a span twice (a cons head kept
+  in an owned slot whose retain the call-argument frame already releases); guarded in both
+  compilers.
+- fixtures: `core-copy-plan-view`, `heap-drop-worklist`, the `logical-not-inference` runner entry.
+
+Checks on the head (5f1e591e, after strict imports): `dotnet build` and format clean; the full C#
+suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 being fixed on
+`fix/csharp-red-tests`); LSP 88 of 88; `ashes test tests` with a stage 0 from the head 1,273
+passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
+items).
+
+**Earlier checkpoint (2026-11-21 01:51):** integration was pushed through `c787ed37`.
+The combined batch at `ba570923` passed build, format, LSP 88/88 and stage-0 e2e
+1,281 passed / 0 failed / 80 skipped. C#: 3,045 passed / 32 failed / 2 skipped. Logs:
+`work/r10pre/combined/`. Its orchestration was intentionally stopped after e2e finished, before
+native builds, to include the newly completed ownership batch. No test process was interrupted.
+
+**Correction to the earlier leak classification:** the original ten red C# rows were not all
+leaks. Two stdout assertions expect 3 per iteration while their unchanged programs appear to
+compute 9; the others include structural drop counts and missing reuse coverage. They require
+review and justified fixes, not a leak exemption. The five additional failures are RSS plateau
+checks. `fix/r10-test-oracles` owns this audit; the actual evidence is `combined/csharp.log`.
+
+The five ownership/fixture commits are integrated as `36ea713b`, `5cd2bd73`, `02b1c44e`,
+`04d865e6`, `d0553c44`: corrected TMC field access, reviewed all 23 fixture files, and ported
+shared/unique matched-wrapper field ownership. Whole-compiler inference passed 9,993 items in
+182 modules. Native verification is pending. `dd6d3b39` is integrated as `3bcb1978` (unresolved
+tuple evidence and lexical helper regression). The REST example compiles with fresh stage 0.
+
+Fresh historical checks in `r10-fixture-candidates/work/historical/`: the borrowed-association
+list regression passes stage 0 and bootstrap54 with poison enabled. The original escaping partial
+application `step-f-stage0-alias-evidence2/work/fx/v1.ash` crashes with stage 0 (exit 139; jump to
+0x3e8) but passes bootstrap54. Stage-0 correction `9bb94357` is integrated as `c787ed37`, still
+unverified; the worker must provide the stage-1 counterpart or precise existing-equivalence proof.
+
+**Checks next:** `r10-fixture-candidates/work/native.sh`, output
+`work/r10pre/native-reviewed/`: fresh stage 0, format, the escaping-partial poison regression,
+reviewed C# fixtures, frontend, combined semantics/95-fixture IR capture, semantics without reuse,
+and logical-not lifetime. The driver renderer is
+`r10-ownership-parity/work/render-parity-capture.sh`; it uses the integration source at rendering.
+Actual mismatching IR goes to `work/r10-shared-capture/actual/`. This remains preflight, not the
+shared round-10 compiler build.
+
+Follow-up checkpoint at `1f25140b`: stage-0 dictionary-capture correction builds and passes format;
+the original partial-application program runs 1,000 rounds with poison and prints `passed`.
+All 207 reviewed IR/explain fixture tests pass, and the self-hosted frontend suite passes. Logs:
+`work/r10pre/native-reviewed/`. The semantics compile was cancelled shortly after starting to
+include the finished stage-1 port; no result is claimed from that compile. The port is `ba8967ed`,
+missing higher-order dictionary regression `e59f4a0c`, structural capture regression `3c7a11ff`,
+and original escaping-partial e2e regression `1f25140b`. The two incorrect arithmetic oracles are
+fixed in `38c67f01`: both original programs compute 9 per round; memory assertions are retained.
+
+Next continuation is `r10-fixture-candidates/work/native-continuation.sh`, logs
+`work/r10pre/native-port/`, with full C#/LSP validation after the dictionary fix, one compiler
+inference preflight, then the combined semantics/parity and no-reuse builds. It reuses the fresh
+`native-reviewed/s0/ashes` (compiler sources unchanged since that build). The 16 short controlled
+IR compiles requested by the oracle worker completed at `r10-test-oracles/work/oracles/`.
+Architecture documents generic-variant reservation before persistent specialization; the oracle
+worker is separating production placement assertions from the documented differential path.
+
+`imports_diagnostics` handed back clean at `e1a90ca3`, now integrated. `lowering_evidence` resumed
+in new `r10-evidence-audit`, branch `fix/r10-evidence-audit` from `38c67f01`, 40-minute budget.
+It added the original escaping-partial regression and is investigating a newly reproduced issue:
+a generalized constrained partial binding used at Int and Str is rejected by bootstrap54, while
+stage 0 accepts it but evaluates an effectful supplied argument twice. Preserve strict evaluation;
+do not copy that stage-0 defect into the stage-1 port. Current-source proof and fixes are pending.
+The first disposable fixture build stopped on MA0006 in `ProjectSupport.cs`; worker commit
+`70e40f45` corrects the ordinal comparison (integration `d30f72dc`). The worker also supplied
+`f808164a`, fixing explicit module-qualifier collisions with imported bare values; its three-file
+regression already runs correctly on stage 1 bootstrap54. Both are included before the fresh stage-0
+build. The candidate generator is `r10-fixture-candidates/work/candidates.sh`; its initial failed
+build log is preserved as `work/candidates/build-initial.log` there.
+Generate fixture candidates once in `r10-fixture-candidates`, for the parity worker to review.
+Do not repeat heavyweight driver builds for each individual fix.
+
+TMC repair validation completed at `d3493f6e` (`r10-tmc-regressions/work/coordinator/repaired/`):
+build, format, qualified-callee and dedup pass. Full C#: 3,041 passed, 32 failed, 2 skipped;
+15 non-fixture failures and 17 IR/explain fixtures, no runtime crash in that suite. The fixture
+differences are now reviewed; the ten original non-fixture failures require the audit above.
+The integration lowering diagnostic build (`work/r10pre/lowering-diagnostic/`, source `319fbe06`)
+failed before producing a binary: `OwnershipSummary.ash:255:243 ASH048 Constructor 'Consumed' is
+declared in module 'AshesCompiler.Semantics.OwnershipSummary', which this module does not import.`
+No bug-2/3 runtime outputs exist from that build. Root cause was comparing UTF-8 AST offsets with
+UTF-16 module boundaries in declaration provenance; corrected in integration `c0c4ae71`, with a
+Unicode regression. No self-import was added. A fresh stage 0 is required for the next build.
+Parser evidence: `work/r10pre/parse-recovery.log` reproduces EOF instead of Int with integration
+frontend; the worker's `work/parse-recovery-fixed/run.log` confirms its fix reports Int at 21..22.
+Integrated-head checks at `fc50661a` finished on 2026-11-21:
+solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
+previously misclassified non-fixture rows plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
+0 failed, 72 skipped. Logs and source commit are in `work/r10pre/resume-integrated/`.
+No shared round-10 build has run: the bug gate remains open.
+
+Pre-integration checks finished; logs are under each waiting branch's
+`work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
+the 10 original non-fixture tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
+57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
+list its 18 additional failures are 12 IR/explain mismatches, five plateau failures, and a crash
+in `Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau` (exit 245).
+That one test passes on the saved main baseline (`work/r10pre/baseline-qualified-callee.log`).
+The isolated check on integration base `a5bf718f` plus only the held TMC patch (`7f3d3e00`)
+also crashes, confirming the patch introduces it; exact log:
+`r10-tmc-regressions/work/coordinator/qualified-callee.log`. Its test-project build is clean.
+The TMC regression is corrected and integrated; stage-1 validation is still pending.
+The old strict-import compile has no recorded
+completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
+`artifacts/selfhost-dev/s1-pre10-debug` is absent, and no compiler job was running on resumption.
+That old run supplies no result. Whole-compiler compilation remains pending behind the gate.
+
+**Batch integration on 2026-11-21** (every cherry-pick pushed immediately):
+
+| Branch (worktree) | Commits | What | Load work before or after integrating |
+| --- | --- | --- | --- |
+| `fix/parity-bugs-4` and `fix/r10-tmc-regressions` | Original suite/diagnostic commits 7d866873, bed9e5ab, 7bff6f17; TMC and corrections 4c51c882, f4a48722, aa1d74be | Cons-tail loop-edge facts and correct transfer of the final spine tail, ported to both compilers. | Stage-0 crash and dedup pass; fixture review and shared stage-1 validation pending. |
+| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed ([record](SELF_HOSTING_LOG.md#round-10-stage-0-fixture-repairs)); the two IR fixtures below remain open. | Full C# validation and integrated-head checks matched expectations; shared stage-1 validation pending. |
+
+The combined source is on origin at `8da62f16`. Lowering-evidence integration is `44820898`,
+`12c7bf89`, `be8f6f28`; imports/parser/diagnostics integration is `1089a9ae`, `bbf05bac`,
+`8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
+
+**Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
+- `tmc_repair` resumed in `r10-immediate-evidence`, from `f4c4cc6f`: standalone inference enforcement
+  of the user-selected immediate-evidence policy. Previous coverage/normalizer batches are integrated.
+- `lowering_evidence` resumed in `r10-evidence-audit`: remaining constrained-binding/evidence audit.
+`imports_diagnostics` is idle. All three first batches handed back clean and are integrated; their
+old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
+
+**Gate status:** 0/2/3/5/6 and the alias/trait portion of 7 have implementations integrated and
+await combined validation. The Unicode provenance blocker is fixed in source. The selector-only
+portion of 7 no longer reproduces on bootstrap54 (regression prints 42); inline declaring-name
+regression still needs stage-1 verification. Bugs 1/4 have implementations integrated, bug 8's real
+example compiles, and bugs 9/10 plus the corrected C# failure audit still require work.
+
+**Original bug descriptions and remaining validation**:
+0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
+   qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
+1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
+   matches only with five more switches off (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`,
+   `GRC_NO_EXITPARAMOWNFIELDS`, `GRC_NO_ARENACURRYBORROW`, `GRC_NO_BOUNDGENERICCALLTYPES`,
+   `GRC_NO_UNREACHEDGENERICLOOPRC`): narrow to one, review the IR, regenerate.
+   `tco_generic_curried_helper_result_passed_to_self_call` differs with all eight off: cause unknown.
+2. `logical-not-inference` fails "recursive discovery placeholder escaped":
+   `lowerCoreExpression("let recursive invert x = !x in invert")` now returns no error where the
+   fixture expects one. Suspects by date: 1bb37dff (answer open `Not` goals from the table) and
+   d64aa0a4/cc9b0862, although all claim to be typed-lowering only. Next step: a diagnostic run
+   printing the actual `CoreLoweringResult` in `checkRecursiveExpressionBoundary` (recipe in
+   `parity-bugs/work/PROGRESS.md`).
+3. Stage 1 on two `(given (xs) -> xs == [])` at different element types
+   (`parity-bugs/work/q/s5b.ash`): `MissingCoreTraitEvidence("Eq", ...)`. Stage 1 keys a proven
+   goal per span, trait and method, as stage 0 did before 3b54ac0d; the port is a per-lowering
+   ordinal and counter in `CoreLoweringState` (unconfirmed as the cause).
+4. Stage 1 lacks stage 0's uniqueness check when matching an owned call result
+   (`match f(x) with Some(span)`, `rc_match_field_shared/owned`), which let it reach the stage-2
+   double release.
+5. Diagnostic details not ported to the inference: the "Expected shape: Some(T)." suffix, the
+   "in if branches" / "in match arm" contexts, stage 0's order of an unjustified requirement before
+   ambiguity (with its semantics-suite expectation).
+6. Parser recovery: stage 0's later errors after the first come from its wrapped combined source
+   ("found RParen" at EOF is the wrapping parenthesis): decided to make stage 0 stop reporting
+   those, not to imitate them; not implemented. Genuine difference: for `let y = (1\n1` stage 0
+   reports "found Int" at 3:1, stage 1 applies `1 1` across the newline and reports "found EOF".
+7. Left by strict imports: stage 1 cannot stitch `import Ashes.Collection.Map.MapTree`
+   (`shipped_type_selector_import.ash`); stage 0 does not check alias names (`type X = Y`); ASH048
+   names an inline module `file#Inner` in stage 1 and `File.Inner` in stage 0; a user trait of an
+   unimported module in `requires`/`implement` is rejected by stage 1 though trait names resolve
+   without an import.
+8. `examples/restful_api` does not compile with stage 0 (ASH010 ambiguous `Eq(a)` at Main.ash 1:1
+   and 18:1, ASH002 at Api.ash:25:13); broken before this week.
+9. The 30 of 95 `ir-program-parity` fixtures (stage 1 against the shared fixtures): decide each
+   after `fix/csharp-red-tests` regenerated the stage-0 side.
+10. Re-check the "Open work recorded at bootstrap36" list above with small programs.
+11. Audit the misclassified C# failures above: correct proven stale stdout/IR expectations and fix
+    actual compiler defects; only demonstrated leak-only failures can be deferred.
+12. Generalized constrained partial application: preserve polymorphism and evaluate supplied
+    arguments once, before the dictionary lambda. Fresh stage-0 double evaluation is a correctness
+    bug; stage-1 current-source acceptance still needs proof (bootstrap54 rejects the second type).
+13. Independent early-callee effects must run once before the next binding; declaration-site fix
+    is integrated, native verification pending. Enforce the user's chosen early-evidence policy.
+14. Newly found mutual-group dictionary ABI and higher-order/operator evidence cases are fixed in
+    source in both compilers; their new regressions await fresh native validation.
+15. Type-table handler/guard scopes, primitive integer complement and shadowed-let scheme selection
+    have source fixes and dedicated coverage; exact deriving and full recorded-layout checks await
+    the new per-module native suite.
+Leaks stay out: 150 leak-only behaviour rows and demonstrated leak-only C# failures. The old blanket
+exemption for ten C# rows was based on incorrect classification and must not be used.
+
+**Paused, not a bug:** `fix/parallel-codegen` (CG-17, LNK-14), paused by the user for the bug
+work; design notes in the CG-17 checklist entry.
+
+**Round 10, once the gate is met** (one shared round, run by the coordinator):
+1. Stage 0 from the head: `dotnet build Ashes.slnx`, `dotnet format --verify-no-changes`, the full
+   C# suite and the LSP suite against `main`'s failures, `ashes test tests`.
+2. Stage 1 (`--debug -O2`, `ASHES_RC_LEAKCHECK=1`), stage 2 with a link map, the behavioural
+   check of both against stage 0, stage 3 and the byte comparison (stage 3 needs swap allowed).
+3. The same behavioural check of stage 1 with `ASHES_TYPED_LOWERING=1`, and the lowered-IR identity
+   sweep with the flag off against the previous stage 1.
+4. The whole-compiler counters with the flag on (pending trait goals, structural equality goals,
+   replay passes, bodies lowered again): expected 0 pending goals and no replay pass.
+5. The self-hosted suites (`scripts/selfhost-dev/suites.sh`, then `--focused`).
+6. The quick runs each batch lists in its worktree's `work/PROGRESS.md`.
+
+After round 10: the flag-on differences it shows, then typed lowering on by default (end of step
+7), then the step-8 ownership rules one at a time, and multithreading resumes.
+
+**Known work parked for later items (2026-11-17), so it is not lost:**
+- Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
+- Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
+- Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
+
+**When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
+than marking it done here. Read "How to work on this" below before your first change.
+
+</details>
+
+### Round 10 stage-0 fixture repairs
+
+On 2026-11-21, integration commits `79b1af42`, `4ecfbf74`, `4bc951f3`, and `207d1ec9`
+closed 27 stale C# failures: LLVM 23 ELF snapshot hashes, project-fixture source context,
+the generic-variant-loop ToSpace decline expectation, and the reviewed lowered-IR/explain oracles.
+The full C# suite on integration `fc50661a` has exactly the remaining 10 known leak failures and
+two separately tracked IR fixtures (3,061 passed, 12 failed, 2 skipped). Build and format pass;
+LSP 88/88 and stage-0 e2e 1,273 passed, 0 failed, 72 skipped. Logs are local to the integration
+worktree under `work/r10pre/resume-integrated/`.
+
 ### Package and test foundations
 
 - [x] **PKG-1** Define pure-Ashes `frontend`, `formatter`, and `semantics` packages with the required dependency
@@ -2886,3 +3572,279 @@ middle of the package exceeds 24 GB, and compiling the semantics package whole p
 after 10m40s before it had to be killed. Those figures are the repeated lowering: the `IrCodegen`
 probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB with the fix.
 
+
+## Round 10 native runtime follow-up, 2026-11-21
+
+Native 3 completed. Its matching generated source `work/r10-named-capture/` is preserved for debugger evidence. Logical-not now fails replay of coincident operator sites with `Bool` versus `Bit`; ordered inference reaches the unchanged mutually recursive Show program and fails `Int` versus `Bool` at `bounce`, line 11:39; external lowering reaches another assertion. The two inference failures are assigned to `lowering_evidence` in `r10-native-evidence-next` / `fix/r10-native-evidence-next`, and the external assertion to `tmc_repair` in `r10-external-next` / `fix/r10-external-next`. Both have quick-probe-only briefs and a 40-minute implementation budget. The coordinator next runs all 200 backend groups with normal and poisoned children in `work/r10pre/backend-native3/`, holding integration fixed while read.
+
+The measurement tool `7e61aa4c` is integrated as `4a478e9f`, awaiting its main-owned build. Its `selfhost/tests/typed-lowering-measurement/README.md` specifies separate legacy/typed runs and 19 TSV columns for timings, replay occurrence, pending/equality goals and per-pass lowering counters. The public API exposes a replay Boolean, not an exact traversal count. This tool changes no compiler behavior.
+
+Backend attempt `work/r10pre/backend-native3/` stopped before compilation at ASH038: the generated wrapper put its export after declarations. The renderer now puts the export before the first declaration; the retry uses `backend-native3-fixed/`. External fixture repair `9e7e5508` is integrated: the synthetic `openCounted` signature incorrectly returned `Unit`, removing its cleanup obligation. The fixture now uses its real source declarations and production ABI registration, preserving all program bodies and assertions. A single native-3 probe with real declarations emitted exactly one `CleanupResource` for `Counted` with `closeCounted`; full group rerun remains pending. The external worker now reviews the new Socket and poison paths while the backend run proceeds.
+
+The backend retry reads frozen `da068c5e`; external repair maps to `aebb362c`. Native-3 audit refresh found 31 of the 32 actual IR files byte-identical to native 2. The changed `non_tail_self_call_list_result` now equals the reference under the stricter `keep-reads.awk` comparison, without deleting its former identity borrow separately. Recomputed guard data still has 122 guards, 51 slots and 29 fixtures, all value 1 with resolved targets. Evidence is `work/r10pre/named-native3/{guard-cfg.tsv,audit/}`. This updates the static comparison, not generated-code runtime acceptance. The main-owned measurement script is `r10-fixture-candidates/work/typed-measurement-checks.sh`; its build and both measurements remain pending.
+
+Inference worker commits `42524c1f` and `61fe580e` are integrated as `e72af846` and `a0a66ff1`. Joint recursive inference was skipped because candidate detection did not recognize stitched `Ashes_Trait_Show` / `Ashes_Trait_Hash`; the predicate now uses the canonical names already recognized by resolution. Changing only that decision in a debugger let the original stitched fixture complete. The separate coincident-Not repair preserves the discovery traversal's consumed proof cursor when returning from a locally re-emitted body, while retaining the original lookup environment for that body's own retry. Both original regression programs and assertions are unchanged. Formatting and the single allowed compiler-source inference check passed: explicit `ok`, 10,170 items / 186 modules, 63.7 seconds. The unresolved-Not follow-on was a debugger probe holding an unrooted pointer across arena restoration; a corrected controlled probe completed the entire unchanged logical-not group. Fresh-native validation remains required. Continuing past Show exposed another ordered-suite failure: `constrained_partial_uses_declared_arithmetic_methods.ash`, Box versus Int at span 654–677, now assigned to the same worker. Evidence: `r10-native-evidence-next/work/PROGRESS.md` and `work/inference.log`.
+
+**Backend native 3 completed:** `work/r10pre/backend-native3-fixed/` at `da068c5e`, build 7.84 minutes, **198/200 groups in normal mode and 198/200 in poison mode**. All eight unchanged ownership programs passed in both modes. RC instrumentation, the actual poisoned recycled-cell check and explicit task frame-dropper execution passed. `testSocketCaptureTeardown` fails in both modes with unsupported IR instruction and is assigned to `tmc_repair`; it still gates the shared round. The other failure is confirmed leak-only: annotation-loop children exit 0, print the correct 12/36, and have live counts 14/40, or 13 cells per additional round. Record that for the post-parallel leak phase. No reader remains from this backend job. The coordinator next builds and runs the typed measurement tool in `work/r10pre/typed-measurement1/` while the two workers implement arithmetic evidence and Socket backend fixes.
+
+The unsupported Socket instruction is `SetDrainTimeout` in the shipped TCP server wrapper; stage-0 shutdown semantics also involve `RequestServerStop`. The worker is tracing the scheduler contract before porting the missing backend path, with both Socket source programs unchanged. Exact reruns of all saved ownership executables passed **16/16**, including the scalar-shadowing program's expected 7. Logs and verdicts are `work/r10pre/backend-native3-fixed/ownership-exact.tsv` and each mode's `.stdout` / `.stderr` files; the main script is `r10-fixture-candidates/work/ownership-native-exact.sh`. The measurement reader remains active at `75fb346f`; integration must not change until it finishes.
+
+Socket worker commit `3502ed04` on `fix/r10-external-next` implements `SetDrainTimeout` emission using the same 10,000 ms initial setting as stage 0, with a targeted shared-global/store check. It is pending integration and native validation. This is only the opcode slice: the stage-1 accept runtime predates graceful shutdown and does not yet consume the setting. The worker is continuing `RequestServerStop` and actual drain/shutdown semantics, with another 30-minute implementation budget; do not count a stored-but-unused setting as completed behavior.
+
+At 05:46 local (04:46 UTC), both workers received 45-minute implementation budgets for the discovered server-runtime gap. Stage 1 creates `ForkWorkers` tasks but lacks scheduler dispatch and worker lifecycle; graceful stop cannot be implemented by sending an unhandled SIGTERM. `tmc_repair` owns `IrCodegen.Server.ash`, signals, fork dispatch, worker-cap visibility and minimal scheduler wiring in `r10-external-next`. `lowering_evidence` now owns accept draining, timer/reaping/fanout, spawned-root accounting and actual graceful-stop regressions in `r10-server-drain` / `fix/r10-server-drain`. Contract slice `0a59931f` is pending integration: `sc.schedServer` and `taskRuntime.serverState` carry an optional `ServerRuntime`; deadline is absolute monotonic milliseconds, timeout duration defaults to 10,000 ms, and child PID storage has 1,024 i64 slots. Peer work begins from integration plus the setter and contract commits. These are correctness prerequisites, distinct from planned parallel compiler code generation.
+
+The arithmetic batch is BATCH READY through `e944cdfc`, pending integration after the measurement reader. It retains the actual written trait requirements through scheduled binding probes and uses program-signature semantics for declared constrained probes, rather than inferring parsed negation as integer-only subtraction. The unchanged stage-0 program prints `-1 17`. Source inference and rebuilt native normal/no-reuse verification of this third fix remain coordinator-owned. The measurement tool built in **5.02 minutes** and is running its legacy measurement before typed mode, still reading `75fb346f`.
+
+Worker/signals slice `49cd9475` is committed on `fix/r10-external-next`, pending integration and runtime validation. It installs SIGTERM/SIGINT handling before forking, shares the Parallel worker cap, returns worker indices, records child PIDs and parent-death behavior, and routes `RequestServerStop` to the supervisor. Direct generated-child signal and one-worker-cap tests are in progress; the peer still implements draining and task accounting. No graceful-stop acceptance claim follows from these unexecuted changes. `fix/r10-server-drain` is pushed with setter/contract prerequisites `920168b8` and `df918941` (duplicates of `3502ed04` and `0a59931f`; integrate each source change once).
+
+Worker tests `f87ab65b` add actual forked-index and SIGTERM stop children. Its source preflight rejected a wrongly nested `RequestServerStop` match: formatter success did not establish correct opcode dispatch structure. Fix `9dc76556` uses a typed accessor and restores the exact previous dispatch tail; the worker compared it against the parent, excluding comments, with no difference. Test refinement `97867ec6` uses a real `wait(NULL)` in the supervisor so child output precedes parent output, avoiding scheduling-dependent parent death. Both repairs are committed and need the main-owned source-inference retry plus native execution. The agent's single source preflight was consumed; no extra agent load was authorized. The peer drain/accounting work continues.
+
+Drain slice `2389ced1` and regressions `ff002244` are committed on `fix/r10-server-drain`, awaiting integration. They implement signal fanout, monotonic deadline, nonblocking child reaping, 50 ms scheduler wakeups and spawned-root accounting. The two new unchanged-source controls pass stage 0 with exact `handler drained` and `bounded` output; they are being registered in the backend harness for stage-1 execution. The drain agent is combining the worker commits and may run its one allowed whole-source inference check for this separate assignment. The worker agent has a short follow-up to cover auto worker count under an explicit one-worker Parallel cap; the existing signal test uses explicit count 1 and does not establish that cap behavior. Main-owned normal/poison execution remains pending.
+
+Both runtime workers have handed back. Backend registrations are in `febcd83d`; the combined source check at that commit passed explicitly: **10,191 items / 187 modules**, 64.3 seconds. Integrate drain-owned `2389ced1`, `ff002244`, `febcd83d` after worker prerequisites, preserving both workers' test registrations. Additional worker test `c8c0d66c` checks automatic count against an installed one-worker backend override, with a test-only two-CPU cache seed bounding failure to one child; expect `0` then `true` for no child. The analogous public `withWorkers` wrapper correctly rejects the effectful `NetListen` body with ASH018, so that language contract is preserved. Native runtime execution of all these commits remains pending.
+
+Measurement progress-only tool change `4b11ff7b` on `fix/r10-measure-progress` is BATCH READY: stderr markers surround load/stitch, inference and the combined first/replay lowering API. Writes are outside measured intervals, and the 19-column TSV writer is unchanged. It awaits integration for the next driver build. The original measurement reader at `75fb346f` remains active in legacy mode (about 13 minutes at 05:59 local); no data row or completion result exists yet. Do not mutate its integration sources or mistake that running process for a completed timing.
+
+**06:04 local checkpoint:** the measurement reader was explicitly stopped at 06:02 after **16:07.81**, with no counter row; typed mode never ran. `legacy.time` records signal 15, and `STOPPED.txt` explains the cancellation. This is neither a completed benchmark nor a compiler failure. Both reader PIDs were confirmed gone before integration. Arithmetic `e944cdfc` → `c2e1c50b`; setter/contract → `39050a0f` / `1cb299fc`; drain/tests → `461635e9` / `8743a4a4`; workers/signals → `a42078f0`; signal tests/dispatch fix/reap test → `6b604641` / `2e08d59f` / `e774b49d`; drain registrations → `31573ec3`; auto-cap test → `c47aa238`; progress tool → `956d4252`. All commits and branches are pushed. Integrated backend package files match the combined runtime source-check revision exactly. Formatting all 11 changed Ashes files left the tree clean. The next reader is the coordinator's `work/r10pre/combined-preflight3/`; fresh native semantic/backend acceptance remains pending.
+
+**06:08 local checkpoint:** `work/r10pre/combined-preflight3/` completed on `6c4cb170`: explicit source inference **ok, 10,190 items / 187 modules**, solution build, format verification, **3/3 snapshot tests**, and fresh stage-0 CLI all passed. Current reference compiler is `work/r10pre/combined-preflight3/s0/ashes`. Both implementation agents are idle and available for actual native failures. Next reader is `work/r10pre/backend-native4/` (expanded backend suite, normal and poisoned children), followed by fresh native semantics. This order exposes server-runtime failures while the semantic rebuild runs. The normal/no-reuse semantic gate, current Socket/shutdown/multiworker execution, round-10 bootstrap/behavior and final-source typed counters remain pending.
+
+
+## Round 10 helper correctness follow-up, 2026-11-21
+
+**Responsibilities and next load.** HTTP replay finished and failed the correctness gate in both modes; evidence is below. `tmc_repair` owns the coroutine repair in `r10-http-native-fix` / `fix/r10-http-native-fix`, from `e34a4193`, with a 40-minute implementation budget from 07:00 local. `lowering_evidence` handed back the captured generic-add repair, integrated and pushed as `64161655` → `95950d96` and `af1d7fe5` → `9be3b8bf`; its branch is also pushed. Raw lowering now retains declaration-only arithmetic schemes and the checked CLI forwards them. The agent's source check caught a CLI signature mismatch corrected by the second commit; final source confirmation and native proof are pending. Main next runs combined preflight and fresh semantics, then combines the HTTP repair into the next backend validation. Rerun progress-enabled measurements on the resulting source. Scripts are `r10-fixture-candidates/work/{combined-preflight,named-native-checks,named-backend-checks,typed-measurement-checks,http-native-replay}.sh`. Inspect actual failed rows; wrappers can finish successfully despite failed cases. Run the shared bootstrap only after the non-leak gate below clears. `17d8825a` confirms the language and regression intentionally reject `state.supply.nextId`. [Earlier checkpoints and step-7/8 audit](SELF_HOSTING_LOG.md#round-10-checkpoints-2026-11-21)
+
+**Actual HTTP replay failed.** `work/r10pre/http-native5-trace/results.tsv`: normal completed three 120-request rounds but logged **40 connected retries** and failed trace checks; poison timed out in its first round, exit 1, with **2 connected retries**. Both runs are finished. Trace inspection found accepted descriptors left unread while the reactor instead read/closed descriptor 0 (including EBADF). The current hypothesis is missing transparent local recursive coroutine-helper lowering: stage 0 preserves awaits as task factories/backedges, whereas stage 1 lowers those helpers as ordinary lambdas with coroutine context reset. This is a non-leak blocker, not an accepted HTTP result. Preserve the original server and client. Reference IR is `r10-http-worker-count/work/server-fixed.ir`; fresh stage-1 IR and a focused regression are requested. Earlier paragraphs describing replay as upcoming are historical checkpoints.
+
+**Active readers and workers.** Combined preflight 4 passed on frozen `a2ea6525`: explicit inference **10,201 items / 187 modules**, solution build, format verification, **3/3 snapshots**, and fresh stage 0 at `work/r10pre/combined-preflight4/s0/ashes`. Fresh named native semantics is next at `work/r10pre/named-native5/`. `lowering_evidence` has a new 30-minute instrumentation-only assignment in `r10-typed-gate-evidence` / `fix/r10-typed-gate-evidence` from that head: expose actionable residual goals and exact replay traversal evidence, preserving the existing TSV and timing windows. This prepares the later typed-lowering gate; it does not enable steps 7/8 early. `tmc_repair` continues the HTTP coroutine repair. Main owns all load work.
+**New helper reference defect.** During the HTTP helper port, a focused stage-0 control rejected partial/first-class uses of a suspending local helper: its physical `Task<Str,Int>` leaked into arithmetic and produced ASH002, whereas a direct call exposed the logical `Int`. The worker is isolating the exact source and has authorization to fix both compilers under the existing transparent-helper contract, with 15 extra minutes if needed. This is a new non-leak gate item; neither the reference rejection nor the unvalidated stage-1 adapter counts as acceptance. Preserve the original reproduction and record its path/hash in the handback.
+
+**Ready batches while native semantics 5 reads integration.** `8b504b03` on `fix/r10-http-native-fix` ports transparent recursive coroutine helpers and adds direct/partial/higher-order controls expecting `62`, plus an IR assertion against nested `RunTask`. The worker continues its C# counterpart. `acdcad8e` on `fix/r10-typed-gate-evidence` adds opt-in `--goal-details`, exact discovery/retained-discovery/replay traversal counts and per-traversal body re-lowerings on stderr; the 19-column TSV is unchanged. Both branches are pushed. Each worker used its one source check, corrected the diagnostic it exposed, and requires final confirmation by main. The next combined preflight checks both the CLI project and the measurement project. Integrate between readers, then run fresh native controls and HTTP replay before acceptance.
+
+**Latest integration and next reader.** With native 5 finished, both batches are integrated and pushed: `8b504b03` → `d3933006`, `acdcad8e` → `9432264a`. Main next runs `work/r10pre/combined-preflight5/`, including the measurement-project source check, and preserves generated harness source with each future output. C# indirect-helper repair and owned/borrowed values across helper suspension/backedges remain with `tmc_repair`; the measurement worker is idle. The HTTP gate is still open. The prepared phased runner is `r10-fixture-candidates/work/round10-bootstrap.sh`; it requires a matching `nonleak-gate.commit` and has not run. It checks exit status before using stage artifacts and allows swap for stage 3.
+
+**C# handback and helper hardening assignment.** `676b1902` on the pushed `fix/r10-http-native-fix` repairs the C# callable adapter and preconstraint: its fresh single-project CLI built with zero warnings/errors and the unchanged mixed helper program printed exactly `62`, exit 0. Main integration is pending the active reader. `lowering_evidence` now owns a 35-minute batch in `r10-helper-lifetime` / `fix/r10-helper-lifetime`, based on `4765f991`: preserve RC-owned/borrowed backedge arguments, avoid forced captures of unused parameters, keep synthesized task nodes separate from original typed identities, and prove Socket transfer/cancellation cleanup. `tmc_repair` transferred the scope with no uncommitted Ash edits. Blocking lifetime defects are in scope; conservative leak-only growth must be recorded. Preflight 5's CLI inference explicitly passed **10,235 items / 188 modules**; the measurement project check and remaining phases are running.
+
+**Current shared load and assignments.** Preflight 5 completed successfully. C# repair `676b1902` → `7ec6bfd8` is integrated and pushed; main next runs the full stage-0 build/format/C#/LSP/e2e batch in `work/r10pre/helper-shared/`. Helper provenance commit `35f97da2` is pushed on `fix/r10-helper-lifetime`; its worker continues lifetime/capture controls before handback. `tmc_repair` has a 20-minute follow-up in `r10-helper-signatures` / `fix/r10-helper-signatures` from `7ec6bfd8`, covering declared results, deliberately Task-returning helpers, and lexical shadowing/aliases without changing the peer's helper implementation. Integrate their ready batches between readers before the next native backend/replay round.
+
+The signature follow-up immediately reproduced another non-leak defect before that shared load started: a suspending helper annotated `Int -> Int` is rejected at its binding because the physical factory returns `Task<Str,Int>`. The worker is fixing the physical annotation while preserving the declared source type; its unchanged combined annotation/shadow/explicit-task/alias control expects `43`. Main will include this correction in the next full reference batch rather than run that batch on the known-broken head. Stage-1 annotation preservation is coordinated with the lifetime worker.
+
+**Combined helper batch now frozen for full reference validation.** Integrated/pushed: source identity `35f97da2` → `5af15ace`; stage-1 annotation `cd05d681` → `969e765c`; borrowed/owned successor retention and unused-capture correction `63c76637` → `42d505e5`; C# annotation `665db39e` → `1656570c`; raw/typed signature assertions `89c610df` → `f195681a`; negative declared-result control `ec6e12e9` → `9ab8a9c8`. All agent branches are pushed. Corrected stage 0 prints `43` for the original combined signature control and `2=1=seed` for the owned-string/borrowed-record backedge control under poison; the negative control reports source-level `Bool vs Int`, proving checks remain active. Main runs `work/r10pre/helper-shared/` now. `tmc_repair` is idle; `lowering_evidence` continues Socket transfer/cancellation controls and its final source check. Fresh native proof of these helper slices is pending.
+
+**Reference results and next ready controls.** On frozen `a29f4fbb`, build/format passed; C# finished **3,075 passed / 5 failed / 2 skipped**, with exactly the five known RSS cases, and LSP passed **88/88**. Fresh reference compiler is `work/r10pre/helper-shared/s0/ashes`; e2e is running. `3aea7458` is pushed on the helper-lifetime branch: confined saturated helpers borrow their parent-owned Socket, with explicit-close/reused-descriptor and timed-cancellation controls passing stage-0 poison (`true`, `true`). Native proof is pending. Its source check is running; a final unused-parameter scheme correction is also being prepared so removing a runtime capture does not admit an incorrectly typed backedge. Dependency-only `6a1913c5` repeats integrated `89c610df`; do not cherry-pick it again. `tmc_repair` has a 10-minute test-artifact task in `r10-http-ir-capture` / `fix/r10-http-ir-capture`, from `a29f4fbb`, retaining exact pre-optimizer HTTP IR without a second lowering pass. The new coordinator `http-reference-checks.sh` compiles the unchanged reference server and uses the replay runner's explicit `stage0` producer mode; run it after the full suite releases port 43129.
+
+HTTP IR artifact task handed back **`5652ed1a`**, pushed, not yet integrated: the original compile-only group writes `selfhost_backend_concurrent_http_server.lowered.ir` from exactly the IR passed to optimization, with no repeated lowering. Formatting and diff checks pass; the worker is idle. The lifetime branch source preflight completed explicitly **10,245 items / 188 modules** at `3aea7458`; the final unused-slot scheme correction still needs main's final combined source confirmation.
+
+**Full reference batch exposed three non-leak regressions.** `work/r10pre/helper-shared/` finished at `a29f4fbb`: build/format passed, C# **3,075 passed / 5 known RSS failed / 2 skipped**, LSP **88/88**, e2e **1,311 passed / 3 failed / 80 skipped**. `async_loop_accumulator.ash`, `awaiting_helper_keeps_owned_backedge_values.ash`, and `recursive_awaiting_helper_remains_callable.ash` reject unannotated helper results as physical `Task<Str,T>`; the annotated `43` fixture passes. This supersedes the earlier partial e2e observations. `tmc_repair` owns a 30-minute correction in `r10-helper-inferred-result` / `fix/r10-helper-inferred-result`, from `bc48802f`. The identified mismatch is physical helper schemes written into source inference hints and wrapped a second time on the next pass. Stage 1 has no equivalent physical-hint writer; its annotation conversion only applies to explicit annotations, but fresh native checks are still required.
+
+The completed lifetime and IR batches are integrated/pushed: Socket confinement `3aea7458` → `6ea9ba67`, unused-formal backedge typing `91fbdf8f` → `73a7082a`, HTTP IR capture `5652ed1a` → `bc48802f`. The final unused-formal correction retains type checking without a runtime capture and has a raw negative control. Main next runs CLI plus measurement source preflight in `work/r10pre/helper-source6/` via `r10-fixture-candidates/work/source-preflight.sh`, then incorporates the C# metadata correction for the next shared load. `lowering_evidence` handed back and is idle. The bootstrap gate remains closed.
+
+
+**Integrated native repair batch.** Logical-not replay now preserves consumed proof positions (`a0a66ff1`); constrained planning recognizes stitched Show/Hash (`e72af846`) and retains written arithmetic requirements (`c2e1c50b`). External-resource tests use their real declared signatures (`aebb362c`). The original failing programs and assertions remain unchanged. Fresh native groups must confirm these repairs, including the previously masked arithmetic fixture.
+
+**Integrated server runtime.** The first Socket execution failure exposed missing timeout emission, fork-worker scheduling and graceful shutdown. Setter/state, signal installation, worker dispatch, parent-death handling, supervisor stop, accept draining, child reaping and spawned-root accounting are integrated through `2e08d59f`, with backend registrations and cap tests through `c47aa238`. The two new shutdown programs pass stage 0; current stage-1 children remain unverified. Native 4 includes worker-index/reap, first/second stop signal, automatic worker override, timeout setting, both drain fixtures and the unchanged Socket close/cancel programs. The one-worker override is tested at the backend instruction level: the analogous effectful public `withWorkers` body correctly rejects NetListen with ASH018.
+
+Native 4 exposed a source-lowering operand swap: `forkWorkers(0)(2)` selected automatic worker count, producing 31 forks on this 32-CPU host. `da9917c2` → `9323b713` preserves port/count order and fixes the semantic assertion that had encoded the same reversal. `21c3c3ca` → `00072197` recognizes direct `Stop.stop` without a handler/provider table and shares its operation path with explicit `perform`; both check the Unit argument and use a fresh result target. Existing integer-zero misuse remains a negative control, and both shutdown source programs are unchanged. Worktrees `r10-server-worker-fix` and `r10-stop-binding` contain the evidence and exact pending native checks in `work/PROGRESS.md`.
+
+**Current reader and next backend controls.** Native semantics 4 reads frozen `586512f7`; its source preflight explicitly passed **10,190 items / 187 modules** before the harness build. Two test-only handbacks are pending integration afterward. `5ce8e443` on `fix/r10-http-native-control` adds a clearly compile-only group for the original three-reactor HTTP server at port 43129, retaining `selfhost_backend_concurrent_http_server`. The fixture is byte-identical to the expanded C# source (SHA256 `c63101eedc93656902cb53586d877398c1d13d0987f46f432b4cc0fb41ea77ec`); main must run the existing 120-request/repeated HTTP client in normal and poison modes. `00b73779` on `fix/r10-bootstrap-runtime-controls` adds actual child execution for five previously unregistered witnesses: generic captured top-level addition, generic trait goals settled at binding, later-sibling result beside a fresh tuple arm, declared arithmetic partials, and recursive Show dictionaries. Their original files/directives are unchanged, and checks require exact output through EOF plus exit 0. Both worktrees' progress files name the cases, retained artifacts and main-owned commands. Both agents are idle; runtime verification remains pending.
+
+**Latest semantic result and integrated repair.** Native 4 failed only `runCoreOrderedInferenceTests` at `forwarded_partial_runs_callee_prefix_before_next_binding.ash:14:36` (`partial`, Int versus Bool). Tail-forwarding helpers now consult the lexically resolved callee's scheme (`0f8825bd` → `4c715545`). The subsequently exposed ambient `Describe` requirement in `partial_uses_ambient_evidence_during_binding_evaluation.ash` now participates in the enclosing dictionary plan (`fdfe00d7` → `4a85f4ce`). Combined source inference passed **10,194 items / 187 modules**. Correcting both decisions in the historical debugger run let the whole ordered group finish; this is not fresh-native proof. Exact unchanged-program controls are integrated as `54d8bcd5` → `07c321bf`, expecting `entered|bound|v=42 v=true` and `7|7 true`. Native verification remains pending. The older `backend-native5` build was stopped before execution when this complete batch became ready; its `STOPPED.txt` preserves that cancellation, not a compiler failure. For HTTP replay require zero logged retries after a successful connection as well as 120/120 responses; transport exceptions can otherwise be retried by the client.
+
+**Backend 5 follow-up:** both exact partial-prefix programs now pass natively in normal and poison modes. Of the five prior bootstrap witnesses, only `generic_add_binding_reading_top_level_value_used_at_int_and_float.ash` fails: `triple` argument 1, line 11:75/span 256–267, Int versus Float during lowering. The other four pass through exact output/EOF and exit checks. The unchanged generic-add program remains a non-leak gate item and is assigned a 30-minute implementation batch from 06:57 local. HTTP compile-only success is separate: the upcoming replay requires all 120 responses plus warmup, two actual forked children per supervisor, no connected retries and no server EBADF. All runtime artifacts and the active generated harness source are preserved.
+
+**Measurement status.** `work/r10pre/typed-measurement1/` built the standalone tool in 5.02 minutes at `75fb346f`. Its legacy run was stopped incomplete after 16:07.81 to validate the ready correctness batch; no counter row exists and typed mode never ran. `STOPPED.txt` and `legacy.time` preserve this result. The progress-enabled tool is integrated as `956d4252`; its stderr markers leave the 19-column TSV and timing intervals unchanged. Rebuild and measure both modes on the resulting frozen source before claiming the step-7/8 counter gate. The API reports replay occurrence, not an exact traversal count.
+
+The commit mappings, debugger evidence, prior active assignments and chronological checkpoints are preserved verbatim in the log. [Native runtime follow-up](SELF_HOSTING_LOG.md#round-10-native-runtime-follow-up-2026-11-21)
+
+
+## Round-10 split-driver and Seed validation checkpoints (2026-11-21)
+
+The following checkpoints are preserved verbatim. Their chronological active-job statements are historical; use the current round section in SELF_HOSTING.md for the latest state.
+
+
+**Parallel validation, 2026-11-21.** The user requested overlapping independent work instead of serializing the entire queue. At frozen integration `db54fdb9`, the coordinator is running the preserved input in `work/r10pre/shared-native3-exact/` alongside the expanded no-reuse input in `work/r10pre/shared-native4-no-reuse/`. Both combined-source inference preflights passed explicitly; native build results remain pending. Each build has a 24 GiB cap, no swap, and a timeout. The first uses the coordinator slot; the second is coordinator-owned work admitted through the existing auxiliary slot script. Keep at most two such load jobs, check available memory before admission, and do not add worker compile/inference jobs while both occupy the memory budget. Workers may implement independently.
+
+The auxiliary `shared-native-build-only.sh` stops after producing the driver. `shared-native-run.sh` then runs its cases without rebuilding, requiring the recorded source commit and a clean tree. Serialize the two backend runtime suites where their network fixtures may share ports. Start `original-backedge-check.sh` in the freed slot while the other job continues: its compiler-host check has no network dependency. Integration remains frozen until all source readers finish. This checkpoint is committed separately while the integration worktree is being read; integrate it between runs.
+
+At 10:44:47, shared native 3 reached its individual 24 GiB cap and the kernel killed its scope (`oom-kill`, 11m31s, wrapper exit 143). No binary or native acceptance resulted. This was not machine-wide memory exhaustion: 54 GiB was available after it stopped. Preserve the exact input and do not retry without a cap. The no-reuse build continues; the coordinator started the independent historical host check in `work/r10pre/original-backedge2/` in the freed slot. Worker `tmc_repair` is investigating the memory growth in `r10-shared-memory` / `fix/r10-shared-memory` from `db54fdb9`, with static work only while the two main jobs occupy the memory budget; request is to distinguish the larger combined input from a compiler regression and propose the smallest diagnostic without weakening acceptance.
+
+The second worker, `lowering_evidence`, is preparing the next table-driven lowering slice in `r10-typed-lowering-next` / `fix/r10-typed-lowering-next` from `db54fdb9`. Work must stay behind the existing typed path, preserve flag-off behavior and generic evidence identity, and replace actual discovery or repeated lowering rather than suppress counters. It is separate from the frozen validation input and will be assessed against measured counters and lifetime checks. Static implementation only while the two main jobs occupy the memory budget; formatting and its one allowed source check await admission. If a sound change needs missing measurements, the worker must identify those instead of guessing.
+
+Memory investigation handed back `BATCH READY` with no compiler changes: see `r10-shared-memory/work/PROGRESS.md`. Shared native 3 combines 101 local modules (1,897,996 source bytes), versus backend native 8's three (510,756 bytes); this alone does not predict peak memory or prove a compiler defect. Earlier separate backend, semantics/parity and measurement drivers peaked at 19,373,372, 20,155,344 and 13,922,064 KiB. Existing `ASHES_TIMING=1` brackets completed phases, so no new instrumentation is needed. The coordinator prepared `split-native-build.sh` and `split-native-run.sh` under `r10-fixture-candidates/work/`: fresh project/output paths, exact copies from the preserved expanded snapshot, only a smaller entry-point dispatcher, and byte comparisons for every copied module and manifest. Backend coverage remains 234 cases, semantics 96 groups, parity 95 fixtures; the unchanged standalone measurement project remains required separately. Both build modes and normal/poison backend children remain required. The failed combined input is retained as evidence, not treated as a pass.
+
+Shared native 4 no-reuse also reached its individual 24 GiB cap at 10:54:41 (11m58s, kernel `oom-kill`, wrapper exit 143); no binary resulted. A bounded gdb attachment was refused by the host ptrace policy, so no stack was obtained and no system setting was changed. Stop building the all-in-one harness; use the split drivers with timing. Historical host 2 remains live. The typed-lowering worker was admitted to formatting (8 GiB) and one CLI inference check (12 GiB through the auxiliary slot) while that is the only main build, then releases the slot for the next split build. Its current patch replaces repeated source-copy call inference with checked recorded instantiations where sufficiently concrete and pure; native correctness and shortcut-use evidence remain pending.
+
+Historical host 2 ended at 10:58:07: build exit 1 after 12:40.15, peak 9,097,852 KiB. Its old `Main.ash` lacks the direct `CoreLowering.Model` import required for `CoreLoweringResult` (two ASH048 diagnostics), followed by many ASH010 diagnostics and `Add(Never)` / `Subtract(Never)` ASH036. Do not count the follow-on diagnostics as independent root causes without checking the valid harness. Worker `imports_diagnostics` is preparing an import-only correction and auditing possible cascades in `r10-historical-host-imports` / `fix/r10-historical-host-imports`; original bodies and prechecks must remain unchanged. The typed worker formatted seven files at 4 GiB and committed/pushed `36d8dbe1`; it is now admitted to its single 12 GiB CLI preflight alongside the split backend build. Coordinator `measurement-build.sh` / `measurement-run.sh` also separate measurement compilation from each run; legacy and typed counters can use independent outputs, with concurrent timings explicitly not treated as an isolated speed comparison.
+
+Both workers handed back. Typed batch `36d8dbe1` passed its one CLI source inference with explicit `ok`, **10,265 items / 188 modules**; native proof is pending. The host correction adds only `import AshesCompiler.Semantics.CoreLowering.Model.CoreLoweringResult`; removing that line restores the archived file byte-for-byte, and formatting preserves the corrected bytes. The coordinator prepared `original-backedge-check-imports.sh` with this identity check and phase timing. Static audit found that any discovery diagnostic skips transfer of inferred evidence, plausibly explaining the host's 83 ASH010 and two ASH036 follow-ons; the corrected build must confirm it. No compiler patch was justified by this invalid-input log. `split-measurement` is now building alongside `split-backend-normal`, with the corrected host retry and split semantics/parity next.
+
+**Fresh native result and active fixes.** Split backend normal built at `db54fdb9` in **8:25.57**, peak **19,310,292 KiB**, with all 234 case registrations preserved. Its runtime starts the 14 additions before the old cases, without omitting or repeating any case. At 11:05, normal mode found `testOriginalTmcAccumulators` failing with `UnknownLoweringBinding("Names.collect")`, and both raw/numbered mixed-method groups failing in unchanged `awaiting_report_keeps_typed_show_dictionaries.ash:24:42` with `SemInt` versus `SemBool` at argument 1 of `job`. The annotation-loop leak also remains; other completed original ownership/evidence witnesses passed. Full normal/poison totals are pending. Worker `tmc_repair` owns the TMC resolution failure in `r10-original-tmc-resolution`; `lowering_evidence` owns the async mixed-dictionary failure in `r10-async-mixed-dictionaries`, both `fix/*` branches from `db54fdb9`, both pushed. The optimization branch stays separate. They implement statically while two 24 GiB builds and one 4 GiB backend runtime job run (52 GiB maximum for those jobs, leaving workstation headroom). No worker compilation or source inference is admitted in that interval. Integration remains frozen.
+
+**Batch integrated after those readers finished.** Final backend totals are 230 passed / 4 failed in each normal/poison mode, with exactly the failure set above. The original C# 50-round fixture explicitly models already-stitched input (`BuildQualifiedCalleeFreshListArgumentProgram`); the new test adapter resolves its one `Names.collect` reference to its existing `Names_collect` definition through the normal reference rewriter. Public module/import controls and the archived source bytes remain unchanged. Async planning lacked the intrinsic `async` scheme and queried Task using the standalone nominal identity instead of Core's layout identity; the paired internal correction preserves the standalone identity and has new scheme/await assertions. Its CLI source check passed **10,259 items / 188 modules**. Native confirmation remains required. The worker is separately verifying whether current stage 0 accepts the flattened spelling as public source; an older successful CLI log is not sufficient current evidence.
+
+`original-backedge3` passed build and all three compiler-host prechecks plus the original lowering run: build **5:32.98**, peak **14,197,820 KiB**, host exit 0 and 1,597 IR lines. Adding the missing import removed all 87 earlier diagnostics. `split-measurement` built in **5:28.16**, peak **13,958,208 KiB**. Legacy and typed counter runs use `r10-measurement-baseline` / `fix/r10-measurement-baseline` at `db54fdb9`; outputs are `work/legacy/` and `work/typed/` there. Each has a 12 GiB cap and timeout; both source inputs are frozen independently of integration. Concurrent wall times cannot establish an isolated speedup. The main checkpoint commits and both correction branches are pushed; typed optimization `36d8dbe1` is still separate.
+
+**Public qualified-name follow-up.** The current `method-reference/s0/ashes` accepts a small public program declaring only `Names_collect` and calling `Names.collect` (422 ms compile), so this is a verified stage-0 import-boundary defect, distinct from the valid internal fixture convention. Worker `tmc_repair` continues on `fix/r10-original-tmc-resolution` with a separate compiler fix and public negative/real-module positive controls; stage 1 already failed the unmatched name, and its public rejection/diagnostic parity must be preserved. The language's explicit-import rule settles the intended public behavior. No new compiler commit yet. Main prepared `async-native-input` at `1ceb60c9` and runs its combined source preflight; this only renders/checks the harness, never attempts the oversized native combined build. Subsequent builds use the split scripts. The two frozen measurement runs remain active and independent of integration changes.
+
+`async-native-input` passed explicit `ok`, **12,737 items / 283 modules**, and `split-backend-async` is now building from that exact input at `1ceb60c9`. C# fix `d1252a5d` is committed and pushed on `fix/r10-original-tmc-resolution`, separate from the integrated harness correction. It permits flattened references only at the explicit internal lowering boundary; public CLI, REPL, LSP and TestRunner use actual visible exports. Its 4 GiB Release CLI build, focused rejection, genuine module/selector output `21`, and scoped formatting passed. Current stage-1 wording for the new negative is being audited; full reference suites and native parity remain pending. Do not integrate while the backend retry reads integration. The prior annotation-loop children were rerun from `split-backend-normal/annotation-check2/`: normal and poison both exit 0, print 12/36 and report live 14/40, confirming the deferred failure remains leak-only. `annotation-check/` records a failed shell wrapper attempt (127), not a compiler/program failure. Future historical-host wrappers compare copied prechecks with the archived originals, so newly added current-suite assertions do not replace or invalidate the exact historical inputs.
+
+**Latest results, 11:38.** `split-backend-async` built and completed **231/234** in each normal/poison mode. The original TMC witness and async fixture now pass. The two mixed-dictionary groups advance to their fourth fixture, `local_eager_seed_uses_evidence_of_its_enclosing_function.ash`, and reject `check(True)` at 30:1 with `SemInt` versus `SemBool`; the fifth custom-method fixture is not reached. The only other failure is the known annotation leak. Worker `lowering_evidence` implements the Seed fix in `r10-enclosing-seed-native` / `fix/r10-enclosing-seed-native` from `1ceb60c9`, with strict concrete-or-enclosing evidence semantics preserved. Its batch will register the five fixtures as separate raw/numbered cases so one failure no longer masks later cases; no witness bytes or outputs change.
+
+Public lookup follow-ups `adbe3bce` (real alias/private member regression) and `82052af0` (value-selector qualifier/sibling isolation) are pushed with `d1252a5d`. Normal stage-1 CLI diagnostics were traced to the same `Unknown module 'Names'.` wording; stage-1 value selectors already create only the selected binding, while type selectors import the module whole as the reference specifies. Main's full reference run is frozen at `82052af0` in `r10-original-tmc-resolution/work/reference/`: build/format pass, C# **3,073 passed / 9 failed / 2 skipped**, LSP **88/88**, E2E still running. Five C# failures are known RSS leaks; the other four all failed to load `libedit.so.2` because the worker had linked only `libLLVM.so`. A coordinator rerun of the entire affected FFI class with `LD_LIBRARY_PATH` set to integration's complete LLVM 23 runtime directory passed **6/6**, including all four failures, in `work/reference-ffi-dependencies/`; no compiler or test source changed. Complete the worker's runtime dependency links after its active run before future builds. C# public fixes are not yet integrated; the Seed fix is the only known compiler bug still being implemented, with fresh semantics/parity/no-reuse and remaining current-head validation still pending.
+
+| Completed check | Result |
+| --- | --- |
+| Public-name reference, `82052af0` | `r10-original-tmc-resolution/work/reference/`: build/format passed, C# **3,073 passed / 9 failed / 2 skipped**; four failures were missing `libedit.so.2` and passed the dependency-corrected **6/6** FFI rerun, leaving only the five known RSS leaks. LSP **88/88**, e2e **1,325 passed / 0 failed / 81 skipped**. Fresh CLI is `work/reference/s0/ashes` in that worktree. |
+| Final trait reference, `b5551092` | `work/r10pre/method-reference/`: build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **88/88**, e2e **1,323 passed / 0 failed / 80 skipped** in 5.67 minutes. The prior eager-Seed and hover failures are resolved. Fresh reference CLI: `s0/ashes`. |
+| Paired source preflight, `0f1c4da1` | `work/r10pre/method-source1/`: CLI **10,258 items / 188 modules**, measurement **7,929 items / 137 modules**, both explicit `ok`, exit 0. This is source consistency, not native acceptance. |
+| Full stage-0 reference, `cbbbc830` | Build and format passed. C# 3,075 passed, five known RSS failures, two skipped. LSP 88/88. E2e 1,319 passed, zero failed, 80 skipped. Logs and compiler under `work/r10pre/dictionary-shared/`, binary `s0/ashes`. |
+| Broad native 5, `1a0b4944` | 96/96 named semantics groups passed. 32 of 95 IR fixtures differed, byte-identical to the previously audited dumps. Eight ownership programs passed plain and poison child checks. Logs under `work/r10pre/named-native5/`. |
+| Backend native 8 exact, `9f336cd1` | 219/220 in each of normal and poison modes. Only the annotation-loop leak failed. Original concurrent HTTP replay passed 720 requests plus warmups, zero connected retries and no EBADF. See `work/r10pre/backend-native8-exact/` and `work/r10pre/http-native8-trace/`. |
+| Shared native attempts | Shared native 1 failed on a missing `Unification` import, fixed by `4861a03b`. Shared native 2 at `ddea44de` stopped in measurement `reportSites` with ASH010/ASH002. Neither attempt produced a binary. Input `work/shared-native.gAD7wCpf/` and logs `work/r10pre/shared-native{1,2}/` are preserved. |
+| REST reference and historical host | Offline stage-0 REST mock passed all 12 assertions in `work/r10pre/rest-mock-reference/`. The historical backedge host build was cancelled (143) before validation. The focused association-list guest passed separately. |
+
+**Integrated batch, 11:52.** Public-name commits `d1252a5d`, `adbe3bce`, `82052af0` are integrated as `1194c512`, `c2f52225`, `3d29ea5c`; each was pushed. The completed reference above validates the unchanged C# source in integration. Stage 1 already enforces these import boundaries, with fresh behavioral diagnostic checks still required. Seed commits `5a311429`, `6a4f39d2` are integrated as `b5332c2e`, `37777548` and pushed. Their CLI source inference passed **10,261 items / 188 modules**. The repair preserves strict ambiguous eager-binding rejection while allowing a dictionary supplied by the enclosing polymorphic function. All workers are handed back; no worker load is active. See `r10-enclosing-seed-native/work/PROGRESS.md` for the ten raw/numbered case names and expected outputs. Native proof is pending.
+
+**Seed native verification started.** Frozen integration is `39e79d7f`. `work/r10pre/seed-native-input/` passed explicit source inference, **12,747 items / 283 modules**, and preserves **242 backend cases, 96 semantics groups and 95 IR fixtures**. The coordinator started `work/r10pre/split-backend-seed/` with the corrected public-name reference compiler from `r10-original-tmc-resolution/work/reference/s0/ashes`; its missing runtime dependencies were linked before admission. Build cap 24 GiB, no swap, auxiliary slot, 5,400-second compiler timeout. Legacy/typed measurements still read only the separate frozen baseline. Integration must remain unchanged while the native job reads it; checkpoint updates go to `fix/r10-parallel-validation`, then fast-forward integration between readers. The user asked whether Seed allows round 10 now: its source check is not native proof, so complete this failing witness and the outstanding semantics/IR/no-reuse checks before declaring the non-leak gate clear. Start round 10 without another approval once that gate is satisfied.
+
+**Inference-cost diagnostics prepared in parallel.** The baseline legacy/typed runs remained in inference after 45 minutes, around 960 MiB RSS each; neither has counters yet. They retain their original 3,600-second bounds. `imports_diagnostics` is preparing minimal progress instrumentation in `r10-inference-progress-diag` / `fix/r10-inference-progress-diag` from `39e79d7f`, with a 3,000-token budget and formatting only under 4 GiB. No worker build or inference is admitted. This is a separate diagnostic branch, not a solver change or intended integration. Before using it, prefer the controlled optimized/unpoisoned same-source comparison described in `r10-measurement-inference-cost/work/PROGRESS.md`: the old 65-second checker predates recursive evidence analysis, so it cannot isolate a current-source regression from debug/poison overhead. If the optimized run still stalls, sparse unit/group progress should identify where. Do not cap the production solver or drop evidence to force convergence.
+
+The diagnostic worker handed back `4c1d782a`, now pushed: identification-complete, per-unit ordinal/package/leading declaration, and power-of-two recursive evidence pass markers with prior summary/direct-use counts. Formatting and static checks passed; compilation/execution are unverified. The patch also applies cleanly to `db54fdb9` for a matched diagnostic comparison. Exact commands and overhead caveats are in `r10-inference-progress-diag/work/PROGRESS.md`. Main prepared `r10-fixture-candidates/work/measurement-optimized-build.sh` (shell syntax checked) for the uninstrumented controlled build: frozen `db54fdb9`, identical stage-0 executable and assembly hashes, `-O2`, no debug/poison/leakcheck, 24 GiB/5,400 seconds. Run through a heavy slot, then use `measurement-run.sh` with `ASHES_CHECKOUT` set to the frozen baseline and a fresh output directory. No worker is active after this handback.
+
+**First Seed native proof, 12:03.** `split-backend-seed` built successfully in **8:49.29**, peak **19,103,672 KiB**, at frozen `39e79d7f`. All ten separate trait controls passed in normal mode, including raw/numbered enclosing Seed (`Int|true Bool|true`) and custom method (`tag:tag:int|tag:tag:bool`), the latter previously masked by the Seed failure. Full 242-case normal/poison execution is running. `work/r10pre/split-semantics-seed/` is building the same preserved input's 96 semantic groups and 95 IR fixtures concurrently, 24 GiB/no swap through an auxiliary slot. No-reuse builds remain next. Main confirmed `git diff 82052af0 39e79d7f -- src` is empty, so the completed public-name C# reference validates the exact integrated C# source without another identical full run. Prioritize correctness validation over the optional optimized measurement comparison.
+
+**Backend completion, 12:08.** `split-backend-seed` finished **241/242 normal and 241/242 poison**; the sole failure is `testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree`. Fresh child reruns in `annotation-check/results.tsv` confirm exit 0, stdout 12/36 and live cells 14/40 in both modes, the same deferred leak. All non-leak backend cases pass, including the previously masked custom-method pair. `annotation-leak-check.sh` in the coordinator script directory preserves this verification. The latest weekly quota snapshot is **95% used at 11:07:38 UTC**; the 97% stop threshold still applies. Semantics/parity build is active; no-reuse checks are next when the frozen measurements release their slots.
+
+**Measurement bounds reached, 12:09.** Both frozen `db54fdb9` debug/poison measurements ended at their original one-hour bound: inner exit **124**, wrapper exit 1, zero TSV rows, stderr ends at `inference start`. Both process handles are terminal and PIDs are gone. This is unresolved inference cost, not proof of an infinite loop or successful counters; the optimized same-source comparison and prepared diagnostic markers remain available. Main immediately started `work/r10pre/split-backend-seed-no-reuse/` through the coordinator slot, 24 GiB/no swap, alongside the existing normal semantics build. Start the no-reuse semantics build when normal semantics releases its build slot. Keep integration frozen at `39e79d7f` until those source readers and their runtime checks finish.
+
+Coordinator scripts are in `r10-fixture-candidates/work/`. On the integrated batch, use `shared-native-prepare.sh` only to render and source-check the full input, then `split-native-build.sh` / `split-native-run.sh` for backend and semantics/parity, including no-reuse. Do not retry the oversized combined native build. Preserve every case and the older dumps. The import-corrected historical host already passed in `original-backedge3`; its repeatable wrapper is `original-backedge-check-imports.sh`. Use `original-cli-checks.sh` against fresh S1 and S2 for real REST compilation, offline mock stdout and module alias/selector results. Read `r10-original-witness-audit/work/PROGRESS.md` for the per-program matrix.
+
+The earlier source preflight at `6876180e` covered 10,248 compiler items in 188 modules and 7,919 measurement items in 137 modules. Use `source-preflight.sh` on the paired source. Run `shared-measurements.sh` on the current build for both legacy and typed counters. The old legacy measurement produced no TSV row and typed mode never ran. Main's `round10-bootstrap.sh` requires a matching `nonleak-gate.commit`. Stage 3 needs swap allowed in the parent scope. The fresh CLI and lifetime checks and S2/S3 byte comparison remain pending.
+
+
+## Round-10 bootstrap55 and quota pause checkpoints (2026-11-21)
+
+The following checkpoints are preserved verbatim. Their chronological active-job statements are historical; use the current round section in SELF_HOSTING.md for the latest state.
+
+
+**Validated source: `39e79d7f`; bootstrap head: `78325617`.** Their only differences are documentation, verified before writing the gate certificate. Integration is clean and pushed. While jobs read it, newer handoff commits are pushed on `fix/r10-parallel-validation`; fast-forward integration between readers only when the round scripts' recorded source head permits it. All implementation workers are handed back. [Verbatim preceding checkpoints](SELF_HOSTING_LOG.md#round-10-split-driver-and-seed-validation-checkpoints-2026-11-21)
+
+| Check | Current evidence |
+| --- | --- |
+| Stage-0 public-name reference, `82052af0` | `r10-original-tmc-resolution/work/reference/`: solution build/format pass; C# 3,073 pass / 9 fail / 2 skip, of which four missing-`libedit.so.2` failures pass the corrected 6/6 FFI-class rerun; only five known RSS leaks remain. LSP 88/88; e2e 1,325 pass / 0 fail / 81 skip. `git diff 82052af0 39e79d7f -- src` is empty. Fresh compiler: that worktree's `work/reference/s0/ashes`; full runtime dependencies are now linked. |
+| Current source preflight | `work/r10pre/seed-native-input/`: explicit `ok`, 12,747 items / 283 modules. Preserved inputs contain 242 backend cases, 96 semantics groups and 95 IR fixtures. |
+| Current native backend | `work/r10pre/split-backend-seed/`: build 8:49.29, peak 19,103,672 KiB; **241/242 normal and 241/242 poison**. Every non-leak case passes, including raw/numbered recursive Show, async Show, result-directed Seed, enclosing eager Seed, custom method, original TMC and ownership controls. Only the annotation-loop leak fails. Fresh `annotation-check/results.tsv` confirms exit 0, correct 12/36 stdout and live 14/40 in both modes. |
+| Semantics and IR | `work/r10pre/split-semantics-seed/`: build **9:06.26**, peak **20,202,524 KiB**; **96/96 groups pass**. **32/95** IR differences remain, with all generated dumps byte-identical to `named-native5/actual` at `1a0b4944`, whose differences were previously audited. `previous-ir-comparison.exit` is 0; no new IR differences. |
+| No-reuse validation | `split-semantics-seed-no-reuse`: build **9:53.93**, peak **20,377,448 KiB**; **96/96 semantics pass**, 32/95 IR differences, all dumps byte-identical to the normal build (`normal-ir-comparison.exit=0`). `split-backend-seed-no-reuse`: build **8:46.99**, peak **19,334,944 KiB**; **241/242 normal and 241/242 poison**. Fresh `annotation-check/results.tsv` again confirms only the known leak, correct output and exit 0. All integration validation readers have ended. |
+| Historical compiler host | `work/r10pre/original-backedge3/`: original three prechecks and original lowering run pass, 1,597 IR lines. Build 5:32.98, peak 14,197,820 KiB. Only the missing direct `CoreLowering.Model.CoreLoweringResult` import was added; stripping it restores archived Main byte-for-byte. All 87 previous diagnostics disappeared. |
+| HTTP and REST originals | Earlier backend-native8 HTTP replay passed 720 requests plus warmups, zero connected retries and no EBADF. Current backend compiles the HTTP server in both modes. Stage-0 REST offline mock passed 12 assertions in `work/r10pre/rest-mock-reference/`; fresh S1/S2 real example/mock/alias/selector checks remain required. |
+
+**Integrated corrections.** Async `46f33d13` → `4f68dbdc` and internal historical-fixture adapter `d6627990` → `bc6d90cf` pass native checks. Public-name commits `d1252a5d`, `adbe3bce`, `82052af0` → `1194c512`, `c2f52225`, `3d29ea5c` are integrated and reference-validated; stage 1 already enforces the import boundaries. Seed `5a311429`, `6a4f39d2` → `b5332c2e`, `37777548` is integrated and natively verified. Strict ambiguous eager evidence must still reject with ASH010; the enclosing function may supply its own dictionary. No test witness was rewritten to avoid a defect.
+
+**Measurement issue remains unresolved.** `work/r10pre/split-measurement/measure` built at `db54fdb9` in 5:28.16, peak 13,958,208 KiB, debug/O0 with RC poisoning. Both modes then read frozen `r10-measurement-baseline` / `fix/r10-measurement-baseline` at `db54fdb9`; outputs there are `work/legacy/` and `work/typed/`. Both reached their original one-hour bounds at 12:09: inner exit 124, wrapper exit 1, zero TSV rows, stderr ending `inference start`. Both handles are terminal. This does not prove an infinite loop or provide counters. The old 65-second source checker predates the new recursive evidence analysis, so it cannot separate source regressions from debug/poison overhead.
+
+The controlled optimized/unpoisoned build passed in **5:35.53**, peak **15,264,412 KiB**. Output is `r10-measurement-baseline/work/optimized-measurement/`; source remains `db54fdb9`, and stage-0 executable/assembly hashes match the prior build. It uses `-O2`, no debug/poison/leakcheck. Its legacy run started at 12:26 with 12 GiB/no swap/3,600 seconds; output is `work/optimized-legacy/` in that frozen worktree. At 12:27 it remained in inference. If inference still stalls, diagnostic-only `4c1d782a` on `fix/r10-inference-progress-diag` provides identification, per-unit and sparse recursive-pass markers. It is formatted/pushed but uncompiled, not intended for integration, and also applies to `db54fdb9`. Exact commands and timing caveats are in that worktree's `work/PROGRESS.md` and `r10-measurement-inference-cost/work/PROGRESS.md`. Do not cap the solver, drop evidence or weaken source input to pass.
+
+At 12:32 the optimized run was still in inference, so main started a matched diagnostic build without cancelling it. Coordinator-owned `r10-inference-progress-frozen` / `fix/r10-inference-progress-frozen` is `db54fdb9` plus only diagnostic patch `4c1d782a`, cherry-picked as **`fb7857e0` and pushed**. `measurement-diagnostic-build.sh` writes `work/diagnostic-build/` there, using the same stage 0, `-O2`, no debug/poison/leakcheck, **16 GiB/no swap/5,400 seconds**. The uninstrumented optimized build peaked at 14.56 GiB; the diagnostic cap leaves total admitted caps at 24+12+16=52 GiB. No uncapped retry is allowed. On success, run the diagnostic binary against the unchanged CLI input from `r10-measurement-baseline` at `db54fdb9`, recording compiler-source and input-source commits separately; this deliberately instrumented run is for localization, not acceptance or timing comparison. All workers remain handed back; this load is coordinator-owned.
+
+**Inference localization, 12:40.** Diagnostic build passed in **5:42.60**, peak **14,516,420 KiB**. Main's `measurement-diagnostic-run.sh` runs it against unchanged `db54fdb9` CLI input with 12 GiB/no swap and a 600-second bound, outputs `r10-inference-progress-frozen/work/diagnostic-run/`. Identification completes and units 0–18 advance. Unit 19 is `TypeInference`; its large recursive group `__ashes_private_value_AshesCompiler_Semantics_TypeInference_inferExpressions` reports pass 2 with **33 prior summaries / 3,138 prior direct parameter and capture uses**. No infinite loop is proved. `imports_diagnostics` now investigates algorithm cost and convergence against the C# counterpart in `r10-recursive-evidence-cost` / `fix/r10-recursive-evidence-cost` from `78325617`, budget 5,000 tokens, static work and at most 4 GiB formatting, no inference/build/suite. Preserve all evidence and demand stages; no production pass cap or dropped requirements. The optimized uninstrumented control continues (14+ minutes in inference at that checkpoint), and stage 1 still builds. Current main caps are 24+12+12=48 GiB.
+
+**Cost batch handed back, `d30df401` (pushed, not integrated).** `fix/r10-recursive-evidence-cost` replaces repeated exact whole-list membership scans in callback-use collection and recursive-summary union with balanced-tree membership, preserving encounter order and all five identity fields. Stage 0 already uses a HashSet in the corresponding collection path. The change does not alter widening, demand stages, solver termination or requirements. A regression distinguishes parameter, applied count, stage, returned flag and projection path, including equal-prefix paths. Formatting and static patch checks pass; no source inference, native or speedup proof yet. Exact matched-input validation and finer per-member diagnostic commands are in `r10-recursive-evidence-cost/work/PROGRESS.md`. All workers are handed back again. The 3,138-use observation establishes substantial work, not nonconvergence; performance remains unresolved until measured.
+
+**Matched optimization check started at 12:50.** The diagnostic control ended at its 600-second bound (exit 124), still at the large group's pass-2 marker. Main created `r10-evidence-index-frozen` / `fix/r10-evidence-index-frozen` from `fb7857e0` and applied only `d30df401` as **`54ba78bc`**, pushed. Its matched diagnostic build is running at 16 GiB/no swap, using `measurement-diagnostic-build.sh` with `ASHES_DIAGNOSTIC_CHECKOUT` set to that worktree and `ASHES_DIAGNOSTIC_REVISION=54ba78bc`. On success run `measurement-diagnostic-run.sh` with the same checkout variable; it keeps the input at unchanged `db54fdb9` and writes `work/diagnostic-run/` beside that build. Compare the same markers and 600-second bound with the control before claiming improvement. Native semantics, full uninstrumented counters and heap impact still need validation; neither the original cost fix nor either diagnostic branch is integrated. Stage 1 and the optimized uninstrumented legacy measurement remain active. Latest checked quota was **97% used at 11:43:09 UTC**; the revised stop threshold is **98%**, so work continues.
+
+**Separate next optimization.** `36d8dbe1` on `fix/r10-typed-lowering-next` is clean/pushed and passed CLI source inference (10,265 items / 188 modules). It uses recorded concrete source-copy call types and records actual shortcut/fallback counts. It is not integrated; native correctness, lifetime and performance proof remain pending. Keep it separate from the current correctness gate.
+
+**Coordinator scripts:** `r10-fixture-candidates/work/`, all machine-local. Use `shared-native-prepare.sh` only to render/source-check, then `split-native-build.sh` and `split-native-run.sh` for backend and semantics/parity in normal/no-reuse configurations. The all-in-one combined native builds both OOMed at their individual 24 GiB caps; preserve their exact inputs, do not retry that oversized harness. Split copies retain every module/case and compare source bytes. `ASHES_CASE_BASELINE` may prioritize new backend cases without changing the set. `annotation-leak-check.sh` reruns the exact leaking children. `original-backedge-check-imports.sh` preserves the original host input; `original-cli-checks.sh` checks fresh S1/S2 real REST compilation, mock stdout and module alias/selector results. `round10-bootstrap.sh` requires a clean matching `nonleak-gate.commit`; stage 3 must have swap allowed in both parent and child scopes. The full round-10 sequence below remains unrun. Start it without further approval once the non-leak gate is met.
+
+The latest weekly quota snapshot is **96% used at 11:30:37 UTC**; check current session data again rather than relying on this dated value. The user revised the stop threshold to **98% used / 2% remaining**. At 98%, stop jobs/workers, save and push the final handoff, pause the goal and give the user the fresh-agent prompt.
+
+**Active shared build.** The checkpoint was fast-forwarded and pushed to integration as `78325617`. `work/r10pre/round10-bootstrap55/nonleak-gate.commit`, `nonleak-gate.md` and `validated-source-difference.txt` record the gate and documentation-only difference from `39e79d7f`. `round10-bootstrap.sh stage1` is running with `r10-original-tmc-resolution/work/reference/s0/ashes`, tag `bootstrap55`, coordinator slot, 24 GiB/no swap, 7,200-second compiler bound, `--debug -O2` and leak checking. Freeze integration throughout the phase chain; its scripts require the same source head for stage 2/3 and behavior. Use this checkpoint branch for live handoff updates. On stage-1 success, stage 2 and stage-1 behavior may overlap within caps; serialize network-conflicting checks. Stage 3 needs swap allowed in its parent scope too. This gate does not claim completed bootstrap, performance, zero replay or leak acceptance. The frozen `db54fdb9` comparison cannot substitute for current-source round-10 counters.
+
+
+## Post-pause repository cleanup (2026-11-21)
+
+The user explicitly requested cleanup after the quota pause, always preserving `main` and `release/*`. Compiler work remained paused; no builds, suites or agents were started. An origin fetch and PR lookup found no open PRs. The audit examined 121 remote-tracking refs (including origin HEAD), 503 local branches and 176 worktrees under `.claude/worktrees/`; the main checkout was excluded from worktree removal.
+
+Removed 6 remote branches atomically with expected-head leases, 21 local branches and 7 worktrees. Every deleted branch was already contained in, or had all its non-merge patches represented in, integration `673ab70e`; no unmatched merge commits were present. Every removed worktree had no tracked modifications, untracked files or ignored files, and its head was reachable from origin. Branches with unique work were retained even when their empty worktrees were removed. All protected local and remote refs were compared before and after and were unchanged. All worktrees with artifacts and all 12 dirty worktrees were retained; pending compiler and diagnostic branches remain available.
+
+Remote branches removed (their local copies were removed too):
+
+- `fix/parity-bugs-2`
+- `fix/parity-bugs-3`
+- `fix/r10-typed-consumer-audit`
+- `fix/strict-imports`
+- `fix/typecheck-decisions`
+- `fix/r10-handoff-queue`
+
+Complete local branch removal inventory:
+
+| Branch | Former head |
+| --- | --- |
+| `chore/llvm-23` | `7ce8d73111547f8b3a424a96489b594f980bb5d4` |
+| `chore/update-dotnet-packages` | `0dd8ba8f16d9f3abc88abeffe35aa02d986be32f` |
+| `fix/parity-bugs-2` | `5178d12e48056511de65ad7754e0c5f824168567` |
+| `fix/parity-bugs-3` | `aecb6a41bc3bb1eb108e017ba235449623a2f70c` |
+| `fix/r10-typed-consumer-audit` | `617eb374a20bdf4243b32279a7fd1736648e8017` |
+| `fix/strict-imports` | `27a7e439f6609497924a38c052e7bb2d2a6644c6` |
+| `fix/typecheck-decisions` | `2977e4ec896db48c4dd9293f6a593f474f1d263c` |
+| `selfhost/loop-parameter-placement` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `selfhost/patternwalk-callee-side` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `worktree-agent-a00df73c416cf50d9` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a069eb239e1a10625` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a21e070faa3f541fb` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a244a3fe6d6c35b66` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a26cad26c6f331875` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a5c0a6f781353b0e1` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a9ee5e83b457df88f` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-aadc205a50bb8a10e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ab060c61577f65791` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ad2d4687886452f58` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ae40c710d2b96377e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `fix/r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+
+Removed worktrees (relative to `.claude/worktrees/`):
+
+| Worktree | Former head |
+| --- | --- |
+| `r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+| `r10-live-checkpoints` | `09fe581f93f648840a4e4e18911d2b50cce10fb3` |
+| `round10` | `e0d8362220aed17b5aa589f37b40c4dce603aa4b` |
+| `step-f-s2-b47src` | `62f20a00ef0fad09e6c54a96eddc62c9df64c41a` |
+| `step-f-s2-crash-2-base` | `a2586d4f43b5ed569066052f3aa7c7b360fb58a4` |
+| `step-f-s2-crash-base` | `67e4588d122b04903a0d38017d2656765bf4ad41` |
+| `step-f-typed-program-docs` | `446d40faa4ac795e60dad3dd3a23f2c93a82d8ca` |
+
+The remaining remote branches and unattached local branches were checked for patch inclusion; branches with unmatched patches were retained. Among artifact-bearing worktrees, branch inclusion alone does not justify deleting tools or evidence. Further cleanup requires preserving their local content and checking current script dependencies. Full before/after refs, worktree inventories, patch-inclusion results and protected-ref comparisons are in integration `work/coord/cleanup-20261121/`.
+
+## Single-branch consolidation and draft PR 1160 (2026-11-21)
+
+The user requested relevance review of the twelve dirty older worktrees, deletion of obsolete
+branches, one development branch for a PR, updated restart documentation, and no development
+Git tags. No tags were created. Compiler jobs and agents remain paused.
+
+- Integrated `d30df401` as `fa0a1247` and `36d8dbe1` as `a898abc2`, pushing each commit. Both
+  cherry-picks completed without conflicts. Prior worker checks remain recorded; no new native,
+  compiler, suite, performance or leak acceptance was run.
+- Archived 85 remote branch file trees and 12 dirty worktree file trees in
+  `docs/selfhost-archive/2026-11-21/source-snapshots.tar.gz`. Every patch reconstructs its original
+  tree from a base on integration, verified using temporary indexes. Original indexes and source
+  files were preserved. The obsolete generated ELF `stage1-post-guards/shape2` was excluded.
+  The manifest, relevance review and retained investigation notes are committed alongside it.
+- Pushed the archive and updated handoff as `96816de1` before deleting any additional branches.
+- Atomically deleted 85 remote branches using expected-head leases, then deleted 97 local branch
+  names. Retained artifact worktrees are detached at their unchanged commits. Only `main`,
+  `release/*` and `selfhost/round10` remain on origin. Protected local and remote refs compare
+  byte-for-byte with the pre-consolidation inventory.
+- Removed eight obsolete older worktrees after verifying their archived source again. Their
+  ignored `work/` evidence directories were moved into the integration audit directory. Four
+  older worktrees retain useful leak/ownership work; see the source archive's review table.
+- Opened [draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160), targeting main from
+  selfhost/round10. It explicitly records REST capability errors, recursive summary growth,
+  missing S2/S3 byte identity and the need to validate the newly consolidated source.
+
+Exact before/after refs, retirement logs, source checks and the verified full-history local Git
+bundle are in `work/coord/consolidation-20261121/`. Remote-backed patches preserve source states;
+the local bundle additionally preserves original histories. This consolidation follows the
+initial 6-remote / 21-local / 7-worktree cleanup above. The current-round handoff and fresh-agent
+prompt supersede historical references to retired branch names or pending cherry-picks.

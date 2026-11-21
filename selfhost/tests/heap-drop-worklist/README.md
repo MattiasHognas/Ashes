@@ -1,6 +1,6 @@
 # Heap-drop graph equivalence
 
-Run `bash scripts/selfhost-dev/render-heap-drop-worklist.sh` to generate a project in `work/heap-drop-worklist`. It combines the current classifier implementation with the original recursive reference and assertions in this folder. Compile the generated project with leak checking and the scoped memory limits documented for Step F.
+Run `bash scripts/selfhost-dev/render-heap-drop-worklist.sh` to generate a project in `work/heap-drop-worklist`. It combines the current classifier implementation with the original recursive reference and assertions in this folder. `Reference.ash.inc` freezes the recursive classifier from before the type-graph index (88aec017^), with the helpers the classifier no longer has under a `reference` prefix; the assertions compare it with `classifyHeapOwnedChildrenDroppable` and `classifyHeapResource`. Compile the generated project with leak checking and the scoped memory limits documented for Step F.
 
 - `check` compares 6,144 small graph roots plus changing generic instantiations, unknown types, tuple/list fields, functions, resources, nominal identity collisions, and zero-cost wrappers.
 - `old` / `new` compare the repeated-child diamond benchmark.

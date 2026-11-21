@@ -11,6 +11,8 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.EvidenceDemand.indexEvidenceUse
+import AshesCompiler.Semantics.EvidenceDemand.zipEvidenceStages
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
 import AshesCompiler.Semantics.NodeIdentity
@@ -31,6 +33,7 @@ export (
     value inferIdentifiedProgramUnitsFrom,
     value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
+    value inferRecursiveGroupForLowering,
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,
@@ -162,6 +165,7 @@ type PendingRecursiveBinding =
 
 type ResolvedRecursiveBinding =
     | name: Str
+    | value: Expr
     | semanticType: SemanticType
     | constraints: List(TraitConstraint)
 
@@ -242,6 +246,13 @@ let recursive appendProgramSubstitution left right =
         | [] -> right
         | head :: tail -> head :: appendProgramSubstitution(tail)(right)
 
+let recursiveMemberEnvironment name scheme environment =
+    (let bound = addTypeBinding(name)(scheme)(environment)
+    in
+        if bound.programInferenceRules
+        then bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(RecursiveEvidenceReference(name))(bound.evidenceFlows)
+        else bound)
+
 let recursive prepareRecursiveBindings bindings environment supply reversedPending =
     match bindings with
         | [] -> RecursivePreparation(environment = environment, pending = reverse(reversedPending), supply = supply)
@@ -254,7 +265,7 @@ let recursive prepareRecursiveBindings bindings environment supply reversedPendi
                         in
                             prepareRecursiveBindings(
                                 tail,
-                                addTypeBinding(name)(scheme)(environment),
+                                recursiveMemberEnvironment(name)(scheme)(environment),
                                 nextSupply,
                                 pending :: reversedPending
                             )
@@ -318,7 +329,8 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
                             in
                                 let unifiedType = applySubstitution(unifiedSubstitution)(placeholderType)
                                 in
-                                    match checkInferenceBindingSignature(
+                                    match checkValueBindingSignature(
+                                        value,
                                         annotation,
                                         requirements,
                                         unifiedType,
@@ -328,7 +340,7 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
                                         valueSupply
                                     ) with
                                         | TypeInferenceResult { semanticType = annotatedType, substitution = annotatedSubstitution, supply = annotatedSupply, constraints = selectedConstraints, error = None } ->
-                                            let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = selectedConstraints)
+                                            let resolvedBinding = ResolvedRecursiveBinding(name = name, value = value, semanticType = annotatedType, constraints = selectedConstraints)
                                             in
                                                 inferRecursiveBindings(
                                                     groupType,
@@ -399,23 +411,169 @@ let recursive recursiveOpenPrintArgument bindings outerEnvironment substitution 
                 | Some(argument) -> Some(argument)
                 | None -> recursiveOpenPrintArgument(tail)(outerEnvironment)(substitution)
 
-let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
+let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment supply =
     match bindings with
-        | [] -> resultEnvironment
-        | ResolvedRecursiveBinding { name = name, semanticType = semanticType, constraints = constraints } :: tail ->
+        | [] -> (resultEnvironment, supply, None)
+        | ResolvedRecursiveBinding { name = name, value = value, semanticType = semanticType, constraints = constraints } :: tail ->
             let resolvedType = applySubstitution(substitution)(semanticType)
             in
-                let resolvedConstraints = applyInferenceConstraints(substitution)(constraints)
+                let selected =
+                    constraints
+                    |> applyInferenceConstraints(substitution)
+                    |> simplifyTraitConstraints(outerEnvironment)
+                    |> requirementsLeftToWrite(outerEnvironment)
                 in
-                    let scheme =
-                        resolvedConstraints
-                        |> simplifyTraitConstraints(outerEnvironment)
-                        |> requirementsLeftToWrite(outerEnvironment)
-                        |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(outerEnvironment))(substitution)(resolvedType)
+                    match inferEvidenceBinding(name)(value)(resolvedType)(selected)(outerEnvironment)(resultEnvironment)(substitution)(supply) with
+                        | EvidenceBindingInference { error = Some(error) } -> (resultEnvironment, supply, Some(ProgramExpressionError(error)))
+                        | EvidenceBindingInference { environment = next, supply = noted, error = None } -> generalizeRecursiveBindings(tail)(outerEnvironment)(substitution)(next)(noted)
+
+// Recursive members share monomorphic variables during inference. A sibling reference made
+// before its definition is complete must therefore take evidence at those very same IDs.
+type RecursiveEvidenceMember =
+    | name: Str
+    | value: Expr
+    | semanticType: SemanticType
+    | constraints: List(TraitConstraint)
+    | sites: List((Int, List((TraitConstraint, Int))))
+    | flows: List((Int, EvidenceCallFlow))
+
+type RecursiveEvidenceSummary =
+    | name: Str
+    | constraints: List(TraitConstraint)
+    | stages: List(Int)
+    | flow: EvidenceCallFlow
+    deriving {Eq, Show}
+
+// Inference visits the top-level members in source order. All the sites of the last member
+// therefore precede the earlier ones in the supply even though IDs within a body need not be
+// ordered. Partition those two streams once, visiting the group members in reverse.
+let recursive takeMemberSites first sites taken =
+    match sites with
+        | (id, occurrence) :: rest when id >= first -> takeMemberSites(first)(rest)((id, occurrence) :: taken)
+        | _ -> (reverse(taken), sites)
+
+let recursive partitionEvidenceMembers bindings sites flows collected =
+    match bindings with
+        | [] -> collected
+        | ResolvedRecursiveBinding { name = name, value = value, semanticType = valueType, constraints = constraints } :: rest ->
+            let first = nodeIdentityOf(value)
+            in
+                match (takeMemberSites(first)(sites)([]), takeMemberSites(first)(flows)([])) with
+                    | ((memberSites, remainingSites), (memberFlows, remainingFlows)) ->
+                        let member = RecursiveEvidenceMember(name = name, value = value, semanticType = valueType, constraints = constraints, sites = memberSites, flows = memberFlows)
+                        in partitionEvidenceMembers(rest)(remainingSites)(remainingFlows)(member :: collected)
+
+let evidenceMembers bindings (supply: TypeVariableSupply) =
+    partitionEvidenceMembers(reverse(bindings))(supply.evidenceSites)(supply.evidenceFlowSites)([])
+
+let recursive indexSiblingSummaries summaries indexed =
+    match summaries with
+        | [] -> indexed
+        | (RecursiveEvidenceSummary { name = name } as summary) :: rest ->
+            indexed
+            |> Ashes.Collection.Map.setStr(name)(summary)
+            |> indexSiblingSummaries(rest)
+
+let siblingSummary name indexed = Ashes.Collection.Map.getStr(name)(indexed)
+
+let recursive containsRecursiveReference sites =
+    match sites with
+        | [] -> false
+        | (_node, RecursiveEvidenceReference(_name)) :: _rest -> true
+        | _head :: rest -> containsRecursiveReference(rest)
+
+let recursive siblingSites sites summaries requirements demands flows =
+    match sites with
+        | [] -> (requirements, demands, reverse(flows))
+        | (node, RecursiveEvidenceReference(name)) :: rest ->
+            match siblingSummary(name)(summaries) with
+                | Some(RecursiveEvidenceSummary { constraints = required, stages = stages, flow = flow }) ->
+                    siblingSites(rest)(summaries)(appendProgramConstraints(required)(requirements))((node, zipEvidenceStages(required)(stages)(-1)) :: demands)((node, flow) :: flows)
+                | None -> siblingSites(rest)(summaries)(requirements)(demands)((node, SourceEvidenceFlow([])([])) :: flows)
+        | entry :: rest -> siblingSites(rest)(summaries)(requirements)(demands)(entry :: flows)
+
+// Calls in a cycle can descend an unbounded number of aggregate fields. Once every member has
+// already propagated its direct edges, summarize further path growth as any nested member.
+let recursive knownParameterPath (use: EvidenceParameterUse) earlier =
+    match earlier with
+        | [] -> false
+        | (EvidenceParameterUse { parameter = slot, applied = applied, stage = stage, returned = returned } as previous) :: rest ->
+            if slot == use.parameter && applied == use.applied && stage == use.stage && returned == use.returned && previous.path != use.path
+            then true
+            else knownParameterPath(use)(rest)
+
+let recursive includesRecursiveUse use uses =
+    match uses with
+        | [] -> false
+        | candidate :: rest -> candidate == use || includesRecursiveUse(use)(rest)
+
+let recursive stableUses remaining earlier result indexed widen =
+    match remaining with
+        | [] -> reverse(result)
+        | (EvidenceParameterUse { path = path } as use) :: rest ->
+            let stable =
+                if widen && path != [] && includesRecursiveUse(use)(earlier) == false && knownParameterPath(use)(earlier)
+                then use with path = ["*"]
+                else use
+            in
+                match indexEvidenceUse(stable)(indexed) with
+                    | None -> stableUses(rest)(earlier)(result)(indexed)(widen)
+                    | Some(next) -> stableUses(rest)(earlier)(stable :: result)(next)(widen)
+
+let stableRecursiveFlow name summaries flow widen =
+    match (flow, siblingSummary(name)(summaries)) with
+        | (SourceEvidenceFlow(uses, captures), Some(RecursiveEvidenceSummary { flow = SourceEvidenceFlow(previous, retained) })) ->
+            widen
+            |> stableUses(appendProgramConstraints(retained)(captures))(retained)([])(Ashes.Collection.Map.empty)
+            |> SourceEvidenceFlow(stableUses(appendProgramConstraints(previous)(uses))(previous)([])(Ashes.Collection.Map.empty)(widen))
+        | _ -> flow
+
+let recursive inferRecursiveEvidencePass members previous (outer: TypeEnvironment) substitution (next: TypeEnvironment) (supply: TypeVariableSupply) summaries widen =
+    match members with
+        | [] -> (next, supply, reverse(summaries), None)
+        | RecursiveEvidenceMember { name = name, value = value, semanticType = memberType, constraints = constraints, sites = sites, flows = flows } :: rest ->
+            match siblingSites(flows)(previous)(constraints)(sites)([]) with
+                | (requirements, projected, boundFlows) ->
+                    let selected =
+                        requirements
+                        |> applyInferenceConstraints(substitution)
+                        |> simplifyTraitConstraints(outer)
+                        |> requirementsLeftToWrite(outer)
                     in
-                        resultEnvironment
-                        |> addTypeBinding(name)(scheme)
-                        |> generalizeRecursiveBindings(tail)(outerEnvironment)(substitution)
+                        let memberSupply = supply with evidenceSites = projected, evidenceFlowSites = boundFlows
+                        in
+                            match inferEvidenceBinding(name)(value)(applySubstitution(substitution)(memberType))(selected)(outer)(next)(substitution)(memberSupply) with
+                                | EvidenceBindingInference { error = Some(error) } -> (next, supply, [], Some(ProgramExpressionError(error)))
+                                | EvidenceBindingInference { scheme = scheme, environment = bound, supply = noted, error = None } ->
+                                    let stages =
+                                        match Ashes.Collection.Map.getStr(name)(bound.evidenceProfiles) with
+                                            | Some(profile) -> profile
+                                            | None -> []
+                                    in
+                                        let flow =
+                                            match Ashes.Collection.Map.getStr(name)(bound.evidenceFlows) with
+                                                | Some(found) -> stableRecursiveFlow(name)(previous)(found)(widen)
+                                                | None -> UnknownEvidenceFlow
+                                        in
+                                            let summary = RecursiveEvidenceSummary(name = name, constraints = scheme.constraints, stages = stages, flow = flow)
+                                            in
+                                                let settled = bound with evidenceFlows = Ashes.Collection.Map.setStr(name)(flow)(bound.evidenceFlows)
+                                                in inferRecursiveEvidencePass(rest)(previous)(outer)(substitution)(settled)((supply with notes = noted.notes))(summary :: summaries)(widen)
+
+let recursive solveRecursiveEvidence members previous environment substitution supply acyclicRounds =
+    match inferRecursiveEvidencePass(members)(indexSiblingSummaries(previous)(Ashes.Collection.Map.empty))(environment)(substitution)(environment)(supply)([])(acyclicRounds <= 0) with
+        | (next, noted, summaries, error) ->
+            if error != None || summaries == previous
+            then (next, noted, error)
+            else solveRecursiveEvidence(members)(summaries)(environment)(substitution)(supply)(acyclicRounds - 1)
+
+let generalizeGroup bindings environment substitution (supply: TypeVariableSupply) =
+    if environment.programInferenceRules && containsRecursiveReference(supply.evidenceFlowSites)
+    then
+        bindings
+        |> syntaxListLength
+        |> solveRecursiveEvidence(evidenceMembers(bindings)(supply))([])(environment)(substitution)(supply)
+    else generalizeRecursiveBindings(bindings)(environment)(substitution)(environment)(supply)
 
 let inferRecursiveGroup bindings state =
     match state with
@@ -451,19 +609,25 @@ let inferRecursiveGroup bindings state =
                                                     |> ProgramExpressionError
                                                 ))
                                             | None ->
-                                                let finalEnvironment =
-                                                    generalizeRecursiveBindings(
-                                                        resolved,
-                                                        outerEnvironment,
-                                                        defaultedSubstitution,
-                                                        outerEnvironment
-                                                    )
-                                                in ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                                match generalizeGroup(resolved)(outerEnvironment)(defaultedSubstitution)(resolvedSupply) with
+                                                    | (finalEnvironment, finalSupply, error) -> ProgramInferenceState(environment = finalEnvironment, substitution = defaultedSubstitution, supply = finalSupply, nextTypeSymbolId = nextTypeSymbolId, error = error)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)
                             ))
         | failedState -> failedState
+
+// Lowering uses the same joint inference as the program pass before fixing the dictionary
+// convention of any member. Its supply shares the lowering state's variable identities.
+// Isolate locally numbered evidence sites. Only fresh type-variable IDs escape into lowering.
+let inferRecursiveGroupForLowering bindings (environment: TypeEnvironment) (supply: TypeVariableSupply) =
+    match identifyBindings(0)(bindings)([]) with
+        | (numbered, _nextNode) ->
+            let groupState = ProgramInferenceState(environment = (environment with programInferenceRules = true, lookupIndex = None), substitution = [], supply = typeVariableSupplyFrom(supply.nextId), nextTypeSymbolId = 0, error = None)
+            in
+                match inferRecursiveGroup(numbered)(groupState) with
+                    | ProgramInferenceState { environment = resolved, substitution = substitution, supply = next, error = None } -> Some((resolved, substitution, (supply with nextId = next.nextId)))
+                    | _ -> None
 
 let recursive registerTypeParameters parameters context supply reversedTypes reversedQuantified =
     match parameters with
@@ -1076,7 +1240,8 @@ let registerParameterizedTypeDeclaration declaration state =
 
 // A type declared without parameters takes one for each payload name that denotes no known type,
 // in the order the names first appear. The declaring type's own name and every declared or
-// built-in type stay concrete field types.
+// built-in type stay concrete field types, and so does a type of a module the declaring module
+// does not import (marked by the reference rewriter), which the field's resolution then reports.
 let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExpr) (found: List(Str)) =
     match typeExpr with
         | TypeAt(_span, inner) -> implicitTypeParameterNames(owner)(context)(inner)(found)
@@ -1084,7 +1249,7 @@ let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExp
             if candidate == owner
             then found
             else
-                if nameExists(candidate)(found)
+                if nameExists(candidate)(found) || Ashes.Text.indexOf(candidate)("$unimported$") >= 0
                 then found
                 else
                     match resolveTypeExpression(typeExpr)(context) with

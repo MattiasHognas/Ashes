@@ -1977,6 +1977,39 @@ function lambda_15  [ClosureHelper from items]
   general_rc_owned_absent_276:
     Return                Source=240   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
 
+function __rc_cdrop_19  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    RcDrop                SourceTemp=1 TypeName=Function RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    Return                Source=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+
+function lambda_15$env_normalize  [ClosureEnvironmentNormalizer from items]
+  locals=3 temps=11
+    LoadLocal             Target=0 Slot=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_291   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    Jump                  Target=rc_representation_done_292   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_291:
+    CopyOutClosure        DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    StoreLocal            Slot=2 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_done_292:
+    LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=7   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=16 Source=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=24 Source=9   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    LoadFuncAddr          Target=10 FuncLabel=__rc_cdrop_19   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    Return                Source=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+
 function recgroup_12_items  [SourceFunction from items]
   locals=2 temps=8
     Alloc                 Target=0 SizeBytes=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
@@ -1993,7 +2026,7 @@ function recgroup_12_items  [SourceFunction from items]
     MakeClosure           Target=7 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     Return                Source=7   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
 
-function lambda_19  [ClosureHelper from topLet]
+function lambda_20  [ClosureHelper from topLet]
   locals=100 temps=391
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:11)
@@ -2022,143 +2055,143 @@ function lambda_19  [ClosureHelper from topLet]
     AndInt                Target=16 Left=14 Right=15   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=14 Source=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
-    JumpIfFalse           CondTemp=16 Target=general_rc_result_normalize_295   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=general_rc_result_owned_294   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  general_rc_result_normalize_295:
+    JumpIfFalse           CondTemp=16 Target=general_rc_result_normalize_297   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    Jump                  Target=general_rc_result_owned_296   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  general_rc_result_normalize_297:
     IsReferenceCounted    Target=17 SourceTemp=10
-    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_296   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_298   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=18 SourceTemp=10 RuntimeManaged=true
     StoreLocal            Slot=15 Source=18   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_297   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_296:
+    Jump                  Target=rc_representation_done_299   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_298:
     Alloc                 Target=19 SizeBytes=24 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=20 BasePtr=10 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=21 SourceTemp=20
-    JumpIfFalse           CondTemp=21 Target=rc_representation_copy_298   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=21 Target=rc_representation_copy_300   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=22 SourceTemp=20 RuntimeManaged=true
     StoreLocal            Slot=16 Source=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_299   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_298:
+    Jump                  Target=rc_representation_done_301   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_300:
     CopyOutArena          DestTemp=23 SrcTemp=20 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=16 Source=23   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_299:
+  rc_representation_done_301:
     LoadLocal             Target=24 Slot=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=25 BasePtr=10 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=26 SourceTemp=25
-    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_300   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_302   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=27 SourceTemp=25 RuntimeManaged=true
     StoreLocal            Slot=17 Source=27   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_301   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_300:
+    Jump                  Target=rc_representation_done_303   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_302:
     LoadConstInt          Target=29 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     CallKnown             Target=30 FuncLabel=__rcnorm_11 EnvTemp=29 ArgTemp=25   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=17 Source=30   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_301:
+  rc_representation_done_303:
     LoadLocal             Target=31 Slot=17   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=19 OffsetBytes=8 Source=31   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=32 BasePtr=10 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=33 SourceTemp=32
-    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_302   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_304   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
     StoreLocal            Slot=18 Source=34   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_303   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_302:
+    Jump                  Target=rc_representation_done_305   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_304:
     Alloc                 Target=35 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=37 SourceTemp=36
-    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_304   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_306   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=38 SourceTemp=36 RuntimeManaged=true
     StoreLocal            Slot=19 Source=38   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_305   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_304:
-    IsReferenceCounted    Target=40 SourceTemp=36
-    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_306   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    RcDup                 Target=41 SourceTemp=36 RuntimeManaged=true
-    StoreLocal            Slot=20 Source=41   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     Jump                  Target=rc_representation_done_307   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
   rc_representation_copy_306:
+    IsReferenceCounted    Target=40 SourceTemp=36
+    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_308   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    RcDup                 Target=41 SourceTemp=36 RuntimeManaged=true
+    StoreLocal            Slot=20 Source=41   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    Jump                  Target=rc_representation_done_309   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_308:
     LoadConstInt          Target=42 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=21 Source=36   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=22 Source=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=23 Source=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_308:
+  rc_normalize_list_310:
     LoadLocal             Target=43 Slot=21   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     CmpIntNe              Target=44 Left=43 Right=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_309   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_311   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=45 SourceTemp=43
-    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_cell_310   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_cell_312   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=46 SourceTemp=43 RuntimeManaged=true
     LoadLocal             Target=47 Slot=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     CmpIntNe              Target=48 Left=47 Right=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_311   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_313   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadLocal             Target=49 Slot=23   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_normalize_list_linked_312   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_first_311:
+    Jump                  Target=rc_normalize_list_linked_314   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_normalize_list_first_313:
     StoreLocal            Slot=22 Source=46   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_linked_312:
+  rc_normalize_list_linked_314:
     StoreLocal            Slot=23 Source=46   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_normalize_list_end_309   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_cell_310:
+    Jump                  Target=rc_normalize_list_end_311   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_normalize_list_cell_312:
     LoadMemOffset         Target=50 BasePtr=43 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=51 BasePtr=43 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=52 SourceTemp=50
-    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_313   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_315   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=53 SourceTemp=50 RuntimeManaged=true
     StoreLocal            Slot=24 Source=53   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_314   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_313:
+    Jump                  Target=rc_representation_done_316   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_315:
     LoadConstInt          Target=55 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     CallKnown             Target=56 FuncLabel=__rcnorm_4 EnvTemp=55 ArgTemp=50   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=24 Source=56   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_314:
+  rc_representation_done_316:
     LoadLocal             Target=57 Slot=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     Alloc                 Target=58 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=58 OffsetBytes=0 Source=57   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=58 OffsetBytes=8 Source=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadLocal             Target=59 Slot=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     CmpIntNe              Target=60 Left=59 Right=42   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    JumpIfFalse           CondTemp=60 Target=rc_normalize_list_first_315   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=60 Target=rc_normalize_list_first_317   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadLocal             Target=61 Slot=23   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=58   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_normalize_list_linked_316   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_first_315:
+    Jump                  Target=rc_normalize_list_linked_318   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_normalize_list_first_317:
     StoreLocal            Slot=22 Source=58   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_linked_316:
+  rc_normalize_list_linked_318:
     StoreLocal            Slot=23 Source=58   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=21 Source=51   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_normalize_list_308   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_normalize_list_end_309:
+    Jump                  Target=rc_normalize_list_310   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_normalize_list_end_311:
     LoadLocal             Target=62 Slot=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=20 Source=62   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_307:
+  rc_representation_done_309:
     LoadLocal             Target=63 Slot=20   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=19 Source=63   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_305:
+  rc_representation_done_307:
     LoadLocal             Target=64 Slot=19   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=64   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     LoadMemOffset         Target=65 BasePtr=32 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     IsReferenceCounted    Target=66 SourceTemp=65
-    JumpIfFalse           CondTemp=66 Target=rc_representation_copy_317   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+    JumpIfFalse           CondTemp=66 Target=rc_representation_copy_319   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     RcDup                 Target=67 SourceTemp=65 RuntimeManaged=true
     StoreLocal            Slot=25 Source=67   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-    Jump                  Target=rc_representation_done_318   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_copy_317:
+    Jump                  Target=rc_representation_done_320   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
+  rc_representation_copy_319:
     CopyOutArena          DestTemp=68 SrcTemp=65 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=25 Source=68   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_318:
+  rc_representation_done_320:
     LoadLocal             Target=69 Slot=25   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=69   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=18 Source=35   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_303:
+  rc_representation_done_305:
     LoadLocal             Target=70 Slot=18   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreMemOffset        BasePtr=19 OffsetBytes=16 Source=70   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=15 Source=19   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  rc_representation_done_297:
+  rc_representation_done_299:
     LoadLocal             Target=71 Slot=15   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     StoreLocal            Slot=14 Source=71   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
-  general_rc_result_owned_294:
+  general_rc_result_owned_296:
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
     LoadLocal             Target=72 Slot=14   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:19)
     SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
@@ -2179,7 +2212,7 @@ function lambda_19  [ClosureHelper from topLet]
     CallClosure           Target=82 ClosureTemp=79 ArgTemp=81   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:24)
     RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=34
     ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=34
-    JumpIfFalse           CondTemp=82 Target=else_322   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=82 Target=else_324   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDrop                SourceTemp=5 TypeName=Token OwnerSlot=9
     SaveArenaState        CursorLocalSlot=36 EndLocalSlot=37
     LoadEnv               Target=83 Index=3   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:31)
@@ -2227,112 +2260,112 @@ function lambda_19  [ClosureHelper from topLet]
     LoadLocal             Target=109 Slot=44   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:69)
     Borrow                Target=110 SourceTemp=109
     IsReferenceCounted    Target=112 SourceTemp=108
-    JumpIfFalse           CondTemp=112 Target=rc_representation_copy_327   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=112 Target=rc_representation_copy_329   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=113 SourceTemp=108 RuntimeManaged=true
     StoreLocal            Slot=51 Source=113   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_representation_done_328   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_copy_327:
+    Jump                  Target=rc_representation_done_330   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_representation_copy_329:
     LoadConstInt          Target=115 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     CallKnown             Target=116 FuncLabel=__rcnorm_16 EnvTemp=115 ArgTemp=108   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=51 Source=116   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_328:
+  rc_representation_done_330:
     LoadLocal             Target=117 Slot=51   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     IsReferenceCounted    Target=118 SourceTemp=110
-    JumpIfFalse           CondTemp=118 Target=rc_representation_copy_329   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=118 Target=rc_representation_copy_331   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=119 SourceTemp=110 RuntimeManaged=true
     RcDrop                SourceTemp=90 TypeName=Tuple OwnerSlot=44
     StoreLocal            Slot=52 Source=119   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_representation_done_330   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_copy_329:
+    Jump                  Target=rc_representation_done_332   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_representation_copy_331:
     Alloc                 Target=120 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadMemOffset         Target=121 BasePtr=110 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     IsReferenceCounted    Target=122 SourceTemp=121
-    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_331   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_333   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=123 SourceTemp=121 RuntimeManaged=true
     StoreLocal            Slot=53 Source=123   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_representation_done_332   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_copy_331:
-    IsReferenceCounted    Target=125 SourceTemp=121
-    JumpIfFalse           CondTemp=125 Target=rc_representation_copy_333   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    RcDup                 Target=126 SourceTemp=121 RuntimeManaged=true
-    StoreLocal            Slot=54 Source=126   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     Jump                  Target=rc_representation_done_334   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
   rc_representation_copy_333:
+    IsReferenceCounted    Target=125 SourceTemp=121
+    JumpIfFalse           CondTemp=125 Target=rc_representation_copy_335   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    RcDup                 Target=126 SourceTemp=121 RuntimeManaged=true
+    StoreLocal            Slot=54 Source=126   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    Jump                  Target=rc_representation_done_336   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_representation_copy_335:
     LoadConstInt          Target=127 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=55 Source=121   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=56 Source=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=57 Source=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_335:
+  rc_normalize_list_337:
     LoadLocal             Target=128 Slot=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     CmpIntNe              Target=129 Left=128 Right=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    JumpIfFalse           CondTemp=129 Target=rc_normalize_list_end_336   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=129 Target=rc_normalize_list_end_338   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     IsReferenceCounted    Target=130 SourceTemp=128
-    JumpIfFalse           CondTemp=130 Target=rc_normalize_list_cell_337   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=130 Target=rc_normalize_list_cell_339   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=131 SourceTemp=128 RuntimeManaged=true
     LoadLocal             Target=132 Slot=56   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     CmpIntNe              Target=133 Left=132 Right=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    JumpIfFalse           CondTemp=133 Target=rc_normalize_list_first_338   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=133 Target=rc_normalize_list_first_340   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadLocal             Target=134 Slot=57   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=134 OffsetBytes=8 Source=131   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_normalize_list_linked_339   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_first_338:
+    Jump                  Target=rc_normalize_list_linked_341   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_normalize_list_first_340:
     StoreLocal            Slot=56 Source=131   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_linked_339:
+  rc_normalize_list_linked_341:
     StoreLocal            Slot=57 Source=131   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_normalize_list_end_336   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_cell_337:
+    Jump                  Target=rc_normalize_list_end_338   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_normalize_list_cell_339:
     LoadMemOffset         Target=135 BasePtr=128 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadMemOffset         Target=136 BasePtr=128 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     IsReferenceCounted    Target=137 SourceTemp=135
-    JumpIfFalse           CondTemp=137 Target=rc_representation_copy_340   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=137 Target=rc_representation_copy_342   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=138 SourceTemp=135 RuntimeManaged=true
     StoreLocal            Slot=58 Source=138   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_representation_done_341   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_copy_340:
+    Jump                  Target=rc_representation_done_343   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_representation_copy_342:
     LoadConstInt          Target=140 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     CallKnown             Target=141 FuncLabel=__rcnorm_4 EnvTemp=140 ArgTemp=135   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=58 Source=141   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_341:
+  rc_representation_done_343:
     LoadLocal             Target=142 Slot=58   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     Alloc                 Target=143 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=143 OffsetBytes=0 Source=142   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=143 OffsetBytes=8 Source=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadLocal             Target=144 Slot=56   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     CmpIntNe              Target=145 Left=144 Right=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    JumpIfFalse           CondTemp=145 Target=rc_normalize_list_first_342   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=145 Target=rc_normalize_list_first_344   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadLocal             Target=146 Slot=57   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=146 OffsetBytes=8 Source=143   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_normalize_list_linked_343   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_first_342:
+    Jump                  Target=rc_normalize_list_linked_345   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_normalize_list_first_344:
     StoreLocal            Slot=56 Source=143   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_linked_343:
+  rc_normalize_list_linked_345:
     StoreLocal            Slot=57 Source=143   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=55 Source=136   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_normalize_list_335   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_normalize_list_end_336:
+    Jump                  Target=rc_normalize_list_337   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_normalize_list_end_338:
     LoadLocal             Target=147 Slot=56   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=54 Source=147   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_334:
+  rc_representation_done_336:
     LoadLocal             Target=148 Slot=54   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=53 Source=148   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_332:
+  rc_representation_done_334:
     LoadLocal             Target=149 Slot=53   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=120 OffsetBytes=0 Source=149   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     LoadMemOffset         Target=150 BasePtr=110 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDrop                SourceTemp=90 TypeName=Tuple OwnerSlot=44
     IsReferenceCounted    Target=151 SourceTemp=150
-    JumpIfFalse           CondTemp=151 Target=rc_representation_copy_344   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+    JumpIfFalse           CondTemp=151 Target=rc_representation_copy_346   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     RcDup                 Target=152 SourceTemp=150 RuntimeManaged=true
     StoreLocal            Slot=59 Source=152   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-    Jump                  Target=rc_representation_done_345   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_copy_344:
+    Jump                  Target=rc_representation_done_347   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
+  rc_representation_copy_346:
     CopyOutArena          DestTemp=153 SrcTemp=150 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=59 Source=153   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_345:
+  rc_representation_done_347:
     LoadLocal             Target=154 Slot=59   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=120 OffsetBytes=8 Source=154   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreLocal            Slot=52 Source=120   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
-  rc_representation_done_330:
+  rc_representation_done_332:
     LoadLocal             Target=155 Slot=52   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     Alloc                 Target=111 SizeBytes=24 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
     StoreMemOffset        BasePtr=111 OffsetBytes=0 Source=105   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:43:36)
@@ -2348,19 +2381,19 @@ function lambda_19  [ClosureHelper from topLet]
     RcDrop                SourceTemp=89 TypeName=Expr OwnerSlot=43
     RestoreArenaState     CursorLocalSlot=41 EndLocalSlot=42 PreRestoreEndSlot=62
     ReclaimArenaChunks    SavedEndSlot=42 PreRestoreEndSlot=62
-    Jump                  Target=match_end_324   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
-  match_arm_cleanup_326:
+    Jump                  Target=match_end_326   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
+  match_arm_cleanup_328:
     RestoreArenaState     CursorLocalSlot=41 EndLocalSlot=42 PreRestoreEndSlot=63
     ReclaimArenaChunks    SavedEndSlot=42 PreRestoreEndSlot=63
-    Jump                  Target=match_none_325   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
-  match_none_325:
+    Jump                  Target=match_none_327   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
+  match_none_327:
     LoadConstInt          Target=161 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
     StoreLocal            Slot=40 Source=161   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
-  match_end_324:
+  match_end_326:
     LoadLocal             Target=162 Slot=40   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:40:25)
     StoreLocal            Slot=35 Source=162   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=endif_323   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  else_322:
+    Jump                  Target=endif_325   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  else_324:
     SaveArenaState        CursorLocalSlot=64 EndLocalSlot=65
     LoadEnv               Target=163 Index=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:44:26)
     LoadLocal             Target=164 Slot=9   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:44:32)
@@ -2379,372 +2412,372 @@ function lambda_19  [ClosureHelper from topLet]
     ReclaimArenaChunks    SavedEndSlot=65 PreRestoreEndSlot=66
     LoadLocal             Target=172 Slot=67   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:44:26)
     IsReferenceCounted    Target=174 SourceTemp=172
-    JumpIfFalse           CondTemp=174 Target=rc_representation_copy_346   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=174 Target=rc_representation_copy_348   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=175 SourceTemp=172 RuntimeManaged=true
     RcDrop                SourceTemp=75 TypeName=Tuple OwnerSlot=31
     StoreLocal            Slot=68 Source=175   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_347   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_346:
+    Jump                  Target=rc_representation_done_349   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_348:
     Alloc                 Target=176 SizeBytes=24 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=177 BasePtr=172 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=178 SourceTemp=177
-    JumpIfFalse           CondTemp=178 Target=rc_representation_copy_348   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=178 Target=rc_representation_copy_350   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=179 SourceTemp=177 RuntimeManaged=true
     StoreLocal            Slot=69 Source=179   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_349   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_348:
+    Jump                  Target=rc_representation_done_351   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_350:
     CopyOutList           DestTemp=180 SrcTemp=177 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=69 Source=180   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_349:
+  rc_representation_done_351:
     LoadLocal             Target=181 Slot=69   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=176 OffsetBytes=0 Source=181   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=182 BasePtr=172 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=183 SourceTemp=182
-    JumpIfFalse           CondTemp=183 Target=rc_representation_copy_350   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=183 Target=rc_representation_copy_352   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=184 SourceTemp=182 RuntimeManaged=true
     StoreLocal            Slot=70 Source=184   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_351   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_350:
+    Jump                  Target=rc_representation_done_353   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_352:
     LoadConstInt          Target=186 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     CallKnown             Target=187 FuncLabel=__rcnorm_16 EnvTemp=186 ArgTemp=182   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=70 Source=187   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_351:
+  rc_representation_done_353:
     LoadLocal             Target=188 Slot=70   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=176 OffsetBytes=8 Source=188   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=189 BasePtr=172 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDrop                SourceTemp=75 TypeName=Tuple OwnerSlot=31
     IsReferenceCounted    Target=190 SourceTemp=189
-    JumpIfFalse           CondTemp=190 Target=rc_representation_copy_352   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=190 Target=rc_representation_copy_354   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=191 SourceTemp=189 RuntimeManaged=true
     StoreLocal            Slot=71 Source=191   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_353   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_352:
+    Jump                  Target=rc_representation_done_355   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_354:
     Alloc                 Target=192 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=193 BasePtr=189 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=194 SourceTemp=193
-    JumpIfFalse           CondTemp=194 Target=rc_representation_copy_354   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=194 Target=rc_representation_copy_356   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=195 SourceTemp=193 RuntimeManaged=true
     StoreLocal            Slot=72 Source=195   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_355   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_354:
-    IsReferenceCounted    Target=197 SourceTemp=193
-    JumpIfFalse           CondTemp=197 Target=rc_representation_copy_356   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    RcDup                 Target=198 SourceTemp=193 RuntimeManaged=true
-    StoreLocal            Slot=73 Source=198   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     Jump                  Target=rc_representation_done_357   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
   rc_representation_copy_356:
+    IsReferenceCounted    Target=197 SourceTemp=193
+    JumpIfFalse           CondTemp=197 Target=rc_representation_copy_358   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    RcDup                 Target=198 SourceTemp=193 RuntimeManaged=true
+    StoreLocal            Slot=73 Source=198   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    Jump                  Target=rc_representation_done_359   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_358:
     LoadConstInt          Target=199 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=74 Source=193   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=75 Source=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=76 Source=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_358:
+  rc_normalize_list_360:
     LoadLocal             Target=200 Slot=74   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     CmpIntNe              Target=201 Left=200 Right=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    JumpIfFalse           CondTemp=201 Target=rc_normalize_list_end_359   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=201 Target=rc_normalize_list_end_361   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=202 SourceTemp=200
-    JumpIfFalse           CondTemp=202 Target=rc_normalize_list_cell_360   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=202 Target=rc_normalize_list_cell_362   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=203 SourceTemp=200 RuntimeManaged=true
     LoadLocal             Target=204 Slot=75   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     CmpIntNe              Target=205 Left=204 Right=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    JumpIfFalse           CondTemp=205 Target=rc_normalize_list_first_361   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=205 Target=rc_normalize_list_first_363   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadLocal             Target=206 Slot=76   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=206 OffsetBytes=8 Source=203   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_normalize_list_linked_362   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_first_361:
+    Jump                  Target=rc_normalize_list_linked_364   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_normalize_list_first_363:
     StoreLocal            Slot=75 Source=203   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_linked_362:
+  rc_normalize_list_linked_364:
     StoreLocal            Slot=76 Source=203   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_normalize_list_end_359   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_cell_360:
+    Jump                  Target=rc_normalize_list_end_361   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_normalize_list_cell_362:
     LoadMemOffset         Target=207 BasePtr=200 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=208 BasePtr=200 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=209 SourceTemp=207
-    JumpIfFalse           CondTemp=209 Target=rc_representation_copy_363   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=209 Target=rc_representation_copy_365   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=210 SourceTemp=207 RuntimeManaged=true
     StoreLocal            Slot=77 Source=210   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_364   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_363:
+    Jump                  Target=rc_representation_done_366   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_365:
     LoadConstInt          Target=212 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     CallKnown             Target=213 FuncLabel=__rcnorm_4 EnvTemp=212 ArgTemp=207   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=77 Source=213   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_364:
+  rc_representation_done_366:
     LoadLocal             Target=214 Slot=77   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     Alloc                 Target=215 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=215 OffsetBytes=0 Source=214   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=215 OffsetBytes=8 Source=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadLocal             Target=216 Slot=75   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     CmpIntNe              Target=217 Left=216 Right=199   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    JumpIfFalse           CondTemp=217 Target=rc_normalize_list_first_365   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=217 Target=rc_normalize_list_first_367   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadLocal             Target=218 Slot=76   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=218 OffsetBytes=8 Source=215   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_normalize_list_linked_366   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_first_365:
+    Jump                  Target=rc_normalize_list_linked_368   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_normalize_list_first_367:
     StoreLocal            Slot=75 Source=215   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_linked_366:
+  rc_normalize_list_linked_368:
     StoreLocal            Slot=76 Source=215   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=74 Source=208   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_normalize_list_358   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_normalize_list_end_359:
+    Jump                  Target=rc_normalize_list_360   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_normalize_list_end_361:
     LoadLocal             Target=219 Slot=75   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=73 Source=219   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_357:
+  rc_representation_done_359:
     LoadLocal             Target=220 Slot=73   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=72 Source=220   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_355:
+  rc_representation_done_357:
     LoadLocal             Target=221 Slot=72   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=192 OffsetBytes=0 Source=221   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     LoadMemOffset         Target=222 BasePtr=189 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     IsReferenceCounted    Target=223 SourceTemp=222
-    JumpIfFalse           CondTemp=223 Target=rc_representation_copy_367   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+    JumpIfFalse           CondTemp=223 Target=rc_representation_copy_369   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     RcDup                 Target=224 SourceTemp=222 RuntimeManaged=true
     StoreLocal            Slot=78 Source=224   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-    Jump                  Target=rc_representation_done_368   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_copy_367:
+    Jump                  Target=rc_representation_done_370   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
+  rc_representation_copy_369:
     CopyOutArena          DestTemp=225 SrcTemp=222 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=78 Source=225   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_368:
+  rc_representation_done_370:
     LoadLocal             Target=226 Slot=78   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=192 OffsetBytes=8 Source=226   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=71 Source=192   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_353:
+  rc_representation_done_355:
     LoadLocal             Target=227 Slot=71   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreMemOffset        BasePtr=176 OffsetBytes=16 Source=227   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=68 Source=176   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  rc_representation_done_347:
+  rc_representation_done_349:
     LoadLocal             Target=228 Slot=68   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=35 Source=228   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
-  endif_323:
+  endif_325:
     LoadLocal             Target=173 Slot=35   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:38:21)
     StoreLocal            Slot=26 Source=173   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
     RcDrop                SourceTemp=74 TypeName=Expr OwnerSlot=30
     RcDrop                SourceTemp=73 TypeName=String OwnerSlot=29
     RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=79
     ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=79
-    Jump                  Target=match_end_319   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
-  match_arm_cleanup_321:
+    Jump                  Target=match_end_321   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
+  match_arm_cleanup_323:
     RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=80
     ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=80
-    Jump                  Target=match_none_320   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
-  match_none_320:
+    Jump                  Target=match_none_322   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
+  match_none_322:
     LoadConstInt          Target=232 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
     StoreLocal            Slot=26 Source=232   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
-  match_end_319:
+  match_end_321:
     LoadLocal             Target=233 Slot=26   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:36:13)
     StoreLocal            Slot=6 Source=233   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=81
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=81
-    Jump                  Target=match_end_291   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
-  match_arm_cleanup_293:
+    Jump                  Target=match_end_293   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
+  match_arm_cleanup_295:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=82
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=82
-    Jump                  Target=match_none_292   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
-  match_none_292:
+    Jump                  Target=match_none_294   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
+  match_none_294:
     LoadConstInt          Target=236 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
     StoreLocal            Slot=6 Source=236   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
-  match_end_291:
+  match_end_293:
     LoadLocal             Target=237 Slot=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:34:5)
     StoreLocal            Slot=83 Source=237   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=238 SourceTemp=237
-    JumpIfFalse           CondTemp=238 Target=general_rc_result_arena_copy_369   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=general_rc_result_already_owned_370   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_result_arena_copy_369:
+    JumpIfFalse           CondTemp=238 Target=general_rc_result_arena_copy_371   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Jump                  Target=general_rc_result_already_owned_372   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  general_rc_result_arena_copy_371:
     IsReferenceCounted    Target=239 SourceTemp=237
-    JumpIfFalse           CondTemp=239 Target=rc_representation_copy_371   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=239 Target=rc_representation_copy_373   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=240 SourceTemp=237 RuntimeManaged=true
     StoreLocal            Slot=84 Source=240   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_372   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_371:
+    Jump                  Target=rc_representation_done_374   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_373:
     Alloc                 Target=241 SizeBytes=24 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=242 BasePtr=237 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=243 SourceTemp=242
-    JumpIfFalse           CondTemp=243 Target=rc_representation_copy_373   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=243 Target=rc_representation_copy_375   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=244 SourceTemp=242 RuntimeManaged=true
     StoreLocal            Slot=85 Source=244   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_374   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_373:
+    Jump                  Target=rc_representation_done_376   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_375:
     CopyOutList           DestTemp=245 SrcTemp=242 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=85 Source=245   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_374:
+  rc_representation_done_376:
     LoadLocal             Target=246 Slot=85   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=241 OffsetBytes=0 Source=246   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=247 BasePtr=237 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=248 SourceTemp=247
-    JumpIfFalse           CondTemp=248 Target=rc_representation_copy_375   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=248 Target=rc_representation_copy_377   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=249 SourceTemp=247 RuntimeManaged=true
     StoreLocal            Slot=86 Source=249   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_376   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_375:
+    Jump                  Target=rc_representation_done_378   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_377:
     LoadConstInt          Target=251 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=252 FuncLabel=__rcnorm_16 EnvTemp=251 ArgTemp=247   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=86 Source=252   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_376:
+  rc_representation_done_378:
     LoadLocal             Target=253 Slot=86   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=241 OffsetBytes=8 Source=253   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=254 BasePtr=237 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=255 SourceTemp=254
-    JumpIfFalse           CondTemp=255 Target=rc_representation_copy_377   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=255 Target=rc_representation_copy_379   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=256 SourceTemp=254 RuntimeManaged=true
     StoreLocal            Slot=87 Source=256   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_378   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_377:
+    Jump                  Target=rc_representation_done_380   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_379:
     Alloc                 Target=257 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=258 BasePtr=254 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=259 SourceTemp=258
-    JumpIfFalse           CondTemp=259 Target=rc_representation_copy_379   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=259 Target=rc_representation_copy_381   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=260 SourceTemp=258 RuntimeManaged=true
     StoreLocal            Slot=88 Source=260   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_380   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_379:
-    IsReferenceCounted    Target=262 SourceTemp=258
-    JumpIfFalse           CondTemp=262 Target=rc_representation_copy_381   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    RcDup                 Target=263 SourceTemp=258 RuntimeManaged=true
-    StoreLocal            Slot=89 Source=263   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     Jump                  Target=rc_representation_done_382   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
   rc_representation_copy_381:
+    IsReferenceCounted    Target=262 SourceTemp=258
+    JumpIfFalse           CondTemp=262 Target=rc_representation_copy_383   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    RcDup                 Target=263 SourceTemp=258 RuntimeManaged=true
+    StoreLocal            Slot=89 Source=263   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Jump                  Target=rc_representation_done_384   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_383:
     LoadConstInt          Target=264 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=90 Source=258   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=91 Source=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=92 Source=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_383:
+  rc_normalize_list_385:
     LoadLocal             Target=265 Slot=90   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=266 Left=265 Right=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=266 Target=rc_normalize_list_end_384   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=266 Target=rc_normalize_list_end_386   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=267 SourceTemp=265
-    JumpIfFalse           CondTemp=267 Target=rc_normalize_list_cell_385   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=267 Target=rc_normalize_list_cell_387   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=268 SourceTemp=265 RuntimeManaged=true
     LoadLocal             Target=269 Slot=91   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=270 Left=269 Right=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=270 Target=rc_normalize_list_first_386   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=270 Target=rc_normalize_list_first_388   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadLocal             Target=271 Slot=92   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=271 OffsetBytes=8 Source=268   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_normalize_list_linked_387   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_first_386:
+    Jump                  Target=rc_normalize_list_linked_389   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_normalize_list_first_388:
     StoreLocal            Slot=91 Source=268   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_linked_387:
+  rc_normalize_list_linked_389:
     StoreLocal            Slot=92 Source=268   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_normalize_list_end_384   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_cell_385:
+    Jump                  Target=rc_normalize_list_end_386   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_normalize_list_cell_387:
     LoadMemOffset         Target=272 BasePtr=265 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=273 BasePtr=265 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=274 SourceTemp=272
-    JumpIfFalse           CondTemp=274 Target=rc_representation_copy_388   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=274 Target=rc_representation_copy_390   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=275 SourceTemp=272 RuntimeManaged=true
     StoreLocal            Slot=93 Source=275   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_389   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_388:
+    Jump                  Target=rc_representation_done_391   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_390:
     LoadConstInt          Target=277 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=278 FuncLabel=__rcnorm_4 EnvTemp=277 ArgTemp=272   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=93 Source=278   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_389:
+  rc_representation_done_391:
     LoadLocal             Target=279 Slot=93   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     Alloc                 Target=280 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=280 OffsetBytes=0 Source=279   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=280 OffsetBytes=8 Source=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadLocal             Target=281 Slot=91   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=282 Left=281 Right=264   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=282 Target=rc_normalize_list_first_390   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=282 Target=rc_normalize_list_first_392   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadLocal             Target=283 Slot=92   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=283 OffsetBytes=8 Source=280   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_normalize_list_linked_391   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_first_390:
+    Jump                  Target=rc_normalize_list_linked_393   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_normalize_list_first_392:
     StoreLocal            Slot=91 Source=280   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_linked_391:
+  rc_normalize_list_linked_393:
     StoreLocal            Slot=92 Source=280   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=90 Source=273   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_normalize_list_383   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_normalize_list_end_384:
+    Jump                  Target=rc_normalize_list_385   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_normalize_list_end_386:
     LoadLocal             Target=284 Slot=91   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=89 Source=284   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_382:
+  rc_representation_done_384:
     LoadLocal             Target=285 Slot=89   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=88 Source=285   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_380:
+  rc_representation_done_382:
     LoadLocal             Target=286 Slot=88   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=257 OffsetBytes=0 Source=286   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=287 BasePtr=254 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=288 SourceTemp=287
-    JumpIfFalse           CondTemp=288 Target=rc_representation_copy_392   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=288 Target=rc_representation_copy_394   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDup                 Target=289 SourceTemp=287 RuntimeManaged=true
     StoreLocal            Slot=94 Source=289   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rc_representation_done_393   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_copy_392:
+    Jump                  Target=rc_representation_done_395   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_394:
     CopyOutArena          DestTemp=290 SrcTemp=287 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=94 Source=290   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_393:
+  rc_representation_done_395:
     LoadLocal             Target=291 Slot=94   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=257 OffsetBytes=8 Source=291   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=87 Source=257   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_378:
+  rc_representation_done_380:
     LoadLocal             Target=292 Slot=87   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=241 OffsetBytes=16 Source=292   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=84 Source=241   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rc_representation_done_372:
+  rc_representation_done_374:
     LoadLocal             Target=293 Slot=84   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=83 Source=293   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_result_already_owned_370:
+  general_rc_result_already_owned_372:
     LoadLocal             Target=294 Slot=83   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadArgumentOwnership Target=295   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=296 Value=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     ShrInt                Target=297 Left=295 Right=296   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=298 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     AndInt                Target=299 Left=297 Right=298   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=299 Target=independent_result_not_requested_394   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=299 Target=independent_result_not_requested_396   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadArgumentOwnership Target=300   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=301 Value=-8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     AndInt                Target=302 Left=300 Right=301   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=303 Value=2305843009213693952   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=302 OffsetBytes=0 Source=303   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  independent_result_not_requested_394:
+  independent_result_not_requested_396:
     LoadLocal             Target=304 Slot=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=305 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=306 Left=304 Right=305   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=306 Target=general_rc_owned_absent_395   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=306 Target=general_rc_owned_absent_397   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=307 SourceTemp=304
-    JumpIfFalse           CondTemp=307 Target=general_rc_owned_absent_395   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=307 Target=general_rc_owned_absent_397   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=308 SourceTemp=304
-    JumpIfFalse           CondTemp=308 Target=rc_drop_tuple_shared_396   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=308 Target=rc_drop_tuple_shared_398   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=309 BasePtr=304 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=310 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=311 FuncLabel=__rcdrop_record_7 EnvTemp=310 ArgTemp=309   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=312 BasePtr=304 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=313 SourceTemp=312
-    JumpIfFalse           CondTemp=313 Target=rc_drop_tuple_shared_397   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=313 Target=rc_drop_tuple_shared_399   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=314 BasePtr=312 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=95 Source=314   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_398:
+  rcdrop_list_400:
     LoadLocal             Target=315 Slot=95   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=316 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=317 Left=315 Right=316   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=317 Target=rcdrop_list_end_400   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=317 Target=rcdrop_list_end_402   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=318 SourceTemp=315
-    JumpIfFalse           CondTemp=318 Target=rcdrop_list_shared_399   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=318 Target=rcdrop_list_shared_401   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=319 BasePtr=315 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=320 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=321 FuncLabel=__rcdrop_record_7 EnvTemp=320 ArgTemp=319   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=322 BasePtr=315 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=315 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=95 Source=322   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rcdrop_list_398   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_shared_399:
+    Jump                  Target=rcdrop_list_400   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_shared_401:
     RcDrop                SourceTemp=315 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_400   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_end_400:
+    Jump                  Target=rcdrop_list_end_402   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_end_402:
     LoadMemOffset         Target=323 BasePtr=312 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=323 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_397:
+  rc_drop_tuple_shared_399:
     RcDrop                SourceTemp=312 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_396:
+  rc_drop_tuple_shared_398:
     RcDrop                SourceTemp=304 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=5 Source=305   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_owned_absent_395:
+  general_rc_owned_absent_397:
     LoadLocal             Target=324 Slot=14   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=325 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=326 Left=324 Right=325   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=326 Target=general_rc_owned_absent_401   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=326 Target=general_rc_owned_absent_403   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=327 SourceTemp=324
-    JumpIfFalse           CondTemp=327 Target=general_rc_owned_absent_401   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=327 Target=general_rc_owned_absent_403   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=328 SourceTemp=324
-    JumpIfFalse           CondTemp=328 Target=rc_drop_tuple_shared_402   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=328 Target=rc_drop_tuple_shared_404   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=329 BasePtr=324 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=329 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=330 BasePtr=324 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
@@ -2752,137 +2785,188 @@ function lambda_19  [ClosureHelper from topLet]
     CallKnown             Target=332 FuncLabel=__rcdrop_general_18 EnvTemp=331 ArgTemp=330   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=333 BasePtr=324 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=334 SourceTemp=333
-    JumpIfFalse           CondTemp=334 Target=rc_drop_tuple_shared_403   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=334 Target=rc_drop_tuple_shared_405   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=335 BasePtr=333 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=96 Source=335   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_404:
+  rcdrop_list_406:
     LoadLocal             Target=336 Slot=96   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=337 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=338 Left=336 Right=337   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=338 Target=rcdrop_list_end_406   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=338 Target=rcdrop_list_end_408   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=339 SourceTemp=336
-    JumpIfFalse           CondTemp=339 Target=rcdrop_list_shared_405   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=339 Target=rcdrop_list_shared_407   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=340 BasePtr=336 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=341 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=342 FuncLabel=__rcdrop_record_7 EnvTemp=341 ArgTemp=340   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=343 BasePtr=336 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=336 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=96 Source=343   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rcdrop_list_404   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_shared_405:
+    Jump                  Target=rcdrop_list_406   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_shared_407:
     RcDrop                SourceTemp=336 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_406   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_end_406:
+    Jump                  Target=rcdrop_list_end_408   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_end_408:
     LoadMemOffset         Target=344 BasePtr=333 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=344 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_403:
+  rc_drop_tuple_shared_405:
     RcDrop                SourceTemp=333 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_402:
+  rc_drop_tuple_shared_404:
     RcDrop                SourceTemp=324 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=14 Source=325   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_owned_absent_401:
+  general_rc_owned_absent_403:
     LoadLocal             Target=345 Slot=39   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=346 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=347 Left=345 Right=346   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=347 Target=general_rc_owned_absent_407   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=347 Target=general_rc_owned_absent_409   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=348 SourceTemp=345
-    JumpIfFalse           CondTemp=348 Target=general_rc_owned_absent_407   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=348 Target=general_rc_owned_absent_409   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=349 SourceTemp=345
-    JumpIfFalse           CondTemp=349 Target=rc_drop_tuple_shared_408   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=349 Target=rc_drop_tuple_shared_410   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=350 BasePtr=345 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=351 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=352 FuncLabel=__rcdrop_general_18 EnvTemp=351 ArgTemp=350   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=353 BasePtr=345 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=354 SourceTemp=353
-    JumpIfFalse           CondTemp=354 Target=rc_drop_tuple_shared_409   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=354 Target=rc_drop_tuple_shared_411   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=355 BasePtr=353 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=97 Source=355   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_410:
+  rcdrop_list_412:
     LoadLocal             Target=356 Slot=97   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=357 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=358 Left=356 Right=357   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=358 Target=rcdrop_list_end_412   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=358 Target=rcdrop_list_end_414   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=359 SourceTemp=356
-    JumpIfFalse           CondTemp=359 Target=rcdrop_list_shared_411   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=359 Target=rcdrop_list_shared_413   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=360 BasePtr=356 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=361 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=362 FuncLabel=__rcdrop_record_7 EnvTemp=361 ArgTemp=360   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=363 BasePtr=356 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=356 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=97 Source=363   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rcdrop_list_410   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_shared_411:
+    Jump                  Target=rcdrop_list_412   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_shared_413:
     RcDrop                SourceTemp=356 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_412   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_end_412:
+    Jump                  Target=rcdrop_list_end_414   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_end_414:
     LoadMemOffset         Target=364 BasePtr=353 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=364 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_409:
+  rc_drop_tuple_shared_411:
     RcDrop                SourceTemp=353 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_408:
+  rc_drop_tuple_shared_410:
     RcDrop                SourceTemp=345 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=39 Source=346   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_owned_absent_407:
+  general_rc_owned_absent_409:
     LoadLocal             Target=365 Slot=67   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=366 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=367 Left=365 Right=366   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=367 Target=general_rc_owned_absent_413   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=367 Target=general_rc_owned_absent_415   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     IsReferenceCounted    Target=368 SourceTemp=365
-    JumpIfFalse           CondTemp=368 Target=general_rc_owned_absent_413   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=368 Target=general_rc_owned_absent_415   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=369 SourceTemp=365
-    JumpIfFalse           CondTemp=369 Target=rc_drop_tuple_shared_414   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=369 Target=rc_drop_tuple_shared_416   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=370 BasePtr=365 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=98 Source=370   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_415:
+  rcdrop_list_417:
     LoadLocal             Target=371 Slot=98   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=372 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=373 Left=371 Right=372   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=373 Target=rcdrop_list_end_417   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=373 Target=rcdrop_list_end_419   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=374 SourceTemp=371
-    JumpIfFalse           CondTemp=374 Target=rcdrop_list_shared_416   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=374 Target=rcdrop_list_shared_418   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=375 BasePtr=371 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=371 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=98 Source=375   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rcdrop_list_415   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_shared_416:
+    Jump                  Target=rcdrop_list_417   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_shared_418:
     RcDrop                SourceTemp=371 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_417   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_end_417:
+    Jump                  Target=rcdrop_list_end_419   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_end_419:
     LoadMemOffset         Target=376 BasePtr=365 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=377 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=378 FuncLabel=__rcdrop_general_17 EnvTemp=377 ArgTemp=376   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=379 BasePtr=365 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=380 SourceTemp=379
-    JumpIfFalse           CondTemp=380 Target=rc_drop_tuple_shared_418   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=380 Target=rc_drop_tuple_shared_420   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=381 BasePtr=379 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreLocal            Slot=99 Source=381   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_419:
+  rcdrop_list_421:
     LoadLocal             Target=382 Slot=99   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=383 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CmpIntNe              Target=384 Left=382 Right=383   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    JumpIfFalse           CondTemp=384 Target=rcdrop_list_end_421   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=384 Target=rcdrop_list_end_423   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcIsUnique            Target=385 SourceTemp=382
-    JumpIfFalse           CondTemp=385 Target=rcdrop_list_shared_420   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    JumpIfFalse           CondTemp=385 Target=rcdrop_list_shared_422   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=386 BasePtr=382 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadConstInt          Target=387 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     CallKnown             Target=388 FuncLabel=__rcdrop_record_7 EnvTemp=387 ArgTemp=386   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     LoadMemOffset         Target=389 BasePtr=382 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=382 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=99 Source=389   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    Jump                  Target=rcdrop_list_419   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_shared_420:
+    Jump                  Target=rcdrop_list_421   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_shared_422:
     RcDrop                SourceTemp=382 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_421   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  rcdrop_list_end_421:
+    Jump                  Target=rcdrop_list_end_423   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rcdrop_list_end_423:
     LoadMemOffset         Target=390 BasePtr=379 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     RcDrop                SourceTemp=390 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_418:
+  rc_drop_tuple_shared_420:
     RcDrop                SourceTemp=379 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_414:
+  rc_drop_tuple_shared_416:
     RcDrop                SourceTemp=365 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=67 Source=366   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-  general_rc_owned_absent_413:
+  general_rc_owned_absent_415:
     Return                Source=294   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+
+function __rc_cdrop_21  [RuntimeManagedClosureDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    RcDrop                SourceTemp=1 TypeName=Function RuntimeManaged=true
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=48   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    RcDrop                SourceTemp=2 TypeName=Function RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Return                Source=3   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+
+function lambda_20$env_normalize  [ClosureEnvironmentNormalizer from topLet]
+  locals=4 temps=18
+    LoadLocal             Target=0 Slot=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_424   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Jump                  Target=rc_representation_done_425   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_424:
+    CopyOutClosure        DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreLocal            Slot=2 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_done_425:
+    LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=48   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    IsReferenceCounted    Target=8 SourceTemp=7
+    JumpIfFalse           CondTemp=8 Target=rc_representation_copy_426   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    RcDup                 Target=9 SourceTemp=7 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=9   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Jump                  Target=rc_representation_done_427   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_copy_426:
+    CopyOutClosure        DestTemp=10 SrcTemp=7 RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreLocal            Slot=3 Source=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+  rc_representation_done_427:
+    LoadLocal             Target=11 Slot=3   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=48 Source=11   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=12 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=12   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=13 BasePtr=0 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=16 Source=13   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=14 BasePtr=0 OffsetBytes=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=24 Source=14   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=15 BasePtr=0 OffsetBytes=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=32 Source=15   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadMemOffset         Target=16 BasePtr=0 OffsetBytes=40   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=40 Source=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    LoadFuncAddr          Target=17 FuncLabel=__rc_cdrop_21   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    Return                Source=17   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
 
 function recgroup_13_topLet  [SourceFunction from topLet]
   locals=2 temps=14
@@ -2906,7 +2990,7 @@ function recgroup_13_topLet  [SourceFunction from topLet]
     LoadLocal             Target=12 Slot=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     MakeClosure           Target=11 FuncLabel=recgroup_12_items EnvPtrTemp=12 EnvSizeBytes=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=48 Source=11   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
-    MakeClosure           Target=13 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=56 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
+    MakeClosure           Target=13 FuncLabel=lambda_20 EnvPtrTemp=0 EnvSizeBytes=56 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:33:1)
     Return                Source=13   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
 
 function recgroup_14_binding  [SourceFunction from binding]
@@ -2955,258 +3039,258 @@ function recgroup_14_binding  [SourceFunction from binding]
     StoreLocal            Slot=15 Source=21   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
     RcDrop                SourceTemp=14 TypeName=Tuple OwnerSlot=19
     RcDrop                SourceTemp=13 TypeName=Expr OwnerSlot=18
-    Jump                  Target=match_end_425   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
-  match_arm_cleanup_427:
+    Jump                  Target=match_end_431   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
+  match_arm_cleanup_433:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
-    Jump                  Target=match_none_426   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
-  match_none_426:
+    Jump                  Target=match_none_432   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
+  match_none_432:
     LoadConstInt          Target=24 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
     StoreLocal            Slot=15 Source=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
-  match_end_425:
+  match_end_431:
     LoadLocal             Target=25 Slot=15   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:48:13)
     StoreLocal            Slot=6 Source=25   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
-    Jump                  Target=match_end_422   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
-  match_arm_cleanup_424:
+    Jump                  Target=match_end_428   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
+  match_arm_cleanup_430:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=23
-    Jump                  Target=match_none_423   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
-  match_none_423:
+    Jump                  Target=match_none_429   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
+  match_none_429:
     LoadConstInt          Target=28 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
     StoreLocal            Slot=6 Source=28   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
-  match_end_422:
+  match_end_428:
     LoadLocal             Target=29 Slot=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:46:5)
     IsReferenceCounted    Target=30 SourceTemp=29
-    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_428   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_434   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
     StoreLocal            Slot=24 Source=31   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_429   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_428:
+    Jump                  Target=rc_representation_done_435   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_434:
     Alloc                 Target=32 SizeBytes=24 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=33 BasePtr=29 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=34 SourceTemp=33
-    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_430   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_436   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=35 SourceTemp=33 RuntimeManaged=true
     StoreLocal            Slot=25 Source=35   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_431   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_430:
+    Jump                  Target=rc_representation_done_437   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_436:
     CopyOutArena          DestTemp=36 SrcTemp=33 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=25 Source=36   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_431:
+  rc_representation_done_437:
     LoadLocal             Target=37 Slot=25   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=32 OffsetBytes=0 Source=37   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=38 BasePtr=29 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=39 SourceTemp=38
-    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_432   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_438   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true
     StoreLocal            Slot=26 Source=40   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_433   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_432:
+    Jump                  Target=rc_representation_done_439   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_438:
     LoadConstInt          Target=42 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=43 FuncLabel=__rcnorm_11 EnvTemp=42 ArgTemp=38   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=26 Source=43   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_433:
+  rc_representation_done_439:
     LoadLocal             Target=44 Slot=26   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=32 OffsetBytes=8 Source=44   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=45 BasePtr=29 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=46 SourceTemp=45
-    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_434   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_440   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=47 SourceTemp=45 RuntimeManaged=true
     StoreLocal            Slot=27 Source=47   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_435   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_434:
+    Jump                  Target=rc_representation_done_441   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_440:
     Alloc                 Target=48 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=49 BasePtr=45 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=50 SourceTemp=49
-    JumpIfFalse           CondTemp=50 Target=rc_representation_copy_436   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=50 Target=rc_representation_copy_442   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=51 SourceTemp=49 RuntimeManaged=true
     StoreLocal            Slot=28 Source=51   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_437   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_436:
+    Jump                  Target=rc_representation_done_443   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_442:
     IsReferenceCounted    Target=53 SourceTemp=49
-    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_438   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_444   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=54 SourceTemp=49 RuntimeManaged=true
     StoreLocal            Slot=29 Source=54   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_439   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_438:
+    Jump                  Target=rc_representation_done_445   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_444:
     LoadConstInt          Target=55 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=30 Source=49   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=31 Source=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=32 Source=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_440:
+  rc_normalize_list_446:
     LoadLocal             Target=56 Slot=30   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=57 Left=56 Right=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=57 Target=rc_normalize_list_end_441   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=57 Target=rc_normalize_list_end_447   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=58 SourceTemp=56
-    JumpIfFalse           CondTemp=58 Target=rc_normalize_list_cell_442   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=58 Target=rc_normalize_list_cell_448   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=59 SourceTemp=56 RuntimeManaged=true
     LoadLocal             Target=60 Slot=31   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=61 Left=60 Right=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_443   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_449   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadLocal             Target=62 Slot=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=59   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_normalize_list_linked_444   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_first_443:
+    Jump                  Target=rc_normalize_list_linked_450   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_normalize_list_first_449:
     StoreLocal            Slot=31 Source=59   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_linked_444:
+  rc_normalize_list_linked_450:
     StoreLocal            Slot=32 Source=59   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_normalize_list_end_441   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_cell_442:
+    Jump                  Target=rc_normalize_list_end_447   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_normalize_list_cell_448:
     LoadMemOffset         Target=63 BasePtr=56 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=64 BasePtr=56 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=65 SourceTemp=63
-    JumpIfFalse           CondTemp=65 Target=rc_representation_copy_445   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=65 Target=rc_representation_copy_451   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=66 SourceTemp=63 RuntimeManaged=true
     StoreLocal            Slot=33 Source=66   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_446   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_445:
+    Jump                  Target=rc_representation_done_452   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_451:
     LoadConstInt          Target=68 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=69 FuncLabel=__rcnorm_4 EnvTemp=68 ArgTemp=63   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=33 Source=69   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_446:
+  rc_representation_done_452:
     LoadLocal             Target=70 Slot=33   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     Alloc                 Target=71 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=71 OffsetBytes=0 Source=70   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=71 OffsetBytes=8 Source=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadLocal             Target=72 Slot=31   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=73 Left=72 Right=55   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=73 Target=rc_normalize_list_first_447   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=73 Target=rc_normalize_list_first_453   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadLocal             Target=74 Slot=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=74 OffsetBytes=8 Source=71   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_normalize_list_linked_448   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_first_447:
+    Jump                  Target=rc_normalize_list_linked_454   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_normalize_list_first_453:
     StoreLocal            Slot=31 Source=71   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_linked_448:
+  rc_normalize_list_linked_454:
     StoreLocal            Slot=32 Source=71   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=30 Source=64   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_normalize_list_440   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_normalize_list_end_441:
+    Jump                  Target=rc_normalize_list_446   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_normalize_list_end_447:
     LoadLocal             Target=75 Slot=31   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=29 Source=75   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_439:
+  rc_representation_done_445:
     LoadLocal             Target=76 Slot=29   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=28 Source=76   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_437:
+  rc_representation_done_443:
     LoadLocal             Target=77 Slot=28   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=48 OffsetBytes=0 Source=77   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=78 BasePtr=45 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=79 SourceTemp=78
-    JumpIfFalse           CondTemp=79 Target=rc_representation_copy_449   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=79 Target=rc_representation_copy_455   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDup                 Target=80 SourceTemp=78 RuntimeManaged=true
     StoreLocal            Slot=34 Source=80   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rc_representation_done_450   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_copy_449:
+    Jump                  Target=rc_representation_done_456   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rc_representation_copy_455:
     CopyOutArena          DestTemp=81 SrcTemp=78 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=34 Source=81   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_450:
+  rc_representation_done_456:
     LoadLocal             Target=82 Slot=34   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=48 OffsetBytes=8 Source=82   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=27 Source=48   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_435:
+  rc_representation_done_441:
     LoadLocal             Target=83 Slot=27   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=32 OffsetBytes=16 Source=83   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=24 Source=32   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rc_representation_done_429:
+  rc_representation_done_435:
     LoadLocal             Target=84 Slot=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadArgumentOwnership Target=85   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=86 Value=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     ShrInt                Target=87 Left=85 Right=86   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=88 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     AndInt                Target=89 Left=87 Right=88   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=89 Target=independent_result_not_requested_451   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=89 Target=independent_result_not_requested_457   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadArgumentOwnership Target=90   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=91 Value=-8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     AndInt                Target=92 Left=90 Right=91   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=93 Value=2305843009213693952   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreMemOffset        BasePtr=92 OffsetBytes=0 Source=93   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  independent_result_not_requested_451:
+  independent_result_not_requested_457:
     LoadLocal             Target=94 Slot=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=95 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=96 Left=94 Right=95   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=96 Target=general_rc_owned_absent_452   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=96 Target=general_rc_owned_absent_458   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=97 SourceTemp=94
-    JumpIfFalse           CondTemp=97 Target=general_rc_owned_absent_452   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=97 Target=general_rc_owned_absent_458   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=98 SourceTemp=94
-    JumpIfFalse           CondTemp=98 Target=rc_drop_tuple_shared_453   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=98 Target=rc_drop_tuple_shared_459   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=99 BasePtr=94 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=100 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=101 FuncLabel=__rcdrop_record_7 EnvTemp=100 ArgTemp=99   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=102 BasePtr=94 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=103 SourceTemp=102
-    JumpIfFalse           CondTemp=103 Target=rc_drop_tuple_shared_454   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=103 Target=rc_drop_tuple_shared_460   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=104 BasePtr=102 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=35 Source=104   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_455:
+  rcdrop_list_461:
     LoadLocal             Target=105 Slot=35   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=106 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=107 Left=105 Right=106   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_457   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_463   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=108 SourceTemp=105
-    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_456   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_462   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=109 BasePtr=105 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=110 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=111 FuncLabel=__rcdrop_record_7 EnvTemp=110 ArgTemp=109   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=112 BasePtr=105 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=35 Source=112   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rcdrop_list_455   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_shared_456:
+    Jump                  Target=rcdrop_list_461   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rcdrop_list_shared_462:
     RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_457   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_end_457:
+    Jump                  Target=rcdrop_list_end_463   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rcdrop_list_end_463:
     LoadMemOffset         Target=113 BasePtr=102 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDrop                SourceTemp=113 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_454:
+  rc_drop_tuple_shared_460:
     RcDrop                SourceTemp=102 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_453:
+  rc_drop_tuple_shared_459:
     RcDrop                SourceTemp=94 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=5 Source=95   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  general_rc_owned_absent_452:
+  general_rc_owned_absent_458:
     LoadLocal             Target=114 Slot=14   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=115 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=116 Left=114 Right=115   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=116 Target=general_rc_owned_absent_458   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=116 Target=general_rc_owned_absent_464   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     IsReferenceCounted    Target=117 SourceTemp=114
-    JumpIfFalse           CondTemp=117 Target=general_rc_owned_absent_458   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=117 Target=general_rc_owned_absent_464   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=118 SourceTemp=114
-    JumpIfFalse           CondTemp=118 Target=rc_drop_tuple_shared_459   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=118 Target=rc_drop_tuple_shared_465   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=119 BasePtr=114 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=120 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=121 FuncLabel=__rcdrop_general_18 EnvTemp=120 ArgTemp=119   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=122 BasePtr=114 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=123 SourceTemp=122
-    JumpIfFalse           CondTemp=123 Target=rc_drop_tuple_shared_460   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=123 Target=rc_drop_tuple_shared_466   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=124 BasePtr=122 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=36 Source=124   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_461:
+  rcdrop_list_467:
     LoadLocal             Target=125 Slot=36   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=126 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CmpIntNe              Target=127 Left=125 Right=126   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    JumpIfFalse           CondTemp=127 Target=rcdrop_list_end_463   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=127 Target=rcdrop_list_end_469   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcIsUnique            Target=128 SourceTemp=125
-    JumpIfFalse           CondTemp=128 Target=rcdrop_list_shared_462   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+    JumpIfFalse           CondTemp=128 Target=rcdrop_list_shared_468   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=129 BasePtr=125 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=130 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     CallKnown             Target=131 FuncLabel=__rcdrop_record_7 EnvTemp=130 ArgTemp=129   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadMemOffset         Target=132 BasePtr=125 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=36 Source=132   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-    Jump                  Target=rcdrop_list_461   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_shared_462:
+    Jump                  Target=rcdrop_list_467   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rcdrop_list_shared_468:
     RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_463   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  rcdrop_list_end_463:
+    Jump                  Target=rcdrop_list_end_469   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
+  rcdrop_list_end_469:
     LoadMemOffset         Target=133 BasePtr=122 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     RcDrop                SourceTemp=133 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_460:
+  rc_drop_tuple_shared_466:
     RcDrop                SourceTemp=122 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_459:
+  rc_drop_tuple_shared_465:
     RcDrop                SourceTemp=114 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=14 Source=115   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
-  general_rc_owned_absent_458:
+  general_rc_owned_absent_464:
     Return                Source=84   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
 
-function lambda_21  [ClosureHelper from size]
+function lambda_23  [ClosureHelper from size]
   locals=22 temps=21
     LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreLocal            Slot=2 Source=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
@@ -3215,28 +3299,28 @@ function lambda_21  [ClosureHelper from size]
     StoreLocal            Slot=5 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreLocal            Slot=6 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreLocal            Slot=7 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-  lambda_21_body:
+  lambda_23_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     LoadLocal             Target=2 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:11)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     CmpIntEq              Target=4 Left=2 Right=3   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_467   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_473   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     LoadLocal             Target=5 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:53:17)
     StoreLocal            Slot=11 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    Jump                  Target=match_end_464   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-  match_arm_cleanup_467:
+    Jump                  Target=match_end_470   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+  match_arm_cleanup_473:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_466   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-  match_next_466:
+    Jump                  Target=match_next_472   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+  match_next_472:
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadConstInt          Target=6 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     CmpIntNe              Target=7 Left=2 Right=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_468   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_474   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     StoreLocal            Slot=18 Source=9   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
@@ -3251,51 +3335,51 @@ function lambda_21  [ClosureHelper from size]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
     StoreLocal            Slot=1 Source=14   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:54:24)
     RestoreStackPointer   Slot=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:54:24)
-    Jump                  Target=lambda_21_body   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:54:24)
+    Jump                  Target=lambda_23_body   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:54:24)
     LoadConstInt          Target=17 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:54:24)
     StoreLocal            Slot=11 Source=17   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
-    Jump                  Target=match_end_464   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-  match_arm_cleanup_468:
+    Jump                  Target=match_end_470   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+  match_arm_cleanup_474:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
-    Jump                  Target=match_none_465   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-  match_none_465:
+    Jump                  Target=match_none_471   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
+  match_none_471:
     LoadConstInt          Target=19 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     StoreLocal            Slot=11 Source=19   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
-  match_end_464:
+  match_end_470:
     LoadLocal             Target=20 Slot=11   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:52:5)
     Return                Source=20   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
 
-function lambda_21$env_normalize  [ClosureEnvironmentNormalizer from size]
+function lambda_23$env_normalize  [ClosureEnvironmentNormalizer from size]
   locals=3 temps=8
     LoadLocal             Target=0 Slot=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     IsReferenceCounted    Target=3 SourceTemp=2
-    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_469   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_475   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
     StoreLocal            Slot=2 Source=4   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-    Jump                  Target=rc_representation_done_470   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-  rc_representation_copy_469:
+    Jump                  Target=rc_representation_done_476   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
+  rc_representation_copy_475:
     CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreLocal            Slot=2 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-  rc_representation_done_470:
+  rc_representation_done_476:
     LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     Return                Source=7   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
 
-function lambda_20  [SourceFunction from size]
+function lambda_22  [SourceFunction from size]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-    MakeClosure           Target=4 FuncLabel=lambda_21 EnvPtrTemp=0 EnvSizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
+    MakeClosure           Target=4 FuncLabel=lambda_23 EnvPtrTemp=0 EnvSizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     Return                Source=4   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
 
-function lambda_22  [SourceFunction from run]
+function lambda_24  [SourceFunction from run]
   locals=38 temps=130
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:57:19)
@@ -3410,35 +3494,35 @@ function lambda_22  [SourceFunction from run]
     LoadLocal             Target=60 Slot=13   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:41)
     Borrow                Target=61 SourceTemp=60
     GetAdtTag             Target=62 Ptr=61   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    SwitchTag             TagTemp=62 Cases=[2] DefaultLabel=lambda_22_rc_edge_13_0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_group_476:
+    SwitchTag             TagTemp=62 Cases=[2] DefaultLabel=lambda_24_rc_edge_13_0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_group_482:
     SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
     LoadConstInt          Target=63 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntNe              Target=64 Left=61 Right=63   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=64 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=64 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtTag             Target=65 Ptr=61   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=67 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntEq              Target=66 Left=65 Right=67   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=66 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=66 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtField           Target=68 Ptr=61 FieldIndex=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=69 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntNe              Target=70 Left=68 Right=69   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=70 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=70 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtTag             Target=71 Ptr=68   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=73 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntEq              Target=72 Left=71 Right=73   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=72 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=72 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtField           Target=74 Ptr=68 FieldIndex=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     StoreLocal            Slot=20 Source=74   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RcDrop                SourceTemp=74 TypeName=String OwnerSlot=20
     GetAdtField           Target=75 Ptr=68 FieldIndex=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=76 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntNe              Target=77 Left=75 Right=76   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=77 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=77 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtTag             Target=78 Ptr=75   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=80 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntEq              Target=79 Left=78 Right=80   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=79 Target=match_arm_cleanup_479   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=79 Target=match_arm_cleanup_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RcDrop                SourceTemp=52 TypeName=Maybe OwnerSlot=13
     GetAdtField           Target=81 Ptr=75 FieldIndex=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     StoreLocal            Slot=21 Source=81   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
@@ -3449,59 +3533,59 @@ function lambda_22  [SourceFunction from run]
     StoreLocal            Slot=17 Source=83   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=23
-    Jump                  Target=match_end_474   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_arm_cleanup_479:
+    Jump                  Target=match_end_480   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_arm_cleanup_485:
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=24
-    Jump                  Target=match_group_next_478   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_group_next_478:
+    Jump                  Target=match_group_next_484   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_group_next_484:
     SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
     LoadConstInt          Target=86 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntNe              Target=87 Left=61 Right=86   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=87 Target=match_arm_cleanup_480   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=87 Target=match_arm_cleanup_486   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtTag             Target=88 Ptr=61   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     LoadConstInt          Target=90 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     CmpIntEq              Target=89 Left=88 Right=90   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-    JumpIfFalse           CondTemp=89 Target=match_arm_cleanup_480   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+    JumpIfFalse           CondTemp=89 Target=match_arm_cleanup_486   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     GetAdtField           Target=91 Ptr=61 FieldIndex=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RcDrop                SourceTemp=52 TypeName=Maybe OwnerSlot=13
     LoadConstInt          Target=92 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:63:34)
     StoreLocal            Slot=17 Source=92   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=27
     ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=27
-    Jump                  Target=match_end_474   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_arm_cleanup_480:
+    Jump                  Target=match_end_480   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_arm_cleanup_486:
     RcDrop                SourceTemp=52 TypeName=Maybe OwnerSlot=13
     RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=28
-    Jump                  Target=match_none_475   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_group_477:
+    Jump                  Target=match_none_481   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_group_483:
     RcDrop                SourceTemp=52 TypeName=Maybe OwnerSlot=13
     SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
     LoadConstInt          Target=93 Value=100   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:64:31)
     StoreLocal            Slot=17 Source=93   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=31
-    Jump                  Target=match_end_474   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_none_475:
+    Jump                  Target=match_end_480   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
+  match_none_481:
     LoadConstInt          Target=94 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     StoreLocal            Slot=17 Source=94   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
-  match_end_474:
+  match_end_480:
     LoadLocal             Target=95 Slot=17   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:35)
     AddInt                Target=96 Left=59 Right=95   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:61:17)
     RcDrop                SourceTemp=51 TypeName=List OwnerSlot=12
     StoreLocal            Slot=9 Source=96   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=32
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=32
-    Jump                  Target=match_end_471   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
-  match_arm_cleanup_473:
+    Jump                  Target=match_end_477   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
+  match_arm_cleanup_479:
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=33
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=33
-    Jump                  Target=match_none_472   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
-  match_none_472:
+    Jump                  Target=match_none_478   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
+  match_none_478:
     LoadConstInt          Target=99 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
     StoreLocal            Slot=9 Source=99   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
-  match_end_471:
+  match_end_477:
     LoadLocal             Target=100 Slot=9   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:59:9)
     StoreLocal            Slot=34 Source=100   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:57:6)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=35
@@ -3511,68 +3595,68 @@ function lambda_22  [SourceFunction from run]
     LoadConstInt          Target=104 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     CmpIntNe              Target=105 Left=103 Right=104   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcDrop                SourceTemp=41 TypeName=List OwnerSlot=4
-    JumpIfFalse           CondTemp=105 Target=general_rc_owned_absent_481   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=105 Target=general_rc_owned_absent_487   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     IsReferenceCounted    Target=106 SourceTemp=103
-    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_481   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_487   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcIsUnique            Target=107 SourceTemp=103
-    JumpIfFalse           CondTemp=107 Target=rc_drop_tuple_shared_482   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=107 Target=rc_drop_tuple_shared_488   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=108 BasePtr=103 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     StoreLocal            Slot=36 Source=108   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_483:
+  rcdrop_list_489:
     LoadLocal             Target=109 Slot=36   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadConstInt          Target=110 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     CmpIntNe              Target=111 Left=109 Right=110   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-    JumpIfFalse           CondTemp=111 Target=rcdrop_list_end_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=111 Target=rcdrop_list_end_491   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcIsUnique            Target=112 SourceTemp=109
-    JumpIfFalse           CondTemp=112 Target=rcdrop_list_shared_484   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=112 Target=rcdrop_list_shared_490   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=113 BasePtr=109 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcDrop                SourceTemp=109 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=36 Source=113   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-    Jump                  Target=rcdrop_list_483   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_shared_484:
+    Jump                  Target=rcdrop_list_489   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+  rcdrop_list_shared_490:
     RcDrop                SourceTemp=109 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_485   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_end_485:
+    Jump                  Target=rcdrop_list_end_491   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+  rcdrop_list_end_491:
     LoadMemOffset         Target=114 BasePtr=103 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadConstInt          Target=115 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     CallKnown             Target=116 FuncLabel=__rcdrop_general_17 EnvTemp=115 ArgTemp=114   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=117 BasePtr=103 OffsetBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcIsUnique            Target=118 SourceTemp=117
-    JumpIfFalse           CondTemp=118 Target=rc_drop_tuple_shared_486   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=118 Target=rc_drop_tuple_shared_492   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=119 BasePtr=117 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     StoreLocal            Slot=37 Source=119   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_487:
+  rcdrop_list_493:
     LoadLocal             Target=120 Slot=37   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadConstInt          Target=121 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     CmpIntNe              Target=122 Left=120 Right=121   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-    JumpIfFalse           CondTemp=122 Target=rcdrop_list_end_489   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=122 Target=rcdrop_list_end_495   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcIsUnique            Target=123 SourceTemp=120
-    JumpIfFalse           CondTemp=123 Target=rcdrop_list_shared_488   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    JumpIfFalse           CondTemp=123 Target=rcdrop_list_shared_494   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=124 BasePtr=120 OffsetBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadConstInt          Target=125 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     CallKnown             Target=126 FuncLabel=__rcdrop_record_7 EnvTemp=125 ArgTemp=124   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadMemOffset         Target=127 BasePtr=120 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=37 Source=127   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-    Jump                  Target=rcdrop_list_487   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_shared_488:
+    Jump                  Target=rcdrop_list_493   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+  rcdrop_list_shared_494:
     RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_489   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  rcdrop_list_end_489:
+    Jump                  Target=rcdrop_list_end_495   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+  rcdrop_list_end_495:
     LoadMemOffset         Target=128 BasePtr=117 OffsetBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     RcDrop                SourceTemp=128 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_486:
+  rc_drop_tuple_shared_492:
     RcDrop                SourceTemp=117 TypeName=Tuple RuntimeManaged=true
-  rc_drop_tuple_shared_482:
+  rc_drop_tuple_shared_488:
     RcDrop                SourceTemp=103 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=8 Source=104   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  general_rc_owned_absent_481:
+  general_rc_owned_absent_487:
     Return                Source=102   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-  lambda_22_rc_edge_13_0:
+  lambda_24_rc_edge_13_0:
     RcDrop                SourceTemp=52 TypeName=Maybe OwnerSlot=13
-    Jump                  Target=match_none_475
+    Jump                  Target=match_none_481
 
-function lambda_24  [ClosureHelper from rounds]
+function lambda_26  [ClosureHelper from rounds]
   locals=24 temps=25
     LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     StoreLocal            Slot=2 Source=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
@@ -3581,24 +3665,24 @@ function lambda_24  [ClosureHelper from rounds]
     StoreLocal            Slot=5 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     StoreLocal            Slot=6 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     StoreLocal            Slot=7 Source=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
-  lambda_24_body:
+  lambda_26_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     LoadLocal             Target=2 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:11)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     CmpIntEq              Target=4 Left=2 Right=3   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_493   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_499   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     LoadLocal             Target=5 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:68:16)
     StoreLocal            Slot=11 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    Jump                  Target=match_end_490   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-  match_arm_cleanup_493:
+    Jump                  Target=match_end_496   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
+  match_arm_cleanup_499:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_492   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-  match_next_492:
+    Jump                  Target=match_next_498   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
+  match_next_498:
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:23)
     LoadConstInt          Target=7 Value=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:27)
@@ -3624,24 +3708,24 @@ function lambda_24  [ClosureHelper from rounds]
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=23
     RestoreStackPointer   Slot=10   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:16)
-    Jump                  Target=lambda_24_body   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:16)
+    Jump                  Target=lambda_26_body   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:16)
     LoadConstInt          Target=22 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:69:16)
     StoreLocal            Slot=11 Source=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
-    Jump                  Target=match_end_490   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-  match_arm_cleanup_494:
+    Jump                  Target=match_end_496   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
+  match_arm_cleanup_500:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
-    Jump                  Target=match_none_491   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-  match_none_491:
+    Jump                  Target=match_none_497   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
+  match_none_497:
     LoadConstInt          Target=23 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     StoreLocal            Slot=11 Source=23   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
-  match_end_490:
+  match_end_496:
     LoadLocal             Target=24 Slot=11   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:67:5)
     Return                Source=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
 
-function lambda_23  [SourceFunction from rounds]
+function lambda_25  [SourceFunction from rounds]
   locals=2 temps=7
     Alloc                 Target=0 SizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
@@ -3649,7 +3733,7 @@ function lambda_23  [SourceFunction from rounds]
     LoadEnv               Target=4 Index=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     Borrow                Target=5 SourceTemp=4
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
-    MakeClosure           Target=6 FuncLabel=lambda_24 EnvPtrTemp=0 EnvSizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
+    MakeClosure           Target=6 FuncLabel=lambda_26 EnvPtrTemp=0 EnvSizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     Return                Source=6   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
 
 function _start_main  [ProgramEntry]
@@ -3691,7 +3775,7 @@ function _start_main  [ProgramEntry]
     MakeClosure           Target=20 FuncLabel=recgroup_14_binding EnvPtrTemp=10 EnvSizeBytes=32 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     StoreLocal            Slot=12 Source=20   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:29:1)
     LoadConstInt          Target=21 Value=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
-    MakeClosure           Target=22 FuncLabel=lambda_20 EnvPtrTemp=21 EnvSizeBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
+    MakeClosure           Target=22 FuncLabel=lambda_22 EnvPtrTemp=21 EnvSizeBytes=0   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     StoreLocal            Slot=13 Source=22   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:51:1)
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
     AllocStack            Target=23 SizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
@@ -3699,13 +3783,13 @@ function _start_main  [ProgramEntry]
     StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     LoadLocal             Target=25 Slot=13   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=25   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
-    MakeClosureStack      Target=26 FuncLabel=lambda_22 EnvPtrTemp=23 EnvSizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
+    MakeClosureStack      Target=26 FuncLabel=lambda_24 EnvPtrTemp=23 EnvSizeBytes=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     StoreLocal            Slot=16 Source=26   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:56:1)
     Alloc                 Target=27 SizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     LoadLocal             Target=28 Slot=16   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     Borrow                Target=29 SourceTemp=28
     StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=29   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
-    MakeClosure           Target=30 FuncLabel=lambda_23 EnvPtrTemp=27 EnvSizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
+    MakeClosure           Target=30 FuncLabel=lambda_25 EnvPtrTemp=27 EnvSizeBytes=8   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     StoreLocal            Slot=17 Source=30   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:66:1)
     SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
     LoadLocal             Target=31 Slot=17   (mutual_recursion_later_sibling_result_beside_fresh_tuple_arm.ash:72:4)

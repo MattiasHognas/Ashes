@@ -197,6 +197,35 @@ function lambda_1  [ClosureHelper from insert]
   general_rc_owned_absent_19:
     Return                Source=41   (tco_pair_released_past_unnamed_successor.ash:9:1)
 
+function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    RcDrop                SourceTemp=1 TypeName=Function RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    Return                Source=2   (tco_pair_released_past_unnamed_successor.ash:9:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from insert]
+  locals=3 temps=9
+    LoadLocal             Target=0 Slot=0   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_23   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    Jump                  Target=rc_representation_done_24   (tco_pair_released_past_unnamed_successor.ash:9:1)
+  rc_representation_copy_23:
+    CopyOutClosure        DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    StoreLocal            Slot=2 Source=5   (tco_pair_released_past_unnamed_successor.ash:9:1)
+  rc_representation_done_24:
+    LoadLocal             Target=6 Slot=2   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=6   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=7   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_4   (tco_pair_released_past_unnamed_successor.ash:9:1)
+    Return                Source=8   (tco_pair_released_past_unnamed_successor.ash:9:1)
+
 function lambda_0  [SourceFunction from insert]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:9:1)
@@ -208,35 +237,35 @@ function lambda_0  [SourceFunction from insert]
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_pair_released_past_unnamed_successor.ash:9:1)
     Return                Source=4   (tco_pair_released_past_unnamed_successor.ash:9:1)
 
-function lambda_4  [SourceFunction from countSeen]
+function lambda_5  [SourceFunction from countSeen]
   locals=20 temps=33
     LoadLocal             Target=0 Slot=1   (tco_pair_released_past_unnamed_successor.ash:17:15)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     CmpIntNe              Target=2 Left=0 Right=1   (tco_pair_released_past_unnamed_successor.ash:17:9)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_26   (tco_pair_released_past_unnamed_successor.ash:17:9)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_28   (tco_pair_released_past_unnamed_successor.ash:17:9)
     GetAdtTag             Target=3 Ptr=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     LoadConstInt          Target=5 Value=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     CmpIntEq              Target=4 Left=3 Right=5   (tco_pair_released_past_unnamed_successor.ash:17:9)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_26   (tco_pair_released_past_unnamed_successor.ash:17:9)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_28   (tco_pair_released_past_unnamed_successor.ash:17:9)
     LoadConstInt          Target=6 Value=0   (tco_pair_released_past_unnamed_successor.ash:18:23)
     StoreLocal            Slot=2 Source=6   (tco_pair_released_past_unnamed_successor.ash:17:9)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_23   (tco_pair_released_past_unnamed_successor.ash:17:9)
-  match_arm_cleanup_26:
+    Jump                  Target=match_end_25   (tco_pair_released_past_unnamed_successor.ash:17:9)
+  match_arm_cleanup_28:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_25   (tco_pair_released_past_unnamed_successor.ash:17:9)
-  match_next_25:
+    Jump                  Target=match_next_27   (tco_pair_released_past_unnamed_successor.ash:17:9)
+  match_next_27:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=7 Value=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     CmpIntNe              Target=8 Left=0 Right=7   (tco_pair_released_past_unnamed_successor.ash:17:9)
-    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_27   (tco_pair_released_past_unnamed_successor.ash:17:9)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_29   (tco_pair_released_past_unnamed_successor.ash:17:9)
     GetAdtTag             Target=9 Ptr=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     LoadConstInt          Target=11 Value=1   (tco_pair_released_past_unnamed_successor.ash:17:9)
     CmpIntEq              Target=10 Left=9 Right=11   (tco_pair_released_past_unnamed_successor.ash:17:9)
-    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_27   (tco_pair_released_past_unnamed_successor.ash:17:9)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_29   (tco_pair_released_past_unnamed_successor.ash:17:9)
     GetAdtField           Target=12 Ptr=0 FieldIndex=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     StoreLocal            Slot=9 Source=12   (tco_pair_released_past_unnamed_successor.ash:17:9)
     GetAdtField           Target=13 Ptr=0 FieldIndex=1   (tco_pair_released_past_unnamed_successor.ash:17:9)
@@ -246,7 +275,7 @@ function lambda_4  [SourceFunction from countSeen]
     StoreLocal            Slot=11 Source=14   (tco_pair_released_past_unnamed_successor.ash:17:9)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadLocal             Target=16 Slot=0   (tco_pair_released_past_unnamed_successor.ash:19:46)
-    MakeClosure           Target=15 FuncLabel=lambda_4 EnvPtrTemp=16 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:19:46)
+    MakeClosure           Target=15 FuncLabel=lambda_5 EnvPtrTemp=16 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:19:46)
     LoadLocal             Target=17 Slot=9   (tco_pair_released_past_unnamed_successor.ash:19:56)
     Borrow                Target=18 SourceTemp=17
     CallClosure           Target=19 ClosureTemp=15 ArgTemp=18   (tco_pair_released_past_unnamed_successor.ash:19:46)
@@ -257,7 +286,7 @@ function lambda_4  [SourceFunction from countSeen]
     RcDrop                SourceTemp=12 TypeName=Seen OwnerSlot=9
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
     LoadLocal             Target=23 Slot=0   (tco_pair_released_past_unnamed_successor.ash:19:68)
-    MakeClosure           Target=22 FuncLabel=lambda_4 EnvPtrTemp=23 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:19:68)
+    MakeClosure           Target=22 FuncLabel=lambda_5 EnvPtrTemp=23 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:19:68)
     LoadLocal             Target=24 Slot=11   (tco_pair_released_past_unnamed_successor.ash:19:78)
     Borrow                Target=25 SourceTemp=24
     CallClosure           Target=26 ClosureTemp=22 ArgTemp=25   (tco_pair_released_past_unnamed_successor.ash:19:68)
@@ -268,32 +297,32 @@ function lambda_4  [SourceFunction from countSeen]
     StoreLocal            Slot=2 Source=27   (tco_pair_released_past_unnamed_successor.ash:17:9)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=18
-    Jump                  Target=match_end_23   (tco_pair_released_past_unnamed_successor.ash:17:9)
-  match_arm_cleanup_27:
+    Jump                  Target=match_end_25   (tco_pair_released_past_unnamed_successor.ash:17:9)
+  match_arm_cleanup_29:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=19
-    Jump                  Target=match_none_24   (tco_pair_released_past_unnamed_successor.ash:17:9)
-  match_none_24:
+    Jump                  Target=match_none_26   (tco_pair_released_past_unnamed_successor.ash:17:9)
+  match_none_26:
     LoadConstInt          Target=31 Value=0   (tco_pair_released_past_unnamed_successor.ash:17:9)
     StoreLocal            Slot=2 Source=31   (tco_pair_released_past_unnamed_successor.ash:17:9)
-  match_end_23:
+  match_end_25:
     LoadLocal             Target=32 Slot=2   (tco_pair_released_past_unnamed_successor.ash:17:9)
     Return                Source=32   (tco_pair_released_past_unnamed_successor.ash:15:1)
 
-function lambda_6  [ClosureHelper from reverseAll]
+function lambda_7  [ClosureHelper from reverseAll]
   locals=34 temps=110
     LoadEnv               Target=0 Index=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=2 Source=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadLocal             Target=36 Slot=2   (tco_pair_released_past_unnamed_successor.ash:21:1)
     IsReferenceCounted    Target=37 SourceTemp=36
-    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_35   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_37   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDup                 Target=38 SourceTemp=36 RuntimeManaged=true
     StoreLocal            Slot=23 Source=38   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_representation_done_36   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_representation_copy_35:
+    Jump                  Target=rc_representation_done_38   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_representation_copy_37:
     CopyOutList           DestTemp=39 SrcTemp=36 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=23 Source=39   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_representation_done_36:
+  rc_representation_done_38:
     LoadLocal             Target=40 Slot=23   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=2 Source=40   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=41 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
@@ -302,22 +331,22 @@ function lambda_6  [ClosureHelper from reverseAll]
     LoadArgumentOwnership Target=43   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=44 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=45 Left=43 Right=44   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=45 Target=rc_arg_normalize_copy_37   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=45 Target=rc_arg_normalize_copy_39   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=24 Source=42   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_arg_normalize_done_38   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_arg_normalize_copy_37:
+    Jump                  Target=rc_arg_normalize_done_40   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_arg_normalize_copy_39:
     IsReferenceCounted    Target=46 SourceTemp=42
-    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_39   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_41   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDup                 Target=47 SourceTemp=42 RuntimeManaged=true
     StoreLocal            Slot=25 Source=47   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_representation_done_40   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_representation_copy_39:
+    Jump                  Target=rc_representation_done_42   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_representation_copy_41:
     CopyOutList           DestTemp=48 SrcTemp=42 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=25 Source=48   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_representation_done_40:
+  rc_representation_done_42:
     LoadLocal             Target=49 Slot=25   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=24 Source=49   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_arg_normalize_done_38:
+  rc_arg_normalize_done_40:
     LoadLocal             Target=50 Slot=24   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=1 Source=50   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=51 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
@@ -325,28 +354,28 @@ function lambda_6  [ClosureHelper from reverseAll]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=5 Source=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  lambda_6_body:
+  lambda_7_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadLocal             Target=2 Slot=2   (tco_pair_released_past_unnamed_successor.ash:22:11)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=3 Value=0   (tco_pair_released_past_unnamed_successor.ash:22:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_pair_released_past_unnamed_successor.ash:22:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_31   (tco_pair_released_past_unnamed_successor.ash:22:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_33   (tco_pair_released_past_unnamed_successor.ash:22:5)
     LoadLocal             Target=5 Slot=1   (tco_pair_released_past_unnamed_successor.ash:23:17)
     StoreLocal            Slot=11 Source=5   (tco_pair_released_past_unnamed_successor.ash:22:5)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    Jump                  Target=match_end_28   (tco_pair_released_past_unnamed_successor.ash:22:5)
-  match_arm_cleanup_31:
+    Jump                  Target=match_end_30   (tco_pair_released_past_unnamed_successor.ash:22:5)
+  match_arm_cleanup_33:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_30   (tco_pair_released_past_unnamed_successor.ash:22:5)
-  match_next_30:
+    Jump                  Target=match_next_32   (tco_pair_released_past_unnamed_successor.ash:22:5)
+  match_next_32:
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadConstInt          Target=6 Value=0   (tco_pair_released_past_unnamed_successor.ash:22:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_pair_released_past_unnamed_successor.ash:22:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_32   (tco_pair_released_past_unnamed_successor.ash:22:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_34   (tco_pair_released_past_unnamed_successor.ash:22:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:22:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:22:5)
     StoreLocal            Slot=18 Source=8   (tco_pair_released_past_unnamed_successor.ash:22:5)
@@ -367,12 +396,12 @@ function lambda_6  [ClosureHelper from reverseAll]
     LoadConstInt          Target=18 Value=0   (tco_pair_released_past_unnamed_successor.ash:24:45)
     CmpIntEq              Target=19 Left=15 Right=18   (tco_pair_released_past_unnamed_successor.ash:24:45)
     OrInt                 Target=20 Left=17 Right=19   (tco_pair_released_past_unnamed_successor.ash:24:45)
-    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_34   (tco_pair_released_past_unnamed_successor.ash:24:45)
-    Jump                  Target=rc_tail_done_33   (tco_pair_released_past_unnamed_successor.ash:24:45)
-  rc_tail_copy_34:
+    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_36   (tco_pair_released_past_unnamed_successor.ash:24:45)
+    Jump                  Target=rc_tail_done_35   (tco_pair_released_past_unnamed_successor.ash:24:45)
+  rc_tail_copy_36:
     CopyOutList           DestTemp=21 SrcTemp=15 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:24:45)
     StoreLocal            Slot=20 Source=21   (tco_pair_released_past_unnamed_successor.ash:24:45)
-  rc_tail_done_33:
+  rc_tail_done_35:
     LoadLocal             Target=22 Slot=20   (tco_pair_released_past_unnamed_successor.ash:24:45)
     Alloc                 Target=23 SizeBytes=16 RuntimeManaged=true   (tco_pair_released_past_unnamed_successor.ash:24:45)
     StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=16   (tco_pair_released_past_unnamed_successor.ash:24:45)
@@ -387,44 +416,44 @@ function lambda_6  [ClosureHelper from reverseAll]
     StoreLocal            Slot=2 Source=24   (tco_pair_released_past_unnamed_successor.ash:24:28)
     StoreLocal            Slot=1 Source=23   (tco_pair_released_past_unnamed_successor.ash:24:28)
     LoadLocal             Target=95 Slot=6
-    JumpIfFalse           CondTemp=95 Target=rc_tco_drop_inactive_134
+    JumpIfFalse           CondTemp=95 Target=rc_tco_drop_inactive_136
     StoreLocal            Slot=32 Source=27
-  rcdrop_list_135:
+  rcdrop_list_137:
     LoadLocal             Target=96 Slot=32
     LoadConstInt          Target=97 Value=0
     CmpIntNe              Target=98 Left=96 Right=97
-    JumpIfFalse           CondTemp=98 Target=rcdrop_list_end_137
+    JumpIfFalse           CondTemp=98 Target=rcdrop_list_end_139
     RcIsUnique            Target=99 SourceTemp=96
-    JumpIfFalse           CondTemp=99 Target=rcdrop_list_shared_136
+    JumpIfFalse           CondTemp=99 Target=rcdrop_list_shared_138
     LoadMemOffset         Target=100 BasePtr=96 OffsetBytes=0
     RcDrop                SourceTemp=100 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=101 BasePtr=96 OffsetBytes=8
     RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=101
-    Jump                  Target=rcdrop_list_135
-  rcdrop_list_shared_136:
+    Jump                  Target=rcdrop_list_137
+  rcdrop_list_shared_138:
     RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_137
-  rcdrop_list_end_137:
-  rc_tco_drop_inactive_134:
+    Jump                  Target=rcdrop_list_end_139
+  rcdrop_list_end_139:
+  rc_tco_drop_inactive_136:
     StoreLocal            Slot=33 Source=25
-  rcdrop_list_138:
+  rcdrop_list_140:
     LoadLocal             Target=102 Slot=33
     LoadConstInt          Target=103 Value=0
     CmpIntNe              Target=104 Left=102 Right=103
-    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_140
+    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_142
     RcIsUnique            Target=105 SourceTemp=102
-    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_139
+    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_141
     LoadMemOffset         Target=106 BasePtr=102 OffsetBytes=0
     RcDrop                SourceTemp=106 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=107 BasePtr=102 OffsetBytes=8
     RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=33 Source=107
-    Jump                  Target=rcdrop_list_138
-  rcdrop_list_shared_139:
+    Jump                  Target=rcdrop_list_140
+  rcdrop_list_shared_141:
     RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_140
-  rcdrop_list_end_140:
+    Jump                  Target=rcdrop_list_end_142
+  rcdrop_list_end_142:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     StoreLocal            Slot=2 Source=24
     LoadConstInt          Target=108 Value=1
@@ -434,20 +463,20 @@ function lambda_6  [ClosureHelper from reverseAll]
     StoreLocal            Slot=7 Source=109
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
     RestoreStackPointer   Slot=10   (tco_pair_released_past_unnamed_successor.ash:24:28)
-    Jump                  Target=lambda_6_body   (tco_pair_released_past_unnamed_successor.ash:24:28)
+    Jump                  Target=lambda_7_body   (tco_pair_released_past_unnamed_successor.ash:24:28)
     LoadConstInt          Target=29 Value=0   (tco_pair_released_past_unnamed_successor.ash:24:28)
     StoreLocal            Slot=11 Source=29   (tco_pair_released_past_unnamed_successor.ash:22:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
-    Jump                  Target=match_end_28   (tco_pair_released_past_unnamed_successor.ash:22:5)
-  match_arm_cleanup_32:
+    Jump                  Target=match_end_30   (tco_pair_released_past_unnamed_successor.ash:22:5)
+  match_arm_cleanup_34:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
-    Jump                  Target=match_none_29   (tco_pair_released_past_unnamed_successor.ash:22:5)
-  match_none_29:
+    Jump                  Target=match_none_31   (tco_pair_released_past_unnamed_successor.ash:22:5)
+  match_none_31:
     LoadConstInt          Target=32 Value=0   (tco_pair_released_past_unnamed_successor.ash:22:5)
     StoreLocal            Slot=11 Source=32   (tco_pair_released_past_unnamed_successor.ash:22:5)
-  match_end_28:
+  match_end_30:
     LoadLocal             Target=33 Slot=11   (tco_pair_released_past_unnamed_successor.ash:22:5)
     LoadConstInt          Target=52 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=26 Source=52   (tco_pair_released_past_unnamed_successor.ash:21:1)
@@ -458,33 +487,33 @@ function lambda_6  [ClosureHelper from reverseAll]
     CmpIntEq              Target=57 Left=56 Right=52   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=58 Left=54 Right=55   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=59 Left=58 Right=57   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=59 Target=rc_tco_exit_transfer_not_selected_41   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=59 Target=rc_tco_exit_transfer_not_selected_43   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=60 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=26 Source=60   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_tco_exit_transfer_done_42   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_tco_exit_transfer_not_selected_41:
+    Jump                  Target=rc_tco_exit_transfer_done_44   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_tco_exit_transfer_not_selected_43:
     LoadLocal             Target=61 Slot=6   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=61 Target=rc_tco_exit_drop_inactive_43   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=61 Target=rc_tco_exit_drop_inactive_45   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=27 Source=53   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_44:
+  rcdrop_list_46:
     LoadLocal             Target=62 Slot=27   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=63 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     CmpIntNe              Target=64 Left=62 Right=63   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=64 Target=rcdrop_list_end_46   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=64 Target=rcdrop_list_end_48   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcIsUnique            Target=65 SourceTemp=62
-    JumpIfFalse           CondTemp=65 Target=rcdrop_list_shared_45   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_shared_47   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadMemOffset         Target=66 BasePtr=62 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=66 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=67 BasePtr=62 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=27 Source=67   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rcdrop_list_44   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_shared_45:
+    Jump                  Target=rcdrop_list_46   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_shared_47:
     RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_46   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_end_46:
-  rc_tco_exit_drop_inactive_43:
-  rc_tco_exit_transfer_done_42:
+    Jump                  Target=rcdrop_list_end_48   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_end_48:
+  rc_tco_exit_drop_inactive_45:
+  rc_tco_exit_transfer_done_44:
     LoadLocal             Target=68 Slot=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadLocal             Target=69 Slot=7   (tco_pair_released_past_unnamed_successor.ash:21:1)
     CmpIntEq              Target=70 Left=68 Right=33   (tco_pair_released_past_unnamed_successor.ash:21:1)
@@ -492,87 +521,87 @@ function lambda_6  [ClosureHelper from reverseAll]
     CmpIntEq              Target=72 Left=71 Right=52   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=73 Left=69 Right=70   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=74 Left=73 Right=72   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=74 Target=rc_tco_exit_transfer_not_selected_47   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=74 Target=rc_tco_exit_transfer_not_selected_49   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=75 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=26 Source=75   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_tco_exit_transfer_done_48   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_tco_exit_transfer_not_selected_47:
+    Jump                  Target=rc_tco_exit_transfer_done_50   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_tco_exit_transfer_not_selected_49:
     LoadLocal             Target=76 Slot=7   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_49   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_51   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=28 Source=68   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_50:
+  rcdrop_list_52:
     LoadLocal             Target=77 Slot=28   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=78 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     CmpIntNe              Target=79 Left=77 Right=78   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_end_52   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=79 Target=rcdrop_list_end_54   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcIsUnique            Target=80 SourceTemp=77
-    JumpIfFalse           CondTemp=80 Target=rcdrop_list_shared_51   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=80 Target=rcdrop_list_shared_53   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadMemOffset         Target=81 BasePtr=77 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=81 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=82 BasePtr=77 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=28 Source=82   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rcdrop_list_50   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_shared_51:
+    Jump                  Target=rcdrop_list_52   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_shared_53:
     RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_52   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_end_52:
-  rc_tco_exit_drop_inactive_49:
-  rc_tco_exit_transfer_done_48:
+    Jump                  Target=rcdrop_list_end_54   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_end_54:
+  rc_tco_exit_drop_inactive_51:
+  rc_tco_exit_transfer_done_50:
     LoadArgumentOwnership Target=83   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=84 Value=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     ShrInt                Target=85 Left=83 Right=84   (tco_pair_released_past_unnamed_successor.ash:21:1)
     AndInt                Target=86 Left=85 Right=84   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=86 Target=rc_result_owned_53   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=86 Target=rc_result_owned_55   (tco_pair_released_past_unnamed_successor.ash:21:1)
     CopyOutList           DestTemp=87 SrcTemp=33 HeadCopy=String Purpose=ArenaResultBoundary   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=30 Source=33   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_55:
+  rcdrop_list_57:
     LoadLocal             Target=88 Slot=30   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=89 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     CmpIntNe              Target=90 Left=88 Right=89   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_57   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_59   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcIsUnique            Target=91 SourceTemp=88
-    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_56   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_58   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadMemOffset         Target=92 BasePtr=88 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=92 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=93 BasePtr=88 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:21:1)
     RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=93   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rcdrop_list_55   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_shared_56:
+    Jump                  Target=rcdrop_list_57   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_shared_58:
     RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_57   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rcdrop_list_end_57:
+    Jump                  Target=rcdrop_list_end_59   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rcdrop_list_end_59:
     StoreLocal            Slot=29 Source=87   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    Jump                  Target=rc_result_done_54   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_result_owned_53:
+    Jump                  Target=rc_result_done_56   (tco_pair_released_past_unnamed_successor.ash:21:1)
+  rc_result_owned_55:
     StoreLocal            Slot=29 Source=33   (tco_pair_released_past_unnamed_successor.ash:21:1)
-  rc_result_done_54:
+  rc_result_done_56:
     LoadLocal             Target=94 Slot=29   (tco_pair_released_past_unnamed_successor.ash:21:1)
     Return                Source=94   (tco_pair_released_past_unnamed_successor.ash:21:1)
 
-function lambda_5  [SourceFunction from reverseAll]
+function lambda_6  [SourceFunction from reverseAll]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    MakeClosure           Target=4 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_pair_released_past_unnamed_successor.ash:21:1)
     Return                Source=4   (tco_pair_released_past_unnamed_successor.ash:21:1)
 
-function lambda_8  [ClosureHelper from countAll]
+function lambda_9  [ClosureHelper from countAll]
   locals=28 temps=54
     LoadEnv               Target=0 Index=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=2 Source=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadLocal             Target=25 Slot=2   (tco_pair_released_past_unnamed_successor.ash:26:1)
     IsReferenceCounted    Target=26 SourceTemp=25
-    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_63   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_65   (tco_pair_released_past_unnamed_successor.ash:26:1)
     RcDup                 Target=27 SourceTemp=25 RuntimeManaged=true
     StoreLocal            Slot=23 Source=27   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    Jump                  Target=rc_representation_done_64   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  rc_representation_copy_63:
+    Jump                  Target=rc_representation_done_66   (tco_pair_released_past_unnamed_successor.ash:26:1)
+  rc_representation_copy_65:
     CopyOutList           DestTemp=28 SrcTemp=25 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=23 Source=28   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  rc_representation_done_64:
+  rc_representation_done_66:
     LoadLocal             Target=29 Slot=23   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=2 Source=29   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadConstInt          Target=30 Value=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
@@ -582,28 +611,28 @@ function lambda_8  [ClosureHelper from countAll]
     StoreLocal            Slot=5 Source=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=6 Source=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=7 Source=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  lambda_8_body:
+  lambda_9_body:
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     SaveStackPointer      Slot=11   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadLocal             Target=2 Slot=2   (tco_pair_released_past_unnamed_successor.ash:27:11)
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (tco_pair_released_past_unnamed_successor.ash:27:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_pair_released_past_unnamed_successor.ash:27:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_61   (tco_pair_released_past_unnamed_successor.ash:27:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_63   (tco_pair_released_past_unnamed_successor.ash:27:5)
     LoadLocal             Target=5 Slot=1   (tco_pair_released_past_unnamed_successor.ash:28:17)
     StoreLocal            Slot=12 Source=5   (tco_pair_released_past_unnamed_successor.ash:27:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_58   (tco_pair_released_past_unnamed_successor.ash:27:5)
-  match_arm_cleanup_61:
+    Jump                  Target=match_end_60   (tco_pair_released_past_unnamed_successor.ash:27:5)
+  match_arm_cleanup_63:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_60   (tco_pair_released_past_unnamed_successor.ash:27:5)
-  match_next_60:
+    Jump                  Target=match_next_62   (tco_pair_released_past_unnamed_successor.ash:27:5)
+  match_next_62:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (tco_pair_released_past_unnamed_successor.ash:27:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_pair_released_past_unnamed_successor.ash:27:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_62   (tco_pair_released_past_unnamed_successor.ash:27:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_64   (tco_pair_released_past_unnamed_successor.ash:27:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:27:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:27:5)
     StoreLocal            Slot=19 Source=8   (tco_pair_released_past_unnamed_successor.ash:27:5)
@@ -624,44 +653,44 @@ function lambda_8  [ClosureHelper from countAll]
     StoreLocal            Slot=2 Source=15   (tco_pair_released_past_unnamed_successor.ash:29:29)
     StoreLocal            Slot=1 Source=14   (tco_pair_released_past_unnamed_successor.ash:29:29)
     LoadLocal             Target=39 Slot=8
-    JumpIfFalse           CondTemp=39 Target=rc_tco_drop_inactive_141
+    JumpIfFalse           CondTemp=39 Target=rc_tco_drop_inactive_143
     StoreLocal            Slot=26 Source=18
-  rcdrop_list_142:
+  rcdrop_list_144:
     LoadLocal             Target=40 Slot=26
     LoadConstInt          Target=41 Value=0
     CmpIntNe              Target=42 Left=40 Right=41
-    JumpIfFalse           CondTemp=42 Target=rcdrop_list_end_144
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_end_146
     RcIsUnique            Target=43 SourceTemp=40
-    JumpIfFalse           CondTemp=43 Target=rcdrop_list_shared_143
+    JumpIfFalse           CondTemp=43 Target=rcdrop_list_shared_145
     LoadMemOffset         Target=44 BasePtr=40 OffsetBytes=0
     RcDrop                SourceTemp=44 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=45 BasePtr=40 OffsetBytes=8
     RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=26 Source=45
-    Jump                  Target=rcdrop_list_142
-  rcdrop_list_shared_143:
+    Jump                  Target=rcdrop_list_144
+  rcdrop_list_shared_145:
     RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_144
-  rcdrop_list_end_144:
-  rc_tco_drop_inactive_141:
+    Jump                  Target=rcdrop_list_end_146
+  rcdrop_list_end_146:
+  rc_tco_drop_inactive_143:
     StoreLocal            Slot=27 Source=16
-  rcdrop_list_145:
+  rcdrop_list_147:
     LoadLocal             Target=46 Slot=27
     LoadConstInt          Target=47 Value=0
     CmpIntNe              Target=48 Left=46 Right=47
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_147
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_149
     RcIsUnique            Target=49 SourceTemp=46
-    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_146
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_148
     LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0
     RcDrop                SourceTemp=50 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=8
     RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=27 Source=51
-    Jump                  Target=rcdrop_list_145
-  rcdrop_list_shared_146:
+    Jump                  Target=rcdrop_list_147
+  rcdrop_list_shared_148:
     RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_147
-  rcdrop_list_end_147:
+    Jump                  Target=rcdrop_list_end_149
+  rcdrop_list_end_149:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
     LoadConstInt          Target=52 Value=0
     StoreLocal            Slot=6 Source=52
@@ -671,54 +700,54 @@ function lambda_8  [ClosureHelper from countAll]
     StoreLocal            Slot=8 Source=53
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=25
     RestoreStackPointer   Slot=11   (tco_pair_released_past_unnamed_successor.ash:29:29)
-    Jump                  Target=lambda_8_body   (tco_pair_released_past_unnamed_successor.ash:29:29)
+    Jump                  Target=lambda_9_body   (tco_pair_released_past_unnamed_successor.ash:29:29)
     LoadConstInt          Target=20 Value=0   (tco_pair_released_past_unnamed_successor.ash:29:29)
     StoreLocal            Slot=12 Source=20   (tco_pair_released_past_unnamed_successor.ash:27:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    Jump                  Target=match_end_58   (tco_pair_released_past_unnamed_successor.ash:27:5)
-  match_arm_cleanup_62:
+    Jump                  Target=match_end_60   (tco_pair_released_past_unnamed_successor.ash:27:5)
+  match_arm_cleanup_64:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_none_59   (tco_pair_released_past_unnamed_successor.ash:27:5)
-  match_none_59:
+    Jump                  Target=match_none_61   (tco_pair_released_past_unnamed_successor.ash:27:5)
+  match_none_61:
     LoadConstInt          Target=23 Value=0   (tco_pair_released_past_unnamed_successor.ash:27:5)
     StoreLocal            Slot=12 Source=23   (tco_pair_released_past_unnamed_successor.ash:27:5)
-  match_end_58:
+  match_end_60:
     LoadLocal             Target=24 Slot=12   (tco_pair_released_past_unnamed_successor.ash:27:5)
     LoadLocal             Target=31 Slot=2   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadLocal             Target=32 Slot=8   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    JumpIfFalse           CondTemp=32 Target=rc_tco_exit_drop_inactive_65   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    JumpIfFalse           CondTemp=32 Target=rc_tco_exit_drop_inactive_67   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=24 Source=31   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  rcdrop_list_66:
+  rcdrop_list_68:
     LoadLocal             Target=33 Slot=24   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadConstInt          Target=34 Value=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
     CmpIntNe              Target=35 Left=33 Right=34   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    JumpIfFalse           CondTemp=35 Target=rcdrop_list_end_68   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_end_70   (tco_pair_released_past_unnamed_successor.ash:26:1)
     RcIsUnique            Target=36 SourceTemp=33
-    JumpIfFalse           CondTemp=36 Target=rcdrop_list_shared_67   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    JumpIfFalse           CondTemp=36 Target=rcdrop_list_shared_69   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadMemOffset         Target=37 BasePtr=33 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
     RcDrop                SourceTemp=37 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=38 BasePtr=33 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:26:1)
     RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=24 Source=38   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    Jump                  Target=rcdrop_list_66   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  rcdrop_list_shared_67:
+    Jump                  Target=rcdrop_list_68   (tco_pair_released_past_unnamed_successor.ash:26:1)
+  rcdrop_list_shared_69:
     RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_68   (tco_pair_released_past_unnamed_successor.ash:26:1)
-  rcdrop_list_end_68:
-  rc_tco_exit_drop_inactive_65:
+    Jump                  Target=rcdrop_list_end_70   (tco_pair_released_past_unnamed_successor.ash:26:1)
+  rcdrop_list_end_70:
+  rc_tco_exit_drop_inactive_67:
     Return                Source=24   (tco_pair_released_past_unnamed_successor.ash:26:1)
 
-function lambda_7  [SourceFunction from countAll]
+function lambda_8  [SourceFunction from countAll]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:26:1)
     LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    MakeClosure           Target=4 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    MakeClosure           Target=4 FuncLabel=lambda_9 EnvPtrTemp=0 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:26:1)
     Return                Source=4   (tco_pair_released_past_unnamed_successor.ash:26:1)
 
-function lambda_11  [ClosureHelper from enqueue]
+function lambda_12  [ClosureHelper from enqueue]
   locals=9 temps=41
     LoadEnv               Target=0 Index=0   (tco_pair_released_past_unnamed_successor.ash:31:58)
     LoadEnv               Target=1 Index=1   (tco_pair_released_past_unnamed_successor.ash:31:65)
@@ -739,65 +768,65 @@ function lambda_11  [ClosureHelper from enqueue]
     StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=2   (tco_pair_released_past_unnamed_successor.ash:31:57)
     StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=8   (tco_pair_released_past_unnamed_successor.ash:31:57)
     IsReferenceCounted    Target=10 SourceTemp=9
-    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_69   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_71   (tco_pair_released_past_unnamed_successor.ash:31:1)
     RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
     StoreLocal            Slot=6 Source=11   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    Jump                  Target=rc_representation_done_70   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_copy_69:
+    Jump                  Target=rc_representation_done_72   (tco_pair_released_past_unnamed_successor.ash:31:1)
+  rc_representation_copy_71:
     Alloc                 Target=12 SizeBytes=16 RuntimeManaged=true   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     IsReferenceCounted    Target=14 SourceTemp=13
-    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_71   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_73   (tco_pair_released_past_unnamed_successor.ash:31:1)
     RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
     StoreLocal            Slot=7 Source=15   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    Jump                  Target=rc_representation_done_72   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_copy_71:
+    Jump                  Target=rc_representation_done_74   (tco_pair_released_past_unnamed_successor.ash:31:1)
+  rc_representation_copy_73:
     CopyOutList           DestTemp=16 SrcTemp=13 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreLocal            Slot=7 Source=16   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_done_72:
+  rc_representation_done_74:
     LoadLocal             Target=17 Slot=7   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=17   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadMemOffset         Target=18 BasePtr=9 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:31:1)
     IsReferenceCounted    Target=19 SourceTemp=18
-    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_73   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_75   (tco_pair_released_past_unnamed_successor.ash:31:1)
     RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
     StoreLocal            Slot=8 Source=20   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    Jump                  Target=rc_representation_done_74   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_copy_73:
+    Jump                  Target=rc_representation_done_76   (tco_pair_released_past_unnamed_successor.ash:31:1)
+  rc_representation_copy_75:
     LoadConstInt          Target=22 Value=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     CallKnown             Target=23 FuncLabel=__rcnorm_2 EnvTemp=22 ArgTemp=18   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreLocal            Slot=8 Source=23   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_done_74:
+  rc_representation_done_76:
     LoadLocal             Target=24 Slot=8   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=24   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreLocal            Slot=6 Source=12   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  rc_representation_done_70:
+  rc_representation_done_72:
     LoadLocal             Target=25 Slot=6   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadArgumentOwnership Target=26   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=27 Value=2   (tco_pair_released_past_unnamed_successor.ash:31:1)
     ShrInt                Target=28 Left=26 Right=27   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=29 Value=1   (tco_pair_released_past_unnamed_successor.ash:31:1)
     AndInt                Target=30 Left=28 Right=29   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    JumpIfFalse           CondTemp=30 Target=independent_result_not_requested_75   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=30 Target=independent_result_not_requested_77   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadArgumentOwnership Target=31   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=32 Value=-8   (tco_pair_released_past_unnamed_successor.ash:31:1)
     AndInt                Target=33 Left=31 Right=32   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=34 Value=2305843009213693952   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=33 OffsetBytes=0 Source=34   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  independent_result_not_requested_75:
+  independent_result_not_requested_77:
     LoadLocal             Target=35 Slot=5   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=36 Value=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     CmpIntNe              Target=37 Left=35 Right=36   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    JumpIfFalse           CondTemp=37 Target=general_rc_owned_absent_76   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=37 Target=general_rc_owned_absent_78   (tco_pair_released_past_unnamed_successor.ash:31:1)
     IsReferenceCounted    Target=38 SourceTemp=35
-    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_76   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_78   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadConstInt          Target=39 Value=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     CallKnown             Target=40 FuncLabel=__rcdrop_general_3 EnvTemp=39 ArgTemp=35   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreLocal            Slot=5 Source=36   (tco_pair_released_past_unnamed_successor.ash:31:1)
-  general_rc_owned_absent_76:
+  general_rc_owned_absent_78:
     Return                Source=25   (tco_pair_released_past_unnamed_successor.ash:31:1)
 
-function lambda_10  [ClosureHelper from enqueue]
+function lambda_11  [ClosureHelper from enqueue]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=24   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadEnv               Target=1 Index=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
@@ -806,20 +835,20 @@ function lambda_10  [ClosureHelper from enqueue]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadEnv               Target=3 Index=1   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    MakeClosure           Target=4 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    MakeClosure           Target=4 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_pair_released_past_unnamed_successor.ash:31:1)
     Return                Source=4   (tco_pair_released_past_unnamed_successor.ash:31:1)
 
-function lambda_9  [SourceFunction from enqueue]
+function lambda_10  [SourceFunction from enqueue]
   locals=2 temps=4
     Alloc                 Target=0 SizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadEnv               Target=2 Index=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    MakeClosure           Target=3 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    MakeClosure           Target=3 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:31:1)
     Return                Source=3   (tco_pair_released_past_unnamed_successor.ash:31:1)
 
-function lambda_16  [ClosureHelper from solve]
+function lambda_17  [ClosureHelper from solve]
   locals=88 temps=302
     LoadEnv               Target=0 Index=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=2 Source=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -831,43 +860,43 @@ function lambda_16  [ClosureHelper from solve]
     StoreLocal            Slot=5 Source=3   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=153 Slot=2   (tco_pair_released_past_unnamed_successor.ash:33:1)
     IsReferenceCounted    Target=154 SourceTemp=153
-    JumpIfFalse           CondTemp=154 Target=rc_representation_copy_106   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=154 Target=rc_representation_copy_108   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDup                 Target=155 SourceTemp=153 RuntimeManaged=true
     StoreLocal            Slot=70 Source=155   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rc_representation_done_107   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_copy_106:
+    Jump                  Target=rc_representation_done_109   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rc_representation_copy_108:
     CopyOutList           DestTemp=156 SrcTemp=153 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=70 Source=156   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_done_107:
+  rc_representation_done_109:
     LoadLocal             Target=157 Slot=70   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=2 Source=157   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=158 Value=1   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=9 Source=158   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=159 Slot=4   (tco_pair_released_past_unnamed_successor.ash:33:1)
     IsReferenceCounted    Target=160 SourceTemp=159
-    JumpIfFalse           CondTemp=160 Target=rc_representation_copy_108   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=160 Target=rc_representation_copy_110   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDup                 Target=161 SourceTemp=159 RuntimeManaged=true
     StoreLocal            Slot=71 Source=161   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rc_representation_done_109   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_copy_108:
+    Jump                  Target=rc_representation_done_111   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rc_representation_copy_110:
     LoadConstInt          Target=164 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CallKnown             Target=165 FuncLabel=__rcnorm_2 EnvTemp=164 ArgTemp=159   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=71 Source=165   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_done_109:
+  rc_representation_done_111:
     LoadLocal             Target=166 Slot=71   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=4 Source=166   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=167 Value=1   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=10 Source=167   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=168 Slot=5   (tco_pair_released_past_unnamed_successor.ash:33:1)
     IsReferenceCounted    Target=169 SourceTemp=168
-    JumpIfFalse           CondTemp=169 Target=rc_representation_copy_110   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=169 Target=rc_representation_copy_112   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDup                 Target=170 SourceTemp=168 RuntimeManaged=true
     StoreLocal            Slot=72 Source=170   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rc_representation_done_111   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_copy_110:
+    Jump                  Target=rc_representation_done_113   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rc_representation_copy_112:
     CopyOutList           DestTemp=171 SrcTemp=168 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=72 Source=171   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_representation_done_111:
+  rc_representation_done_113:
     LoadLocal             Target=172 Slot=72   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=5 Source=172   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=173 Value=1   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -875,19 +904,19 @@ function lambda_16  [ClosureHelper from solve]
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     LoadConstInt          Target=4 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=8 Source=4   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  lambda_16_body:
+  lambda_17_body:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     SaveStackPointer      Slot=14   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=5 Slot=2   (tco_pair_released_past_unnamed_successor.ash:34:11)
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadConstInt          Target=6 Value=0   (tco_pair_released_past_unnamed_successor.ash:34:5)
     CmpIntEq              Target=7 Left=5 Right=6   (tco_pair_released_past_unnamed_successor.ash:34:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_80   (tco_pair_released_past_unnamed_successor.ash:34:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_82   (tco_pair_released_past_unnamed_successor.ash:34:5)
     LoadLocal             Target=8 Slot=3   (tco_pair_released_past_unnamed_successor.ash:36:19)
     SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
     LoadConstInt          Target=9 Value=0   (tco_pair_released_past_unnamed_successor.ash:36:13)
     CmpIntEq              Target=10 Left=8 Right=9   (tco_pair_released_past_unnamed_successor.ash:36:13)
-    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_84   (tco_pair_released_past_unnamed_successor.ash:36:13)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_86   (tco_pair_released_past_unnamed_successor.ash:36:13)
     SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
     LoadEnv               Target=11 Index=2   (tco_pair_released_past_unnamed_successor.ash:37:25)
     LoadLocal             Target=12 Slot=4   (tco_pair_released_past_unnamed_successor.ash:37:35)
@@ -903,10 +932,10 @@ function lambda_16  [ClosureHelper from solve]
     LoadConstInt          Target=19 Value=1   (tco_pair_released_past_unnamed_successor.ash:37:43)
     AndInt                Target=20 Left=18 Right=19   (tco_pair_released_past_unnamed_successor.ash:37:43)
     StoreLocal            Slot=26 Source=15   (tco_pair_released_past_unnamed_successor.ash:37:43)
-    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_85   (tco_pair_released_past_unnamed_successor.ash:37:43)
+    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_87   (tco_pair_released_past_unnamed_successor.ash:37:43)
     RcDup                 Target=21 SourceTemp=15 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=26 Source=21   (tco_pair_released_past_unnamed_successor.ash:37:43)
-  rc_call_argument_not_retained_85:
+  rc_call_argument_not_retained_87:
     LoadLocal             Target=22 Slot=26   (tco_pair_released_past_unnamed_successor.ash:37:43)
     CallClosure           Target=23 ClosureTemp=14 ArgTemp=22 RuntimeManagedArgumentFlagTemp=20   (tco_pair_released_past_unnamed_successor.ash:37:43)
     LoadConstInt          Target=24 Value=0   (tco_pair_released_past_unnamed_successor.ash:37:61)
@@ -917,12 +946,12 @@ function lambda_16  [ClosureHelper from solve]
     StoreLocal            Slot=18 Source=26   (tco_pair_released_past_unnamed_successor.ash:36:13)
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=28
-    Jump                  Target=match_end_81   (tco_pair_released_past_unnamed_successor.ash:36:13)
-  match_arm_cleanup_84:
+    Jump                  Target=match_end_83   (tco_pair_released_past_unnamed_successor.ash:36:13)
+  match_arm_cleanup_86:
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=29
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=29
-    Jump                  Target=match_next_83   (tco_pair_released_past_unnamed_successor.ash:36:13)
-  match_next_83:
+    Jump                  Target=match_next_85   (tco_pair_released_past_unnamed_successor.ash:36:13)
+  match_next_85:
     SaveArenaState        CursorLocalSlot=30 EndLocalSlot=31
     SaveArenaState        CursorLocalSlot=32 EndLocalSlot=33
     LoadEnv               Target=27 Index=6   (tco_pair_released_past_unnamed_successor.ash:39:27)
@@ -937,10 +966,10 @@ function lambda_16  [ClosureHelper from solve]
     CmpIntEq              Target=36 Left=34 Right=35   (tco_pair_released_past_unnamed_successor.ash:39:27)
     OrInt                 Target=37 Left=33 Right=36   (tco_pair_released_past_unnamed_successor.ash:39:27)
     StoreLocal            Slot=34 Source=28   (tco_pair_released_past_unnamed_successor.ash:39:27)
-    JumpIfFalse           CondTemp=34 Target=rc_call_argument_not_retained_87   (tco_pair_released_past_unnamed_successor.ash:39:27)
+    JumpIfFalse           CondTemp=34 Target=rc_call_argument_not_retained_89   (tco_pair_released_past_unnamed_successor.ash:39:27)
     RcDup                 Target=38 SourceTemp=28 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=34 Source=38   (tco_pair_released_past_unnamed_successor.ash:39:27)
-  rc_call_argument_not_retained_87:
+  rc_call_argument_not_retained_89:
     LoadLocal             Target=39 Slot=34   (tco_pair_released_past_unnamed_successor.ash:39:27)
     CallClosure           Target=40 ClosureTemp=27 ArgTemp=39 RuntimeManagedArgumentFlagTemp=34   (tco_pair_released_past_unnamed_successor.ash:39:27)
     LoadConstInt          Target=41 Value=0   (tco_pair_released_past_unnamed_successor.ash:39:44)
@@ -950,28 +979,28 @@ function lambda_16  [ClosureHelper from solve]
     CallClosure           Target=45 ClosureTemp=40 ArgTemp=41   (tco_pair_released_past_unnamed_successor.ash:39:27)
     RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=35
     ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=35
-    JumpIfFalse           CondTemp=37 Target=rc_handed_over_not_adopted_88   (tco_pair_released_past_unnamed_successor.ash:39:27)
-    Jump                  Target=rc_handed_over_done_89   (tco_pair_released_past_unnamed_successor.ash:39:27)
-  rc_handed_over_not_adopted_88:
+    JumpIfFalse           CondTemp=37 Target=rc_handed_over_not_adopted_90   (tco_pair_released_past_unnamed_successor.ash:39:27)
+    Jump                  Target=rc_handed_over_done_91   (tco_pair_released_past_unnamed_successor.ash:39:27)
+  rc_handed_over_not_adopted_90:
     StoreLocal            Slot=36 Source=39   (tco_pair_released_past_unnamed_successor.ash:39:27)
-  rcdrop_list_90:
+  rcdrop_list_92:
     LoadLocal             Target=46 Slot=36   (tco_pair_released_past_unnamed_successor.ash:39:27)
     LoadConstInt          Target=47 Value=0   (tco_pair_released_past_unnamed_successor.ash:39:27)
     CmpIntNe              Target=48 Left=46 Right=47   (tco_pair_released_past_unnamed_successor.ash:39:27)
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_92   (tco_pair_released_past_unnamed_successor.ash:39:27)
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_94   (tco_pair_released_past_unnamed_successor.ash:39:27)
     RcIsUnique            Target=49 SourceTemp=46
-    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_91   (tco_pair_released_past_unnamed_successor.ash:39:27)
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_93   (tco_pair_released_past_unnamed_successor.ash:39:27)
     LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:39:27)
     RcDrop                SourceTemp=50 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:39:27)
     RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=36 Source=51   (tco_pair_released_past_unnamed_successor.ash:39:27)
-    Jump                  Target=rcdrop_list_90   (tco_pair_released_past_unnamed_successor.ash:39:27)
-  rcdrop_list_shared_91:
+    Jump                  Target=rcdrop_list_92   (tco_pair_released_past_unnamed_successor.ash:39:27)
+  rcdrop_list_shared_93:
     RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_92   (tco_pair_released_past_unnamed_successor.ash:39:27)
-  rcdrop_list_end_92:
-  rc_handed_over_done_89:
+    Jump                  Target=rcdrop_list_end_94   (tco_pair_released_past_unnamed_successor.ash:39:27)
+  rcdrop_list_end_94:
+  rc_handed_over_done_91:
     LoadConstInt          Target=52 Value=0   (tco_pair_released_past_unnamed_successor.ash:39:49)
     LoadLocal             Target=53 Slot=4   (tco_pair_released_past_unnamed_successor.ash:39:53)
     LoadLocal             Target=54 Slot=5   (tco_pair_released_past_unnamed_successor.ash:39:59)
@@ -989,52 +1018,52 @@ function lambda_16  [ClosureHelper from solve]
     RcDup                 Target=224 SourceTemp=53 RuntimeManaged=true
     RcDup                 Target=225 SourceTemp=54 RuntimeManaged=true MayBeEmpty=true
     LoadLocal             Target=226 Slot=9
-    JumpIfFalse           CondTemp=226 Target=rc_tco_drop_inactive_148
+    JumpIfFalse           CondTemp=226 Target=rc_tco_drop_inactive_150
     StoreLocal            Slot=78 Source=56
-  rcdrop_list_149:
+  rcdrop_list_151:
     LoadLocal             Target=227 Slot=78
     LoadConstInt          Target=228 Value=0
     CmpIntNe              Target=229 Left=227 Right=228
-    JumpIfFalse           CondTemp=229 Target=rcdrop_list_end_151
+    JumpIfFalse           CondTemp=229 Target=rcdrop_list_end_153
     RcIsUnique            Target=230 SourceTemp=227
-    JumpIfFalse           CondTemp=230 Target=rcdrop_list_shared_150
+    JumpIfFalse           CondTemp=230 Target=rcdrop_list_shared_152
     LoadMemOffset         Target=231 BasePtr=227 OffsetBytes=0
     RcDrop                SourceTemp=231 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=232 BasePtr=227 OffsetBytes=8
     RcDrop                SourceTemp=227 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=78 Source=232
-    Jump                  Target=rcdrop_list_149
-  rcdrop_list_shared_150:
+    Jump                  Target=rcdrop_list_151
+  rcdrop_list_shared_152:
     RcDrop                SourceTemp=227 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_151
-  rcdrop_list_end_151:
-  rc_tco_drop_inactive_148:
+    Jump                  Target=rcdrop_list_end_153
+  rcdrop_list_end_153:
+  rc_tco_drop_inactive_150:
     LoadLocal             Target=233 Slot=10
-    JumpIfFalse           CondTemp=233 Target=rc_tco_drop_inactive_152
+    JumpIfFalse           CondTemp=233 Target=rc_tco_drop_inactive_154
     LoadConstInt          Target=234 Value=0
     CallKnown             Target=235 FuncLabel=__rcdrop_general_3 EnvTemp=234 ArgTemp=58
-  rc_tco_drop_inactive_152:
+  rc_tco_drop_inactive_154:
     LoadLocal             Target=236 Slot=11
-    JumpIfFalse           CondTemp=236 Target=rc_tco_drop_inactive_153
+    JumpIfFalse           CondTemp=236 Target=rc_tco_drop_inactive_155
     StoreLocal            Slot=79 Source=59
-  rcdrop_list_154:
+  rcdrop_list_156:
     LoadLocal             Target=237 Slot=79
     LoadConstInt          Target=238 Value=0
     CmpIntNe              Target=239 Left=237 Right=238
-    JumpIfFalse           CondTemp=239 Target=rcdrop_list_end_156
+    JumpIfFalse           CondTemp=239 Target=rcdrop_list_end_158
     RcIsUnique            Target=240 SourceTemp=237
-    JumpIfFalse           CondTemp=240 Target=rcdrop_list_shared_155
+    JumpIfFalse           CondTemp=240 Target=rcdrop_list_shared_157
     LoadMemOffset         Target=241 BasePtr=237 OffsetBytes=0
     RcDrop                SourceTemp=241 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=242 BasePtr=237 OffsetBytes=8
     RcDrop                SourceTemp=237 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=79 Source=242
-    Jump                  Target=rcdrop_list_154
-  rcdrop_list_shared_155:
+    Jump                  Target=rcdrop_list_156
+  rcdrop_list_shared_157:
     RcDrop                SourceTemp=237 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_156
-  rcdrop_list_end_156:
-  rc_tco_drop_inactive_153:
+    Jump                  Target=rcdrop_list_end_158
+  rcdrop_list_end_158:
+  rc_tco_drop_inactive_155:
     StoreLocal            Slot=2 Source=45
     LoadConstInt          Target=243 Value=1
     StoreLocal            Slot=9 Source=243
@@ -1045,34 +1074,34 @@ function lambda_16  [ClosureHelper from solve]
     LoadConstInt          Target=245 Value=1
     StoreLocal            Slot=11 Source=245
     RestoreStackPointer   Slot=14   (tco_pair_released_past_unnamed_successor.ash:39:21)
-    Jump                  Target=lambda_16_body   (tco_pair_released_past_unnamed_successor.ash:39:21)
+    Jump                  Target=lambda_17_body   (tco_pair_released_past_unnamed_successor.ash:39:21)
     LoadConstInt          Target=61 Value=0   (tco_pair_released_past_unnamed_successor.ash:39:21)
     StoreLocal            Slot=18 Source=61   (tco_pair_released_past_unnamed_successor.ash:36:13)
     RestoreArenaState     CursorLocalSlot=30 EndLocalSlot=31 PreRestoreEndSlot=37
     ReclaimArenaChunks    SavedEndSlot=31 PreRestoreEndSlot=37
-    Jump                  Target=match_end_81   (tco_pair_released_past_unnamed_successor.ash:36:13)
-  match_arm_cleanup_86:
+    Jump                  Target=match_end_83   (tco_pair_released_past_unnamed_successor.ash:36:13)
+  match_arm_cleanup_88:
     RestoreArenaState     CursorLocalSlot=30 EndLocalSlot=31 PreRestoreEndSlot=38
     ReclaimArenaChunks    SavedEndSlot=31 PreRestoreEndSlot=38
-    Jump                  Target=match_none_82   (tco_pair_released_past_unnamed_successor.ash:36:13)
-  match_none_82:
+    Jump                  Target=match_none_84   (tco_pair_released_past_unnamed_successor.ash:36:13)
+  match_none_84:
     LoadConstInt          Target=62 Value=0   (tco_pair_released_past_unnamed_successor.ash:36:13)
     StoreLocal            Slot=18 Source=62   (tco_pair_released_past_unnamed_successor.ash:36:13)
-  match_end_81:
+  match_end_83:
     LoadLocal             Target=63 Slot=18   (tco_pair_released_past_unnamed_successor.ash:36:13)
     StoreLocal            Slot=15 Source=63   (tco_pair_released_past_unnamed_successor.ash:34:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=39
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=39
-    Jump                  Target=match_end_77   (tco_pair_released_past_unnamed_successor.ash:34:5)
-  match_arm_cleanup_80:
+    Jump                  Target=match_end_79   (tco_pair_released_past_unnamed_successor.ash:34:5)
+  match_arm_cleanup_82:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=40
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=40
-    Jump                  Target=match_next_79   (tco_pair_released_past_unnamed_successor.ash:34:5)
-  match_next_79:
+    Jump                  Target=match_next_81   (tco_pair_released_past_unnamed_successor.ash:34:5)
+  match_next_81:
     SaveArenaState        CursorLocalSlot=41 EndLocalSlot=42
     LoadConstInt          Target=64 Value=0   (tco_pair_released_past_unnamed_successor.ash:34:5)
     CmpIntNe              Target=65 Left=5 Right=64   (tco_pair_released_past_unnamed_successor.ash:34:5)
-    JumpIfFalse           CondTemp=65 Target=match_arm_cleanup_93   (tco_pair_released_past_unnamed_successor.ash:34:5)
+    JumpIfFalse           CondTemp=65 Target=match_arm_cleanup_95   (tco_pair_released_past_unnamed_successor.ash:34:5)
     LoadMemOffset         Target=66 BasePtr=5 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:34:5)
     LoadMemOffset         Target=67 BasePtr=5 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:34:5)
     StoreLocal            Slot=43 Source=66   (tco_pair_released_past_unnamed_successor.ash:34:5)
@@ -1080,7 +1109,7 @@ function lambda_16  [ClosureHelper from solve]
     LoadLocal             Target=68 Slot=1   (tco_pair_released_past_unnamed_successor.ash:41:16)
     LoadConstInt          Target=69 Value=0   (tco_pair_released_past_unnamed_successor.ash:41:24)
     CmpIntLe              Target=70 Left=68 Right=69   (tco_pair_released_past_unnamed_successor.ash:41:16)
-    JumpIfFalse           CondTemp=70 Target=else_94   (tco_pair_released_past_unnamed_successor.ash:41:13)
+    JumpIfFalse           CondTemp=70 Target=else_96   (tco_pair_released_past_unnamed_successor.ash:41:13)
     RcDrop                SourceTemp=67 TypeName=List OwnerSlot=44
     RcDrop                SourceTemp=66 TypeName=String OwnerSlot=43
     SaveArenaState        CursorLocalSlot=46 EndLocalSlot=47
@@ -1098,10 +1127,10 @@ function lambda_16  [ClosureHelper from solve]
     LoadConstInt          Target=79 Value=1   (tco_pair_released_past_unnamed_successor.ash:42:36)
     AndInt                Target=80 Left=78 Right=79   (tco_pair_released_past_unnamed_successor.ash:42:36)
     StoreLocal            Slot=51 Source=75   (tco_pair_released_past_unnamed_successor.ash:42:36)
-    JumpIfFalse           CondTemp=80 Target=rc_call_argument_not_retained_96   (tco_pair_released_past_unnamed_successor.ash:42:36)
+    JumpIfFalse           CondTemp=80 Target=rc_call_argument_not_retained_98   (tco_pair_released_past_unnamed_successor.ash:42:36)
     RcDup                 Target=81 SourceTemp=75 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=51 Source=81   (tco_pair_released_past_unnamed_successor.ash:42:36)
-  rc_call_argument_not_retained_96:
+  rc_call_argument_not_retained_98:
     LoadLocal             Target=82 Slot=51   (tco_pair_released_past_unnamed_successor.ash:42:36)
     CallClosure           Target=83 ClosureTemp=74 ArgTemp=82 RuntimeManagedArgumentFlagTemp=80   (tco_pair_released_past_unnamed_successor.ash:42:36)
     LoadConstInt          Target=84 Value=0   (tco_pair_released_past_unnamed_successor.ash:42:54)
@@ -1110,8 +1139,8 @@ function lambda_16  [ClosureHelper from solve]
     ReclaimArenaChunks    SavedEndSlot=50 PreRestoreEndSlot=52
     AddInt                Target=86 Left=73 Right=85   (tco_pair_released_past_unnamed_successor.ash:42:18)
     StoreLocal            Slot=45 Source=86   (tco_pair_released_past_unnamed_successor.ash:41:13)
-    Jump                  Target=endif_95   (tco_pair_released_past_unnamed_successor.ash:41:13)
-  else_94:
+    Jump                  Target=endif_97   (tco_pair_released_past_unnamed_successor.ash:41:13)
+  else_96:
     SaveArenaState        CursorLocalSlot=53 EndLocalSlot=54
     LoadEnv               Target=87 Index=7   (tco_pair_released_past_unnamed_successor.ash:44:23)
     Borrow                Target=88 SourceTemp=87
@@ -1131,10 +1160,10 @@ function lambda_16  [ClosureHelper from solve]
     CmpIntEq              Target=102 Left=100 Right=101   (tco_pair_released_past_unnamed_successor.ash:44:23)
     OrInt                 Target=103 Left=99 Right=102   (tco_pair_released_past_unnamed_successor.ash:44:23)
     StoreLocal            Slot=55 Source=94   (tco_pair_released_past_unnamed_successor.ash:44:23)
-    JumpIfFalse           CondTemp=100 Target=rc_call_argument_not_retained_97   (tco_pair_released_past_unnamed_successor.ash:44:23)
+    JumpIfFalse           CondTemp=100 Target=rc_call_argument_not_retained_99   (tco_pair_released_past_unnamed_successor.ash:44:23)
     RcDup                 Target=104 SourceTemp=94 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=55 Source=104   (tco_pair_released_past_unnamed_successor.ash:44:23)
-  rc_call_argument_not_retained_97:
+  rc_call_argument_not_retained_99:
     LoadLocal             Target=105 Slot=55   (tco_pair_released_past_unnamed_successor.ash:44:23)
     CallClosure           Target=106 ClosureTemp=93 ArgTemp=105 RuntimeManagedArgumentFlagTemp=100   (tco_pair_released_past_unnamed_successor.ash:44:23)
     LoadLocal             Target=107 Slot=4   (tco_pair_released_past_unnamed_successor.ash:44:48)
@@ -1147,28 +1176,28 @@ function lambda_16  [ClosureHelper from solve]
     LoadConstInt          Target=110 Value=1   (tco_pair_released_past_unnamed_successor.ash:44:23)
     StoreLocal            Slot=59 Source=110   (tco_pair_released_past_unnamed_successor.ash:44:23)
     LoadLocal             Target=111 Slot=57   (tco_pair_released_past_unnamed_successor.ash:44:23)
-    JumpIfFalse           CondTemp=103 Target=rc_handed_over_not_adopted_98   (tco_pair_released_past_unnamed_successor.ash:44:23)
-    Jump                  Target=rc_handed_over_done_99   (tco_pair_released_past_unnamed_successor.ash:44:23)
-  rc_handed_over_not_adopted_98:
+    JumpIfFalse           CondTemp=103 Target=rc_handed_over_not_adopted_100   (tco_pair_released_past_unnamed_successor.ash:44:23)
+    Jump                  Target=rc_handed_over_done_101   (tco_pair_released_past_unnamed_successor.ash:44:23)
+  rc_handed_over_not_adopted_100:
     StoreLocal            Slot=60 Source=105   (tco_pair_released_past_unnamed_successor.ash:44:23)
-  rcdrop_list_100:
+  rcdrop_list_102:
     LoadLocal             Target=112 Slot=60   (tco_pair_released_past_unnamed_successor.ash:44:23)
     LoadConstInt          Target=113 Value=0   (tco_pair_released_past_unnamed_successor.ash:44:23)
     CmpIntNe              Target=114 Left=112 Right=113   (tco_pair_released_past_unnamed_successor.ash:44:23)
-    JumpIfFalse           CondTemp=114 Target=rcdrop_list_end_102   (tco_pair_released_past_unnamed_successor.ash:44:23)
+    JumpIfFalse           CondTemp=114 Target=rcdrop_list_end_104   (tco_pair_released_past_unnamed_successor.ash:44:23)
     RcIsUnique            Target=115 SourceTemp=112
-    JumpIfFalse           CondTemp=115 Target=rcdrop_list_shared_101   (tco_pair_released_past_unnamed_successor.ash:44:23)
+    JumpIfFalse           CondTemp=115 Target=rcdrop_list_shared_103   (tco_pair_released_past_unnamed_successor.ash:44:23)
     LoadMemOffset         Target=116 BasePtr=112 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:44:23)
     RcDrop                SourceTemp=116 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=117 BasePtr=112 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:44:23)
     RcDrop                SourceTemp=112 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=60 Source=117   (tco_pair_released_past_unnamed_successor.ash:44:23)
-    Jump                  Target=rcdrop_list_100   (tco_pair_released_past_unnamed_successor.ash:44:23)
-  rcdrop_list_shared_101:
+    Jump                  Target=rcdrop_list_102   (tco_pair_released_past_unnamed_successor.ash:44:23)
+  rcdrop_list_shared_103:
     RcDrop                SourceTemp=112 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_102   (tco_pair_released_past_unnamed_successor.ash:44:23)
-  rcdrop_list_end_102:
-  rc_handed_over_done_99:
+    Jump                  Target=rcdrop_list_end_104   (tco_pair_released_past_unnamed_successor.ash:44:23)
+  rcdrop_list_end_104:
+  rc_handed_over_done_101:
     SaveArenaState        CursorLocalSlot=62 EndLocalSlot=63
     LoadMemOffset         Target=118 BasePtr=111 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:44:17)
     StoreLocal            Slot=64 Source=118   (tco_pair_released_past_unnamed_successor.ash:44:17)
@@ -1209,134 +1238,134 @@ function lambda_16  [ClosureHelper from solve]
     StoreLocal            Slot=5 Source=131   (tco_pair_released_past_unnamed_successor.ash:45:47)
     StoreLocal            Slot=1 Source=134   (tco_pair_released_past_unnamed_successor.ash:45:47)
     IsReferenceCounted    Target=246 SourceTemp=125
-    JumpIfFalse           CondTemp=246 Target=rc_representation_copy_157
+    JumpIfFalse           CondTemp=246 Target=rc_representation_copy_159
     RcDup                 Target=247 SourceTemp=125 RuntimeManaged=true
     StoreLocal            Slot=81 Source=247
-    Jump                  Target=rc_representation_done_158
-  rc_representation_copy_157:
-    IsReferenceCounted    Target=249 SourceTemp=125
-    JumpIfFalse           CondTemp=249 Target=rc_representation_copy_159
-    RcDup                 Target=250 SourceTemp=125 RuntimeManaged=true
-    StoreLocal            Slot=82 Source=250
     Jump                  Target=rc_representation_done_160
   rc_representation_copy_159:
+    IsReferenceCounted    Target=249 SourceTemp=125
+    JumpIfFalse           CondTemp=249 Target=rc_representation_copy_161
+    RcDup                 Target=250 SourceTemp=125 RuntimeManaged=true
+    StoreLocal            Slot=82 Source=250
+    Jump                  Target=rc_representation_done_162
+  rc_representation_copy_161:
     LoadConstInt          Target=252 Value=0
     CallKnown             Target=253 FuncLabel=__rcnorm_2 EnvTemp=252 ArgTemp=125
     StoreLocal            Slot=82 Source=253
-  rc_representation_done_160:
+  rc_representation_done_162:
     LoadLocal             Target=254 Slot=82
     StoreLocal            Slot=81 Source=254
-  rc_representation_done_158:
+  rc_representation_done_160:
     LoadLocal             Target=255 Slot=81
     IsReferenceCounted    Target=256 SourceTemp=131
-    JumpIfFalse           CondTemp=256 Target=rc_representation_copy_161
+    JumpIfFalse           CondTemp=256 Target=rc_representation_copy_163
     RcDup                 Target=257 SourceTemp=131 RuntimeManaged=true
     StoreLocal            Slot=83 Source=257
-    Jump                  Target=rc_representation_done_162
-  rc_representation_copy_161:
+    Jump                  Target=rc_representation_done_164
+  rc_representation_copy_163:
     CopyOutList           DestTemp=258 SrcTemp=131 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=83 Source=258
-  rc_representation_done_162:
+  rc_representation_done_164:
     LoadLocal             Target=259 Slot=83
     LoadLocal             Target=260 Slot=9
-    JumpIfFalse           CondTemp=260 Target=rc_tco_drop_inactive_163
+    JumpIfFalse           CondTemp=260 Target=rc_tco_drop_inactive_165
     StoreLocal            Slot=84 Source=138
-  rcdrop_list_164:
+  rcdrop_list_166:
     LoadLocal             Target=261 Slot=84
     LoadConstInt          Target=262 Value=0
     CmpIntNe              Target=263 Left=261 Right=262
-    JumpIfFalse           CondTemp=263 Target=rcdrop_list_end_166
+    JumpIfFalse           CondTemp=263 Target=rcdrop_list_end_168
     RcIsUnique            Target=264 SourceTemp=261
-    JumpIfFalse           CondTemp=264 Target=rcdrop_list_shared_165
+    JumpIfFalse           CondTemp=264 Target=rcdrop_list_shared_167
     LoadMemOffset         Target=265 BasePtr=261 OffsetBytes=0
     RcDrop                SourceTemp=265 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=266 BasePtr=261 OffsetBytes=8
     RcDrop                SourceTemp=261 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=84 Source=266
-    Jump                  Target=rcdrop_list_164
-  rcdrop_list_shared_165:
+    Jump                  Target=rcdrop_list_166
+  rcdrop_list_shared_167:
     RcDrop                SourceTemp=261 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_166
-  rcdrop_list_end_166:
-  rc_tco_drop_inactive_163:
+    Jump                  Target=rcdrop_list_end_168
+  rcdrop_list_end_168:
+  rc_tco_drop_inactive_165:
     LoadLocal             Target=267 Slot=10
-    JumpIfFalse           CondTemp=267 Target=rc_tco_drop_inactive_167
+    JumpIfFalse           CondTemp=267 Target=rc_tco_drop_inactive_169
     LoadConstInt          Target=268 Value=0
     CallKnown             Target=269 FuncLabel=__rcdrop_general_3 EnvTemp=268 ArgTemp=140
-  rc_tco_drop_inactive_167:
+  rc_tco_drop_inactive_169:
     LoadLocal             Target=270 Slot=11
-    JumpIfFalse           CondTemp=270 Target=rc_tco_drop_inactive_168
+    JumpIfFalse           CondTemp=270 Target=rc_tco_drop_inactive_170
     StoreLocal            Slot=85 Source=141
-  rcdrop_list_169:
+  rcdrop_list_171:
     LoadLocal             Target=271 Slot=85
     LoadConstInt          Target=272 Value=0
     CmpIntNe              Target=273 Left=271 Right=272
-    JumpIfFalse           CondTemp=273 Target=rcdrop_list_end_171
+    JumpIfFalse           CondTemp=273 Target=rcdrop_list_end_173
     RcIsUnique            Target=274 SourceTemp=271
-    JumpIfFalse           CondTemp=274 Target=rcdrop_list_shared_170
+    JumpIfFalse           CondTemp=274 Target=rcdrop_list_shared_172
     LoadMemOffset         Target=275 BasePtr=271 OffsetBytes=0
     RcDrop                SourceTemp=275 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=276 BasePtr=271 OffsetBytes=8
     RcDrop                SourceTemp=271 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=85 Source=276
-    Jump                  Target=rcdrop_list_169
-  rcdrop_list_shared_170:
+    Jump                  Target=rcdrop_list_171
+  rcdrop_list_shared_172:
     RcDrop                SourceTemp=271 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_171
-  rcdrop_list_end_171:
-  rc_tco_drop_inactive_168:
+    Jump                  Target=rcdrop_list_end_173
+  rcdrop_list_end_173:
+  rc_tco_drop_inactive_170:
     StoreLocal            Slot=86 Source=136
-  rcdrop_list_172:
+  rcdrop_list_174:
     LoadLocal             Target=277 Slot=86
     LoadConstInt          Target=278 Value=0
     CmpIntNe              Target=279 Left=277 Right=278
-    JumpIfFalse           CondTemp=279 Target=rcdrop_list_end_174
+    JumpIfFalse           CondTemp=279 Target=rcdrop_list_end_176
     RcIsUnique            Target=280 SourceTemp=277
-    JumpIfFalse           CondTemp=280 Target=rcdrop_list_shared_173
+    JumpIfFalse           CondTemp=280 Target=rcdrop_list_shared_175
     LoadMemOffset         Target=281 BasePtr=277 OffsetBytes=0
     RcDrop                SourceTemp=281 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=282 BasePtr=277 OffsetBytes=8
     RcDrop                SourceTemp=277 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=86 Source=282
-    Jump                  Target=rcdrop_list_172
-  rcdrop_list_shared_173:
+    Jump                  Target=rcdrop_list_174
+  rcdrop_list_shared_175:
     RcDrop                SourceTemp=277 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_174
-  rcdrop_list_end_174:
+    Jump                  Target=rcdrop_list_end_176
+  rcdrop_list_end_176:
     LoadLocal             Target=283 Slot=58
     LoadConstInt          Target=284 Value=0
     CmpIntNe              Target=285 Left=283 Right=284
-    JumpIfFalse           CondTemp=285 Target=general_rc_owned_absent_175
+    JumpIfFalse           CondTemp=285 Target=general_rc_owned_absent_177
     IsReferenceCounted    Target=286 SourceTemp=283
-    JumpIfFalse           CondTemp=286 Target=general_rc_owned_absent_175
+    JumpIfFalse           CondTemp=286 Target=general_rc_owned_absent_177
     RcIsUnique            Target=287 SourceTemp=283
-    JumpIfFalse           CondTemp=287 Target=rc_drop_tuple_shared_176
+    JumpIfFalse           CondTemp=287 Target=rc_drop_tuple_shared_178
     LoadMemOffset         Target=288 BasePtr=283 OffsetBytes=0
     StoreLocal            Slot=87 Source=288
-  rcdrop_list_177:
+  rcdrop_list_179:
     LoadLocal             Target=289 Slot=87
     LoadConstInt          Target=290 Value=0
     CmpIntNe              Target=291 Left=289 Right=290
-    JumpIfFalse           CondTemp=291 Target=rcdrop_list_end_179
+    JumpIfFalse           CondTemp=291 Target=rcdrop_list_end_181
     RcIsUnique            Target=292 SourceTemp=289
-    JumpIfFalse           CondTemp=292 Target=rcdrop_list_shared_178
+    JumpIfFalse           CondTemp=292 Target=rcdrop_list_shared_180
     LoadMemOffset         Target=293 BasePtr=289 OffsetBytes=0
     RcDrop                SourceTemp=293 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=294 BasePtr=289 OffsetBytes=8
     RcDrop                SourceTemp=289 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=87 Source=294
-    Jump                  Target=rcdrop_list_177
-  rcdrop_list_shared_178:
+    Jump                  Target=rcdrop_list_179
+  rcdrop_list_shared_180:
     RcDrop                SourceTemp=289 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_179
-  rcdrop_list_end_179:
+    Jump                  Target=rcdrop_list_end_181
+  rcdrop_list_end_181:
     LoadMemOffset         Target=295 BasePtr=283 OffsetBytes=8
     LoadConstInt          Target=296 Value=0
     CallKnown             Target=297 FuncLabel=__rcdrop_general_3 EnvTemp=296 ArgTemp=295
-  rc_drop_tuple_shared_176:
+  rc_drop_tuple_shared_178:
     RcDrop                SourceTemp=283 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=58 Source=284
-  general_rc_owned_absent_175:
+  general_rc_owned_absent_177:
     LoadConstInt          Target=298 Value=0
     StoreLocal            Slot=59 Source=298
     StoreLocal            Slot=2 Source=135
@@ -1350,158 +1379,158 @@ function lambda_16  [ClosureHelper from solve]
     LoadConstInt          Target=301 Value=1
     StoreLocal            Slot=11 Source=301
     RestoreStackPointer   Slot=14   (tco_pair_released_past_unnamed_successor.ash:45:47)
-    Jump                  Target=lambda_16_body   (tco_pair_released_past_unnamed_successor.ash:45:47)
+    Jump                  Target=lambda_17_body   (tco_pair_released_past_unnamed_successor.ash:45:47)
     LoadConstInt          Target=143 Value=0   (tco_pair_released_past_unnamed_successor.ash:45:47)
     StoreLocal            Slot=61 Source=143   (tco_pair_released_past_unnamed_successor.ash:44:17)
     RestoreArenaState     CursorLocalSlot=62 EndLocalSlot=63 PreRestoreEndSlot=66
     ReclaimArenaChunks    SavedEndSlot=63 PreRestoreEndSlot=66
-    Jump                  Target=match_end_103   (tco_pair_released_past_unnamed_successor.ash:44:17)
-  match_arm_cleanup_105:
+    Jump                  Target=match_end_105   (tco_pair_released_past_unnamed_successor.ash:44:17)
+  match_arm_cleanup_107:
     RestoreArenaState     CursorLocalSlot=62 EndLocalSlot=63 PreRestoreEndSlot=67
     ReclaimArenaChunks    SavedEndSlot=63 PreRestoreEndSlot=67
-    Jump                  Target=match_none_104   (tco_pair_released_past_unnamed_successor.ash:44:17)
-  match_none_104:
+    Jump                  Target=match_none_106   (tco_pair_released_past_unnamed_successor.ash:44:17)
+  match_none_106:
     LoadConstInt          Target=146 Value=0   (tco_pair_released_past_unnamed_successor.ash:44:17)
     StoreLocal            Slot=61 Source=146   (tco_pair_released_past_unnamed_successor.ash:44:17)
-  match_end_103:
+  match_end_105:
     LoadLocal             Target=147 Slot=61   (tco_pair_released_past_unnamed_successor.ash:44:17)
     StoreLocal            Slot=45 Source=147   (tco_pair_released_past_unnamed_successor.ash:41:13)
-  endif_95:
+  endif_97:
     LoadLocal             Target=148 Slot=45   (tco_pair_released_past_unnamed_successor.ash:41:13)
     StoreLocal            Slot=15 Source=148   (tco_pair_released_past_unnamed_successor.ash:34:5)
     RestoreArenaState     CursorLocalSlot=41 EndLocalSlot=42 PreRestoreEndSlot=68
     ReclaimArenaChunks    SavedEndSlot=42 PreRestoreEndSlot=68
-    Jump                  Target=match_end_77   (tco_pair_released_past_unnamed_successor.ash:34:5)
-  match_arm_cleanup_93:
+    Jump                  Target=match_end_79   (tco_pair_released_past_unnamed_successor.ash:34:5)
+  match_arm_cleanup_95:
     RestoreArenaState     CursorLocalSlot=41 EndLocalSlot=42 PreRestoreEndSlot=69
     ReclaimArenaChunks    SavedEndSlot=42 PreRestoreEndSlot=69
-    Jump                  Target=match_none_78   (tco_pair_released_past_unnamed_successor.ash:34:5)
-  match_none_78:
+    Jump                  Target=match_none_80   (tco_pair_released_past_unnamed_successor.ash:34:5)
+  match_none_80:
     LoadConstInt          Target=151 Value=0   (tco_pair_released_past_unnamed_successor.ash:34:5)
     StoreLocal            Slot=15 Source=151   (tco_pair_released_past_unnamed_successor.ash:34:5)
-  match_end_77:
+  match_end_79:
     LoadLocal             Target=152 Slot=15   (tco_pair_released_past_unnamed_successor.ash:34:5)
     LoadLocal             Target=174 Slot=57   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=175 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=176 Left=174 Right=175   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=176 Target=general_rc_owned_absent_112   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=176 Target=general_rc_owned_absent_114   (tco_pair_released_past_unnamed_successor.ash:33:1)
     IsReferenceCounted    Target=177 SourceTemp=174
-    JumpIfFalse           CondTemp=177 Target=general_rc_owned_absent_112   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=177 Target=general_rc_owned_absent_114   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=178 SourceTemp=174
-    JumpIfFalse           CondTemp=178 Target=rc_drop_tuple_shared_113   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=178 Target=rc_drop_tuple_shared_115   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=179 BasePtr=174 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=73 Source=179   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_114:
+  rcdrop_list_116:
     LoadLocal             Target=180 Slot=73   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=181 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=182 Left=180 Right=181   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=182 Target=rcdrop_list_end_116   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=182 Target=rcdrop_list_end_118   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=183 SourceTemp=180
-    JumpIfFalse           CondTemp=183 Target=rcdrop_list_shared_115   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=183 Target=rcdrop_list_shared_117   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=184 BasePtr=180 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=184 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=185 BasePtr=180 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=180 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=73 Source=185   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rcdrop_list_114   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_shared_115:
+    Jump                  Target=rcdrop_list_116   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_shared_117:
     RcDrop                SourceTemp=180 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_116   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_end_116:
+    Jump                  Target=rcdrop_list_end_118   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_end_118:
     LoadMemOffset         Target=186 BasePtr=174 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=187 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CallKnown             Target=188 FuncLabel=__rcdrop_general_3 EnvTemp=187 ArgTemp=186   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_drop_tuple_shared_113:
+  rc_drop_tuple_shared_115:
     RcDrop                SourceTemp=174 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=57 Source=175   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  general_rc_owned_absent_112:
+  general_rc_owned_absent_114:
     LoadLocal             Target=189 Slot=58   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=190 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=191 Left=189 Right=190   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=191 Target=general_rc_owned_absent_117   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=191 Target=general_rc_owned_absent_119   (tco_pair_released_past_unnamed_successor.ash:33:1)
     IsReferenceCounted    Target=192 SourceTemp=189
-    JumpIfFalse           CondTemp=192 Target=general_rc_owned_absent_117   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=192 Target=general_rc_owned_absent_119   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=193 SourceTemp=189
-    JumpIfFalse           CondTemp=193 Target=rc_drop_tuple_shared_118   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=193 Target=rc_drop_tuple_shared_120   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=194 BasePtr=189 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=74 Source=194   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_119:
+  rcdrop_list_121:
     LoadLocal             Target=195 Slot=74   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=196 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=197 Left=195 Right=196   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=197 Target=rcdrop_list_end_121   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=197 Target=rcdrop_list_end_123   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=198 SourceTemp=195
-    JumpIfFalse           CondTemp=198 Target=rcdrop_list_shared_120   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=198 Target=rcdrop_list_shared_122   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=199 BasePtr=195 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=199 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=200 BasePtr=195 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=195 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=74 Source=200   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rcdrop_list_119   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_shared_120:
+    Jump                  Target=rcdrop_list_121   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_shared_122:
     RcDrop                SourceTemp=195 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_121   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_end_121:
+    Jump                  Target=rcdrop_list_end_123   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_end_123:
     LoadMemOffset         Target=201 BasePtr=189 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=202 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CallKnown             Target=203 FuncLabel=__rcdrop_general_3 EnvTemp=202 ArgTemp=201   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_drop_tuple_shared_118:
+  rc_drop_tuple_shared_120:
     RcDrop                SourceTemp=189 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=58 Source=190   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  general_rc_owned_absent_117:
+  general_rc_owned_absent_119:
     LoadLocal             Target=204 Slot=2   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=205 Slot=9   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=205 Target=rc_tco_exit_drop_inactive_122   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=205 Target=rc_tco_exit_drop_inactive_124   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=75 Source=204   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_123:
+  rcdrop_list_125:
     LoadLocal             Target=206 Slot=75   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=207 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=208 Left=206 Right=207   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=208 Target=rcdrop_list_end_125   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=208 Target=rcdrop_list_end_127   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=209 SourceTemp=206
-    JumpIfFalse           CondTemp=209 Target=rcdrop_list_shared_124   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=209 Target=rcdrop_list_shared_126   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=210 BasePtr=206 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=210 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=211 BasePtr=206 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=206 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=75 Source=211   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rcdrop_list_123   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_shared_124:
+    Jump                  Target=rcdrop_list_125   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_shared_126:
     RcDrop                SourceTemp=206 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_125   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_end_125:
-  rc_tco_exit_drop_inactive_122:
+    Jump                  Target=rcdrop_list_end_127   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_end_127:
+  rc_tco_exit_drop_inactive_124:
     LoadLocal             Target=212 Slot=4   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=213 Slot=10   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=213 Target=rc_tco_exit_drop_inactive_126   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=213 Target=rc_tco_exit_drop_inactive_128   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=214 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CallKnown             Target=215 FuncLabel=__rcdrop_general_3 EnvTemp=214 ArgTemp=212   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rc_tco_exit_drop_inactive_126:
+  rc_tco_exit_drop_inactive_128:
     LoadLocal             Target=216 Slot=5   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=217 Slot=11   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=217 Target=rc_tco_exit_drop_inactive_127   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=217 Target=rc_tco_exit_drop_inactive_129   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=76 Source=216   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_128:
+  rcdrop_list_130:
     LoadLocal             Target=218 Slot=76   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadConstInt          Target=219 Value=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     CmpIntNe              Target=220 Left=218 Right=219   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    JumpIfFalse           CondTemp=220 Target=rcdrop_list_end_130   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=220 Target=rcdrop_list_end_132   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcIsUnique            Target=221 SourceTemp=218
-    JumpIfFalse           CondTemp=221 Target=rcdrop_list_shared_129   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    JumpIfFalse           CondTemp=221 Target=rcdrop_list_shared_131   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadMemOffset         Target=222 BasePtr=218 OffsetBytes=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=222 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=223 BasePtr=218 OffsetBytes=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
     RcDrop                SourceTemp=218 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=76 Source=223   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    Jump                  Target=rcdrop_list_128   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_shared_129:
+    Jump                  Target=rcdrop_list_130   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_shared_131:
     RcDrop                SourceTemp=218 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_130   (tco_pair_released_past_unnamed_successor.ash:33:1)
-  rcdrop_list_end_130:
-  rc_tco_exit_drop_inactive_127:
+    Jump                  Target=rcdrop_list_end_132   (tco_pair_released_past_unnamed_successor.ash:33:1)
+  rcdrop_list_end_132:
+  rc_tco_exit_drop_inactive_129:
     Return                Source=152   (tco_pair_released_past_unnamed_successor.ash:33:1)
 
-function lambda_15  [ClosureHelper from solve]
+function lambda_16  [ClosureHelper from solve]
   locals=2 temps=12
     Alloc                 Target=0 SizeBytes=64   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadEnv               Target=1 Index=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -1521,10 +1550,10 @@ function lambda_15  [ClosureHelper from solve]
     LoadEnv               Target=9 Index=6   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Borrow                Target=10 SourceTemp=9
     StoreMemOffset        BasePtr=0 OffsetBytes=56 Source=10   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    MakeClosure           Target=11 FuncLabel=lambda_16 EnvPtrTemp=0 EnvSizeBytes=64   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    MakeClosure           Target=11 FuncLabel=lambda_17 EnvPtrTemp=0 EnvSizeBytes=64   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Return                Source=11   (tco_pair_released_past_unnamed_successor.ash:33:1)
 
-function lambda_14  [ClosureHelper from solve]
+function lambda_15  [ClosureHelper from solve]
   locals=2 temps=11
     Alloc                 Target=0 SizeBytes=56   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadEnv               Target=1 Index=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -1542,10 +1571,10 @@ function lambda_14  [ClosureHelper from solve]
     LoadEnv               Target=8 Index=5   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Borrow                Target=9 SourceTemp=8
     StoreMemOffset        BasePtr=0 OffsetBytes=48 Source=9   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    MakeClosure           Target=10 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=56   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    MakeClosure           Target=10 FuncLabel=lambda_16 EnvPtrTemp=0 EnvSizeBytes=56   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Return                Source=10   (tco_pair_released_past_unnamed_successor.ash:33:1)
 
-function lambda_13  [ClosureHelper from solve]
+function lambda_14  [ClosureHelper from solve]
   locals=2 temps=10
     Alloc                 Target=0 SizeBytes=48   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadEnv               Target=1 Index=0   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -1561,10 +1590,10 @@ function lambda_13  [ClosureHelper from solve]
     LoadEnv               Target=7 Index=4   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Borrow                Target=8 SourceTemp=7
     StoreMemOffset        BasePtr=0 OffsetBytes=40 Source=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    MakeClosure           Target=9 FuncLabel=lambda_14 EnvPtrTemp=0 EnvSizeBytes=48   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    MakeClosure           Target=9 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=48   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Return                Source=9   (tco_pair_released_past_unnamed_successor.ash:33:1)
 
-function lambda_12  [SourceFunction from solve]
+function lambda_13  [SourceFunction from solve]
   locals=2 temps=10
     Alloc                 Target=0 SizeBytes=40   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -1578,10 +1607,10 @@ function lambda_12  [SourceFunction from solve]
     LoadEnv               Target=7 Index=3   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Borrow                Target=8 SourceTemp=7
     StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=8   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    MakeClosure           Target=9 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=40   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    MakeClosure           Target=9 FuncLabel=lambda_14 EnvPtrTemp=0 EnvSizeBytes=40   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Return                Source=9   (tco_pair_released_past_unnamed_successor.ash:33:1)
 
-function lambda_19  [ClosureHelper from rounds]
+function lambda_20  [ClosureHelper from rounds]
   locals=18 temps=36
     LoadEnv               Target=0 Index=0   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreLocal            Slot=2 Source=0   (tco_pair_released_past_unnamed_successor.ash:47:1)
@@ -1592,17 +1621,17 @@ function lambda_19  [ClosureHelper from rounds]
     StoreLocal            Slot=6 Source=2   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreLocal            Slot=7 Source=2   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreLocal            Slot=8 Source=2   (tco_pair_released_past_unnamed_successor.ash:47:1)
-  lambda_19_body:
+  lambda_20_body:
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     SaveStackPointer      Slot=11   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadLocal             Target=3 Slot=2   (tco_pair_released_past_unnamed_successor.ash:48:8)
     LoadConstInt          Target=4 Value=0   (tco_pair_released_past_unnamed_successor.ash:48:13)
     CmpIntEq              Target=5 Left=3 Right=4   (tco_pair_released_past_unnamed_successor.ash:48:8)
-    JumpIfFalse           CondTemp=5 Target=else_131   (tco_pair_released_past_unnamed_successor.ash:48:5)
+    JumpIfFalse           CondTemp=5 Target=else_133   (tco_pair_released_past_unnamed_successor.ash:48:5)
     LoadLocal             Target=6 Slot=1   (tco_pair_released_past_unnamed_successor.ash:49:10)
     StoreLocal            Slot=12 Source=6   (tco_pair_released_past_unnamed_successor.ash:48:5)
-    Jump                  Target=endif_132   (tco_pair_released_past_unnamed_successor.ash:48:5)
-  else_131:
+    Jump                  Target=endif_134   (tco_pair_released_past_unnamed_successor.ash:48:5)
+  else_133:
     LoadLocal             Target=7 Slot=3   (tco_pair_released_past_unnamed_successor.ash:50:17)
     LoadLocal             Target=8 Slot=2   (tco_pair_released_past_unnamed_successor.ash:50:23)
     LoadConstInt          Target=9 Value=1   (tco_pair_released_past_unnamed_successor.ash:50:27)
@@ -1617,10 +1646,10 @@ function lambda_19  [ClosureHelper from rounds]
     LoadConstInt          Target=17 Value=1   (tco_pair_released_past_unnamed_successor.ash:50:38)
     LoadConstInt          Target=18 Value=0   (tco_pair_released_past_unnamed_successor.ash:50:38)
     StoreLocal            Slot=15 Source=13   (tco_pair_released_past_unnamed_successor.ash:50:38)
-    JumpIfFalse           CondTemp=18 Target=rc_call_argument_not_retained_133   (tco_pair_released_past_unnamed_successor.ash:50:38)
+    JumpIfFalse           CondTemp=18 Target=rc_call_argument_not_retained_135   (tco_pair_released_past_unnamed_successor.ash:50:38)
     RcDup                 Target=19 SourceTemp=13 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=15 Source=19   (tco_pair_released_past_unnamed_successor.ash:50:38)
-  rc_call_argument_not_retained_133:
+  rc_call_argument_not_retained_135:
     LoadLocal             Target=20 Slot=15   (tco_pair_released_past_unnamed_successor.ash:50:38)
     CallClosure           Target=21 ClosureTemp=12 ArgTemp=20 RuntimeManagedArgumentFlagTemp=18   (tco_pair_released_past_unnamed_successor.ash:50:38)
     LoadConstInt          Target=22 Value=0   (tco_pair_released_past_unnamed_successor.ash:50:50)
@@ -1643,14 +1672,14 @@ function lambda_19  [ClosureHelper from rounds]
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=17
     RestoreStackPointer   Slot=11   (tco_pair_released_past_unnamed_successor.ash:50:10)
-    Jump                  Target=lambda_19_body   (tco_pair_released_past_unnamed_successor.ash:50:10)
+    Jump                  Target=lambda_20_body   (tco_pair_released_past_unnamed_successor.ash:50:10)
     LoadConstInt          Target=34 Value=0   (tco_pair_released_past_unnamed_successor.ash:50:10)
     StoreLocal            Slot=12 Source=34   (tco_pair_released_past_unnamed_successor.ash:48:5)
-  endif_132:
+  endif_134:
     LoadLocal             Target=35 Slot=12   (tco_pair_released_past_unnamed_successor.ash:48:5)
     Return                Source=35   (tco_pair_released_past_unnamed_successor.ash:47:1)
 
-function lambda_18  [ClosureHelper from rounds]
+function lambda_19  [ClosureHelper from rounds]
   locals=2 temps=6
     Alloc                 Target=0 SizeBytes=24   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadLocal             Target=1 Slot=1   (tco_pair_released_past_unnamed_successor.ash:47:1)
@@ -1659,17 +1688,17 @@ function lambda_18  [ClosureHelper from rounds]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadEnv               Target=4 Index=1   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (tco_pair_released_past_unnamed_successor.ash:47:1)
-    MakeClosure           Target=5 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=24   (tco_pair_released_past_unnamed_successor.ash:47:1)
+    MakeClosure           Target=5 FuncLabel=lambda_20 EnvPtrTemp=0 EnvSizeBytes=24   (tco_pair_released_past_unnamed_successor.ash:47:1)
     Return                Source=5   (tco_pair_released_past_unnamed_successor.ash:47:1)
 
-function lambda_17  [SourceFunction from rounds]
+function lambda_18  [SourceFunction from rounds]
   locals=2 temps=6
     Alloc                 Target=0 SizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadLocal             Target=3 Slot=1   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=3   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadEnv               Target=4 Index=0   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (tco_pair_released_past_unnamed_successor.ash:47:1)
-    MakeClosure           Target=5 FuncLabel=lambda_18 EnvPtrTemp=0 EnvSizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:47:1)
+    MakeClosure           Target=5 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=16   (tco_pair_released_past_unnamed_successor.ash:47:1)
     Return                Source=5   (tco_pair_released_past_unnamed_successor.ash:47:1)
 
 function _start_main  [ProgramEntry]
@@ -1678,19 +1707,19 @@ function _start_main  [ProgramEntry]
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:9:1)
     StoreLocal            Slot=0 Source=1   (tco_pair_released_past_unnamed_successor.ash:9:1)
     LoadConstInt          Target=2 Value=0   (tco_pair_released_past_unnamed_successor.ash:15:1)
-    MakeClosure           Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:15:1)
+    MakeClosure           Target=3 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:15:1)
     StoreLocal            Slot=1 Source=3   (tco_pair_released_past_unnamed_successor.ash:15:1)
     LoadConstInt          Target=4 Value=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
-    MakeClosure           Target=5 FuncLabel=lambda_5 EnvPtrTemp=4 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
+    MakeClosure           Target=5 FuncLabel=lambda_6 EnvPtrTemp=4 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:21:1)
     StoreLocal            Slot=2 Source=5   (tco_pair_released_past_unnamed_successor.ash:21:1)
     LoadConstInt          Target=6 Value=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
-    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=6 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
+    MakeClosure           Target=7 FuncLabel=lambda_8 EnvPtrTemp=6 EnvSizeBytes=0   (tco_pair_released_past_unnamed_successor.ash:26:1)
     StoreLocal            Slot=3 Source=7   (tco_pair_released_past_unnamed_successor.ash:26:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     AllocStack            Target=8 SizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:31:1)
     LoadLocal             Target=9 Slot=0   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (tco_pair_released_past_unnamed_successor.ash:31:1)
-    MakeClosureStack      Target=10 FuncLabel=lambda_9 EnvPtrTemp=8 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:31:1)
+    MakeClosureStack      Target=10 FuncLabel=lambda_10 EnvPtrTemp=8 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:31:1)
     StoreLocal            Slot=6 Source=10   (tco_pair_released_past_unnamed_successor.ash:31:1)
     Alloc                 Target=11 SizeBytes=32   (tco_pair_released_past_unnamed_successor.ash:33:1)
     LoadLocal             Target=12 Slot=1   (tco_pair_released_past_unnamed_successor.ash:33:1)
@@ -1702,12 +1731,12 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=15 Slot=6   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Borrow                Target=16 SourceTemp=15
     StoreMemOffset        BasePtr=11 OffsetBytes=24 Source=16   (tco_pair_released_past_unnamed_successor.ash:33:1)
-    MakeClosure           Target=17 FuncLabel=lambda_12 EnvPtrTemp=11 EnvSizeBytes=32   (tco_pair_released_past_unnamed_successor.ash:33:1)
+    MakeClosure           Target=17 FuncLabel=lambda_13 EnvPtrTemp=11 EnvSizeBytes=32   (tco_pair_released_past_unnamed_successor.ash:33:1)
     StoreLocal            Slot=7 Source=17   (tco_pair_released_past_unnamed_successor.ash:33:1)
     Alloc                 Target=18 SizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:47:1)
     LoadLocal             Target=19 Slot=7   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=19   (tco_pair_released_past_unnamed_successor.ash:47:1)
-    MakeClosure           Target=20 FuncLabel=lambda_17 EnvPtrTemp=18 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:47:1)
+    MakeClosure           Target=20 FuncLabel=lambda_18 EnvPtrTemp=18 EnvSizeBytes=8   (tco_pair_released_past_unnamed_successor.ash:47:1)
     StoreLocal            Slot=8 Source=20   (tco_pair_released_past_unnamed_successor.ash:47:1)
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     LoadLocal             Target=21 Slot=8   (tco_pair_released_past_unnamed_successor.ash:53:4)

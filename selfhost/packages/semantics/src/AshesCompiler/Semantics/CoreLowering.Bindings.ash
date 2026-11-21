@@ -19,6 +19,8 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.CoroutineSocketFrame
+import AshesCompiler.Semantics.TaskStructLayout
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -44,7 +46,7 @@ export (
     value beginCurryStage,
     value noteLetBoundFunction,
     value linkCurryStage,
-    value closeTmcChainPrepared,
+    value closeTmcChain,
     value adoptDeferredSelfCallResults,
     value unifySelfCallResults,
     value reserveTcoExitTransferSlot,
@@ -172,7 +174,9 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (bodyTyp
                                                             |> emit(Label(doneLabel))
                                                             |> emit(LoadLocal(outTemp)(joinSlot))
                                                             |> markClosedChainResult(bodyTemp)(bodyType)(outTemp)
-                                                            |> withClosedProducerChain(outTemp), outTemp)
+                                                            |> withClosedProducerChain(outTemp)(if isRuntimeTemp(bodyTemp)(state)
+                                                            then bodyTemp
+                                                            else outTemp), outTemp)
 
 // Closes a tail-modulo-constructor spine at the function's single return, before any ownership
 // finalization: from here on the function's result IS the spine and the body value is only the last
@@ -192,15 +196,6 @@ let closeTmcChain (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: 
                                 match freshLabel("tmc_close_done")(emptyState) with
                                     | FreshLabel { state = doneState, label = doneLabel } -> emitTmcChainClose(destSlot)(resultSlot)(bodyTemp)(bodyType)(joinSlot)(emptyLabel)(doneLabel)(doneState)
         | None -> (state, bodyTemp)
-
-// `closeTmcChain` applied to a lowered body, so a caller can close the spine without restructuring
-// the ownership steps that follow it. A failed body passes through untouched.
-let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
-    match lowered with
-        | LoweredCoreValue { error = Some(_error) } -> lowered
-        | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            match closeTmcChain(label)(bodyTemp)(bodyType)(state) with
-                | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
 
 let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(element)(state) with
@@ -600,10 +595,6 @@ let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
             else withStateCurryStage(None)(state)
         | None -> state
 
-let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: LoweredCoreValue) =
-    match prepared with
-        | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
-
 let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (state: CoreLoweringState) =
     match pairs with
         | [] -> (state, None)
@@ -937,13 +928,37 @@ let copyEscapingCapture (stackAllocate: Bool) (binding: CoreBinding) (captureTem
                         then (state, captureTemp)
                         else emitLocatedDeepCopy(captureTemp)(captureType)(state)
 
-// A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
-// the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
-// ownership step without disturbing the shape of the function below it.
+// Survivor order is the final closure environment order after pruning. A capture
+// borrowed from an enclosing frame has no new obligation in this one.
+let recursive localSocketOffsets captures body offset (outer: CoreLoweringState) (finished: CoreLoweringState) =
+    match captures with
+        | [] -> []
+        | CoreBinding { name = name, location = CoreLocal(slot), scheme = scheme, ownedRead = owned } :: rest ->
+            let following = localSocketOffsets(rest)(body)(offset + 8)(outer)(finished)
+            in
+                if (owned || slot == 1) && resourceTypeNameOf(resolveType(finished)(scheme.body))(finished) == Some("Socket") && resourceStateOf(slot)(outer) == None && socketStaysInTask(name)(body)
+                then offset :: following
+                else following
+        | _ :: rest -> localSocketOffsets(rest)(body)(offset + 8)(outer)(finished)
+
+let taskHeaderSize =
+    match taskStructLayout with
+        | TaskStructLayout { headerSize = size } -> size
+
+let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
+    if statePendingCoroutineBody(outer)
+    then
+        match localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished) with
+            | [] -> value with state = withCompletedTaskFrameDropper(None)(value.state)
+            | offsets ->
+                let dropper = makeSocketFrameDropper(label)(offsets)
+                in
+                    let state = value.state
+                    in value with state = withCompletedTaskFrameDropper(Some(dropper.label))((state with functions = dropper :: state.functions))
+    else value
+
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
-    match lowered
-    |> closeTmcChainLowered(label)
-    |> unifySelfCallResults with
+    match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
             match bodyState
@@ -977,6 +992,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         |> markCapturedResourcesMoved(survivors)
                                         |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
                                         |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                        |> registerTaskFrameDropper(label)(survivors)(body)(typedOuter)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus

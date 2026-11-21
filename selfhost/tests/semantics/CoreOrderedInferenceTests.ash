@@ -1,3 +1,10 @@
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
@@ -5,10 +12,14 @@ import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ShippedModuleStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 export (
     value runCoreOrderedInferenceTests,
+    value readShippedSources,
+    value standardTraits,
 )
 
 let lowerSource source =
@@ -101,24 +112,26 @@ let checkStandardListSort traits unit =
             match expectBool(traits + "\n" + source + "\nmatch sort([\"z\", \"a\"]) with | first :: second :: [] -> first == \"a\" && second == \"z\" | _ -> false") with
                 | _ -> Unit
 
-let recursive countFunctions (functions: List(IrFunction)) =
+let recursive countValueStages (functions: List(IrFunction)) =
     match functions with
         | [] -> 0
-        | _function :: rest -> 1 + countFunctions(rest)
+        | IrFunction { origin = Some(IrFunctionOrigin { originKind = SourceFunctionOriginKind }) } :: rest -> 1 + countValueStages(rest)
+        | IrFunction { origin = Some(IrFunctionOrigin { originKind = ClosureHelperOrigin }) } :: rest -> 1 + countValueStages(rest)
+        | _helper :: rest -> countValueStages(rest)
 
 // An unused constrained binding is lowered once as a dictionary-taking function, as stage 0
 // emits it: one body per curried stage and no second copy left behind by a provisional pass.
-let expectFunctionCount expected message source =
+let expectValueStageCount expected message source =
     match expectBool(source) with
         | IrProgram { functions = functions } ->
-            if countFunctions(functions) == expected
+            if countValueStages(functions) == expected
             then Unit
             else
-                Ashes.IO.panic(message + ": " + Ashes.Text.fromInt(countFunctions(functions)) + " functions")
+                Ashes.IO.panic(message + ": " + Ashes.Text.fromInt(countValueStages(functions)) + " callable stages")
 
-let checkUnusedComparator unit = expectFunctionCount(3)("unused comparator retained a provisional body")("let before left right = left <= right\ntrue")
+let checkUnusedComparator unit = expectValueStageCount(3)("unused comparator retained a provisional body")("let before left right = left <= right\ntrue")
 
-let checkUnusedFunctionChains unit = expectFunctionCount(6)("unused function chain retained provisional bodies")("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue")
+let checkUnusedFunctionChains unit = expectValueStageCount(6)("unused function chain retained provisional bodies")("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue")
 
 let checkEscapingFunctionChain unit =
     match lowerSource("let before left right = left <= right\nlet alias = before\nlet next = alias\n(next, true)") with
@@ -207,6 +220,106 @@ let checkStitchedFixture shipped path =
                         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("stitched regression failed: " + Ashes.Trait.Show.show(error))
                         | _ -> Ashes.IO.panic("stitched regression produced no program")
 
+let checkRawImmediateEvidence shipped path =
+    match Ashes.IO.File.readText(path) with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match stitchWithShippedModules("regression")(path)(source)(shipped) with
+                | Error(error) ->
+                    error
+                    |> Ashes.Trait.Show.show
+                    |> Ashes.IO.panic
+                | Ok(StitchedSyntaxProject { program = program }) ->
+                    match lowerCoreProgramWithSource(path)(source)(program) with
+                        | CoreLoweringResult { error = Some(CoreImmediateEvidenceDiagnostic(message)) } ->
+                            if Ashes.Text.contains(message)("needed while evaluating this binding")
+                            then Unit
+                            else Ashes.IO.panic(message)
+                        | _ -> Ashes.IO.panic("raw lowering accepted unresolved immediate evidence")
+
+// Lower the captured loop through the same numbered syntax and type table as a typed
+// CLI compile. Both instantiations must use arithmetic in the entry module.
+let recursive hasEntryInstruction path opcode lines =
+    match lines with
+        | [] -> false
+        | line :: rest -> Ashes.Text.startsWith(line)("    " + opcode + " ") && Ashes.Text.contains(line)(path) || hasEntryInstruction(path)(opcode)(rest)
+
+let checkEntryCopyIr mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(ir), error = None } ->
+            let lines = formatIr(ir)(LoweredIr)(None)
+            in
+                if hasEntryInstruction(path)("AddInt")(lines) && hasEntryInstruction(path)("AddFloat")(lines)
+                then Unit
+                else Ashes.IO.panic("entry-frame loop lost an arithmetic instantiation")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("entry-frame loop failed in " + mode + " lowering: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("entry-frame loop produced no program in " + mode + " lowering")
+
+let recursive containsBlockingRun path instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RunTask(_, _), location = Some(IrSourceLocation(file, _, _)) } :: rest -> file == path || containsBlockingRun(path)(rest)
+        | _ :: rest -> containsBlockingRun(path)(rest)
+
+let recursive coroutineBlocks path functions =
+    match functions with
+        | [] -> false
+        | IrFunction { coroutine = Some(_), instructions = instructions } :: rest -> containsBlockingRun(path)(instructions) || coroutineBlocks(path)(rest)
+        | _ :: rest -> coroutineBlocks(path)(rest)
+
+let checkHelperSignatureIr mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(ir), error = None } ->
+            let lines = formatIr(ir)(LoweredIr)(None)
+            in
+                if hasEntryInstruction(path)("Suspend")(lines) && Ashes.Text.contains(Ashes.Text.join("\n")(lines))("Target=__async_loop_") && !coroutineBlocks(path)(ir.functions)
+                then Unit
+                else Ashes.IO.panic(mode + " helper failed to suspend and restart without blocking: " + path)
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " declared helper failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " declared helper produced no program")
+
+let checkSocketHelperIr mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(ir), error = None } ->
+            let lines = formatIr(ir)(LoweredIr)(None)
+            in
+                let text = Ashes.Text.join("\n")(lines)
+                in
+                    if hasEntryInstruction(path)("Suspend")(lines) && Ashes.Text.contains(text)("Target=__async_loop_") && Ashes.Text.contains(text)("FrameDropperLabel=")
+                    then Unit
+                    else Ashes.IO.panic(mode + " awaiting socket helper lost its parent frame obligation")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " socket helper failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " socket helper produced no program")
+
+let checkFixtureLowered mode path lowered =
+    match lowered with
+        | CoreLoweringResult { program = Some(_program), error = None } -> Unit
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " lowering failed for " + path + ": " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(mode + " lowering produced no program for " + path)
+
+let checkRawAndTypedIr verify shipped path =
+    match Ashes.IO.File.readText(path) with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match stitchWithShippedModules("regression")(path)(source)(shipped) with
+                | Error(error) -> Ashes.IO.panic("fixture stitching failed: " + Ashes.Trait.Show.show(error))
+                | Ok(stitched) ->
+                    let _ =
+                        stitched.program
+                        |> lowerCoreProgramWithSource(path)(source)
+                        |> verify("raw")(path)
+                    in
+                        let identified = identifyStitchedProject(stitched)
+                        in
+                            match inferIdentifiedStitchedProjectFrom("standalone"
+                            |> emptyTypeEnvironmentForPackage
+                            |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                                | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("fixture inference failed: " + Ashes.Trait.Show.show(error))
+                                | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                    table
+                                    |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))
+                                    |> verify("typed")(path)
+
 let checkStitchedLibraryContext unit =
     match Ashes.IO.Directory.entries("lib/Ashes") with
         | Error(message) -> Ashes.IO.panic(message)
@@ -215,6 +328,31 @@ let checkStitchedLibraryContext unit =
             in
                 Unit
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/logical_not_inferred_predicates.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_evaluates_argument_once_at_two_types.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_forwards_show_evidence.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/mutually_recursive_show_functions_keep_dictionary_at_call_sites.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/higher_order_constrained_alias_uses_later_constructor_argument.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/constrained_partial_uses_declared_arithmetic_methods.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/captured_partial_separates_early_and_residual_requirements.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/generalized_partial_runs_callee_prefix_before_next_binding.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/forwarded_partial_runs_callee_prefix_before_next_binding.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/partial_uses_ambient_evidence_during_binding_evaluation.ash"))
+                |> (given (_) -> checkRawImmediateEvidence(shipped)("tests/partial_requires_open_evidence_before_returning_function.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkEntryCopyIr)(shipped)("tests/generic_add_binding_reading_top_level_value_used_at_int_and_float.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_preserves_declared_results.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/awaiting_helper_keeps_owned_backedge_values.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/async_loop_accumulator.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkHelperSignatureIr)(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkSocketHelperIr)(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/empty_list_equality_lambdas_at_two_element_types.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/list_equality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/list_inequality_uses_ambient_element_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/mutual_recursive_tree_rewrite_checks_empty_aliases.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/recursive_report_uses_each_values_show_dictionary.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/awaiting_report_keeps_typed_show_dictionaries.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/result_directed_method_uses_concrete_and_supplied_evidence.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/local_eager_seed_uses_evidence_of_its_enclosing_function.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/custom_method_value_selects_dictionary_from_argument_type.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
 let checkExpressionBoundary unit =

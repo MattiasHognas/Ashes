@@ -427,16 +427,19 @@ let builtinInferenceEnvironment unit =
     |> withIntrinsicBuiltinSignatures
 
 // A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
-// program or rejects it with an error that keeps its structural form.
-let wordedLoweringError (lowering: CoreLoweringResult) =
+// program or rejects it with an error that keeps its structural form. An error lowering does not
+// locate (an operator's operands of two types) is printed at `fallbackPrefix`, the location the
+// inference rejected the program at, which is where stage 0 reports it.
+let wordedLoweringError (fallbackPrefix: Str) (lowering: CoreLoweringResult) =
     match lowering with
         | CoreLoweringResult { error = Some(error) } ->
-            match loweringErrorDiagnostic(error) with
-                | Some(_diagnostic) ->
+            match (loweringErrorDiagnostic(error), loweringErrorLocation(error)) with
+                | (Some(DiagnosticEntry { message = message, code = code }), None) -> Some(fallbackPrefix + codePrefix(code) + message)
+                | (Some(_diagnostic), Some(_location)) ->
                     error
                     |> loweringErrorText
                     |> Some
-                | None -> None
+                | (None, _) -> None
         | _ -> None
 
 // The compile error of a program the inference rejects. A bare unification error lacks the call,
@@ -449,8 +452,8 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         if inferenceErrorWantsCallSiteWording(stitched.definitionPlacements)(error)
         then
             match stitched.program
-            |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-            |> wordedLoweringError with
+            |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
+            |> wordedLoweringError(inferenceErrorLocationPrefix(inputPath)(source)(result)) with
                 | Some(text) -> text
                 | None -> inferenceText
         else inferenceText)
@@ -474,7 +477,10 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                         nodeTypes
                         |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
                         |> loweredStitchedResult
-                    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched))
+                    else
+                        stitched.program
+                        |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(nodeTypes)
+                        |> loweredStitchedResult)
 
 let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     if typedLoweringRequested(Unit)
@@ -843,16 +849,32 @@ let duplicateConstructorOwner (source: Str) (name: Str) =
                 | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
         | Error(_error) -> None
 
-// A stitching failure as stage 0 words it: a constructor a type of the entry program declares
-// twice, or a binding the entry program declares twice. Every other failure prints its structural
-// form.
-let stitchErrorText (source: Str) (error: ShippedStitchError) =
+// Stage 0's standard-library module set, in the order its unknown-module diagnostic lists it.
+let knownStandardModulesText = "Ashes, Ashes.Trait, Ashes.IO, Ashes.Core.Result, Ashes.Collection.List, Ashes.Number.Math, Ashes.Collection.Array, Ashes.Collection.Map, Ashes.Collection.HashMap, Ashes.Collection.HashTrie, Ashes.Task.Parallel, Ashes.Core.Maybe, Ashes.Test, Ashes.Internal, Ashes.Internal.Regex, Ashes.IO.File, Ashes.IO.Directory, Ashes.IO.Path, Ashes.IO.Environment, Ashes.Text, Ashes.Text.Source, Ashes.Rune, Ashes.Number.BigInt, Ashes.Byte, Ashes.Ffi, Ashes.Number.UInt, Ashes.Net.Http, Ashes.Net.Tcp, Ashes.Net.Tcp.Server, Ashes.Net.Http.Server, Ashes.Net.Tls.Server, Ashes.Net.Tls, Ashes.Task, Ashes.IO.Process, Ashes.IO.Console, Ashes.Text.Json, Ashes.Net.Rpc, Ashes.Text.Regex"
+
+let stitchFailureText (source: Str) (error: ShippedStitchError) =
     match error with
         | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
                 | None -> "ASH013 Duplicate top-level binding '" + name + "'."
+        | ShippedModuleMissing(_importer, name) -> "Unknown standard library module '" + name + "'. Known modules: " + knownStandardModulesText + "."
         | other -> Ashes.Trait.Show.show(other)
+
+// A stitching failure as stage 0 words it: the parse diagnostics of a module the parser rejected,
+// a constructor a type of the entry program declares twice, or a binding the entry program
+// declares twice. Every other failure prints its structural form.
+let stitchErrorText (inputPath: Str) (source: Str) (error: ShippedStitchError) =
+    match shippedStitchParseDiagnostics(error) with
+        | Some(diagnostics) -> parseDiagnosticsText(inputPath)(source)(diagnostics)
+        | None -> stitchFailureText(source)(error)
+
+// A project stitching failure: the parse diagnostics of the files the parser rejected as stage 0
+// words them, every other failure in its structural form.
+let projectStitchErrorText (entryPath: Str) (source: Str) (error: ProjectStitchError) =
+    match projectStitchParseDiagnostics(error) with
+        | Some(diagnostics) -> parseDiagnosticsText(entryPath)(source)(diagnostics)
+        | None -> Ashes.Trait.Show.show(error)
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
@@ -866,7 +888,7 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                     match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
                         | Error(error) ->
                             error
-                            |> stitchErrorText(source)
+                            |> stitchErrorText(inputPath)(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
@@ -883,7 +905,7 @@ let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: Expl
                     match stitchProject(Ashes.IO.Path.Unix)(layout)(shipped) with
                         | Error(error) ->
                             error
-                            |> Ashes.Trait.Show.show
+                            |> projectStitchErrorText(layout.entryPath)(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
 

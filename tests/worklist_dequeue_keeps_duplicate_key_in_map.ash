@@ -3,6 +3,7 @@
 // a reuse specialization, then enqueues a derived key unless the map already holds it. The map's
 // new nodes take copies of their keys, so a key passed borrowed into the specialization is never
 // left behind in the map once the loop releases it.
+import Ashes.Collection.Map
 let recursive enqueue (pending: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) =
     match pending with
         | [] -> (back, queued)

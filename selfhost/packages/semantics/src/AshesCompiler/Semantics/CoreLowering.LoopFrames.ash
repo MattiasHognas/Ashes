@@ -1091,17 +1091,6 @@ let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringSta
 // closed, and the second lowering starts from that substitution. A body lowered again only
 // because a call result resolved keeps the first substitution, where the binding's result is
 // still the lowering-local variable its self calls defer to.
-// The second lowering of a body, from a state whose substitution already resolves its calls. The
-// closures nested in it are lowered once (see `resolvingCallsAgain`); the flag is put back to what
-// the enclosing lowering had before the result is handed on.
-let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (outer: Bool) (restarted: CoreLoweringState) =
-    match restarted
-    |> withStateResolvingCallsAgain(true)
-    |> observeLoweringEvent(2)
-    |> prepare
-    |> lower(body) with
-        | LoweredCoreValue { state = againState, temp = temp, semanticType = semanticType, error = error } -> LoweredCoreValue(state = withStateResolvingCallsAgain(outer)(againState), temp = temp, semanticType = semanticType, error = error)
-
 // The state a body is lowered again from: the scope it entered with, the substitution an earlier
 // lowering settled, and the calls to a later group member that lowering recorded. Stage 0 sees such a
 // call's result open at the call even when the body's own later use settles it, so the site keeps
@@ -1110,6 +1099,26 @@ let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
     (entered with typeSupply = lowered.typeSupply)
     |> withSubstitution(lowered.substitution)
     |> withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))
+
+// The second lowering of a body, from a state whose substitution already resolves its calls. The
+// closures nested in it are lowered once (see `resolvingCallsAgain`); the flag is put back to what
+// the enclosing lowering had before the result is handed on.
+let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (outer: Bool) (entered: CoreLoweringState) (first: CoreLoweringState) =
+    match first
+    |> restartedAgainst(entered)
+    |> withStateResolvingCallsAgain(true)
+    |> observeLoweringEvent(2)
+    |> prepare
+    |> lower(body) with
+        | LoweredCoreValue { state = againState } as result ->
+            let resumed = withStateResolvingCallsAgain(outer)(againState)
+            in
+                // Replay can revisit a now-concrete operand without consulting the proof it
+                // consumed on the first traversal. The next body starts after that traversal.
+                if stateTraitGoalsPinned(entered)
+                then
+                    result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
+                else result with state = resumed
 
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
@@ -1143,16 +1152,11 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then
-                            closedState
-                            |> restartedAgainst(entered)
-                            |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)
+                        then closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)(entered)
                         else
                             if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
                             then
-                                firstState
-                                |> restartedAgainst(entered)
-                                |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)
+                                firstState |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)(entered)
                             else first
 
 // A recursive member nested in a body that is being lowered again takes fresh type variables for
@@ -1171,10 +1175,7 @@ let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState ->
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then
-                            closedState
-                            |> restartedAgainst(entered)
-                            |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)
+                        then closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)(entered)
                         else first
     else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered)
 

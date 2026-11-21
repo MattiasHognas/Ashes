@@ -74,7 +74,7 @@ let rejectMismatchedPatternBranches unit =
         match Unit
         |> emptyTypeEnvironment
         |> inferExpression(expression) with
-            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(MatchArmTypeMismatch(TypeMismatch(SemInt, SemString), 2)) } -> Unit
             | _ -> test.fail("match branches should have one result type"))
 
 let rejectInvalidPatternGuard unit =

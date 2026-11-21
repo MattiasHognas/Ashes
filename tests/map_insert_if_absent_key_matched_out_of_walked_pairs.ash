@@ -1,5 +1,6 @@
 // expect: 24
 
+import Ashes.Collection.Map
 let recursive addDependents (function: Str) (dependencies: List((Str, Bool))) (dependents: MapTree(Str, List(Str))) =
     match dependencies with
         | [] -> dependents

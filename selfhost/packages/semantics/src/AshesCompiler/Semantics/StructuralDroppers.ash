@@ -21,6 +21,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.filter
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
@@ -1251,6 +1252,7 @@ let synthesizeGeneralAdtDropper (semanticType: SemanticType) (dropperTypes: Drop
 type OwnedReleasePlan =
     | deepUnique: Bool
     | constructorName: Maybe(Str)
+    | matchFieldTransfer: Maybe((Int, List(Int)))
 
 // The inline release program of one owned aggregate at its scope exit, in emission order, with
 // the counters, cache, and dropper functions it advanced.
@@ -1298,15 +1300,37 @@ let emitKnownConstructorFieldDrops (valueTemp: Int) (tagless: Bool) (knownUnique
 // `EmitKnownConstructorRuntimeManagedAdtDrop`: only that constructor's owned children are walked,
 // under a uniqueness test unless the value is known unique; the shared label is allocated either
 // way.
-let emitKnownConstructorDrop (valueTemp: Int) (named: SemanticType) (constructorName: Str) (knownUnique: Bool) (body: DropperBody) =
+let recursive emitKnownConstructorDrop (valueTemp: Int) (named: SemanticType) (constructorName: Str) (knownUnique: Bool) (excluded: List(Int)) (body: DropperBody) =
     match ownedChildren(Some(constructorName))(named)(body) with
-        | ([], queried) -> emitTypeDrop(valueTemp)(named)(queried)
-        | (children, queried) ->
-            match freshDropperLabel("rc_drop_known_shared")(queried) with
+        | (allChildren, queried) ->
+            emitRemainingConstructorDrop(valueTemp)(named)(knownUnique)(filter(given (child: HeapDropperChild) -> !containsInt(child.fieldIndex)(excluded))(allChildren))(queried)
+and emitRemainingConstructorDrop (valueTemp: Int) (named: SemanticType) (knownUnique: Bool) (remaining: List(HeapDropperChild)) (body: DropperBody) =
+    match remaining with
+        | [] -> emitTypeDrop(valueTemp)(named)(body)
+        | children ->
+            match freshDropperLabel("rc_drop_known_shared")(body) with
                 | (sharedLabel, labelBody) ->
                     labelBody
                     |> emitKnownConstructorFieldDrops(valueTemp)(typeIsTagless(named)(body))(knownUnique)(sharedLabel)(children)
                     |> emitTypeDrop(valueTemp)(named)
+
+// The entry test decides which fields the wrapper handed to its bindings. A wrapper that
+// was shared at entry can become unique before cleanup and must then release all its children.
+let emitMatchedConstructorDrop (valueTemp: Int) (named: SemanticType) (constructor: Str) (flagSlot: Int) (excluded: List(Int)) (body: DropperBody) =
+    match freshDropperTemp(body) with
+        | (flag, allocated) ->
+            match freshDropperLabel("rc_match_fields_retained")(allocated) with
+                | (retained, indexed) ->
+                    match freshDropperLabel("rc_match_wrapper_released")(indexed) with
+                        | (doneLabel, labeled) ->
+                            labeled
+                            |> emitDropper(LoadLocal(flag)(flagSlot))
+                            |> emitDropper(JumpIfFalse(flag)(retained))
+                            |> emitKnownConstructorDrop(valueTemp)(named)(constructor)(false)(excluded)
+                            |> emitDropper(Jump(doneLabel))
+                            |> emitDropper(Label(retained))
+                            |> emitAdtDrop(valueTemp)(named)
+                            |> emitDropper(Label(doneLabel))
 
 let namedTypeOwnsChildren (named: SemanticType) (body: DropperBody) =
     match dropperLayoutFactsIndexed(named)(body) with
@@ -1323,11 +1347,12 @@ let emitClassifiedOwnedAggregateRelease (valueTemp: Int) (semanticType: Semantic
         | (SemTuple(elements), _plan) -> (true, emitTupleDrop(valueTemp)(elements)(body))
         | (SemList(element), OwnedReleasePlan { deepUnique = true }) -> (true, emitUniqueListDrop(valueTemp)(element)(body))
         | (SemList(element), _plan) -> (true, emitListDrop(valueTemp)(element)(body))
+        | (SemNamed(_symbolId, _name, _arguments), OwnedReleasePlan { constructorName = Some(constructor), matchFieldTransfer = Some((flagSlot, excluded)) }) -> (true, emitMatchedConstructorDrop(valueTemp)(semanticType)(constructor)(flagSlot)(excluded)(body))
         | (SemNamed(_symbolId, _name, _arguments), OwnedReleasePlan { deepUnique = deepUnique, constructorName = constructorName }) ->
             match namedTypeOwnsChildren(semanticType)(body) with
                 | (true, queried) ->
                     match constructorName with
-                        | Some(constructor) -> (true, emitKnownConstructorDrop(valueTemp)(semanticType)(constructor)(deepUnique)(queried))
+                        | Some(constructor) -> (true, emitKnownConstructorDrop(valueTemp)(semanticType)(constructor)(deepUnique)([])(queried))
                         | None -> (true, emitAdtDrop(valueTemp)(semanticType)(queried))
                 | (false, queried) -> (false, queried)
         | _ -> (false, body)

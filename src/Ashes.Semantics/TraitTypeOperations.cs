@@ -20,10 +20,15 @@ internal static class TraitTypeOperations
     }
 
     internal static InstantiatedTypeScheme Instantiate(TypeScheme scheme, Func<TypeRef> freshTypeVariable)
+        => Instantiate(scheme, freshTypeVariable, out _);
+
+    internal static InstantiatedTypeScheme Instantiate(TypeScheme scheme, Func<TypeRef> freshTypeVariable,
+        out IReadOnlyDictionary<int, TypeRef> renaming)
     {
         Dictionary<int, TypeRef> substitution = scheme.Quantified.ToDictionary(
             variable => variable.Id,
             _ => freshTypeVariable());
+        renaming = substitution;
         return new InstantiatedTypeScheme(
             Substitute(scheme.Body, substitution),
             TraitConstraint.Canonicalize(scheme.Constraints.Select(constraint => Substitute(constraint, substitution))));

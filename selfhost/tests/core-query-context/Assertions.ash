@@ -74,7 +74,7 @@ let checkRestore unit =
             | (_facts, body) ->
                 let types = stateDropperTypes(body)
                 in
-                    match synthesizeOwnedAggregateReleaseIndexed(0)(box(SemInt))(OwnedReleasePlan(deepUnique = false, constructorName = None))(types)(emptyDropperLabelCache)(1)(0)(0)(0) with
+                    match synthesizeOwnedAggregateReleaseIndexed(0)(box(SemInt))(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(types)(emptyDropperLabelCache)(1)(0)(0)(0) with
                         | (_synthesis, context) ->
                             let warmed = withStateDropperContext(context)(body)
                             in

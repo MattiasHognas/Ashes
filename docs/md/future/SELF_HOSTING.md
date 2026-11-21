@@ -21,9 +21,9 @@ to; keep this list updated when an item is promoted or resolved.
 | Custom capability context in constrained-call queries | Core capability declarations and operation schemes are not projected into the constrained-call inference environment. An argument that invokes a user capability may therefore fail re-inference even when ordinary Core lowering supports it. [Small retained probe](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/tests/constrained-bindings/deferred/CapabilityArgument.ash); no bootstrap dependency has been demonstrated. | Project the declared operation/provider context and validate effect/evidence handling when required. This remains deferred and is not included in the constructor/alias/external/record-field query fixes. |
 | Generic arithmetic and bitwise dictionaries | Ordinary generic operator dispatch for `Add`, `Subtract`, `Multiply`, `Divide`, `Modulo`, and bitwise traits is not implemented by the current constrained-binding path. That path admits only `Eq`, `Ord`, and `Not`; other constraints retain the existing primitive/deferred operator lowering and its type-mismatch or unsupported/missing-evidence diagnostics. Concrete primitive arithmetic support does not establish generic dictionary dispatch. | Add operator-to-dictionary lowering, physical evidence forwarding, and ownership checks for these traits when required. Preserve existing diagnostics; do not claim this broader parity from the Eq/Ord/Not bootstrap fix. |
 | Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
-| Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
+| Stage-1 poison instrumentation | The self-hosted backend now emits a cached RC payload fill when the compiler reads `ASHES_RC_POISON=1`. Earlier stage-1-produced program checks were plain. | Verify the generated LLVM fill, run the backend ownership programs with the switch off and on during child codegen, and record the current-source results before claiming a poisoned stage-1 pass. |
 | Stage-1 parity bugs found after the fixpoint (2026-11-18) | (1) Project planning resolves the entry module by name (`loadReachableModules` → `loadNamedModule` in `ProjectCompilationPlanning.ash`), so a project whose source roots hold another `Main.ash` fails with `ProjectCompilationAmbiguousModule("Main")`; stage 0 loads the entry by path (`selfhost/tests/inference-environment`, `inference-fields`, `recursive-trait-evidence`). (2) Lowering rejects `apply(given (x) -> print(x))(3)`, which stage 0 accepts. (3) One type mismatch is reported at the wrong line. (4) A parse error in the entry file prints structurally (`ShippedParseError(...)`). Reproducers under the `infer-edges` worktree's `work/q/` (`pr5.ash`, `u1.ash`). | Fix in stage 1 with a regression test each; item 2 of "Start here". |
-| Type-checking gaps found after the fixpoint (2026-11-18) | (5) A user trait requirement used only under an unused inner `let` (`let _ = Named.label(x) in 1`) is dropped from the enclosing scheme. (6) Stage 0 accepts a trait method whose signature mentions no trait parameter, which section 21.2 of the language reference rejects. (7) Stage 0 accepts constructors and types of modules a file does not import, against the reference's import rule (the self-hosted suites relied on it and now import what they name). (8) The standalone inference reports an unknown field type as an arity mismatch on the record that holds the field. (9) The standalone inference rejects a field read through two records (`state.typeSupply.nextId`); check the reference before calling it a bug. | (6) and (7) change what stage 0 accepts and need a decision on the message; (5) changes schemes across the compiler. |
+| Type-checking gaps found after the fixpoint (2026-11-18) | (5) A user trait requirement used only under an unused inner `let` (`let _ = Named.label(x) in 1`) is dropped from the enclosing scheme. (6) Stage 0 accepts a trait method whose signature mentions no trait parameter, which section 21.2 of the language reference rejects. (7) Stage 0 accepts constructors and types of modules a file does not import, against the reference's import rule (the self-hosted suites relied on it and now import what they name). (8) The standalone inference reports an unknown field type as an arity mismatch on the record that holds the field. (9) Closed. [Language reference §4.3](../reference/language.md#_4-3-record-types) defines field access on record bindings. Both compilers treat `state.typeSupply.nextId` as a qualified name and reject the unknown module `state.typeSupply`. The regression `tests/field_read_through_record_field_rejected.ash` covers this diagnostic. Bind the intermediate record to a name to read its field. | Decided 2026-11-18 by the user: (6) stage 0 rejects such a method with a proper diagnostic, as the reference and stage 1 do; (7) stage 0 becomes strict, as the reference and stage 1 are, after a check of `lib/`, `examples/` and `tests/` for files that rely on the leniency; (5) the inference passes a requirement on a variable the inner `let` does not generalize on to the enclosing binding (standard HM), before step 8, because steps 7 and 8 read schemes from the table. Done 2026-11-18: (5) in the inference, for `let` and `let recursive` (stage 0 already passed such a requirement on and rejects a call at a type without an implementation with ASH036); (6) in stage 0 as ASH010 at the trait declaration, with stage 1's error worded the same; no trait in `lib/`, `examples/`, `tests/` or `selfhost/` declared such a method. (7) decided further: shipped `Ashes.*` modules follow the rule too, and trait names in `deriving`, `requires` and `implement` stay visible without an import; done in both stages as ASH048 (stage 1 was as lenient as stage 0 for an exported type or constructor, so its reference rewriter marks such a name); the tests that relied on it import what they name. |
 | Test debt left after the suite pass (2026-11-18) | Ten `LinuxBackendCoverageTests` (memory-plateau and reuse tests) fail on `main` as well; they belong to the leak work. `selfhost/tests/heap-drop-worklist` compares against `heapCanDropValueGraph`, removed in 88aec017; the fix (freeze the old helpers in `Reference.ash.inc`, point the assertions at `classifyHeapOwnedChildrenDroppable`) is designed and not done. 30 of 95 `ir-program-parity` fixtures differ from stage 0. `namespace_old_module_fails` fails under stage 0 itself. Not ported to the inference: the "Expected shape: Some(T)." suffix and the "in if branches" / "in match arm" contexts. | Decide each parity fixture from the suite run's results; step 9 retires the fixtures. |
 | Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E as item 5 of "Start here", with a clean committed-tree census and fresh reproductions. Promote any item that blocks the bootstrap or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
 
@@ -103,11 +103,6 @@ Correctness, stage 0:
   diagnostic.
 - A tuple holding an alias of an unresolved constrained function is accepted and emits a
   dictionary-taking closure.
-- A type name in an annotation is accepted when the module that declares it is imported only
-  transitively, which the language reference does not allow. With `A` exporting `type T`, `B`
-  importing `A`, and `Main` importing only `B`, `let get (t: T) = t.n` in `Main` compiles and
-  runs. The standalone inference rejects it with `UnknownTypeName("T")`; two modules of the
-  compiler's own source relied on it and now import what they annotate with.
 
 Correctness, stage 1:
 
@@ -317,9 +312,18 @@ Order of work. Each step lands separately and is useful if the later ones are de
    - Record construction and update have no instantiation record.
    - Operators record a trait and an operand type, not whether the instance is primitive, a user
      instance or a dictionary.
-   - Schemes keep requirements at concrete types (`requires Multiply(Int)`), and variables
-     nothing constrains stay variables; both need a decision (drop settled requirements, default
-     unconstrained variables).
+   - Schemes and unconstrained variables, decided on **2026-11-18** by the user. A binding's
+     requirements are reduced through the implementations as stage 0 reduces them: one an
+     implementation supplies leaves nothing (`Multiply(Int)`), one an implementation head matches
+     leaves that implementation's requirements (`Eq(List(a))` becomes `Eq(a)`). A written requirement
+     on known types or one a head matches is rejected as unjustified (`ASH010`), in the standalone
+     inference and in stage 0, which used to fail on both with an internal ABI error. A variable
+     nothing constrains stays open in the table and lowering treats it as any type, never as `Int`;
+     a requirement still open in the trailing expression, where no binding quantifies its variable,
+     is ambiguous (`ASH010`, reference 21.6), with no numeric default for operators. Stage 0 already
+     rejected that shape; the standalone inference now does too, with stage 0's wording for both
+     ambiguity forms. Lowering's own `Int` sealing of a deferred operator is unchanged where the
+     inference does not reject first.
    - `tests/trait_deriving.ash` is rejected before numbering.
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
@@ -395,13 +399,142 @@ Work is verified in shared rounds: agents finish a batch, run only cheap checks 
 whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
 behavioural check for all of them, then stage 2, its behavioural check, and stage 3.
 
-**Known work parked for later items (2026-11-17), so it is not lost:**
-- Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
-- Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
-- Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
+### Current round: round 10 (paused for weekly usage, 2026-11-21)
 
-**When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
-than marking it done here. Read "How to work on this" below before your first change.
+**Weekly usage stop rule (user, revised 2026-11-21).** Stop at **98% used / 2% remaining**, replacing the earlier 97% threshold. The snapshot reached **98% at 11:59:02 UTC**; shutdown began at **13:00:32 Stockholm**. All jobs are stopped and all workers handed back. The reset recorded in that snapshot is 2026-11-27 23:42:42 UTC (28 November 00:42 Stockholm). Current-session snapshots are `token_count` events with `payload.rate_limits` in `/home/mattias/.codex/sessions/2026/11/21/rollout-2026-11-21T00-41-46-01a1fb56-67b0-7d63-a3c0-59dbf37e6755.jsonl`; select `window_minutes: 10080`. A new agent must check its own current snapshot, not this dated value. At the threshold, stop jobs/workers, update handoff/docs, commit/push all work, pause the goal and supply the continuation prompt. Do not confuse task token accounting with weekly usage.
+
+**Paused; round 10 is incomplete.** Stage 1 (`bootstrap55`) built successfully from `78325617`; stage 2 and two measurement runs were cancelled for quota, with exit 143. No stage-2/3 binary or byte comparison resulted. Fresh stage-1 checks exposed REST capability-resolution errors, and matched diagnostics exposed large recursive-evidence summary growth. These reopen acceptance despite the passing pre-round native checks. Integration is `selfhost/round10`. During user-requested consolidation, the two completed pending batches were integrated as `fa0a1247` and `a898abc2`; fresh native validation remains pending. No compiler jobs or agents remain active. [Fresh-agent continuation prompt](SELF_HOSTING_RESUME.md).
+
+**One development branch; no development tags.** [Draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160) uses `selfhost/round10`. Consolidation removed 85 remote branches, 97 local branches and eight obsolete worktrees after preserving their source and evidence. The only remote branches remaining are `main`, `release/*` and `selfhost/round10`; protected refs are unchanged. Retired branch and older worktree snapshots are preserved in the [verified source archive and relevance review](../../selfhost-archive/2026-11-21/README.md). Artifact worktrees remain at their original revisions with detached HEADs; historical branch names in tables and progress files are provenance, not branches to resume or merge. Four older worktrees retain useful leak/ownership investigations. Archive patches are not compiler acceptance or integration candidates as a batch. The PR remains a draft pending the outstanding compiler fixes and validation.
+
+**Initial post-pause cleanup (before consolidation, 2026-11-21).** The first pass removed 6 redundant remote branches, 21 redundant local branches and 7 clean worktrees, initially preserving the 12 dirty older worktrees for review. The later consolidation above reviewed and archived those states, then retired eight. [Initial removal inventory](SELF_HOSTING_LOG.md#post-pause-repository-cleanup-2026-11-21). Machine-local audits: `work/coord/cleanup-20261121/` and `work/coord/consolidation-20261121/`. The compiler goal remains paused.
+
+| Active work | Revision, evidence and next proof |
+| --- | --- |
+| Mixed concrete and abstract qualified trait calls | In unchanged measurement `reportSites`, the generic dictionary displaced concrete `Show` instances. C# `43b26d44` → `a964e98d` passes recursive and poison async closure controls. Stage-1 type-directed dispatch `f40b94cf` → `13dbe9b2` is integrated. |
+| First-class method selected by its expected result | Annotated `Seed.first : Unit -> Int` returned 1 instead of 17 in a generic scope. C# `f25bb10b` → `d8ad60c6` passes `17/17/yes`; the stage-1 counterpart is in `13dbe9b2`. Strict ambiguous eager selection still rejects with ASH010. |
+| Eager evidence regression | Full reference at `f25bb10b` exposed the unchanged local eager Seed fixture as ASH010. `bf922c7b` now unifies the consumed dictionary method's actual arrow with its requested signature; poison output is again `Int|true Bool|true`. Stage-1 replay identity and exact raw/numbered/native controls are integrated. |
+| Recursive hover metadata | Reference LSP had one failing sweep: a recursive use exposed hidden dictionary parameters. `10f57493` → `eacb6cd9` and analyzer correction `4e0f844d` → `30905b28` record the source signature `List<a> -> Int requires {Area(a)}` by definition identity. Runtime ABI is unchanged. Final central LSP passed 88/88. |
+| Current validation queue | Both normal/no-reuse drivers passed every non-leak backend case and 96/96 semantic groups on the earlier source; IR dumps match prior audited output. Stage 1 then built, but the real REST example/mock fail capability resolution. Recursive evidence indexing `d30df401` is now integrated as `fa0a1247`; it advances the diagnostic but does not resolve summary growth. Fix and validate these areas before a fresh bootstrap attempt. |
+| Newly integrated typed-lowering batch | `36d8dbe1` is integrated as `a898abc2`; prior source inference passed **10,265 items / 188 modules**. Fresh central native checks remain. It reads eligible concrete source-copy call types from recorded inference instead of walking argument expressions and rebuilding the inference environment. The old fallback, copy emission and ownership remain; measured counters distinguish actual recorded/inferred use. There is no speedup or native-correctness claim for this new source. |
+
+`work/r10pre/report-reference/` and `method-reference/` are older reference snapshots. Use the final evidence table below for current results and compiler paths; successful driver checks do not replace the remaining fresh CLI/bootstrap acceptance.
+
+[Verbatim checkpoint history and commit mappings](SELF_HOSTING_LOG.md#round-10-shared-native-and-trait-selection-checkpoints-2026-11-21)
+
+#### Orientation and responsibilities
+
+1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
+2. Read “Start here” immediately above and “Type inference before lowering” in this plan, especially steps 7 and 8.
+3. Consult the language reference (§13.1 imports, §21 traits, operators and requirements), diagnostic codes including ASH048, and test directives. [Language](../reference/language.md) · [Diagnostics](../reference/diagnostics.md) · [Tests](../guide/testing.md)
+4. Read the behaviour runner, suite/probe instructions and package guide. On the development machine read `.claude/worktrees/step-f-round3/work/coord/rules.md` before running compilers. [Behaviour](../../../selfhost/tests/behaviour/README.md) · [Suites](../../../scripts/selfhost-dev/README.md) · [Packages](../../../selfhost/README.md)
+
+The coordinator owns integration, builds, profiling, suites, sweeps and pushes. At most two workers use temporary separate `fix/*` branches and hand back substantial committed batches with exact load requests in `work/PROGRESS.md`. Keep worker and integration branches backed up after each commit, then retire worker branches after integration and preservation of needed evidence. Integrate between jobs that read the source. The user authorized GPT-6.2 Astra, autonomous iteration, validated milestone PR merges and obsolete-branch cleanup. Keep one shared development/PR branch and create no development tags. Round 10 has draft PR #1160 and no merged milestone PR.
+
+All worktree names below are relative to `.claude/worktrees/`. Generated scripts, binaries and logs under `work/` are machine-local. Coordinator paths below are relative to `step-f-round3/` unless another worktree is named.
+
+| Worktree / branch | Responsibility or evidence |
+| --- | --- |
+| `step-f-round3` / `selfhost/round10` | Coordinator validation, shared rounds and results. |
+| `r10-native-evidence-next` / `fix/r10-native-evidence-next` | All three inference repairs integrated through `c2e1c50b`; original cases await fresh native validation. |
+| `r10-external-next`, `r10-server-drain` / corresponding `fix/*` | External oracle and complete server-runtime batches integrated through `c47aa238`; backend native 4 validates their children. |
+| `r10-measure-progress` / `fix/r10-measure-progress` | Stderr progress markers integrated as `956d4252`; rebuild the tool for the next measurement. |
+| `r10-phantom-query` / `fix/r10-phantom-query` | BATCH READY `66b8d0d3`, integrated as `e948b6f2`: candidate-directed phantom-variable query in both compilers. Three focused poison programs had byte-identical lowered IR and expected output; compiler-source inference passed 10,131 items / 184 modules. No measured speedup claim. The HTTP trace and repair are archived in `r10-http-worker-count`. |
+| `r10-handoff-consolidation` / `fix/r10-handoff-consolidation` | Completed and integrated as `da3848ad` / `02d8cd30`. |
+| `r10-evidence-boundaries` / `fix/r10-evidence-boundaries` | BATCH READY through `bd915b62`, integrated. Stage-1 poison work is recorded in `r10-native-poison`. |
+| `r10-callback-evidence`, `r10-ir-ownership-audit` / corresponding `fix/*` | Completed callback and ownership batches, integrated through `0db26650` and `30935ec4`. Their progress files identify witnesses, source checks and outstanding native checks. |
+| `r10-type-coverage`, `r10-test-oracles`, `r10-remaining-correctness` | Coverage inventory, C# oracle evidence and bootstrap36 historical reproducers. |
+| `r10-fixture-candidates` | Coordinator scripts and preserved fixture/stack evidence under `work/`; `parallel-codegen` / `fix/parallel-codegen` is separately paused. |
+
+#### Current evidence and next validation
+
+**Paused at the user's 98% weekly usage threshold. No compiler jobs or agents remain active.** The results below predate source consolidation commits `fa0a1247` and `a898abc2`. Bootstrap source was `78325617`; native validation source `39e79d7f` differed from that only in documentation. The new integrated source needs fresh checks. [Continuation prompt and restart procedure](SELF_HOSTING_RESUME.md). [Verbatim preceding checkpoints](SELF_HOSTING_LOG.md#round-10-bootstrap55-and-quota-pause-checkpoints-2026-11-21).
+
+| Check | Final evidence at pause |
+| --- | --- |
+| Stage-0 reference | `r10-original-tmc-resolution/work/reference/` at `82052af0`: build/format pass, C# 3,073 pass / 9 fail / 2 skip; four missing-library failures pass the corrected 6/6 FFI-class rerun, leaving five known RSS leaks. LSP 88/88; e2e 1,325 pass / 0 fail / 81 skip. Integrated `src/` is identical to that revision. Fresh CLI: `work/reference/s0/ashes` there, with complete runtime dependencies. |
+| Native input | `work/r10pre/seed-native-input/`: explicit inference `ok`, 12,747 items / 283 modules; lists contain 242 backend cases, 96 semantics groups and 95 IR fixtures. |
+| Backend normal/no-reuse | `split-backend-seed` and `split-backend-seed-no-reuse` each pass **241/242 normal and 241/242 poison**. Only the known annotation-loop leak fails. Each batch's `annotation-check/results.tsv` confirms exit 0, correct 12/36 stdout and live 14/40 in both modes. All ten trait, original TMC, async and ownership controls pass. Build times 8:49.29 / 8:46.99; peaks 19,103,672 / 19,334,944 KiB. |
+| Semantics and IR | `split-semantics-seed` and `split-semantics-seed-no-reuse` each pass **96/96** groups. The **32/95** IR differences are byte-identical between both builds and to audited `named-native5/actual`; saved comparison exits are 0. Build times 9:06.26 / 9:53.93; peaks 20,202,524 / 20,377,448 KiB. |
+| Historical host | `original-backedge3`: three original prechecks and original lowering pass, 1,597 IR lines. Build 5:32.98, peak 14,197,820 KiB. Only the missing direct type import was added; removing it restores archived Main byte-for-byte. All 87 earlier diagnostics disappeared. |
+| Round-10 stage 1 | **PASS**, `artifacts/selfhost-dev/s1-f-bootstrap55-debug`, source `78325617`. Build **27:26.14**, peak **19,202,944 KiB**, debug/O2/leakcheck. SHA-256 `7e7181c45741e6b74e37032ef709856b32831588bc0f10bb8255e324c6aaf993`. Evidence: `work/r10pre/round10-bootstrap55/`. |
+| Round-10 stage 2 | **Quota cancellation**, exit 143, no stage-2 binary. Stage 3, byte comparison, fresh full behavior and full round suites/counters have not run. Cancellation is not a compiler failure. |
+| Fresh stage-1 original CLI | `work/r10pre/bootstrap55-cli-s1/`: alias and selector compile/run and print 42. **REST and mock reject**: Main.ash:6:1, ASH019 unknown capability `Store`; ApiMock.ash:94:5, ASH020 handler arm `Store.load` not a declared operation. Both fail immediately, not by memory cap. Stage-0 REST oracle passed all 12 assertions. |
+
+Paths are relative to integration unless another worktree is named. The pre-round known-bug gate passed, but fresh CLI findings **reopen correctness acceptance**. Round 10 is incomplete.
+
+**Next implementation: two independent tasks.**
+
+1. Fix stage-1 REST capability resolution using the unchanged real example and mock, language import/capability rules and stage-0 implementation. Do not rewrite the examples. No worker was assigned before the quota stop.
+2. Finish recursive evidence cost/convergence work. The exact baseline diagnostic reaches unit 19 (`TypeInference`), group `__ashes_private_value_AshesCompiler_Semantics_TypeInference_inferExpressions`, pass 2 with **33 summaries / 3,138 direct parameter and capture uses**, then times out at 600 seconds before another sparse marker. Indexing advances to pass 4 with **310,375 uses**, then was cancelled for quota. Lookup is faster, but summary growth remains unresolved; there is no proof of an infinite loop or completed speedup. Compare C# merge rules, including earliest-stage handling, without dropping required evidence or capping production iterations. Preserve the agreed strict eager-evidence policy.
+
+**Consolidated batches and retained diagnostic evidence:**
+
+- **`d30df401` → `fa0a1247`, integrated:** balanced-tree exact membership replaces accumulating-list scans, preserving order, five identity fields, demand stages and widening. Formatting/static checks pass. Matched diagnostic compilation and partial progress above are established; current-source native semantics, full uninstrumented counters and heap impact remain unverified. `r10-recursive-evidence-cost/work/PROGRESS.md` has matched-input and finer member-level diagnostic commands.
+- **`36d8dbe1` → `a898abc2`, integrated:** recorded concrete source-copy call types and actual shortcut/fallback counters. CLI inference passed 10,265 items / 188 modules; native/lifetime/performance checks remain. See `r10-typed-lowering-next/work/PROGRESS.md`.
+- **Diagnostic-only, do not integrate:** `fix/r10-inference-progress-diag` at `4c1d782a`; exact-baseline copy `fix/r10-inference-progress-frozen` at `fb7857e0`; baseline plus indexing `fix/r10-evidence-index-frozen` at `54ba78bc`. Use the real `d30df401` batch after validation, not its diagnostic copy.
+- **Archive only:** shutdown found 23 previously uncommitted generated fixture candidates in the detached `r10-fixture-candidates` worktree. They were preserved, not accepted, as `0c7d7923` on `fix/r10-fixture-candidates-archive` and pushed. Do not merge them or replace the validated fixture oracles with them. The older `fix/r10-typed-consumer-audit` branch was backed up at shutdown, then retired during the authorized cleanup: its head `617eb374` is already an ancestor of integration.
+
+**Measurement artifacts and terminal states:**
+
+- `r10-measurement-baseline` stays at `db54fdb9`. Its `work/legacy/` and `work/typed/` use the debug/O0/poison driver in integration `work/r10pre/split-measurement/`; both reached 3,600 seconds, exit 124, no TSV rows.
+- Its `work/optimized-measurement/measure` uses identical source and stage-0 hashes, O2 without debug/poison/leakcheck. Build **5:35.53**, peak **15,264,412 KiB**. `work/optimized-legacy/` was cancelled for quota (inner exit 143), still in inference without counters.
+- `r10-inference-progress-frozen/work/diagnostic-build/`: build **5:42.60**, peak **14,516,420 KiB**, cap 16 GiB. `work/diagnostic-run/`: real 600-second timeout, exit 124, last marker pass 2 / 3,138 uses. Compiler `fb7857e0`, input `db54fdb9`.
+- `r10-evidence-index-frozen/work/diagnostic-build/`: build **5:44.73**, peak **15,052,560 KiB**, cap 16 GiB. `work/diagnostic-run/`: quota cancellation, exit 143, last marker pass 4 / 310,375 uses. Compiler `54ba78bc`, input `db54fdb9`.
+- Stop records: integration `work/r10pre/usage-pause-20261121/`. All three cancelled leaf processes and wrappers were verified gone; all workers had handed back. Preserve terminal outputs and use fresh result directories.
+
+**Coordinator scripts:** machine-local `r10-fixture-candidates/work/`. `shared-native-prepare.sh` renders/source-checks only; use `split-native-build.sh` / `split-native-run.sh` for actual native checks. The oversized combined harness OOMed twice at 24 GiB; do not retry it. Preserve every original case. `annotation-leak-check.sh`, `original-cli-checks.sh`, and `original-backedge-check-imports.sh` preserve their witnesses. Original CLI compile cap defaults to 8 GiB; the fresh checks used `ASHES_CLI_CHECK_MEMORY=4G` and recorded that cap. Measurement wrappers are `measurement-optimized-build.sh`, `measurement-run.sh`, `measurement-diagnostic-build.sh`, `measurement-diagnostic-run.sh`; diagnostic wrappers accept `ASHES_DIAGNOSTIC_CHECKOUT` and build revision `ASHES_DIAGNOSTIC_REVISION`. Frozen-baseline counters are not current-source acceptance.
+
+`round10-bootstrap.sh` requires a clean matching source head and refuses existing phase results/binaries. Preserve bootstrap55's source `78325617`, valid stage 1 and cancelled stage2. Consolidated source changes and fixes for the new blockers require validation and a fresh bootstrap attempt/output name. Do not create development Git tags, mark the old gate current or overwrite failed/cancelled evidence. Stage 3 needs swap in parent and child scopes. The full objective remains clean byte-identical S2/S3, stage parity, typed lowering 7/8, parallel LLVM/linking, then all leaks; blocking leaks are immediate.
+
+#### Gate and remaining bugs
+
+Fix every known non-leak bug before the shared round, including crashes, hangs, wrong stdout, rejected valid programs and incorrect diagnostics. Fix a leak immediately if it blocks progress. The five measured C# RSS failures and historical leak-only behaviour rows are temporary exclusions. After multithreading, fix all remaining compiler and generated-program leaks. Original bug numbers below correspond to the earlier reproduction notes. [Round-10 history](SELF_HOSTING_LOG.md#round-10-preflight-history)
+
+The new annotation-loop backend failure is also confirmed leak-only: both children exit 0 and print the correct 12/36, while live cells rise from 14 to 40 over two additional rounds (13 per round). Preserve it for the post-parallel leak phase. The active non-leak checks include all three repaired semantic groups, Socket close/cancel, worker fork/reaping/cap behavior, graceful drain completion/deadline and the original HTTP 120-request control.
+
+| Bug | Implemented or observed | Proof still needed |
+| --- | --- | --- |
+| 0. TMC accumulator and qualified callee | Grown-seen accumulator repair and final-tail transfer integrated in both compilers. Stage-0 qualified-callee and dedup checks passed. | Fresh stage-1 checks of the original programs and stage-2 lifetime regression. |
+| 1. Stage-0 IR fixtures | Reviewed `loop_result_some_holding_the_loop_parameter` and `tco_generic_curried_helper_result_passed_to_self_call` plus their related IR/explain oracles. All 207 reviewed stage-0 fixture tests passed. | Recheck full suites on the current head. Stage-1 IR differences belong to bug 9. |
+| 2–3. Open Not and competing Eq goals | Executable recursive-expression boundary and per-lowering evidence identity fixes integrated. Original Eq witness uses two `given xs -> xs == []` functions at distinct element types. | Run logical-not/discovery, lifetime and same-span comparison cases in the current native suites. |
+| 4. Owned matched fields | Ported shared/unique ownership when destructuring an owned call result such as `Some(span)`. | Exercise both unique and shared paths and the stage-2 double-release witness. |
+| 5–7. Diagnostics, parser recovery, imports | Integrated expected constructor shape, if/match contexts, requirement precedence, EOF/newline recovery, alias visibility, trait-name exemptions, qualifier resolution and Unicode provenance corrections. | Compare current stage-1 positions, words and ordering with stage 0. Check shipped selector-only `MapTree`, and `File.Inner` as ASH048's declaring module. The selector printed 42 on bootstrap54. |
+| 8. REST example | The real `examples/restful_api` compiled with fresh stage 0 after the module-alias fix. | Current stage-1 example build and offline mock run. |
+| 9. Lowered-IR parity and ownership | Four relevant integrated repairs cover captured-self normalization, TMC close-before-result-publication, scalar pattern fields excluded from RC retains, and lexical identity of transferred binders. See the ownership evidence below. | Fresh named IR/semantics plus no-reuse run. Classify remaining differences individually and execute the actual programs. |
+| 10. Bootstrap36 carryover | Escaping dictionary environment capture/copier/dropper repairs integrated; original stage-0 poison case passed 1,000 rounds. Small association-list check passed stage 0 and bootstrap54. | Current stage 1 on partial application, lexical helper (`first`), same-span Not/Ord, and typed generic entry-frame capture (`generic_add_binding_reading_top_level_value_used_at_int_and_float.ash` should print `12 4.5`). The original backedge-scan driver also needs checking. See `r10-remaining-correctness/work/PROGRESS.md` and “Open work recorded at bootstrap36” above. |
+| 11. C# wrong-output and structural oracles | Both unchanged builders compute 9 per round. Corrected their stdout assertions and eight structural assertions, preserving production and documented differential-path ownership/reuse checks. Last full C# run left only five measured RSS failures. | Reaudit actual failures on each new full run. |
+| 12–14. Constrained partials and evidence | Generalized partials, captured lexical dictionaries, recursive-group ABI, higher-order forwarding, selected fields and callback return/invoke summaries are integrated in both compilers. Expanded poison native inference-policy suite passes. | Check invocation/delayed-return lowering, normal/raw executable boundaries, independent effects and mixed concrete uses in fresh broad native suites and backend behavior. |
+| 15. Inference table coverage | Source inventory enumerates 19 semantic type constructors, 48 expression constructors and 14 patterns. Handler binders/guard scope, unsigned and signed integer complement, shadowed-let scheme lookup, deriving and layout translation have targeted tests. | Run `RecordedInferenceCoverageTests`, including the exact stitched `tests/trait_deriving.ash`. Check synthetic lowering-only nodes separately from numbered source and derived expressions. Full inference coverage, table-driven lowering and zero replay remain unverified. |
+| 16. Native driver stage-0 evidence | Composite dependency deferral and exact dictionary identity repaired the original ASH010. The exact native7 retry exposed missing sibling-method capture; packed-dictionary projection is now repaired, with equality, inequality and suspension probes passing. | The unchanged 220-group input passed every non-leak group in native 8 and the full reference completed at `cbbbc830`. Execute the expanded raw/numbered and coroutine controls on the paired source. |
+| 17. Mixed concrete/generic trait calls | Shared native 2 stopped in unchanged measurement code. Focused C# controls pass on the worker branch. | Validate both compiler repairs on the preserved input and expanded native groups. |
+| 18. Result-directed first-class method | The first-class Seed method returned 1 in place of 17 when the enclosing generic dictionary won. C# focused poison control passes. | Verify concrete and generic selection in fresh stage 1, including first-class, captured and custom-method calls. |
+
+**Strict evaluation decision.** Evidence needed while evaluating a binding must already be concrete or supplied by the enclosing function. Annotate an ambiguous binding. A later top-level use cannot select its earlier effect's instance. Requirements used only by a returned function remain generalized. An enclosing polymorphic `check x` may use its inferred Seed/Eq dictionaries. Each canonical scheme requirement's demand stage is recorded at `nodeEvidenceStagesAt(rhsRoot)(nodeTypes)`. A returned callback retains its latent requirements; a peer that invokes it during binding can require immediate evidence. The independent prefix test must print `entered|bound|v=42 v=true`, with the supplied prefix evaluated once before the marker. [Language reference](../reference/language.md)
+
+**Ownership evidence.** Offline analysis of the old 35 IR differences found active flag 1 at all 122 transfer guards across 29 fixtures and 51 flag slots. That establishes the taken guard path on those specific dumps. In the two generic-collection fixtures the direct loop keeps its arena chain across the backedge, and the helper loop acquires the normalized successor before releasing the previous root. The extra borrow of the string head is a temp copy; the extra zero store in `step` has no reader. Preserve the exact IR fixtures. Fresh mixed arena/RC paths and executable behavior still need validation.
+
+For `tail_call_scalar_shadowing_another_arms_list_tail.ash`, stage 0 emits two real retains and prints 7. Old stage-1 IR also retained the unrelated integer 7, and bootstrap54's generated executable exited 139. The worker's whole-compiler source preflight after `30935ec4` passed (10,090 items, 184 modules). Check the integrated lexical-binding repair with `runCallWindowLoweringTests` and a current stage-1 backend. Also run the following original IR-fixture sources as programs. The integrated stage-1 backend now supports the compile-time poison switch. Run its generated children in both modes and verify poison is present in the instrumented child. The suite executable’s own poison setting alone cannot establish that. The named IR-only harness cannot establish backend behavior.
+
+| Fixture | Expected stdout |
+| --- | --- |
+| `generic_collection_loop_reuses_matched_accumulator` | 1 |
+| `collection_threaded_through_helper_releases_by_slot` | 1 |
+| `non_tail_self_call_list_result` | 1 |
+| `spine_cell_head_bound_by_let_releases_its_binding` | 5 |
+| `aggregate_borrowing_owner_kept_by_callee` | 1 |
+| `producer_conses_nested_variant_head` | 4 |
+| `record_head_list_producer` | 2 |
+
+#### Shared round after the gate clears
+
+1. Validate stage 0 from the frozen head with solution build, format verification, full C# and LSP suites and `ashes test tests`. Compare failures with the saved baseline by actual cause.
+2. Build stage 1 with `--debug -O2` and `ASHES_RC_LEAKCHECK=1`. Build stage 2 with its link map. Run the behavioural check of **both** against stage 0, recording acceptance, diagnostic, stdout and exit code. Build stage 3 from stage 2 without errors and compare the stage-2 and stage-3 binaries byte for byte. Follow the coordinator's stage-3 swap allowance. The local template is `work/step-f/round9.sh`.
+3. Repeat stage-1 behaviour with `ASHES_TYPED_LOWERING=1`. With the flag off, compare lowered IR against the previous stage 1. The available round-9 binaries are `artifacts/selfhost-dev/s1-f-bootstrap54-debug` and `s2-f-bootstrap54` (with maps). Earlier results are under `work/behaviour/b54-s1/` and `b54-s2/`.
+4. With the flag on, record whole-compiler counters for pending trait goals, structural equality goals, replay passes and bodies lowered again. Require zero pending goals and no replay. Use the re-lowering count to verify replacement of discovery and repeated lowering.
+5. Run `scripts/selfhost-dev/suites.sh` and its `--focused` variants plus outstanding checks in each batch handoff. Record the source, binaries, counters, behaviour summaries and byte comparison before calling the round complete.
+
+After the round, resolve flag-on differences, enable typed lowering by default (step 7), then replace the step-8 order-dependent ownership rules one at a time. Resume CG-17 parallel LLVM/codegen and LNK-14 linking after that. Parked type-query, linker and leak measurements remain in the work order and historical checkpoint. [Preflight history](SELF_HOSTING_LOG.md#round-10-preflight-history)
 
 ## Work order
 
@@ -1103,7 +1236,7 @@ F. **Clear the blockers the probe reports.** **Done** (on the way to the fixpoin
    again. What remained there was SEM-22, confined to its own module, and a memory cap that was mostly
    repeated lowering. Gates: BOOT-2.
 
-   The leak census run under stage 1 (2026-09-28) found five more gaps it cannot close alone.
+   The leak census run under stage 1 (2026-09-28) found five more gaps it cannot close alone; the fifth, a shipped type named without an import, is rejected by both stages since 2026-11-18 (ASH048).
    Each has a reproducer under `scripts/selfhost-dev/reproducers/`:
 
    - A static `provide` is never wired into whole-program lowering (CAP-7, typed by CAP-9), so a
@@ -1117,8 +1250,6 @@ F. **Clear the blockers the probe reports.** **Done** (on the way to the fixpoin
    - An unknown type name in an annotation surfaces as an ASH002 mismatch at a call, not as
      stage 0's unknown-type diagnostic (whose span points at `<std:Ashes.Trait>:1:1`):
      `unknown_type_name_in_annotation.ash`.
-   - Both stages accept a shipped type named without an import of its module, which the
-     language reference's import rules do not allow: `unimported_shipped_type_accepted.ash`.
 
    The same run's parse errors on a parenthesized `let` whose value is a nested `let ... in`, the
    unbound handler-arm capture (`capabilityClosureResultNNNN`) and the `u8 vs u8` mismatch are fixed.
@@ -3253,6 +3384,12 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
+
+  Design notes for the stage-1 port (2026-11-18, research only, nothing implemented yet):
+  - Threads: `Ashes.Task.Parallel.both` forks a real `clone` worker in stage 1 too (`parallelBothBound` in CoreLowering.Expressions, codegen in IrCodegen.Parallel), with its own arena and reference-counting region and a deep copy of the result back. It forks only when the right thunk's result type passes `canRunRightOnWorker` and silently runs sequentially otherwise: return `(Bool, Bytes)` rather than `Result(Bytes, Str)` and annotate the job function. Chain `both` so partition 0 runs last on the main thread (it does the bitcode payload IO); capture only scalars and LLVM handles, since counts are not atomic. Each partition gets its own context, module, builder and target machine; codegen and verification stay on the main thread, only optimize and emit go to workers.
+  - Risk: worker stacks are a hard-coded 1 MiB (`workerStackBytes`, no stack-size flag); whether LLVM fits a partition's optimize and emit in that is unproven. Plan an `ASHES_LLVM_SEQUENTIAL=1` fallback that keeps the partitions and runs them one after another.
+  - Stage 1 differs from stage 0 in ways that remove two of stage 0's rules: every function but the entry is internal and libc names are always imports (no weak-helper rule), and the x64 arena cursors are GS-relative (no local-exec rule). Symbols shared between partitions need hidden visibility, or LLVM emits `REX_GOTPCRELX` relocations stage 1's linker does not relax. Share only the globals created before any function body (a sentinel global marks the end), not globals with equal names: the `.str_msg_<name>` constants reuse one name for different contents.
+  - LNK-14: a line-by-line port of the three `ElfRelocatableObjects` files, the output built as byte pieces joined once as the ELF linker does; 16- and 32-bit fields packed into 64-bit writes (no Int-to-u32 conversion). COFF is out of scope while stage 1 targets linux-x64 only. All LLVM C functions needed are exported by libLLVM 23.1.
 
 ### Object parsing and executable linking
 

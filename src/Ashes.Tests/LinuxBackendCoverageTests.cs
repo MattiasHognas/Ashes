@@ -3030,7 +3030,9 @@ public sealed class LinuxBackendCoverageTests
         // the owned result itself, so the back edge releases the previous iteration's map, as it
         // does when the call is written in the argument's place. (The map's updates grow the arena
         // per round on this path, so this is checked on the lowered loop.)
-        GeneralRcDropsInLoop(BuildMapLoopSuccessorBoundByLetProgram(3), "solve").ShouldBe(3);
+        string source = BuildMapLoopSuccessorBoundByLetProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "Ashes.Collection.Map.setStr(key)(false)", "solve(rest)((key", "__rcdrop_general");
     }
 
     [Test]
@@ -3041,9 +3043,21 @@ public sealed class LinuxBackendCoverageTests
         // receives the parameter itself or a call's owned result, which holds the earlier record's
         // parts by references of its own, so the earlier record is released at the edge that hands
         // the map on unchanged. The merged record handed to the generic setStr is an owned
-        // reference-counted copy, released after the call when the map did not adopt it (the sixth
-        // record release), instead of a deep copy into the to-space region, which nothing reclaims.
-        DropperCallsInLoop(BuildTableMergedOrHandedOnProgram(3), "solve", "__rcdrop_record").ShouldBe(6);
+        // reference-counted copy, released after the call when the map did not adopt it.
+        string source = BuildTableMergedOrHandedOnProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "lookup(key)(table)", "solve(table)(rest)", "__rcdrop_record");
+
+        SourceLocation setCall = FindSourceLocation(source, "Ashes.Collection.Map.setStr(key)(merged)");
+        List<IrInst> instructions = loop.Instructions;
+        List<IrCfgBlock> blocks = IrControlFlowGraph.Build(instructions);
+        blocks.Any(block =>
+            instructions[block.Start] is IrInst.Label label && label.Name.StartsWith("rc_handed_over_not_adopted_", StringComparison.Ordinal)
+            && instructions.GetRange(block.Start, block.End - block.Start).OfType<IrInst.CallKnown>().Any(drop =>
+                drop.Location == setCall && drop.FuncLabel.StartsWith("__rcdrop_record", StringComparison.Ordinal)
+                && instructions.Take(block.Start).OfType<IrInst.CallClosure>()
+                    .Any(call => call.Location == setCall && call.ArgTemp == drop.ArgTemp))).ShouldBeTrue(
+                        "the non-adopting setStr path must release the merged record it was given");
     }
 
     [Test]
@@ -3052,28 +3066,53 @@ public sealed class LinuxBackendCoverageTests
         // A back queue of strings handed on unchanged while the map of queued keys is rebuilt, on
         // the map's general path: the queue holds nothing of an earlier map but strings it retains,
         // so the back edge releases the earlier map.
-        GeneralRcDropsInLoop(BuildMapLoopPredecessorPastQueueOfStringsProgram(3), "solve").ShouldBe(7);
+        string source = BuildMapLoopPredecessorPastQueueOfStringsProgram(3);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "solve");
+        AssertPredecessorReleasedAtEdge(loop, source, "Ashes.Collection.Map.setStr(key)(false)", "solve(rest)(back)(dequeued)", "__rcdrop_general");
     }
 
-    // The general droppers a loop's closure helper calls, the loop lowered without reuse
-    // specializations.
-    private static int GeneralRcDropsInLoop(string source, string loopName)
-        => DropperCallsInLoop(source, loopName, "__rcdrop_general");
+    private static IrFunction GetTailLoop(IrProgram ir, string loopName)
+        => ir.Functions.Single(function =>
+            function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: var name }
+            && string.Equals(name, loopName, StringComparison.Ordinal)
+            && function.Instructions.OfType<IrInst.Jump>().Any(jump =>
+                string.Equals(jump.Target, function.Label + "_body", StringComparison.Ordinal)));
 
-    // The droppers of one family (a label prefix) a loop's closure helper calls, the loop lowered
-    // without reuse specializations.
-    private static int DropperCallsInLoop(string source, string loopName, string dropperPrefix)
+    private static SourceLocation FindSourceLocation(string source, string expression)
     {
-        IrProgram ir = LowerProgramWithImportsWithoutReuse(source);
-        IrFunction loop = ir.Functions
-            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: var name }
-                && string.Equals(name, loopName, StringComparison.Ordinal))
-            .Single(function => function.Instructions.Any(instruction =>
-                instruction is IrInst.Jump { Target: var target }
-                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
-        return loop.Instructions.Count(instruction =>
-            instruction is IrInst.CallKnown { FuncLabel: var label }
-                && label.StartsWith(dropperPrefix, StringComparison.Ordinal));
+        source = source.ReplaceLineEndings("\n");
+        int offset = source.IndexOf(expression, StringComparison.Ordinal);
+        offset.ShouldBeGreaterThanOrEqualTo(0);
+        var index = new SourceTextIndex(source);
+        (int line, int column) = index.ToPosition(index.ToUtf8Offset(offset), SourcePositionEncoding.Utf16);
+        return new SourceLocation("<memory>", line + 1, column + 1);
+    }
+
+    private static void AssertPredecessorReleasedAtEdge(
+        IrFunction loop, string source, string producerExpression, string recursiveCall, string dropperPrefix)
+    {
+        SourceLocation producer = FindSourceLocation(source, producerExpression);
+        SourceLocation edge = FindSourceLocation(source, recursiveCall);
+        List<IrInst> instructions = loop.Instructions;
+        // Before installing the new call result, lowering saves the old slot in a separate
+        // predecessor slot. Follow that value to its drop, independently of other owners.
+        int saveIndex = Enumerable.Range(1, instructions.Count - 2).Single(i =>
+            instructions[i] is IrInst.StoreLocal save && save.Location == producer
+            && instructions[i - 1] is IrInst.LoadLocal old && old.Target == save.Source
+            && instructions[i + 1] is IrInst.StoreLocal update && update.Slot == old.Slot);
+        int predecessor = ((IrInst.StoreLocal)instructions[saveIndex]).Slot;
+        int jumpIndex = instructions.FindIndex(instruction => instruction is IrInst.Jump jump
+            && jump.Location == edge && string.Equals(jump.Target, loop.Label + "_body", StringComparison.Ordinal));
+        jumpIndex.ShouldBeGreaterThan(saveIndex);
+
+        List<IrCfgBlock> blocks = IrControlFlowGraph.Build(instructions);
+        int edgeBlock = IrControlFlowGraph.FindBlock(blocks, jumpIndex);
+        int[] dominators = IrControlFlowGraph.ComputeImmediateDominators(blocks);
+        instructions.OfType<IrInst.LoadLocal>().Count(load => load.Slot == predecessor
+            && IrControlFlowGraph.Dominates(dominators, IrControlFlowGraph.FindBlock(blocks, instructions.IndexOf(load)), edgeBlock)
+            && instructions.OfType<IrInst.CallKnown>().Any(drop =>
+                drop.ArgTemp == load.Target && drop.FuncLabel.StartsWith(dropperPrefix, StringComparison.Ordinal)))
+            .ShouldBe(1, $"the back edge at '{recursiveCall}' must release the predecessor saved at '{producerExpression}'");
     }
 
     [Test]
@@ -5870,17 +5909,12 @@ public sealed class LinuxBackendCoverageTests
         // A loop threading a map through a helper's owned result while it walks a list of strings.
         // The walked list's tail holds only parts of the list the loop was entered with, so each
         // earlier iteration's map is released at the back edge rather than overwritten in its slot:
-        // one release there, beside the two at the loop's exit. (The map's own reuse specialization
-        // grows the arena per round, so this is checked on the lowered loop, not by peak memory.)
-        IrProgram ir = LowerProgramWithImports(BuildMapThreadedThroughWalkedListLoopProgram(3));
-        IrFunction loop = ir.Functions
-            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: "dependentsOf" })
-            .Single(function => function.Instructions.Any(instruction =>
-                instruction is IrInst.Jump { Target: var target }
-                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
-        loop.Instructions.Count(instruction =>
-            instruction is IrInst.CallKnown { FuncLabel: var label }
-                && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBe(3);
+        // the old result of addDependents is saved before the current result replaces it.
+        string source = BuildMapThreadedThroughWalkedListLoopProgram(3);
+        IrProgram ir = LowerProgramWithSourceLocations(source);
+        IrFunction loop = GetTailLoop(ir, "dependentsOf");
+        const string pipeline = "dependents\n            |> addDependents(key)";
+        AssertPredecessorReleasedAtEdge(loop, source, pipeline, pipeline, "__rcdrop_general");
 
         if (OperatingSystem.IsLinux())
         {
@@ -5898,7 +5932,9 @@ public sealed class LinuxBackendCoverageTests
         // when makeNode is inlined, once the helper body is lowered; nothing released it before.
         // (The specialization copies the missing value into the persistent region at every call,
         // so this is checked on the lowered program, not by peak memory.)
-        IrProgram ir = LowerProgramWithImports(BuildMapUpsertClosureResultLoopProgram(40));
+        string source = BuildMapUpsertClosureResultLoopProgram(40);
+        IrProgram production = LowerWithRuntimeRcMapLoop(source, "rounds", "counts");
+        IrProgram ir = LowerProgramWithImportsAndLowering(source, PersistentMapConfiguration).Ir;
         bool copiedResultReleased = ir.Functions.Any(function =>
         {
             List<IrInst> instructions = function.Instructions;
@@ -5914,6 +5950,8 @@ public sealed class LinuxBackendCoverageTests
         {
             ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
             result.Stdout.ShouldBe("44\n");
+            ExecutionResult productionResult = await CompileRunWithLinuxLlvmAsync(production).ConfigureAwait(false);
+            productionResult.Stdout.ShouldBe(result.Stdout);
         }
     }
 
@@ -7074,7 +7112,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildLoopParameterTheBodyNeverReadsProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            sample.Stdout.ShouldBe($"{rounds * 9}\n");
             samples.Add(sample);
         }
 
@@ -7252,7 +7290,7 @@ public sealed class LinuxBackendCoverageTests
         {
             IrProgram program = LowerProgramWithImports(BuildExitCellOfRecordsPassedToCallProgram(rounds));
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            sample.Stdout.ShouldBe($"{rounds * 9}\n");
             samples.Add(sample);
         }
 
@@ -9013,7 +9051,8 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Reuse_update_reads_the_value_it_overwrites_from_the_token_cell()
     {
-        IrProgram ir = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        IrProgram ir = LowerProgramWithImportsAndLowering(
+            BuildPersistentMapStringUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         int checkedUpdates = 0;
         foreach (IrFunction function in ir.Functions)
         {
@@ -9039,11 +9078,13 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        IrProgram mapProbe = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        IrProgram mapProbe = LowerProgramWithImportsAndLowering(
+            BuildPersistentMapStringUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         AllInstructions(mapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
         AllInstructions(mapProbe).Any(instruction => instruction is IrInst.CopyStringIntoOrFresh).ShouldBeTrue();
 
-        IrProgram hashMapProbe = LowerProgramWithImports(BuildPersistentHashMapUpdateMemoryProgram(1));
+        IrProgram hashMapProbe = LowerProgramWithImportsAndLowering(
+            BuildPersistentHashMapUpdateMemoryProgram(1), PersistentMapConfiguration).Ir;
         AllInstructions(hashMapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
         hashMapProbe.Functions.Any(function =>
             function.Origin?.Kind == IrFunctionOriginKind.TraitOperatorSpecialization
@@ -9052,12 +9093,45 @@ public sealed class LinuxBackendCoverageTests
                 "Ashes_Collection_HashMap_hMax",
                 StringComparison.Ordinal)).ShouldBeTrue();
 
+        await AssertMapUpdateMemoryPlateausAsync(PersistentMapConfiguration).ConfigureAwait(false);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_map_memory_should_plateau_as_updates_scale()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        LowerWithRuntimeRcMapLoop(BuildPersistentMapStringUpdateMemoryProgram(1), "loop", "map");
+        LowerWithRuntimeRcMapLoop(BuildPersistentHashMapUpdateMemoryProgram(1), "loop", "map");
+        await AssertMapUpdateMemoryPlateausAsync(LoweringConfiguration.Default).ConfigureAwait(false);
+    }
+
+    // Production reserves these concrete changing variants for runtime RC before persistent
+    // specialization. Exercise the independent region path on the same inputs without changing
+    // process-global compiler controls in concurrently executing tests.
+    private static LoweringConfiguration PersistentMapConfiguration { get; } = new(EnableGenericVariantLoopRc: false);
+
+    private static IrProgram LowerWithRuntimeRcMapLoop(string source, string loopName, string parameterName)
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithImportsAndLowering(source);
+        IReadOnlyList<TcoParamPlacementTrace> placements = lowering.GetTcoPlacementDecisions(loopName)
+            ?? throw new InvalidOperationException($"No TCO placement snapshot for '{loopName}'.");
+        placements.Single(trace => string.Equals(trace.Current.ParameterName, parameterName, StringComparison.Ordinal))
+            .Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        return ir;
+    }
+
+    private static async Task AssertMapUpdateMemoryPlateausAsync(LoweringConfiguration configuration)
+    {
         List<MemoryExecutionResult> mapSamples = await MeasureImportedMemoryGrowthAsync(
             BuildPersistentMapStringUpdateMemoryProgram,
-            outputPerIteration: 1).ConfigureAwait(false);
+            outputPerIteration: 1, configuration: configuration).ConfigureAwait(false);
         List<MemoryExecutionResult> hashMapSamples = await MeasureImportedMemoryGrowthAsync(
             BuildPersistentHashMapUpdateMemoryProgram,
-            outputPerIteration: 1).ConfigureAwait(false);
+            outputPerIteration: 1, configuration: configuration).ConfigureAwait(false);
 
         AssertMemoryPlateaus("persistent Map String-value update", mapSamples);
         AssertMemoryPlateaus("persistent HashMap fixed-key update", hashMapSamples);
@@ -9874,6 +9948,14 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<string> HttpRequestRawWithRetryAsync(int port, string request)
     {
+        (_, byte[] bytes) = await HttpExchangeRawWithRetryAsync(port, request).ConfigureAwait(false);
+        using MemoryStream buffer = new MemoryStream(bytes);
+        using StreamReader reader = new StreamReader(buffer, Encoding.UTF8);
+        return reader.ReadToEnd().Trim();
+    }
+
+    private static async Task<(int ClientPort, byte[] Bytes)> HttpExchangeRawWithRetryAsync(int port, string request)
+    {
         var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
         while (true)
         {
@@ -9885,8 +9967,9 @@ public sealed class LinuxBackendCoverageTests
                 await using (stream.ConfigureAwait(false))
                 {
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-                    using var reader = new StreamReader(stream, Encoding.UTF8);
-                    return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                    using MemoryStream buffer = new MemoryStream();
+                    await stream.CopyToAsync(buffer).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return (((IPEndPoint)client.Client.LocalEndPoint!).Port, buffer.ToArray());
                 }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
@@ -10548,6 +10631,91 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Cancelled_socket_wait_releases_its_capture_before_reusing_the_descriptor()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The timer cancels a parked accept. The dup survives the suspended factory
+        // returning and its caller leaving scope, each of which tears down its owners.
+        using LoopbackPortLease port = LoopbackPortLease.Create();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            external duplicate(Int) -> Int = "dup@libc.so.6"
+            external release(Int) -> Int = "close@libc.so.6"
+            let hold socket =
+                async(let acceptOne = async(match await Ashes.Net.Tcp.Server.accept(socket) with
+                        | Ok(_client) -> 1
+                        | Error(_e) -> 2)
+                in let timer = async(match await Ashes.Task.sleep(5) with
+                        | Ok(_u) -> 3
+                        | Error(_e) -> 4)
+                in match await Ashes.Task.race([acceptOne, timer]) with
+                    | Ok(3) -> duplicate(1)
+                    | _ -> 0)
+            let run u =
+                match Ashes.Task.run(Ashes.Net.Tcp.Server.listen({{port.Port}})) with
+                    | Ok(socket) ->
+                        match Ashes.Task.run(hold(socket)) with
+                            | Ok(replacement) -> replacement
+                            | Error(_e) -> -1
+                    | Error(_e) -> -1
+            Ashes.IO.print(release(run(Unit)) == 0)
+            """;
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgramWithImports(source)).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true\n", result.Stderr);
+    }
+
+    [Test]
+    public async Task Awaited_socket_close_preserves_a_reused_descriptor_and_releases_unconsumed_captures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // dup acquires the lowest free descriptor. On the close path it occupies the
+        // socket number before the parent frame tears down. On the borrow path teardown
+        // frees a lower descriptor while leaving the replacement open.
+        using LoopbackPortLease port = LoopbackPortLease.Create();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            external duplicate(Int) -> Int = "dup@libc.so.6"
+            external release(Int) -> Int = "close@libc.so.6"
+            let hold shouldClose socket =
+                async(let nested u = async(await Ashes.Net.Tcp.close(socket))
+                in if shouldClose
+                    then match await nested(Unit) with
+                        | Ok(Ok(_u)) -> duplicate(1)
+                        | _ -> 0
+                    else match await Ashes.Task.sleep(1) with
+                        | Ok(_u) -> duplicate(1)
+                        | Error(_e) -> 0)
+            let run shouldClose =
+                match Ashes.Task.run(Ashes.Net.Tcp.Server.listen({{port.Port}})) with
+                    | Ok(socket) ->
+                        match Ashes.Task.run(hold(shouldClose)(socket)) with
+                            | Ok(replacement) ->
+                                let next = duplicate(1)
+                                in let _ = release(next)
+                                in Ashes.IO.print(release(replacement) == 0 && (shouldClose || next < replacement))
+                            | Error(e) -> Ashes.IO.print(e)
+                    | Error(e) -> Ashes.IO.print(e)
+            let _ = run(true)
+            run(false)
+            """;
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgramWithImports(source)).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true\ntrue\n", result.Stderr);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_serve_http_concurrently_across_workers()
     {
         // Concurrent HTTP under the run-queue scheduler: many simultaneous requests against a
@@ -10580,25 +10748,26 @@ public sealed class LinuxBackendCoverageTests
             // test only needs enough simultaneous clients to keep every reactor busy.
             const int total = 120;
             const int waveSize = 8;
-            int ok = 0;
+            const string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            List<string> failures = [];
             for (int offset = 0; offset < total; offset += waveSize)
             {
                 int count = Math.Min(waveSize, total - offset);
-                Task<bool>[] tasks = Enumerable.Range(0, count).Select(async _ =>
+                Task<(int ClientPort, byte[] Bytes)>[] tasks = Enumerable.Range(0, count).Select(_ => HttpExchangeRawWithRetryAsync(port, request)).ToArray();
+                (int ClientPort, byte[] Bytes)[] replies = await Task.WhenAll(tasks).ConfigureAwait(false);
+                for (int i = 0; i < replies.Length; i++)
                 {
-                    var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
-                    return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
-                }).ToArray();
-                foreach (bool succeeded in await Task.WhenAll(tasks).ConfigureAwait(false))
-                {
-                    if (succeeded)
+                    (int clientPort, byte[] bytes) = replies[i];
+                    if (!bytes.AsSpan().StartsWith("HTTP/1.1 200 OK\r\n"u8))
                     {
-                        ok++;
+                        string reply = bytes.Length == 0 ? "EOF before any response bytes"
+                            : $"{bytes.Length} bytes, prefix (hex) {Convert.ToHexString(bytes.AsSpan(0, Math.Min(128, bytes.Length)))}";
+                        failures.Add($"Request {offset + i + 1}/{total}, client port {clientPort}, server port {port}, server PID {proc.Id}: {reply}");
                     }
                 }
             }
 
-            ok.ShouldBe(total);
+            failures.ShouldBeEmpty();
             proc.HasExited.ShouldBeFalse();
         }
         finally
@@ -11138,27 +11307,8 @@ public sealed class LinuxBackendCoverageTests
     internal static IrProgram LowerProgramWithImports(string source)
         => LowerProgramWithImportsAndLowering(source).Ir;
 
-    // A program with imports lowered without reuse specializations, the general path stage 1 takes.
-    private static IrProgram LowerProgramWithImportsWithoutReuse(string source)
-    {
-        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
-        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
-        HashSet<string> importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
-        Diagnostics diagnostics = new();
-        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
-        diagnostics.ThrowIfAny();
-        Lowering lowering = new(
-            diagnostics,
-            importedStdModules,
-            parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases,
-            layout.ConstructorModules,
-            new LoweringConfiguration(EnableReuse: false));
-        IrProgram ir = lowering.Lower(program);
-        diagnostics.ThrowIfAny();
-        return ir;
-    }
-
-    internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(string source)
+    internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(
+        string source, LoweringConfiguration? configuration = null)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -11168,7 +11318,7 @@ public sealed class LinuxBackendCoverageTests
         var program = new Parser(layout.Source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
 
-        var lowering = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+        var lowering = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, configuration: configuration);
         var ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
         return (lowering, ir);
@@ -11248,7 +11398,7 @@ public sealed class LinuxBackendCoverageTests
 
     // A standalone program lowered with its source context, as the CLI lowers it: every emitted
     // instruction carries its source location.
-    private static IrProgram LowerProgramWithSourceLocations(string source)
+    private static IrProgram LowerProgramWithSourceLocations(string source, LoweringConfiguration? configuration = null)
     {
         ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
@@ -11262,7 +11412,8 @@ public sealed class LinuxBackendCoverageTests
             diagnostics,
             new HashSet<string>(parsed.ImportNames, StringComparer.Ordinal),
             parsed.ImportAliases,
-            layout.ConstructorModules);
+            layout.ConstructorModules,
+            configuration);
         lowering.SetSourceContext(layout);
         IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
@@ -11476,13 +11627,14 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<List<MemoryExecutionResult>> MeasureImportedMemoryGrowthAsync(
         Func<int, string> sourceFactory,
-        int outputPerIteration)
+        int outputPerIteration,
+        LoweringConfiguration? configuration = null)
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
         List<MemoryExecutionResult> samples = new(iterationCounts.Length);
         foreach (int iterations in iterationCounts)
         {
-            IrProgram ir = LowerProgramWithImports(sourceFactory(iterations));
+            IrProgram ir = LowerProgramWithImportsAndLowering(sourceFactory(iterations), configuration).Ir;
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
             sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
             samples.Add(sample);
@@ -23966,11 +24118,12 @@ public sealed class LinuxBackendCoverageTests
         // Each top-level item's escape body is bound to no name and handed to one argument of a
         // curried call. The value an earlier iteration left in its slot was released only when the
         // call's result was kept in an owned slot, and that result is a partial application, so the
-        // loop kept every escape body until its exit: one release fewer at the back edge. (The
+        // loop kept every escape body until its exit. The
         // program's own arena grows with the rounds for another reason, so this checks the release
-        // rather than the memory.) The count pins that rule (one fewer without it); the leak-check
-        // property of the same shape is CurriedChainPredecessorLeakTests in Ashes.Fuzzing.Tests.
-        DropperCallsInLoop(BuildCurriedChainPredecessorProgram(2), "lowerItems", "__rcdrop_general").ShouldBe(22);
+        // directly. The same shape has a leak-check property in CurriedChainPredecessorLeakTests.
+        string source = BuildCurriedChainPredecessorProgram(2);
+        IrFunction loop = GetTailLoop(LowerProgramWithSourceLocations(source, new(EnableReuse: false)), "lowerItems");
+        AssertPredecessorReleasedAtEdge(loop, source, "topLevelEscapeBody(nextAnalysis)", "lowerItems(rest)(trailing)", "__rcdrop_general");
     }
 
     private static string BuildArenaHeadTupleOwnerDuplicateProgram(int rounds)

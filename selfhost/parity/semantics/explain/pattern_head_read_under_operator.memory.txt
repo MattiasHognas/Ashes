@@ -14,12 +14,12 @@ Function: stamp
     xs: consumed, move-safe yes
     result fresh: yes
   perceus [lambda_0]
-    dup:                  0
-    drop:                 2
-    uniqueness checks:    1
+    dup:                  2
+    drop:                 11
+    uniqueness checks:    4
   representation [lambda_0]
     conservative unknown: 5
     region:               1
-    runtime rc:           4
+    runtime rc:           9
     copy value:           3
 

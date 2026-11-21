@@ -11,6 +11,26 @@ public sealed partial class Lowering
         return _moduleAliases.TryGetValue(moduleName, out var resolved) ? resolved : moduleName;
     }
 
+    // Direct lowering can consume already stitched code. Public source layouts instead supply the
+    // actual exports of each visible module; an underscore in a local name introduces no namespace.
+    private string? QualifiedValueBindingName(Expr.QualifiedVar reference)
+    {
+        string module = ResolveModuleAlias(reference.Module);
+        if (_qualifiedValueScopes is null)
+        {
+            return _configuration.AllowFlattenedQualifiedValues
+                ? $"{ProjectSupport.SanitizeModuleBindingName(module)}_{reference.Name}"
+                : null;
+        }
+        return _qualifiedValueScopes.TryGetValue(ReferencingModule(GetSpan(reference)), out var scope)
+            && scope.TryGetValue(module, out IReadOnlySet<string>? exports) && exports.Contains(reference.Name)
+                ? $"{ProjectSupport.SanitizeModuleBindingName(module)}_{reference.Name}"
+                : null;
+    }
+
+    private Binding? LookupQualifiedValue(Expr.QualifiedVar reference) =>
+        QualifiedValueBindingName(reference) is { } name ? Lookup(name) : null;
+
     private (int, TypeRef) LowerQualifiedVar(
         Expr.QualifiedVar qv,
         LoweredValueRequest request)
@@ -33,14 +53,14 @@ public sealed partial class Lowering
         }
 
         var sanitizedModuleName = ProjectSupport.SanitizeModuleBindingName(resolvedModule);
-        var exportedBindingName = $"{sanitizedModuleName}_{qv.Name}";
         // An inlined helper body or a reuse specialization re-lowers an expression outside the
         // declaration scope it was written in, where the stitched module binding is no longer on the
         // scope chain. Membership in the lowered top-level function references proves the binding was
         // already emitted, so resolve it the same way an unqualified backward reference resolves
         // there rather than reporting the module as unknown.
-        Binding? exportedBinding = Lookup(exportedBindingName);
-        if (exportedBinding is not null || _topLevelFunctionRefs.ContainsKey(exportedBindingName))
+        string? exportedBindingName = QualifiedValueBindingName(qv);
+        Binding? exportedBinding = exportedBindingName is null ? null : Lookup(exportedBindingName);
+        if (exportedBindingName is not null && (exportedBinding is not null || _topLevelFunctionRefs.ContainsKey(exportedBindingName)))
         {
             return LowerExportedQualifiedBinding(
                 qv, resolvedModule, exportedBindingName, exportedBinding, request);
@@ -84,8 +104,8 @@ public sealed partial class Lowering
             return false;
         }
 
-        string candidate = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{reference.Name}";
-        if (Lookup(candidate) is null && !_topLevelFunctionRefs.ContainsKey(candidate))
+        string? candidate = QualifiedValueBindingName(reference);
+        if (candidate is null || Lookup(candidate) is null && !_topLevelFunctionRefs.ContainsKey(candidate))
         {
             return false;
         }

@@ -5,36 +5,36 @@ Function: allDeps
   ownership
     nodes: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_1]
-    dup:                  0
-    drop:                 4
-    uniqueness checks:    2
-  representation [lambda_1]
-    conservative unknown: 6
+  perceus [lambda_3]
+    dup:                  4
+    drop:                 11
+    uniqueness checks:    5
+  representation [lambda_3]
+    conservative unknown: 2
     region:               1
-    runtime rc:           5
+    runtime rc:           21
 
 Function: countLists
   ownership
     lists: consumed, move-safe yes
     n: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_5]
+  perceus [lambda_8]
     dup:                  2
     drop:                 12
     uniqueness checks:    6
-  perceus [lambda_4]
+  perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_5__scalarenv1]
+  perceus [lambda_8__scalarenv1]
     dup:                  2
     drop:                 12
     uniqueness checks:    6
-  representation [lambda_5]
+  representation [lambda_8]
     runtime rc:           7
     copy value:           6
-  representation [lambda_4]
+  representation [lambda_7]
     conservative unknown: 1
     region:               3
 
@@ -43,22 +43,22 @@ Function: countNames
     names: consumed, move-safe yes
     n: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_3]
+  perceus [lambda_6]
     dup:                  2
     drop:                 9
     uniqueness checks:    3
-  perceus [lambda_2]
+  perceus [lambda_5]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_3__scalarenv0]
+  perceus [lambda_6__scalarenv0]
     dup:                  2
     drop:                 9
     uniqueness checks:    3
-  representation [lambda_3]
+  representation [lambda_6]
     runtime rc:           7
     copy value:           6
-  representation [lambda_2]
+  representation [lambda_5]
     conservative unknown: 1
     region:               3
 
@@ -67,11 +67,11 @@ Function: getNodeNames
     nodes: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  1
-    drop:                 4
-    uniqueness checks:    1
+    dup:                  4
+    drop:                 10
+    uniqueness checks:    4
   representation [lambda_0]
-    conservative unknown: 4
+    conservative unknown: 2
     region:               1
-    runtime rc:           9
+    runtime rc:           30
 

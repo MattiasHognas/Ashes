@@ -1671,7 +1671,9 @@ public abstract record IrInst
     /// <param name="FrameDropperLabel">
     /// Function releasing the task frame's owned words, or null when the frame owns none. The
     /// backend stores it in the task header so completion, cancellation, and reaping can tear the
-    /// frame down without knowing the coroutine's layout.
+    /// frame down without knowing the coroutine's layout. The first argument is the task pointer.
+    /// A zero second argument releases the frame. A nonzero second argument points to a Socket
+    /// word whose matching direct cleanup obligations must be cleared before the socket closes.
     /// </param>
     public sealed record CreateTask(
         int Target,

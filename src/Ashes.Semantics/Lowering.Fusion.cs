@@ -43,8 +43,8 @@ public sealed partial class Lowering
                         return null;
                     }
 
-                    string compilerName = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
-                    return _functionSourceNames is not null
+                    string? compilerName = QualifiedValueBindingName(qv);
+                    return compilerName is not null && _functionSourceNames is not null
                         && _functionSourceNames.TryGetValue(compilerName, out SourceFunctionName? mapped)
                             ? mapped.QualifiedName
                             : null;

@@ -262,24 +262,29 @@ let testFindCapabilityOperationIndex unit =
             | None -> test.fail("expected operation index"))
 
 let testStopCapabilityLowering unit =
-    (let stopCall =
-        ExprPerform(
-            ExprCall(
-                ExprQualifiedVar("Stop")("stop"),
-                ExprInt(0),
-                false,
-                callArgumentsInline
-            )
-        )
+    (let stopCall argument =
+        ExprCall(ExprQualifiedVar("Stop")("stop"))(argument)(false)(callArgumentsInline)
     in
-        match lowerCoreExpression(stopCall) with
-            | CoreLoweringResult { program = Some(program), error = None } ->
-                match program with
-                    | IrProgram { entryFunction = IrFunction { instructions = instrs } } ->
-                        instrs
-                        |> containsRequestServerStop
-                        |> test.assertEqual(true)
-            | _ -> test.fail("stop capability lowering failed"))
+        let check expression =
+            match lowerCoreExpression(expression) with
+                | CoreLoweringResult { program = Some(IrProgram { entryFunction = IrFunction { instructions = instrs } }), error = None } ->
+                    instrs
+                    |> containsRequestServerStop
+                    |> test.assertEqual(true)
+                | result -> test.fail("stop capability lowering failed: " + Ashes.Trait.Show.show(result.error))
+        in
+            let call = stopCall(ExprVar("Unit"))
+            in
+                let _ = check(call)
+                in
+                    let _ = check(ExprPerform(call))
+                    in
+                        match ExprInt(0)
+                        |> stopCall
+                        |> ExprPerform
+                        |> lowerCoreExpression with
+                            | CoreLoweringResult { error = Some(CoreCallTypeMismatch(_, _)) } -> Unit
+                            | _ -> test.fail("Stop.stop requires a Unit argument"))
 
 let testHandleExpressionLowering unit =
     (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
@@ -394,8 +399,11 @@ let testHandleArmWithoutResumeIsRejected unit =
                 )
             in
                 match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
-                    | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
-                    | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                    | CoreLoweringResult { error = Some(CoreCapabilityDiagnostic("ASH020", message)) } ->
+                        "State.get': every path of an operation arm must call resume(...)"
+                        |> Ashes.Text.contains(message)
+                        |> test.assertEqual(true)
+                    | CoreLoweringResult { error = Some(other) } -> test.fail("expected ASH020 for the non-resuming State.get arm, got " + Ashes.Trait.Show.show(other))
                     | _ -> test.fail("expected an operation arm without resume to be rejected"))
 
 // A non-resuming `let` prefix before a bare tail resume (`let y = u + 1 in resume(y * 2)`) is an

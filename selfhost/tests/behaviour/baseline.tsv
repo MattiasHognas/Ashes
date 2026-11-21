@@ -271,6 +271,7 @@ dictionary_call_key_kept_by_loop_successor	same
 dictionary_call_label_in_local_loop_released	live-differs	stage 1 more (stage0=1 stage1=58)
 element_specialization_caller_alias_not_owner	same	
 empty_list_field_under_cons_pattern_handed_to_curried_call	same	
+equality_of_applied_lambda_parameter_with_empty_list	stage1-compile-fails	MissingCoreTraitEvidence("Eq", SemVariable(6))
 error_branch_typechecks	same	
 error_terminates	same	
 escaping_tuple_borrowed_state_string	same	
@@ -331,7 +332,13 @@ fuse_map_foldleft	live-differs	stage 1 fewer (stage0=24 stage1=1)
 fuse_map_foldleft_declines	live-differs	stage 1 fewer (stage0=5 stage1=1)
 fuse_map_foldleft_shadowed_decline	live-differs	stage 1 fewer (stage0=3 stage1=1)
 general_list_tail_matched_in_tuple_released	same	
+generic_add_binding_reading_top_level_value_returns_list_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Float vs Int. Context: in argument #2 of call to 'Ashes_Collection_List_map'.
+generic_add_binding_reading_top_level_value_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'triple'.
+generic_add_binding_reading_top_level_value_used_at_two_types_inside_a_function	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'triple'.
 generic_add_binding_used_at_int_and_str	stage1-compile-fails	ASH002 Type mismatch: Int vs Str. Context: in argument #1 of call to 'add'.
+generic_add_let_below_top_level_captured_by_inner_lambda	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'double'.
+generic_add_let_below_top_level_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'double'.
+generic_add_non_tail_recursive_binding_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'sumWith'.
 generic_append_map_churn_plateau	same	
 generic_append_map_churn_unannotated_plateau	same	
 generic_append_of_generic_map_results_releases_after_copy	same	
@@ -341,6 +348,7 @@ generic_lookup_key_reference_released	live-differs	stage 1 more (stage0=1 stage1
 generic_map_passed_as_value_keeps_closure_results	same	
 generic_map_string_churn_plateau	same	
 generic_multiply_binding_used_at_int_and_float	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'square'.
+generic_multiply_binding_used_at_two_types_inside_a_function	stage1-compile-fails	ASH002 Type mismatch: Int vs Float. Context: in argument #1 of call to 'square'.
 generic_parameter_adt_argument_not_copied_to_space	same	
 generic_parameter_list_argument_handed_over_not_copied	same	
 generic_result_beside_owned_record_releases_the_record	same	
@@ -1059,6 +1067,7 @@ trait_capability_async	stage1-compile-fails	UnknownLoweringBinding("Adjust.adjus
 trait_concrete_requirement_inside_polymorphic_function	same	
 trait_deriving	stage1-compile-fails	UnsupportedCoreDerivingExpansion("UnsupportedDerivedField("Tree", "Eq")")
 trait_deriving_self_referential_via_list	same	
+trait_goals_of_generic_binding_used_at_one_type_settled_at_site	same	
 trait_inferred_evidence	live-differs	stage 1 fewer (stage0=2 stage1=1)
 trait_method_string_result_released	same	
 trait_operand_type_fixed_after_comparison	stage1-compile-fails	UnsupportedCoreLoweringExpression("non-core expression")

@@ -1,15 +1,26 @@
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Frontend.Token
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
-    | pendingTraitGoals: List((Str, SemanticType))
+    | pendingTraitGoals: List((Str, SemanticType, List((Str, SemanticType))))
     | traitGoalsPinned: Bool
     | active: Bool
+    | activeTraitMethods: List((Str, SemanticType, Str, Str))
+
+type CoreTraitGoalAnswer =
+    | ProvenOperandType(SemanticType)
+    | ProvenAmbientMethod(Str)
+    deriving {Eq}
+
+type CoreTraitGoalProof =
+    | SharedTraitGoalProof(CoreTraitGoalAnswer)
+    | OrderedTraitGoalProofs(List(Maybe(CoreTraitGoalAnswer)))
 
 type CoreProgramState =
-    | provenTraitGoals: MapTree(Str, SemanticType)
+    | provenTraitGoals: MapTree(Str, CoreTraitGoalProof)
 
 type CoreLoweringState =
     | substitution: MapTree(Int, SemanticType)
@@ -55,4 +66,9 @@ let hasActiveTraitEvidence _traitName _operandType state =
 
 let emitCoreTraitUnaryDispatch _traitName _methodName resultType _lower operandTemp _operandType state = success(operandTemp)(resultType)(state)
 
+// Without a type table an open operand stays as lowering has it.
+let recordedNotOperand operandType state = (state, operandType)
+
 let noLower _expression state = success(0)(SemNever)(state)
+
+let observePendingGoal _structural _key _operand state = state

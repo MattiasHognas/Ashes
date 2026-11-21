@@ -158,6 +158,35 @@ function lambda_3  [ClosureHelper from appendTo]
     LoadLocal             Target=40 Slot=11   (taken_over_record_generic_let_holder.ash:12:5)
     Return                Source=40   (taken_over_record_generic_let_holder.ash:11:1)
 
+function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:11:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:11:1)
+    RcDrop                SourceTemp=1 TypeName=Function RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (taken_over_record_generic_let_holder.ash:11:1)
+    Return                Source=2   (taken_over_record_generic_let_holder.ash:11:1)
+
+function lambda_3$env_normalize  [ClosureEnvironmentNormalizer from appendTo]
+  locals=3 temps=9
+    LoadLocal             Target=0 Slot=0   (taken_over_record_generic_let_holder.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_generic_let_holder.ash:11:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:11:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_12   (taken_over_record_generic_let_holder.ash:11:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (taken_over_record_generic_let_holder.ash:11:1)
+    Jump                  Target=rc_representation_done_13   (taken_over_record_generic_let_holder.ash:11:1)
+  rc_representation_copy_12:
+    CopyOutClosure        DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization   (taken_over_record_generic_let_holder.ash:11:1)
+    StoreLocal            Slot=2 Source=5   (taken_over_record_generic_let_holder.ash:11:1)
+  rc_representation_done_13:
+    LoadLocal             Target=6 Slot=2   (taken_over_record_generic_let_holder.ash:11:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=6   (taken_over_record_generic_let_holder.ash:11:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:11:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=7   (taken_over_record_generic_let_holder.ash:11:1)
+    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_4   (taken_over_record_generic_let_holder.ash:11:1)
+    Return                Source=8   (taken_over_record_generic_let_holder.ash:11:1)
+
 function lambda_2  [SourceFunction from appendTo]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=16   (taken_over_record_generic_let_holder.ash:11:1)
@@ -169,107 +198,107 @@ function lambda_2  [SourceFunction from appendTo]
     MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:11:1)
     Return                Source=4   (taken_over_record_generic_let_holder.ash:11:1)
 
-function __rcdrop_general_7  [RuntimeManagedAdtDropper]
+function __rcdrop_general_8  [RuntimeManagedAdtDropper]
   locals=2 temps=8
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:16:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_17   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_19   (taken_over_record_generic_let_holder.ash:16:1)
     GetAdtTag             Target=2 Ptr=0   (taken_over_record_generic_let_holder.ash:16:1)
-    SwitchTag             TagTemp=2 Cases=[3] DefaultLabel=rcdrop_general_shared_17   (taken_over_record_generic_let_holder.ash:16:1)
-  rcdrop_general_ctor_18:
+    SwitchTag             TagTemp=2 Cases=[3] DefaultLabel=rcdrop_general_shared_19   (taken_over_record_generic_let_holder.ash:16:1)
+  rcdrop_general_ctor_20:
     GetAdtField           Target=3 Ptr=0 FieldIndex=1   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=4 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=5 FuncLabel=__rcdrop_general_7 EnvTemp=4 ArgTemp=3   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_generic_let_holder.ash:16:1)
-  rcdrop_general_ctor_19:
-    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_generic_let_holder.ash:16:1)
-  rcdrop_general_ctor_20:
+    CallKnown             Target=5 FuncLabel=__rcdrop_general_8 EnvTemp=4 ArgTemp=3   (taken_over_record_generic_let_holder.ash:16:1)
+    Jump                  Target=rcdrop_general_shared_19   (taken_over_record_generic_let_holder.ash:16:1)
+  rcdrop_general_ctor_21:
+    Jump                  Target=rcdrop_general_shared_19   (taken_over_record_generic_let_holder.ash:16:1)
+  rcdrop_general_ctor_22:
     GetAdtField           Target=6 Ptr=0 FieldIndex=0   (taken_over_record_generic_let_holder.ash:16:1)
     RcDrop                SourceTemp=6 TypeName=String RuntimeManaged=true
-    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_generic_let_holder.ash:16:1)
-  rcdrop_general_shared_17:
+    Jump                  Target=rcdrop_general_shared_19   (taken_over_record_generic_let_holder.ash:16:1)
+  rcdrop_general_shared_19:
     RcDrop                SourceTemp=0 TypeName=Pat RuntimeManaged=true
     LoadConstInt          Target=7 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
     Return                Source=7   (taken_over_record_generic_let_holder.ash:16:1)
 
-function __rcdrop_structural_6  [StructuralOwnerDropper]
+function __rcdrop_structural_7  [StructuralOwnerDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=1 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=2 FuncLabel=__rcdrop_general_7 EnvTemp=1 ArgTemp=0   (taken_over_record_generic_let_holder.ash:16:1)
+    CallKnown             Target=2 FuncLabel=__rcdrop_general_8 EnvTemp=1 ArgTemp=0   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
     Return                Source=3   (taken_over_record_generic_let_holder.ash:16:1)
 
-function __rcnorm_8  [RuntimeManagedAdtNormalizer]
+function __rcnorm_9  [RuntimeManagedAdtNormalizer]
   locals=6 temps=21
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_23   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_25   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_24   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_23:
+    Jump                  Target=rc_representation_done_26   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_25:
     GetAdtTag             Target=3 Ptr=0   (taken_over_record_generic_let_holder.ash:16:1)
-    SwitchTag             TagTemp=3 Cases=[3] DefaultLabel=rcnorm_ctor_25   (taken_over_record_generic_let_holder.ash:16:1)
-  rcnorm_ctor_25:
+    SwitchTag             TagTemp=3 Cases=[3] DefaultLabel=rcnorm_ctor_27   (taken_over_record_generic_let_holder.ash:16:1)
+  rcnorm_ctor_27:
     CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=5 Ptr=0 FieldIndex=1   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=6 SourceTemp=5
-    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_29   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_31   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
     StoreLocal            Slot=4 Source=7   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_30   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_29:
+    Jump                  Target=rc_representation_done_32   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_31:
     LoadConstInt          Target=9 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=10 FuncLabel=__rcnorm_8 EnvTemp=9 ArgTemp=5   (taken_over_record_generic_let_holder.ash:16:1)
+    CallKnown             Target=10 FuncLabel=__rcnorm_9 EnvTemp=9 ArgTemp=5   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=4 Source=10   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_30:
+  rc_representation_done_32:
     LoadLocal             Target=11 Slot=4   (taken_over_record_generic_let_holder.ash:16:1)
     SetAdtField           Ptr=4 FieldIndex=1 Source=11   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=3 Source=4   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rcnorm_end_28   (taken_over_record_generic_let_holder.ash:16:1)
-  rcnorm_ctor_26:
+    Jump                  Target=rcnorm_end_30   (taken_over_record_generic_let_holder.ash:16:1)
+  rcnorm_ctor_28:
     CopyOutArena          DestTemp=12 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=12   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rcnorm_end_28   (taken_over_record_generic_let_holder.ash:16:1)
-  rcnorm_ctor_27:
+    Jump                  Target=rcnorm_end_30   (taken_over_record_generic_let_holder.ash:16:1)
+  rcnorm_ctor_29:
     CopyOutArena          DestTemp=13 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=14 Ptr=0 FieldIndex=0   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=15 SourceTemp=14
-    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_31   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_33   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=16 SourceTemp=14 RuntimeManaged=true
     StoreLocal            Slot=5 Source=16   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_32   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_31:
+    Jump                  Target=rc_representation_done_34   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_33:
     CopyOutArena          DestTemp=17 SrcTemp=14 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=5 Source=17   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_32:
+  rc_representation_done_34:
     LoadLocal             Target=18 Slot=5   (taken_over_record_generic_let_holder.ash:16:1)
     SetAdtField           Ptr=13 FieldIndex=0 Source=18   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=3 Source=13   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rcnorm_end_28   (taken_over_record_generic_let_holder.ash:16:1)
-  rcnorm_end_28:
+    Jump                  Target=rcnorm_end_30   (taken_over_record_generic_let_holder.ash:16:1)
+  rcnorm_end_30:
     LoadLocal             Target=19 Slot=3   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=2 Source=19   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_24:
+  rc_representation_done_26:
     LoadLocal             Target=20 Slot=2   (taken_over_record_generic_let_holder.ash:16:1)
     Return                Source=20   (taken_over_record_generic_let_holder.ash:16:1)
 
-function lambda_5  [ClosureHelper from expand]
+function lambda_6  [ClosureHelper from expand]
   locals=32 temps=86
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=2 Source=0   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=29 Slot=2   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=30 SourceTemp=29
-    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_21   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_23   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
     StoreLocal            Slot=24 Source=31   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_22   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_21:
+    Jump                  Target=rc_representation_done_24   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_23:
     LoadConstInt          Target=34 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=35 FuncLabel=__rcnorm_8 EnvTemp=34 ArgTemp=29   (taken_over_record_generic_let_holder.ash:16:1)
+    CallKnown             Target=35 FuncLabel=__rcnorm_9 EnvTemp=34 ArgTemp=29   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=24 Source=35   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_22:
+  rc_representation_done_24:
     LoadLocal             Target=36 Slot=24   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=2 Source=36   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=37 Value=1   (taken_over_record_generic_let_holder.ash:16:1)
@@ -279,18 +308,18 @@ function lambda_5  [ClosureHelper from expand]
     StoreLocal            Slot=5 Source=1   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=6 Source=1   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=7 Source=1   (taken_over_record_generic_let_holder.ash:16:1)
-  lambda_5_body:
+  lambda_6_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=2 Slot=2   (taken_over_record_generic_let_holder.ash:17:11)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:17:5)
     CmpIntNe              Target=4 Left=2 Right=3   (taken_over_record_generic_let_holder.ash:17:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_15   (taken_over_record_generic_let_holder.ash:17:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_17   (taken_over_record_generic_let_holder.ash:17:5)
     GetAdtTag             Target=5 Ptr=2   (taken_over_record_generic_let_holder.ash:17:5)
     LoadConstInt          Target=7 Value=0   (taken_over_record_generic_let_holder.ash:17:5)
     CmpIntEq              Target=6 Left=5 Right=7   (taken_over_record_generic_let_holder.ash:17:5)
-    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_15   (taken_over_record_generic_let_holder.ash:17:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_17   (taken_over_record_generic_let_holder.ash:17:5)
     GetAdtField           Target=8 Ptr=2 FieldIndex=0   (taken_over_record_generic_let_holder.ash:17:5)
     StoreLocal            Slot=14 Source=8   (taken_over_record_generic_let_holder.ash:17:5)
     GetAdtField           Target=9 Ptr=2 FieldIndex=1   (taken_over_record_generic_let_holder.ash:17:5)
@@ -308,12 +337,12 @@ function lambda_5  [ClosureHelper from expand]
     StoreLocal            Slot=2 Source=13   (taken_over_record_generic_let_holder.ash:18:32)
     StoreLocal            Slot=1 Source=12   (taken_over_record_generic_let_holder.ash:18:32)
     LoadLocal             Target=79 Slot=16
-    JumpIfFalse           CondTemp=79 Target=rc_tco_drop_inactive_109
+    JumpIfFalse           CondTemp=79 Target=rc_tco_drop_inactive_111
     LoadConstInt          Target=80 Value=0
-    CallKnown             Target=81 FuncLabel=__rcdrop_general_7 EnvTemp=80 ArgTemp=16
-  rc_tco_drop_inactive_109:
+    CallKnown             Target=81 FuncLabel=__rcdrop_general_8 EnvTemp=80 ArgTemp=16
+  rc_tco_drop_inactive_111:
     LoadConstInt          Target=82 Value=0
-    CallKnown             Target=83 FuncLabel=__rcdrop_general_7 EnvTemp=82 ArgTemp=14
+    CallKnown             Target=83 FuncLabel=__rcdrop_general_8 EnvTemp=82 ArgTemp=14
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     LoadConstInt          Target=84 Value=0
     StoreLocal            Slot=6 Source=84
@@ -323,17 +352,17 @@ function lambda_5  [ClosureHelper from expand]
     StoreLocal            Slot=16 Source=85
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
     RestoreStackPointer   Slot=10   (taken_over_record_generic_let_holder.ash:18:32)
-    Jump                  Target=lambda_5_body   (taken_over_record_generic_let_holder.ash:18:32)
+    Jump                  Target=lambda_6_body   (taken_over_record_generic_let_holder.ash:18:32)
     LoadConstInt          Target=18 Value=0   (taken_over_record_generic_let_holder.ash:18:32)
     StoreLocal            Slot=11 Source=18   (taken_over_record_generic_let_holder.ash:17:5)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=17
-    Jump                  Target=match_end_12   (taken_over_record_generic_let_holder.ash:17:5)
-  match_arm_cleanup_15:
+    Jump                  Target=match_end_14   (taken_over_record_generic_let_holder.ash:17:5)
+  match_arm_cleanup_17:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=18
-    Jump                  Target=match_next_14   (taken_over_record_generic_let_holder.ash:17:5)
-  match_next_14:
+    Jump                  Target=match_next_16   (taken_over_record_generic_let_holder.ash:17:5)
+  match_next_16:
     SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
     StoreLocal            Slot=21 Source=2   (taken_over_record_generic_let_holder.ash:17:5)
     LoadLocal             Target=27 Slot=21   (taken_over_record_generic_let_holder.ash:16:1)
@@ -346,117 +375,117 @@ function lambda_5  [ClosureHelper from expand]
     StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=22   (taken_over_record_generic_let_holder.ash:19:20)
     StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=20   (taken_over_record_generic_let_holder.ash:19:20)
     StoreLocal            Slot=11 Source=23   (taken_over_record_generic_let_holder.ash:17:5)
-    RcDrop                SourceTemp=2 TypeName=Pat OwnerSlot=21 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_6
-    Jump                  Target=match_end_12   (taken_over_record_generic_let_holder.ash:17:5)
-  match_arm_cleanup_16:
+    RcDrop                SourceTemp=2 TypeName=Pat OwnerSlot=21 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_7
+    Jump                  Target=match_end_14   (taken_over_record_generic_let_holder.ash:17:5)
+  match_arm_cleanup_18:
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
-    Jump                  Target=match_none_13   (taken_over_record_generic_let_holder.ash:17:5)
-  match_none_13:
+    Jump                  Target=match_none_15   (taken_over_record_generic_let_holder.ash:17:5)
+  match_none_15:
     LoadConstInt          Target=25 Value=0   (taken_over_record_generic_let_holder.ash:17:5)
     StoreLocal            Slot=11 Source=25   (taken_over_record_generic_let_holder.ash:17:5)
-  match_end_12:
+  match_end_14:
     LoadLocal             Target=26 Slot=11   (taken_over_record_generic_let_holder.ash:17:5)
     IsReferenceCounted    Target=38 SourceTemp=26
-    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_33   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_35   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=39 SourceTemp=26 RuntimeManaged=true
     StoreLocal            Slot=25 Source=39   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_34   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_33:
-    IsReferenceCounted    Target=41 SourceTemp=26
-    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_35   (taken_over_record_generic_let_holder.ash:16:1)
-    RcDup                 Target=42 SourceTemp=26 RuntimeManaged=true
-    StoreLocal            Slot=26 Source=42   (taken_over_record_generic_let_holder.ash:16:1)
     Jump                  Target=rc_representation_done_36   (taken_over_record_generic_let_holder.ash:16:1)
   rc_representation_copy_35:
+    IsReferenceCounted    Target=41 SourceTemp=26
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_37   (taken_over_record_generic_let_holder.ash:16:1)
+    RcDup                 Target=42 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=42   (taken_over_record_generic_let_holder.ash:16:1)
+    Jump                  Target=rc_representation_done_38   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_37:
     LoadConstInt          Target=43 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=27 Source=26   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=28 Source=43   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=29 Source=43   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_37:
+  rc_normalize_list_39:
     LoadLocal             Target=44 Slot=27   (taken_over_record_generic_let_holder.ash:16:1)
     CmpIntNe              Target=45 Left=44 Right=43   (taken_over_record_generic_let_holder.ash:16:1)
-    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_end_38   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_end_40   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=46 SourceTemp=44
-    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_cell_39   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_cell_41   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=47 SourceTemp=44 RuntimeManaged=true
     LoadLocal             Target=48 Slot=28   (taken_over_record_generic_let_holder.ash:16:1)
     CmpIntNe              Target=49 Left=48 Right=43   (taken_over_record_generic_let_holder.ash:16:1)
-    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_40   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_42   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=50 Slot=29   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=47   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_normalize_list_linked_41   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_first_40:
+    Jump                  Target=rc_normalize_list_linked_43   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_normalize_list_first_42:
     StoreLocal            Slot=28 Source=47   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_linked_41:
+  rc_normalize_list_linked_43:
     StoreLocal            Slot=29 Source=47   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_normalize_list_end_38   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_cell_39:
+    Jump                  Target=rc_normalize_list_end_40   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_normalize_list_cell_41:
     LoadMemOffset         Target=51 BasePtr=44 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:16:1)
     LoadMemOffset         Target=52 BasePtr=44 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:16:1)
     IsReferenceCounted    Target=53 SourceTemp=51
-    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_42   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_44   (taken_over_record_generic_let_holder.ash:16:1)
     RcDup                 Target=54 SourceTemp=51 RuntimeManaged=true
     StoreLocal            Slot=30 Source=54   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_representation_done_43   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_copy_42:
+    Jump                  Target=rc_representation_done_45   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_representation_copy_44:
     LoadConstInt          Target=56 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=57 FuncLabel=__rcnorm_8 EnvTemp=56 ArgTemp=51   (taken_over_record_generic_let_holder.ash:16:1)
+    CallKnown             Target=57 FuncLabel=__rcnorm_9 EnvTemp=56 ArgTemp=51   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=30 Source=57   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_43:
+  rc_representation_done_45:
     LoadLocal             Target=58 Slot=30   (taken_over_record_generic_let_holder.ash:16:1)
     Alloc                 Target=59 SizeBytes=16 RuntimeManaged=true   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=59 OffsetBytes=0 Source=58   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=43   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=60 Slot=28   (taken_over_record_generic_let_holder.ash:16:1)
     CmpIntNe              Target=61 Left=60 Right=43   (taken_over_record_generic_let_holder.ash:16:1)
-    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_44   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_46   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=62 Slot=29   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=59   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_normalize_list_linked_45   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_first_44:
+    Jump                  Target=rc_normalize_list_linked_47   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_normalize_list_first_46:
     StoreLocal            Slot=28 Source=59   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_linked_45:
+  rc_normalize_list_linked_47:
     StoreLocal            Slot=29 Source=59   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=27 Source=52   (taken_over_record_generic_let_holder.ash:16:1)
-    Jump                  Target=rc_normalize_list_37   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_normalize_list_end_38:
+    Jump                  Target=rc_normalize_list_39   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_normalize_list_end_40:
     LoadLocal             Target=63 Slot=28   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=26 Source=63   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_36:
+  rc_representation_done_38:
     LoadLocal             Target=64 Slot=26   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=25 Source=64   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_representation_done_34:
+  rc_representation_done_36:
     LoadLocal             Target=65 Slot=25   (taken_over_record_generic_let_holder.ash:16:1)
     LoadArgumentOwnership Target=66   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=67 Value=2   (taken_over_record_generic_let_holder.ash:16:1)
     ShrInt                Target=68 Left=66 Right=67   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=69 Value=1   (taken_over_record_generic_let_holder.ash:16:1)
     AndInt                Target=70 Left=68 Right=69   (taken_over_record_generic_let_holder.ash:16:1)
-    JumpIfFalse           CondTemp=70 Target=independent_result_not_requested_46   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=70 Target=independent_result_not_requested_48   (taken_over_record_generic_let_holder.ash:16:1)
     LoadArgumentOwnership Target=71   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=72 Value=-8   (taken_over_record_generic_let_holder.ash:16:1)
     AndInt                Target=73 Left=71 Right=72   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=74 Value=2305843009213693952   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=73 OffsetBytes=0 Source=74   (taken_over_record_generic_let_holder.ash:16:1)
-  independent_result_not_requested_46:
+  independent_result_not_requested_48:
     LoadLocal             Target=75 Slot=2   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=76 Slot=16   (taken_over_record_generic_let_holder.ash:16:1)
-    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_47   (taken_over_record_generic_let_holder.ash:16:1)
+    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_49   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=77 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    CallKnown             Target=78 FuncLabel=__rcdrop_general_7 EnvTemp=77 ArgTemp=75   (taken_over_record_generic_let_holder.ash:16:1)
-  rc_tco_exit_drop_inactive_47:
+    CallKnown             Target=78 FuncLabel=__rcdrop_general_8 EnvTemp=77 ArgTemp=75   (taken_over_record_generic_let_holder.ash:16:1)
+  rc_tco_exit_drop_inactive_49:
     Return                Source=65   (taken_over_record_generic_let_holder.ash:16:1)
 
-function lambda_4  [SourceFunction from expand]
+function lambda_5  [SourceFunction from expand]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (taken_over_record_generic_let_holder.ash:16:1)
     LoadLocal             Target=1 Slot=1   (taken_over_record_generic_let_holder.ash:16:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_generic_let_holder.ash:16:1)
-    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_generic_let_holder.ash:16:1)
+    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_generic_let_holder.ash:16:1)
     Return                Source=4   (taken_over_record_generic_let_holder.ash:16:1)
 
-function lambda_12  [ClosureHelper from expandedArms]
+function lambda_13  [ClosureHelper from expandedArms]
   locals=23 temps=39
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:21:1)
     StoreLocal            Slot=2 Source=0   (taken_over_record_generic_let_holder.ash:21:1)
@@ -467,26 +496,26 @@ function lambda_12  [ClosureHelper from expandedArms]
     SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:21:1)
     StoreLocal            Slot=7 Source=3   (taken_over_record_generic_let_holder.ash:21:1)
-  lambda_12_body:
+  lambda_13_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (taken_over_record_generic_let_holder.ash:21:1)
     LoadLocal             Target=4 Slot=2   (taken_over_record_generic_let_holder.ash:22:11)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=5 Value=0   (taken_over_record_generic_let_holder.ash:22:5)
     CmpIntEq              Target=6 Left=4 Right=5   (taken_over_record_generic_let_holder.ash:22:5)
-    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_51   (taken_over_record_generic_let_holder.ash:22:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_53   (taken_over_record_generic_let_holder.ash:22:5)
     LoadLocal             Target=7 Slot=1   (taken_over_record_generic_let_holder.ash:23:17)
     StoreLocal            Slot=11 Source=7   (taken_over_record_generic_let_holder.ash:22:5)
-    Jump                  Target=match_end_48   (taken_over_record_generic_let_holder.ash:22:5)
-  match_arm_cleanup_51:
+    Jump                  Target=match_end_50   (taken_over_record_generic_let_holder.ash:22:5)
+  match_arm_cleanup_53:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_50   (taken_over_record_generic_let_holder.ash:22:5)
-  match_next_50:
+    Jump                  Target=match_next_52   (taken_over_record_generic_let_holder.ash:22:5)
+  match_next_52:
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadConstInt          Target=8 Value=0   (taken_over_record_generic_let_holder.ash:22:5)
     CmpIntNe              Target=9 Left=4 Right=8   (taken_over_record_generic_let_holder.ash:22:5)
-    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_52   (taken_over_record_generic_let_holder.ash:22:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_54   (taken_over_record_generic_let_holder.ash:22:5)
     LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:22:5)
     LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:22:5)
     StoreLocal            Slot=18 Source=10   (taken_over_record_generic_let_holder.ash:22:5)
@@ -524,24 +553,24 @@ function lambda_12  [ClosureHelper from expandedArms]
     StoreLocal            Slot=4 Source=15   (taken_over_record_generic_let_holder.ash:24:30)
     StoreLocal            Slot=1 Source=29   (taken_over_record_generic_let_holder.ash:24:30)
     RestoreStackPointer   Slot=10   (taken_over_record_generic_let_holder.ash:24:30)
-    Jump                  Target=lambda_12_body   (taken_over_record_generic_let_holder.ash:24:30)
+    Jump                  Target=lambda_13_body   (taken_over_record_generic_let_holder.ash:24:30)
     LoadConstInt          Target=34 Value=0   (taken_over_record_generic_let_holder.ash:24:30)
     StoreLocal            Slot=11 Source=34   (taken_over_record_generic_let_holder.ash:22:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
-    Jump                  Target=match_end_48   (taken_over_record_generic_let_holder.ash:22:5)
-  match_arm_cleanup_52:
+    Jump                  Target=match_end_50   (taken_over_record_generic_let_holder.ash:22:5)
+  match_arm_cleanup_54:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
-    Jump                  Target=match_none_49   (taken_over_record_generic_let_holder.ash:22:5)
-  match_none_49:
+    Jump                  Target=match_none_51   (taken_over_record_generic_let_holder.ash:22:5)
+  match_none_51:
     LoadConstInt          Target=37 Value=0   (taken_over_record_generic_let_holder.ash:22:5)
     StoreLocal            Slot=11 Source=37   (taken_over_record_generic_let_holder.ash:22:5)
-  match_end_48:
+  match_end_50:
     LoadLocal             Target=38 Slot=11   (taken_over_record_generic_let_holder.ash:22:5)
     Return                Source=38   (taken_over_record_generic_let_holder.ash:21:1)
 
-function lambda_11  [ClosureHelper from expandedArms]
+function lambda_12  [ClosureHelper from expandedArms]
   locals=2 temps=6
     Alloc                 Target=0 SizeBytes=24   (taken_over_record_generic_let_holder.ash:21:1)
     LoadEnv               Target=1 Index=0   (taken_over_record_generic_let_holder.ash:21:1)
@@ -550,28 +579,28 @@ function lambda_11  [ClosureHelper from expandedArms]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_generic_let_holder.ash:21:1)
     LoadLocal             Target=4 Slot=1   (taken_over_record_generic_let_holder.ash:21:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (taken_over_record_generic_let_holder.ash:21:1)
-    MakeClosure           Target=5 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:21:1)
+    MakeClosure           Target=5 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:21:1)
     Return                Source=5   (taken_over_record_generic_let_holder.ash:21:1)
 
-function lambda_10  [ClosureHelper from expandedArms]
+function lambda_11  [ClosureHelper from expandedArms]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=16   (taken_over_record_generic_let_holder.ash:21:1)
     LoadEnv               Target=1 Index=0   (taken_over_record_generic_let_holder.ash:21:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_generic_let_holder.ash:21:1)
     LoadLocal             Target=3 Slot=1   (taken_over_record_generic_let_holder.ash:21:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_generic_let_holder.ash:21:1)
-    MakeClosure           Target=4 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:21:1)
+    MakeClosure           Target=4 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:21:1)
     Return                Source=4   (taken_over_record_generic_let_holder.ash:21:1)
 
-function lambda_9  [SourceFunction from expandedArms]
+function lambda_10  [SourceFunction from expandedArms]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (taken_over_record_generic_let_holder.ash:21:1)
     LoadLocal             Target=1 Slot=1   (taken_over_record_generic_let_holder.ash:21:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_generic_let_holder.ash:21:1)
-    MakeClosure           Target=4 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_generic_let_holder.ash:21:1)
+    MakeClosure           Target=4 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_generic_let_holder.ash:21:1)
     Return                Source=4   (taken_over_record_generic_let_holder.ash:21:1)
 
-function lambda_15  [ClosureHelper from expandCases]
+function lambda_16  [ClosureHelper from expandCases]
   locals=44 temps=106
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:26:1)
     StoreLocal            Slot=2 Source=0   (taken_over_record_generic_let_holder.ash:26:1)
@@ -580,14 +609,14 @@ function lambda_15  [ClosureHelper from expandCases]
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadConstInt          Target=2 Value=0   (taken_over_record_generic_let_holder.ash:26:1)
     StoreLocal            Slot=6 Source=2   (taken_over_record_generic_let_holder.ash:26:1)
-  lambda_15_body:
+  lambda_16_body:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     SaveStackPointer      Slot=9   (taken_over_record_generic_let_holder.ash:26:1)
     LoadLocal             Target=3 Slot=2   (taken_over_record_generic_let_holder.ash:27:11)
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadConstInt          Target=4 Value=0   (taken_over_record_generic_let_holder.ash:27:5)
     CmpIntEq              Target=5 Left=3 Right=4   (taken_over_record_generic_let_holder.ash:27:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_56   (taken_over_record_generic_let_holder.ash:27:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_58   (taken_over_record_generic_let_holder.ash:27:5)
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadEnv               Target=6 Index=1   (taken_over_record_generic_let_holder.ash:28:17)
     LoadLocal             Target=7 Slot=1   (taken_over_record_generic_let_holder.ash:28:29)
@@ -597,26 +626,26 @@ function lambda_15  [ClosureHelper from expandCases]
     LoadConstInt          Target=11 Value=1   (taken_over_record_generic_let_holder.ash:28:17)
     LoadConstInt          Target=12 Value=0   (taken_over_record_generic_let_holder.ash:28:17)
     StoreLocal            Slot=15 Source=7   (taken_over_record_generic_let_holder.ash:28:17)
-    JumpIfFalse           CondTemp=12 Target=rc_call_argument_not_retained_57   (taken_over_record_generic_let_holder.ash:28:17)
+    JumpIfFalse           CondTemp=12 Target=rc_call_argument_not_retained_59   (taken_over_record_generic_let_holder.ash:28:17)
     RcDup                 Target=13 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=15 Source=13   (taken_over_record_generic_let_holder.ash:28:17)
-  rc_call_argument_not_retained_57:
+  rc_call_argument_not_retained_59:
     LoadLocal             Target=14 Slot=15   (taken_over_record_generic_let_holder.ash:28:17)
     CallClosure           Target=15 ClosureTemp=6 ArgTemp=14 RuntimeManagedArgumentFlagTemp=12   (taken_over_record_generic_let_holder.ash:28:17)
     LoadConstInt          Target=16 Value=0   (taken_over_record_generic_let_holder.ash:28:34)
     LoadConstInt          Target=18 Value=2   (taken_over_record_generic_let_holder.ash:28:17)
     CallClosure           Target=17 ClosureTemp=15 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_generic_let_holder.ash:28:17)
     StoreLocal            Slot=10 Source=17   (taken_over_record_generic_let_holder.ash:27:5)
-    Jump                  Target=match_end_53   (taken_over_record_generic_let_holder.ash:27:5)
-  match_arm_cleanup_56:
+    Jump                  Target=match_end_55   (taken_over_record_generic_let_holder.ash:27:5)
+  match_arm_cleanup_58:
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=19
-    Jump                  Target=match_next_55   (taken_over_record_generic_let_holder.ash:27:5)
-  match_next_55:
+    Jump                  Target=match_next_57   (taken_over_record_generic_let_holder.ash:27:5)
+  match_next_57:
     SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
     LoadConstInt          Target=20 Value=0   (taken_over_record_generic_let_holder.ash:27:5)
     CmpIntNe              Target=21 Left=3 Right=20   (taken_over_record_generic_let_holder.ash:27:5)
-    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_58   (taken_over_record_generic_let_holder.ash:27:5)
+    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_60   (taken_over_record_generic_let_holder.ash:27:5)
     LoadMemOffset         Target=22 BasePtr=3 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:27:5)
     LoadMemOffset         Target=23 BasePtr=3 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:27:5)
     LoadMemOffset         Target=24 BasePtr=22 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:27:5)
@@ -643,10 +672,10 @@ function lambda_15  [ClosureHelper from expandCases]
     LoadConstInt          Target=39 Value=1   (taken_over_record_generic_let_holder.ash:31:29)
     LoadConstInt          Target=40 Value=0   (taken_over_record_generic_let_holder.ash:31:29)
     StoreLocal            Slot=30 Source=35   (taken_over_record_generic_let_holder.ash:31:29)
-    JumpIfFalse           CondTemp=40 Target=rc_call_argument_not_retained_59   (taken_over_record_generic_let_holder.ash:31:29)
+    JumpIfFalse           CondTemp=40 Target=rc_call_argument_not_retained_61   (taken_over_record_generic_let_holder.ash:31:29)
     RcDup                 Target=41 SourceTemp=35 RuntimeManaged=true
     StoreLocal            Slot=30 Source=41   (taken_over_record_generic_let_holder.ash:31:29)
-  rc_call_argument_not_retained_59:
+  rc_call_argument_not_retained_61:
     LoadLocal             Target=42 Slot=30   (taken_over_record_generic_let_holder.ash:31:29)
     CallClosure           Target=43 ClosureTemp=34 ArgTemp=42 RuntimeManagedArgumentFlagTemp=40   (taken_over_record_generic_let_holder.ash:31:29)
     LoadLocal             Target=44 Slot=32   (taken_over_record_generic_let_holder.ash:31:29)
@@ -667,10 +696,10 @@ function lambda_15  [ClosureHelper from expandCases]
     AndInt                Target=54 Left=52 Right=53   (taken_over_record_generic_let_holder.ash:30:13)
     LoadConstInt          Target=55 Value=0   (taken_over_record_generic_let_holder.ash:30:13)
     StoreLocal            Slot=35 Source=49   (taken_over_record_generic_let_holder.ash:30:13)
-    JumpIfFalse           CondTemp=55 Target=rc_call_argument_not_retained_60   (taken_over_record_generic_let_holder.ash:30:13)
+    JumpIfFalse           CondTemp=55 Target=rc_call_argument_not_retained_62   (taken_over_record_generic_let_holder.ash:30:13)
     RcDup                 Target=56 SourceTemp=49 RuntimeManaged=true
     StoreLocal            Slot=35 Source=56   (taken_over_record_generic_let_holder.ash:30:13)
-  rc_call_argument_not_retained_60:
+  rc_call_argument_not_retained_62:
     LoadLocal             Target=57 Slot=35   (taken_over_record_generic_let_holder.ash:30:13)
     CallClosure           Target=58 ClosureTemp=47 ArgTemp=57 RuntimeManagedArgumentFlagTemp=55   (taken_over_record_generic_let_holder.ash:30:13)
     LoadLocal             Target=59 Slot=24   (taken_over_record_generic_let_holder.ash:31:65)
@@ -682,10 +711,10 @@ function lambda_15  [ClosureHelper from expandCases]
     AndInt                Target=65 Left=63 Right=64   (taken_over_record_generic_let_holder.ash:30:13)
     LoadConstInt          Target=66 Value=0   (taken_over_record_generic_let_holder.ash:30:13)
     StoreLocal            Slot=36 Source=60   (taken_over_record_generic_let_holder.ash:30:13)
-    JumpIfFalse           CondTemp=66 Target=rc_call_argument_not_retained_61   (taken_over_record_generic_let_holder.ash:30:13)
+    JumpIfFalse           CondTemp=66 Target=rc_call_argument_not_retained_63   (taken_over_record_generic_let_holder.ash:30:13)
     RcDup                 Target=67 SourceTemp=60 RuntimeManaged=true
     StoreLocal            Slot=36 Source=67   (taken_over_record_generic_let_holder.ash:30:13)
-  rc_call_argument_not_retained_61:
+  rc_call_argument_not_retained_63:
     LoadLocal             Target=68 Slot=36   (taken_over_record_generic_let_holder.ash:30:13)
     CallClosure           Target=69 ClosureTemp=58 ArgTemp=68 RuntimeManagedArgumentFlagTemp=66   (taken_over_record_generic_let_holder.ash:30:13)
     LoadLocal             Target=70 Slot=1   (taken_over_record_generic_let_holder.ash:30:13)
@@ -695,10 +724,10 @@ function lambda_15  [ClosureHelper from expandCases]
     LoadConstInt          Target=74 Value=1   (taken_over_record_generic_let_holder.ash:30:13)
     LoadConstInt          Target=75 Value=0   (taken_over_record_generic_let_holder.ash:30:13)
     StoreLocal            Slot=37 Source=70   (taken_over_record_generic_let_holder.ash:30:13)
-    JumpIfFalse           CondTemp=75 Target=rc_call_argument_not_retained_62   (taken_over_record_generic_let_holder.ash:30:13)
+    JumpIfFalse           CondTemp=75 Target=rc_call_argument_not_retained_64   (taken_over_record_generic_let_holder.ash:30:13)
     RcDup                 Target=76 SourceTemp=70 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=37 Source=76   (taken_over_record_generic_let_holder.ash:30:13)
-  rc_call_argument_not_retained_62:
+  rc_call_argument_not_retained_64:
     LoadLocal             Target=77 Slot=37   (taken_over_record_generic_let_holder.ash:30:13)
     LoadConstInt          Target=79 Value=2   (taken_over_record_generic_let_holder.ash:30:13)
     OrInt                 Target=80 Left=75 Right=79   (taken_over_record_generic_let_holder.ash:30:13)
@@ -713,72 +742,72 @@ function lambda_15  [ClosureHelper from expandCases]
     RcDrop                SourceTemp=26 TypeName=PatternBinding OwnerSlot=24
     RcDrop                SourceTemp=25 TypeName=PatternBinding OwnerSlot=23
     LoadLocal             Target=92 Slot=34
-    JumpIfFalse           CondTemp=92 Target=lambda_15_rc_edge_22_15
+    JumpIfFalse           CondTemp=92 Target=lambda_16_rc_edge_22_15
     LoadLocal             Target=93 Slot=32
     LoadConstInt          Target=94 Value=0
     CmpIntNe              Target=95 Left=93 Right=94
-    JumpIfFalse           CondTemp=95 Target=lambda_15_rc_edge_22_16
+    JumpIfFalse           CondTemp=95 Target=lambda_16_rc_edge_22_16
     LoadConstInt          Target=96 Value=0
     CmpIntNe              Target=97 Left=93 Right=96
-    JumpIfFalse           CondTemp=97 Target=lambda_15_rc_edge_22_17
+    JumpIfFalse           CondTemp=97 Target=lambda_16_rc_edge_22_17
     IsReferenceCounted    Target=98 SourceTemp=93
-    JumpIfFalse           CondTemp=98 Target=lambda_15_rc_edge_22_18
+    JumpIfFalse           CondTemp=98 Target=lambda_16_rc_edge_22_18
     StoreLocal            Slot=43 Source=93
-  rcdrop_list_spine_111:
+  rcdrop_list_spine_113:
     LoadLocal             Target=99 Slot=43
     LoadConstInt          Target=100 Value=0
     CmpIntNe              Target=101 Left=99 Right=100
-    JumpIfFalse           CondTemp=101 Target=lambda_15_rc_edge_22_20
+    JumpIfFalse           CondTemp=101 Target=lambda_16_rc_edge_22_20
     RcIsUnique            Target=102 SourceTemp=99
-    JumpIfFalse           CondTemp=102 Target=rcdrop_list_spine_shared_112
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_spine_shared_114
     LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=8
     RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=43 Source=103
-    Jump                  Target=rcdrop_list_spine_111
-  rcdrop_list_spine_shared_112:
+    Jump                  Target=rcdrop_list_spine_113
+  rcdrop_list_spine_shared_114:
     RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=rcdrop_list_spine_end_113
-  rcdrop_list_spine_end_113:
+    Jump                  Target=rcdrop_list_spine_end_115
+  rcdrop_list_spine_end_115:
     LoadConstInt          Target=104 Value=0
     StoreLocal            Slot=32 Source=104
-  taken_over_skip_110:
+  taken_over_skip_112:
     LoadConstInt          Target=105 Value=0
     StoreLocal            Slot=34 Source=105
     RestoreStackPointer   Slot=9   (taken_over_record_generic_let_holder.ash:30:13)
-    Jump                  Target=lambda_15_body   (taken_over_record_generic_let_holder.ash:30:13)
+    Jump                  Target=lambda_16_body   (taken_over_record_generic_let_holder.ash:30:13)
     LoadConstInt          Target=85 Value=0   (taken_over_record_generic_let_holder.ash:30:13)
     StoreLocal            Slot=10 Source=85   (taken_over_record_generic_let_holder.ash:27:5)
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=40
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=40
-    Jump                  Target=match_end_53   (taken_over_record_generic_let_holder.ash:27:5)
-  match_arm_cleanup_58:
+    Jump                  Target=match_end_55   (taken_over_record_generic_let_holder.ash:27:5)
+  match_arm_cleanup_60:
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=41
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=41
-    Jump                  Target=match_none_54   (taken_over_record_generic_let_holder.ash:27:5)
-  match_none_54:
+    Jump                  Target=match_none_56   (taken_over_record_generic_let_holder.ash:27:5)
+  match_none_56:
     LoadConstInt          Target=90 Value=0   (taken_over_record_generic_let_holder.ash:27:5)
     StoreLocal            Slot=10 Source=90   (taken_over_record_generic_let_holder.ash:27:5)
-  match_end_53:
+  match_end_55:
     LoadLocal             Target=91 Slot=10   (taken_over_record_generic_let_holder.ash:27:5)
     Return                Source=91   (taken_over_record_generic_let_holder.ash:26:1)
-  lambda_15_rc_edge_22_20:
+  lambda_16_rc_edge_22_20:
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=rcdrop_list_spine_end_113
-  lambda_15_rc_edge_22_15:
+    Jump                  Target=rcdrop_list_spine_end_115
+  lambda_16_rc_edge_22_15:
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=taken_over_skip_110
-  lambda_15_rc_edge_22_16:
+    Jump                  Target=taken_over_skip_112
+  lambda_16_rc_edge_22_16:
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=taken_over_skip_110
-  lambda_15_rc_edge_22_17:
+    Jump                  Target=taken_over_skip_112
+  lambda_16_rc_edge_22_17:
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=taken_over_skip_110
-  lambda_15_rc_edge_22_18:
+    Jump                  Target=taken_over_skip_112
+  lambda_16_rc_edge_22_18:
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    Jump                  Target=taken_over_skip_110
+    Jump                  Target=taken_over_skip_112
 
-function lambda_14  [ClosureHelper from expandCases]
+function lambda_15  [ClosureHelper from expandCases]
   locals=2 temps=8
     Alloc                 Target=0 SizeBytes=40   (taken_over_record_generic_let_holder.ash:26:1)
     LoadEnv               Target=1 Index=0   (taken_over_record_generic_let_holder.ash:26:1)
@@ -791,10 +820,10 @@ function lambda_14  [ClosureHelper from expandCases]
     StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (taken_over_record_generic_let_holder.ash:26:1)
     LoadEnv               Target=6 Index=3   (taken_over_record_generic_let_holder.ash:26:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=6   (taken_over_record_generic_let_holder.ash:26:1)
-    MakeClosure           Target=7 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=40   (taken_over_record_generic_let_holder.ash:26:1)
+    MakeClosure           Target=7 FuncLabel=lambda_16 EnvPtrTemp=0 EnvSizeBytes=40   (taken_over_record_generic_let_holder.ash:26:1)
     Return                Source=7   (taken_over_record_generic_let_holder.ash:26:1)
 
-function lambda_13  [SourceFunction from expandCases]
+function lambda_14  [SourceFunction from expandCases]
   locals=2 temps=8
     Alloc                 Target=0 SizeBytes=32   (taken_over_record_generic_let_holder.ash:26:1)
     LoadLocal             Target=1 Slot=1   (taken_over_record_generic_let_holder.ash:26:1)
@@ -805,37 +834,37 @@ function lambda_13  [SourceFunction from expandCases]
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (taken_over_record_generic_let_holder.ash:26:1)
     LoadEnv               Target=6 Index=2   (taken_over_record_generic_let_holder.ash:26:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (taken_over_record_generic_let_holder.ash:26:1)
-    MakeClosure           Target=7 FuncLabel=lambda_14 EnvPtrTemp=0 EnvSizeBytes=32   (taken_over_record_generic_let_holder.ash:26:1)
+    MakeClosure           Target=7 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=32   (taken_over_record_generic_let_holder.ash:26:1)
     Return                Source=7   (taken_over_record_generic_let_holder.ash:26:1)
 
-function lambda_16  [SourceFunction from count]
+function lambda_17  [SourceFunction from count]
   locals=15 temps=19
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:35:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (taken_over_record_generic_let_holder.ash:35:5)
     CmpIntEq              Target=2 Left=0 Right=1   (taken_over_record_generic_let_holder.ash:35:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_66   (taken_over_record_generic_let_holder.ash:35:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_68   (taken_over_record_generic_let_holder.ash:35:5)
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:36:17)
     StoreLocal            Slot=2 Source=3   (taken_over_record_generic_let_holder.ash:35:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_63   (taken_over_record_generic_let_holder.ash:35:5)
-  match_arm_cleanup_66:
+    Jump                  Target=match_end_65   (taken_over_record_generic_let_holder.ash:35:5)
+  match_arm_cleanup_68:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_65   (taken_over_record_generic_let_holder.ash:35:5)
-  match_next_65:
+    Jump                  Target=match_next_67   (taken_over_record_generic_let_holder.ash:35:5)
+  match_next_67:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (taken_over_record_generic_let_holder.ash:35:5)
     CmpIntNe              Target=5 Left=0 Right=4   (taken_over_record_generic_let_holder.ash:35:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_67   (taken_over_record_generic_let_holder.ash:35:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_69   (taken_over_record_generic_let_holder.ash:35:5)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:35:5)
     LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:35:5)
     StoreLocal            Slot=9 Source=7   (taken_over_record_generic_let_holder.ash:35:5)
     LoadConstInt          Target=8 Value=1   (taken_over_record_generic_let_holder.ash:37:24)
     SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
     LoadLocal             Target=10 Slot=0   (taken_over_record_generic_let_holder.ash:37:28)
-    MakeClosure           Target=9 FuncLabel=lambda_16 EnvPtrTemp=10 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:37:28)
+    MakeClosure           Target=9 FuncLabel=lambda_17 EnvPtrTemp=10 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:37:28)
     LoadLocal             Target=11 Slot=9   (taken_over_record_generic_let_holder.ash:37:34)
     Borrow                Target=12 SourceTemp=11
     LoadConstInt          Target=14 Value=2   (taken_over_record_generic_let_holder.ash:37:28)
@@ -847,45 +876,45 @@ function lambda_16  [SourceFunction from count]
     StoreLocal            Slot=2 Source=15   (taken_over_record_generic_let_holder.ash:35:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
-    Jump                  Target=match_end_63   (taken_over_record_generic_let_holder.ash:35:5)
-  match_arm_cleanup_67:
+    Jump                  Target=match_end_65   (taken_over_record_generic_let_holder.ash:35:5)
+  match_arm_cleanup_69:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=14
-    Jump                  Target=match_none_64   (taken_over_record_generic_let_holder.ash:35:5)
-  match_none_64:
+    Jump                  Target=match_none_66   (taken_over_record_generic_let_holder.ash:35:5)
+  match_none_66:
     LoadConstInt          Target=17 Value=0   (taken_over_record_generic_let_holder.ash:35:5)
     StoreLocal            Slot=2 Source=17   (taken_over_record_generic_let_holder.ash:35:5)
-  match_end_63:
+  match_end_65:
     LoadLocal             Target=18 Slot=2   (taken_over_record_generic_let_holder.ash:35:5)
     Return                Source=18   (taken_over_record_generic_let_holder.ash:34:1)
 
-function __rcnorm_18  [RuntimeManagedAdtNormalizer]
+function __rcnorm_19  [RuntimeManagedAdtNormalizer]
   locals=4 temps=8
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:39:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_83   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_85   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_representation_done_84   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_copy_83:
+    Jump                  Target=rc_representation_done_86   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_representation_copy_85:
     GetAdtTag             Target=3 Ptr=0   (taken_over_record_generic_let_holder.ash:39:1)
-    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_85   (taken_over_record_generic_let_holder.ash:39:1)
-  rcnorm_ctor_85:
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_87   (taken_over_record_generic_let_holder.ash:39:1)
+  rcnorm_ctor_87:
     CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=4   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rcnorm_end_87   (taken_over_record_generic_let_holder.ash:39:1)
-  rcnorm_ctor_86:
+    Jump                  Target=rcnorm_end_89   (taken_over_record_generic_let_holder.ash:39:1)
+  rcnorm_ctor_88:
     CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=5   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rcnorm_end_87   (taken_over_record_generic_let_holder.ash:39:1)
-  rcnorm_end_87:
+    Jump                  Target=rcnorm_end_89   (taken_over_record_generic_let_holder.ash:39:1)
+  rcnorm_end_89:
     LoadLocal             Target=6 Slot=3   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=2 Source=6   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_84:
+  rc_representation_done_86:
     LoadLocal             Target=7 Slot=2   (taken_over_record_generic_let_holder.ash:39:1)
     Return                Source=7   (taken_over_record_generic_let_holder.ash:39:1)
 
-function lambda_17  [SourceFunction from makeCases]
+function lambda_18  [SourceFunction from makeCases]
   locals=10 temps=78
     LoadConstInt          Target=0 Value=0   (taken_over_record_generic_let_holder.ash:39:26)
     AllocAdt              Target=1 Tag=1 FieldCount=0   (taken_over_record_generic_let_holder.ash:39:134)
@@ -937,118 +966,118 @@ function lambda_17  [SourceFunction from makeCases]
     StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=26   (taken_over_record_generic_let_holder.ash:39:26)
     StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=15   (taken_over_record_generic_let_holder.ash:39:26)
     IsReferenceCounted    Target=28 SourceTemp=27
-    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_68   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_70   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=29 SourceTemp=27 RuntimeManaged=true
     StoreLocal            Slot=2 Source=29   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_representation_done_69   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_copy_68:
-    IsReferenceCounted    Target=31 SourceTemp=27
-    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_70   (taken_over_record_generic_let_holder.ash:39:1)
-    RcDup                 Target=32 SourceTemp=27 RuntimeManaged=true
-    StoreLocal            Slot=3 Source=32   (taken_over_record_generic_let_holder.ash:39:1)
     Jump                  Target=rc_representation_done_71   (taken_over_record_generic_let_holder.ash:39:1)
   rc_representation_copy_70:
+    IsReferenceCounted    Target=31 SourceTemp=27
+    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_72   (taken_over_record_generic_let_holder.ash:39:1)
+    RcDup                 Target=32 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=32   (taken_over_record_generic_let_holder.ash:39:1)
+    Jump                  Target=rc_representation_done_73   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_representation_copy_72:
     LoadConstInt          Target=33 Value=0   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=4 Source=27   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=5 Source=33   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=6 Source=33   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_72:
+  rc_normalize_list_74:
     LoadLocal             Target=34 Slot=4   (taken_over_record_generic_let_holder.ash:39:1)
     CmpIntNe              Target=35 Left=34 Right=33   (taken_over_record_generic_let_holder.ash:39:1)
-    JumpIfFalse           CondTemp=35 Target=rc_normalize_list_end_73   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=35 Target=rc_normalize_list_end_75   (taken_over_record_generic_let_holder.ash:39:1)
     IsReferenceCounted    Target=36 SourceTemp=34
-    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_cell_74   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_cell_76   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=37 SourceTemp=34 RuntimeManaged=true
     LoadLocal             Target=38 Slot=5   (taken_over_record_generic_let_holder.ash:39:1)
     CmpIntNe              Target=39 Left=38 Right=33   (taken_over_record_generic_let_holder.ash:39:1)
-    JumpIfFalse           CondTemp=39 Target=rc_normalize_list_first_75   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=39 Target=rc_normalize_list_first_77   (taken_over_record_generic_let_holder.ash:39:1)
     LoadLocal             Target=40 Slot=6   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=37   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_normalize_list_linked_76   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_first_75:
+    Jump                  Target=rc_normalize_list_linked_78   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_normalize_list_first_77:
     StoreLocal            Slot=5 Source=37   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_linked_76:
+  rc_normalize_list_linked_78:
     StoreLocal            Slot=6 Source=37   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_normalize_list_end_73   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_cell_74:
+    Jump                  Target=rc_normalize_list_end_75   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_normalize_list_cell_76:
     LoadMemOffset         Target=41 BasePtr=34 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:39:1)
     LoadMemOffset         Target=42 BasePtr=34 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:39:1)
     IsReferenceCounted    Target=43 SourceTemp=41
-    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_77   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_79   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=44 SourceTemp=41 RuntimeManaged=true
     StoreLocal            Slot=7 Source=44   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_representation_done_78   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_copy_77:
+    Jump                  Target=rc_representation_done_80   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_representation_copy_79:
     Alloc                 Target=45 SizeBytes=24 RuntimeManaged=true   (taken_over_record_generic_let_holder.ash:39:1)
     LoadMemOffset         Target=46 BasePtr=41 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:39:1)
     IsReferenceCounted    Target=47 SourceTemp=46
-    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_79   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_81   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=48 SourceTemp=46 RuntimeManaged=true
     StoreLocal            Slot=8 Source=48   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_representation_done_80   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_copy_79:
+    Jump                  Target=rc_representation_done_82   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_representation_copy_81:
     LoadConstInt          Target=50 Value=0   (taken_over_record_generic_let_holder.ash:39:1)
-    CallKnown             Target=51 FuncLabel=__rcnorm_8 EnvTemp=50 ArgTemp=46   (taken_over_record_generic_let_holder.ash:39:1)
+    CallKnown             Target=51 FuncLabel=__rcnorm_9 EnvTemp=50 ArgTemp=46   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=8 Source=51   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_80:
+  rc_representation_done_82:
     LoadLocal             Target=52 Slot=8   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=52   (taken_over_record_generic_let_holder.ash:39:1)
     LoadMemOffset         Target=53 BasePtr=41 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=45 OffsetBytes=8 Source=53   (taken_over_record_generic_let_holder.ash:39:1)
     LoadMemOffset         Target=54 BasePtr=41 OffsetBytes=16   (taken_over_record_generic_let_holder.ash:39:1)
     IsReferenceCounted    Target=55 SourceTemp=54
-    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_81   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_83   (taken_over_record_generic_let_holder.ash:39:1)
     RcDup                 Target=56 SourceTemp=54 RuntimeManaged=true
     StoreLocal            Slot=9 Source=56   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_representation_done_82   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_copy_81:
+    Jump                  Target=rc_representation_done_84   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_representation_copy_83:
     LoadConstInt          Target=58 Value=0   (taken_over_record_generic_let_holder.ash:39:1)
-    CallKnown             Target=59 FuncLabel=__rcnorm_18 EnvTemp=58 ArgTemp=54   (taken_over_record_generic_let_holder.ash:39:1)
+    CallKnown             Target=59 FuncLabel=__rcnorm_19 EnvTemp=58 ArgTemp=54   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=9 Source=59   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_82:
+  rc_representation_done_84:
     LoadLocal             Target=60 Slot=9   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=45 OffsetBytes=16 Source=60   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=7 Source=45   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_78:
+  rc_representation_done_80:
     LoadLocal             Target=61 Slot=7   (taken_over_record_generic_let_holder.ash:39:1)
     Alloc                 Target=62 SizeBytes=16 RuntimeManaged=true   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=62 OffsetBytes=0 Source=61   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=33   (taken_over_record_generic_let_holder.ash:39:1)
     LoadLocal             Target=63 Slot=5   (taken_over_record_generic_let_holder.ash:39:1)
     CmpIntNe              Target=64 Left=63 Right=33   (taken_over_record_generic_let_holder.ash:39:1)
-    JumpIfFalse           CondTemp=64 Target=rc_normalize_list_first_88   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=64 Target=rc_normalize_list_first_90   (taken_over_record_generic_let_holder.ash:39:1)
     LoadLocal             Target=65 Slot=6   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=65 OffsetBytes=8 Source=62   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_normalize_list_linked_89   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_first_88:
+    Jump                  Target=rc_normalize_list_linked_91   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_normalize_list_first_90:
     StoreLocal            Slot=5 Source=62   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_linked_89:
+  rc_normalize_list_linked_91:
     StoreLocal            Slot=6 Source=62   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=4 Source=42   (taken_over_record_generic_let_holder.ash:39:1)
-    Jump                  Target=rc_normalize_list_72   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_normalize_list_end_73:
+    Jump                  Target=rc_normalize_list_74   (taken_over_record_generic_let_holder.ash:39:1)
+  rc_normalize_list_end_75:
     LoadLocal             Target=66 Slot=5   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=3 Source=66   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_71:
+  rc_representation_done_73:
     LoadLocal             Target=67 Slot=3   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=2 Source=67   (taken_over_record_generic_let_holder.ash:39:1)
-  rc_representation_done_69:
+  rc_representation_done_71:
     LoadLocal             Target=68 Slot=2   (taken_over_record_generic_let_holder.ash:39:1)
     LoadArgumentOwnership Target=69   (taken_over_record_generic_let_holder.ash:39:1)
     LoadConstInt          Target=70 Value=2   (taken_over_record_generic_let_holder.ash:39:1)
     ShrInt                Target=71 Left=69 Right=70   (taken_over_record_generic_let_holder.ash:39:1)
     LoadConstInt          Target=72 Value=1   (taken_over_record_generic_let_holder.ash:39:1)
     AndInt                Target=73 Left=71 Right=72   (taken_over_record_generic_let_holder.ash:39:1)
-    JumpIfFalse           CondTemp=73 Target=independent_result_not_requested_90   (taken_over_record_generic_let_holder.ash:39:1)
+    JumpIfFalse           CondTemp=73 Target=independent_result_not_requested_92   (taken_over_record_generic_let_holder.ash:39:1)
     LoadArgumentOwnership Target=74   (taken_over_record_generic_let_holder.ash:39:1)
     LoadConstInt          Target=75 Value=-8   (taken_over_record_generic_let_holder.ash:39:1)
     AndInt                Target=76 Left=74 Right=75   (taken_over_record_generic_let_holder.ash:39:1)
     LoadConstInt          Target=77 Value=2305843009213693952   (taken_over_record_generic_let_holder.ash:39:1)
     StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=77   (taken_over_record_generic_let_holder.ash:39:1)
-  independent_result_not_requested_90:
+  independent_result_not_requested_92:
     Return                Source=68   (taken_over_record_generic_let_holder.ash:39:1)
 
-function lambda_20  [ClosureHelper from check]
+function lambda_21  [ClosureHelper from check]
   locals=18 temps=36
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
@@ -1080,44 +1109,44 @@ function lambda_20  [ClosureHelper from check]
     AddInt                Target=17 Left=12 Right=16   (taken_over_record_generic_let_holder.ash:43:8)
     LoadLocal             Target=18 Slot=8   (taken_over_record_generic_let_holder.ash:42:6)
     StoreLocal            Slot=17 Source=18
-  taken_over_cell_115:
+  taken_over_cell_117:
     LoadLocal             Target=21 Slot=17
     LoadConstInt          Target=22 Value=0
     CmpIntNe              Target=23 Left=21 Right=22
-    JumpIfFalse           CondTemp=23 Target=lambda_20_rc_edge_8_1
+    JumpIfFalse           CondTemp=23 Target=lambda_21_rc_edge_8_1
     IsReferenceCounted    Target=24 SourceTemp=21
-    JumpIfFalse           CondTemp=24 Target=taken_over_arena_cell_116
+    JumpIfFalse           CondTemp=24 Target=taken_over_arena_cell_118
     RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
-    Jump                  Target=taken_over_done_114
-  taken_over_arena_cell_116:
+    Jump                  Target=taken_over_done_116
+  taken_over_arena_cell_118:
     LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=0
     IsReferenceCounted    Target=26 SourceTemp=25
-    JumpIfFalse           CondTemp=26 Target=taken_over_arena_head_118
-    Jump                  Target=taken_over_next_117
-  taken_over_arena_head_118:
+    JumpIfFalse           CondTemp=26 Target=taken_over_arena_head_120
+    Jump                  Target=taken_over_next_119
+  taken_over_arena_head_120:
     LoadMemOffset         Target=27 BasePtr=25 OffsetBytes=0
     LoadConstInt          Target=28 Value=0
     CmpIntNe              Target=29 Left=27 Right=28
-    JumpIfFalse           CondTemp=29 Target=taken_over_next_117
+    JumpIfFalse           CondTemp=29 Target=taken_over_next_119
     IsReferenceCounted    Target=30 SourceTemp=27
-    JumpIfFalse           CondTemp=30 Target=taken_over_next_117
+    JumpIfFalse           CondTemp=30 Target=taken_over_next_119
     LoadConstInt          Target=31 Value=0
-    CallKnown             Target=32 FuncLabel=__rcdrop_general_7 EnvTemp=31 ArgTemp=27
-  taken_over_next_117:
+    CallKnown             Target=32 FuncLabel=__rcdrop_general_8 EnvTemp=31 ArgTemp=27
+  taken_over_next_119:
     LoadMemOffset         Target=33 BasePtr=21 OffsetBytes=8
     StoreLocal            Slot=17 Source=33
-    Jump                  Target=taken_over_cell_115
-  taken_over_done_114:
+    Jump                  Target=taken_over_cell_117
+  taken_over_done_116:
     StoreLocal            Slot=15 Source=17   (taken_over_record_generic_let_holder.ash:42:6)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=16
     LoadLocal             Target=20 Slot=15   (taken_over_record_generic_let_holder.ash:42:6)
     Return                Source=20   (taken_over_record_generic_let_holder.ash:41:1)
-  lambda_20_rc_edge_8_1:
+  lambda_21_rc_edge_8_1:
     RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
-    Jump                  Target=taken_over_done_114
+    Jump                  Target=taken_over_done_116
 
-function lambda_19  [SourceFunction from check]
+function lambda_20  [SourceFunction from check]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=24   (taken_over_record_generic_let_holder.ash:41:1)
     LoadEnv               Target=1 Index=0   (taken_over_record_generic_let_holder.ash:41:1)
@@ -1126,26 +1155,26 @@ function lambda_19  [SourceFunction from check]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_generic_let_holder.ash:41:1)
     LoadEnv               Target=3 Index=1   (taken_over_record_generic_let_holder.ash:41:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (taken_over_record_generic_let_holder.ash:41:1)
-    MakeClosure           Target=4 FuncLabel=lambda_20 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:41:1)
+    MakeClosure           Target=4 FuncLabel=lambda_21 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:41:1)
     Return                Source=4   (taken_over_record_generic_let_holder.ash:41:1)
 
-function __rcdrop_general_22  [RuntimeManagedAdtDropper]
+function __rcdrop_general_23  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (taken_over_record_generic_let_holder.ash:45:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_104   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_106   (taken_over_record_generic_let_holder.ash:45:1)
     GetAdtTag             Target=2 Ptr=0   (taken_over_record_generic_let_holder.ash:45:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_104   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_general_ctor_105:
-    Jump                  Target=rcdrop_general_shared_104   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_general_ctor_106:
-    Jump                  Target=rcdrop_general_shared_104   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_general_shared_104:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_106   (taken_over_record_generic_let_holder.ash:45:1)
+  rcdrop_general_ctor_107:
+    Jump                  Target=rcdrop_general_shared_106   (taken_over_record_generic_let_holder.ash:45:1)
+  rcdrop_general_ctor_108:
+    Jump                  Target=rcdrop_general_shared_106   (taken_over_record_generic_let_holder.ash:45:1)
+  rcdrop_general_shared_106:
     RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:45:1)
     Return                Source=3   (taken_over_record_generic_let_holder.ash:45:1)
 
-function lambda_21  [SourceFunction from probe]
+function lambda_22  [SourceFunction from probe]
   locals=13 temps=47
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:45:22)
@@ -1166,14 +1195,14 @@ function lambda_21  [SourceFunction from probe]
     StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (taken_over_record_generic_let_holder.ash:45:42)
     StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=8   (taken_over_record_generic_let_holder.ash:45:42)
     IsReferenceCounted    Target=11 SourceTemp=10
-    JumpIfFalse           CondTemp=11 Target=rc_representation_copy_91   (taken_over_record_generic_let_holder.ash:45:22)
+    JumpIfFalse           CondTemp=11 Target=rc_representation_copy_93   (taken_over_record_generic_let_holder.ash:45:22)
     RcDup                 Target=12 SourceTemp=10 RuntimeManaged=true
     StoreLocal            Slot=8 Source=12   (taken_over_record_generic_let_holder.ash:45:22)
-    Jump                  Target=rc_representation_done_92   (taken_over_record_generic_let_holder.ash:45:22)
-  rc_representation_copy_91:
+    Jump                  Target=rc_representation_done_94   (taken_over_record_generic_let_holder.ash:45:22)
+  rc_representation_copy_93:
     CopyOutList           DestTemp=13 SrcTemp=10 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (taken_over_record_generic_let_holder.ash:45:22)
     StoreLocal            Slot=8 Source=13   (taken_over_record_generic_let_holder.ash:45:22)
-  rc_representation_done_92:
+  rc_representation_done_94:
     LoadLocal             Target=14 Slot=8   (taken_over_record_generic_let_holder.ash:45:22)
     LoadConstInt          Target=15 Value=0   (taken_over_record_generic_let_holder.ash:45:22)
     LoadMemOffset         Target=16 BasePtr=7 OffsetBytes=16   (taken_over_record_generic_let_holder.ash:45:22)
@@ -1182,74 +1211,74 @@ function lambda_21  [SourceFunction from probe]
     LoadConstInt          Target=19 Value=1   (taken_over_record_generic_let_holder.ash:45:22)
     AndInt                Target=20 Left=18 Right=19   (taken_over_record_generic_let_holder.ash:45:22)
     StoreLocal            Slot=9 Source=14   (taken_over_record_generic_let_holder.ash:45:22)
-    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_93   (taken_over_record_generic_let_holder.ash:45:22)
+    JumpIfFalse           CondTemp=20 Target=rc_call_argument_not_retained_95   (taken_over_record_generic_let_holder.ash:45:22)
     RcDup                 Target=21 SourceTemp=14 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=9 Source=21   (taken_over_record_generic_let_holder.ash:45:22)
-  rc_call_argument_not_retained_93:
+  rc_call_argument_not_retained_95:
     LoadLocal             Target=22 Slot=9   (taken_over_record_generic_let_holder.ash:45:22)
     CallClosure           Target=23 ClosureTemp=7 ArgTemp=22 RuntimeManagedArgumentFlagTemp=20   (taken_over_record_generic_let_holder.ash:45:22)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=10
-    JumpIfFalse           CondTemp=15 Target=rc_handed_over_not_adopted_94   (taken_over_record_generic_let_holder.ash:45:22)
-    Jump                  Target=rc_handed_over_done_95   (taken_over_record_generic_let_holder.ash:45:22)
-  rc_handed_over_not_adopted_94:
+    JumpIfFalse           CondTemp=15 Target=rc_handed_over_not_adopted_96   (taken_over_record_generic_let_holder.ash:45:22)
+    Jump                  Target=rc_handed_over_done_97   (taken_over_record_generic_let_holder.ash:45:22)
+  rc_handed_over_not_adopted_96:
     StoreLocal            Slot=11 Source=14   (taken_over_record_generic_let_holder.ash:45:22)
-  rcdrop_list_96:
+  rcdrop_list_98:
     LoadLocal             Target=24 Slot=11   (taken_over_record_generic_let_holder.ash:45:22)
     LoadConstInt          Target=25 Value=0   (taken_over_record_generic_let_holder.ash:45:22)
     CmpIntNe              Target=26 Left=24 Right=25   (taken_over_record_generic_let_holder.ash:45:22)
-    JumpIfFalse           CondTemp=26 Target=rcdrop_list_end_98   (taken_over_record_generic_let_holder.ash:45:22)
+    JumpIfFalse           CondTemp=26 Target=rcdrop_list_end_100   (taken_over_record_generic_let_holder.ash:45:22)
     RcIsUnique            Target=27 SourceTemp=24
-    JumpIfFalse           CondTemp=27 Target=rcdrop_list_shared_97   (taken_over_record_generic_let_holder.ash:45:22)
+    JumpIfFalse           CondTemp=27 Target=rcdrop_list_shared_99   (taken_over_record_generic_let_holder.ash:45:22)
     LoadMemOffset         Target=28 BasePtr=24 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:45:22)
     RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=29 BasePtr=24 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:45:22)
     RcDrop                SourceTemp=24 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=11 Source=29   (taken_over_record_generic_let_holder.ash:45:22)
-    Jump                  Target=rcdrop_list_96   (taken_over_record_generic_let_holder.ash:45:22)
-  rcdrop_list_shared_97:
+    Jump                  Target=rcdrop_list_98   (taken_over_record_generic_let_holder.ash:45:22)
+  rcdrop_list_shared_99:
     RcDrop                SourceTemp=24 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_98   (taken_over_record_generic_let_holder.ash:45:22)
-  rcdrop_list_end_98:
-  rc_handed_over_done_95:
+    Jump                  Target=rcdrop_list_end_100   (taken_over_record_generic_let_holder.ash:45:22)
+  rcdrop_list_end_100:
+  rc_handed_over_done_97:
     LoadLocal             Target=30 Slot=7   (taken_over_record_generic_let_holder.ash:45:1)
     LoadConstInt          Target=31 Value=0   (taken_over_record_generic_let_holder.ash:45:1)
     CmpIntNe              Target=32 Left=30 Right=31   (taken_over_record_generic_let_holder.ash:45:1)
-    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_99   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_101   (taken_over_record_generic_let_holder.ash:45:1)
     IsReferenceCounted    Target=33 SourceTemp=30
-    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_99   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_101   (taken_over_record_generic_let_holder.ash:45:1)
     StoreLocal            Slot=12 Source=30   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_list_100:
+  rcdrop_list_102:
     LoadLocal             Target=34 Slot=12   (taken_over_record_generic_let_holder.ash:45:1)
     LoadConstInt          Target=35 Value=0   (taken_over_record_generic_let_holder.ash:45:1)
     CmpIntNe              Target=36 Left=34 Right=35   (taken_over_record_generic_let_holder.ash:45:1)
-    JumpIfFalse           CondTemp=36 Target=rcdrop_list_end_102   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=36 Target=rcdrop_list_end_104   (taken_over_record_generic_let_holder.ash:45:1)
     RcIsUnique            Target=37 SourceTemp=34
-    JumpIfFalse           CondTemp=37 Target=rcdrop_list_shared_101   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=37 Target=rcdrop_list_shared_103   (taken_over_record_generic_let_holder.ash:45:1)
     LoadMemOffset         Target=38 BasePtr=34 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:45:1)
     RcIsUnique            Target=39 SourceTemp=38
-    JumpIfFalse           CondTemp=39 Target=rc_drop_tuple_shared_103   (taken_over_record_generic_let_holder.ash:45:1)
+    JumpIfFalse           CondTemp=39 Target=rc_drop_tuple_shared_105   (taken_over_record_generic_let_holder.ash:45:1)
     LoadMemOffset         Target=40 BasePtr=38 OffsetBytes=0   (taken_over_record_generic_let_holder.ash:45:1)
     LoadConstInt          Target=41 Value=0   (taken_over_record_generic_let_holder.ash:45:1)
-    CallKnown             Target=42 FuncLabel=__rcdrop_general_7 EnvTemp=41 ArgTemp=40   (taken_over_record_generic_let_holder.ash:45:1)
+    CallKnown             Target=42 FuncLabel=__rcdrop_general_8 EnvTemp=41 ArgTemp=40   (taken_over_record_generic_let_holder.ash:45:1)
     LoadMemOffset         Target=43 BasePtr=38 OffsetBytes=16   (taken_over_record_generic_let_holder.ash:45:1)
     LoadConstInt          Target=44 Value=0   (taken_over_record_generic_let_holder.ash:45:1)
-    CallKnown             Target=45 FuncLabel=__rcdrop_general_22 EnvTemp=44 ArgTemp=43   (taken_over_record_generic_let_holder.ash:45:1)
-  rc_drop_tuple_shared_103:
+    CallKnown             Target=45 FuncLabel=__rcdrop_general_23 EnvTemp=44 ArgTemp=43   (taken_over_record_generic_let_holder.ash:45:1)
+  rc_drop_tuple_shared_105:
     RcDrop                SourceTemp=38 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=46 BasePtr=34 OffsetBytes=8   (taken_over_record_generic_let_holder.ash:45:1)
     RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=12 Source=46   (taken_over_record_generic_let_holder.ash:45:1)
-    Jump                  Target=rcdrop_list_100   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_list_shared_101:
+    Jump                  Target=rcdrop_list_102   (taken_over_record_generic_let_holder.ash:45:1)
+  rcdrop_list_shared_103:
     RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_102   (taken_over_record_generic_let_holder.ash:45:1)
-  rcdrop_list_end_102:
+    Jump                  Target=rcdrop_list_end_104   (taken_over_record_generic_let_holder.ash:45:1)
+  rcdrop_list_end_104:
     StoreLocal            Slot=7 Source=31   (taken_over_record_generic_let_holder.ash:45:1)
-  general_rc_owned_absent_99:
+  general_rc_owned_absent_101:
     Return                Source=23   (taken_over_record_generic_let_holder.ash:45:1)
 
-function lambda_24  [ClosureHelper from loop]
+function lambda_25  [ClosureHelper from loop]
   locals=16 temps=24
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:47:1)
     StoreLocal            Slot=2 Source=0   (taken_over_record_generic_let_holder.ash:47:1)
@@ -1258,17 +1287,17 @@ function lambda_24  [ClosureHelper from loop]
     StoreLocal            Slot=5 Source=1   (taken_over_record_generic_let_holder.ash:47:1)
     StoreLocal            Slot=6 Source=1   (taken_over_record_generic_let_holder.ash:47:1)
     StoreLocal            Slot=7 Source=1   (taken_over_record_generic_let_holder.ash:47:1)
-  lambda_24_body:
+  lambda_25_body:
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     SaveStackPointer      Slot=10   (taken_over_record_generic_let_holder.ash:47:1)
     LoadLocal             Target=2 Slot=2   (taken_over_record_generic_let_holder.ash:48:8)
     LoadConstInt          Target=3 Value=0   (taken_over_record_generic_let_holder.ash:48:13)
     CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_generic_let_holder.ash:48:8)
-    JumpIfFalse           CondTemp=4 Target=else_107   (taken_over_record_generic_let_holder.ash:48:5)
+    JumpIfFalse           CondTemp=4 Target=else_109   (taken_over_record_generic_let_holder.ash:48:5)
     LoadLocal             Target=5 Slot=1   (taken_over_record_generic_let_holder.ash:49:10)
     StoreLocal            Slot=11 Source=5   (taken_over_record_generic_let_holder.ash:48:5)
-    Jump                  Target=endif_108   (taken_over_record_generic_let_holder.ash:48:5)
-  else_107:
+    Jump                  Target=endif_110   (taken_over_record_generic_let_holder.ash:48:5)
+  else_109:
     LoadLocal             Target=6 Slot=2   (taken_over_record_generic_let_holder.ash:50:15)
     LoadConstInt          Target=7 Value=1   (taken_over_record_generic_let_holder.ash:50:19)
     SubInt                Target=8 Left=6 Right=7   (taken_over_record_generic_let_holder.ash:50:15)
@@ -1293,14 +1322,14 @@ function lambda_24  [ClosureHelper from loop]
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
     RestoreStackPointer   Slot=10   (taken_over_record_generic_let_holder.ash:50:10)
-    Jump                  Target=lambda_24_body   (taken_over_record_generic_let_holder.ash:50:10)
+    Jump                  Target=lambda_25_body   (taken_over_record_generic_let_holder.ash:50:10)
     LoadConstInt          Target=22 Value=0   (taken_over_record_generic_let_holder.ash:50:10)
     StoreLocal            Slot=11 Source=22   (taken_over_record_generic_let_holder.ash:48:5)
-  endif_108:
+  endif_110:
     LoadLocal             Target=23 Slot=11   (taken_over_record_generic_let_holder.ash:48:5)
     Return                Source=23   (taken_over_record_generic_let_holder.ash:47:1)
 
-function lambda_23  [SourceFunction from loop]
+function lambda_24  [SourceFunction from loop]
   locals=2 temps=7
     Alloc                 Target=0 SizeBytes=16   (taken_over_record_generic_let_holder.ash:47:1)
     LoadLocal             Target=1 Slot=1   (taken_over_record_generic_let_holder.ash:47:1)
@@ -1308,7 +1337,7 @@ function lambda_23  [SourceFunction from loop]
     LoadEnv               Target=4 Index=0   (taken_over_record_generic_let_holder.ash:47:1)
     Borrow                Target=5 SourceTemp=4
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (taken_over_record_generic_let_holder.ash:47:1)
-    MakeClosure           Target=6 FuncLabel=lambda_24 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:47:1)
+    MakeClosure           Target=6 FuncLabel=lambda_25 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:47:1)
     Return                Source=6   (taken_over_record_generic_let_holder.ash:47:1)
 
 function _start_main  [ProgramEntry]
@@ -1320,10 +1349,10 @@ function _start_main  [ProgramEntry]
     MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:11:1)
     StoreLocal            Slot=1 Source=3   (taken_over_record_generic_let_holder.ash:11:1)
     LoadConstInt          Target=4 Value=0   (taken_over_record_generic_let_holder.ash:16:1)
-    MakeClosure           Target=5 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:16:1)
+    MakeClosure           Target=5 FuncLabel=lambda_5 EnvPtrTemp=4 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:16:1)
     StoreLocal            Slot=2 Source=5   (taken_over_record_generic_let_holder.ash:16:1)
     LoadConstInt          Target=6 Value=0   (taken_over_record_generic_let_holder.ash:21:1)
-    MakeClosure           Target=7 FuncLabel=lambda_9 EnvPtrTemp=6 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:21:1)
+    MakeClosure           Target=7 FuncLabel=lambda_10 EnvPtrTemp=6 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:21:1)
     StoreLocal            Slot=3 Source=7   (taken_over_record_generic_let_holder.ash:21:1)
     Alloc                 Target=8 SizeBytes=24   (taken_over_record_generic_let_holder.ash:26:1)
     LoadLocal             Target=9 Slot=0   (taken_over_record_generic_let_holder.ash:26:1)
@@ -1332,14 +1361,14 @@ function _start_main  [ProgramEntry]
     StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=10   (taken_over_record_generic_let_holder.ash:26:1)
     LoadLocal             Target=11 Slot=2   (taken_over_record_generic_let_holder.ash:26:1)
     StoreMemOffset        BasePtr=8 OffsetBytes=16 Source=11   (taken_over_record_generic_let_holder.ash:26:1)
-    MakeClosure           Target=12 FuncLabel=lambda_13 EnvPtrTemp=8 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:26:1)
+    MakeClosure           Target=12 FuncLabel=lambda_14 EnvPtrTemp=8 EnvSizeBytes=24   (taken_over_record_generic_let_holder.ash:26:1)
     StoreLocal            Slot=4 Source=12   (taken_over_record_generic_let_holder.ash:26:1)
     LoadConstInt          Target=13 Value=0   (taken_over_record_generic_let_holder.ash:34:1)
-    MakeClosure           Target=14 FuncLabel=lambda_16 EnvPtrTemp=13 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:34:1)
+    MakeClosure           Target=14 FuncLabel=lambda_17 EnvPtrTemp=13 EnvSizeBytes=0   (taken_over_record_generic_let_holder.ash:34:1)
     StoreLocal            Slot=5 Source=14   (taken_over_record_generic_let_holder.ash:34:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     LoadConstInt          Target=15 Value=0   (taken_over_record_generic_let_holder.ash:39:1)
-    MakeClosureStack      Target=16 FuncLabel=lambda_17 EnvPtrTemp=15 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_generic_let_holder.ash:39:1)
+    MakeClosureStack      Target=16 FuncLabel=lambda_18 EnvPtrTemp=15 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_generic_let_holder.ash:39:1)
     StoreLocal            Slot=8 Source=16   (taken_over_record_generic_let_holder.ash:39:1)
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     AllocStack            Target=17 SizeBytes=16   (taken_over_record_generic_let_holder.ash:41:1)
@@ -1347,7 +1376,7 @@ function _start_main  [ProgramEntry]
     StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=18   (taken_over_record_generic_let_holder.ash:41:1)
     LoadLocal             Target=19 Slot=5   (taken_over_record_generic_let_holder.ash:41:1)
     StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=19   (taken_over_record_generic_let_holder.ash:41:1)
-    MakeClosureStack      Target=20 FuncLabel=lambda_19 EnvPtrTemp=17 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:41:1)
+    MakeClosureStack      Target=20 FuncLabel=lambda_20 EnvPtrTemp=17 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:41:1)
     StoreLocal            Slot=11 Source=20   (taken_over_record_generic_let_holder.ash:41:1)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     AllocStack            Target=21 SizeBytes=16   (taken_over_record_generic_let_holder.ash:45:1)
@@ -1357,13 +1386,13 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=24 Slot=8   (taken_over_record_generic_let_holder.ash:45:1)
     Borrow                Target=25 SourceTemp=24
     StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=25   (taken_over_record_generic_let_holder.ash:45:1)
-    MakeClosureStack      Target=26 FuncLabel=lambda_21 EnvPtrTemp=21 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:45:1)
+    MakeClosureStack      Target=26 FuncLabel=lambda_22 EnvPtrTemp=21 EnvSizeBytes=16   (taken_over_record_generic_let_holder.ash:45:1)
     StoreLocal            Slot=14 Source=26   (taken_over_record_generic_let_holder.ash:45:1)
     Alloc                 Target=27 SizeBytes=8   (taken_over_record_generic_let_holder.ash:47:1)
     LoadLocal             Target=28 Slot=14   (taken_over_record_generic_let_holder.ash:47:1)
     Borrow                Target=29 SourceTemp=28
     StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=29   (taken_over_record_generic_let_holder.ash:47:1)
-    MakeClosure           Target=30 FuncLabel=lambda_23 EnvPtrTemp=27 EnvSizeBytes=8   (taken_over_record_generic_let_holder.ash:47:1)
+    MakeClosure           Target=30 FuncLabel=lambda_24 EnvPtrTemp=27 EnvSizeBytes=8   (taken_over_record_generic_let_holder.ash:47:1)
     StoreLocal            Slot=15 Source=30   (taken_over_record_generic_let_holder.ash:47:1)
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadLocal             Target=31 Slot=15   (taken_over_record_generic_let_holder.ash:52:16)

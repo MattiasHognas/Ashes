@@ -1185,6 +1185,8 @@ let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (
 // callee's result may reach) is the only holder of a value produced right there, a fresh tuple
 // consed onto an accumulator passed to a recursive call, and an arena cell releases nothing. The
 // value goes to an owned slot, released once the function's result holds references of its own.
+// A head that is a retain the call's argument frame already collected (an alias's owner retained
+// for the cell) is released after the call, so it does not also go to a slot.
 // Stage 0's `IsCopiedOutFreshHeadType`: a list, tuple or data type the function's result copies out
 // rather than owns is copied before the owned slots are released, so such a head is kept the same
 // way.
@@ -1208,7 +1210,7 @@ let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headT
         | LoweredCoreValue { state = state, error = None } ->
             let resolved = resolveType(state)(headType)
             in
-                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !collectsCallArgumentRetain(headTemp)(stateCallArgumentRecordRetains(state)) && !copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
                 then
                     match freshLocal(state) with
                         | FreshLocal { state = allocated, local = ownedSlot } ->

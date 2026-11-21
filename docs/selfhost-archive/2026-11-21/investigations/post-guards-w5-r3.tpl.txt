@@ -1,0 +1,19 @@
+let recursive drain (pending: List(List(Int))) (order: List(Int)) =
+    match pending with
+        | [] :: rest -> drain(rest)(order)
+        | (x :: more) :: rest -> drain(more :: rest)(x :: order)
+        | [] -> order
+
+let recursive total (xs: List(Int)) =
+    match xs with
+        | [] -> 0
+        | x :: rest -> x + total(rest)
+
+let probe (n: Int) = total(drain([[n, 2], [3]])([]))
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe(n))
+
+Ashes.IO.print(loop(ROUNDS)(0))

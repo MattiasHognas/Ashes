@@ -3802,60 +3802,45 @@ public sealed partial class Lowering
             bindings.Add(binding);
         }
 
-        if (CopiesCapturedSelfClosure && bindings.Any(binding => binding is Binding.Self))
-        {
-            AttachCapturedSelfCopyNormalizer(closureLabel, captures, bindings);
-            return;
-        }
-
+        bool capturesSelf = CopiesCapturedSelfClosure && bindings.Any(binding => binding is Binding.Self);
+        bool capturesEvidence = captures.Any(name => _borrowedTraitDictionaryBindings.Contains(name)
+            || _traitDictionaryParameterMetadata.ContainsKey(name)
+            || _selectedTraitMethodBindings.Contains(name));
         List<(int EnvOffset, TypeRef Type)> normalizableCaptures = [];
-        for (int index = 0; index < bindings.Count; index++)
-        {
-            if (!CanRuntimeNormalizeClosureCapture(bindings[index].Type))
-            {
-                return;
-            }
-
-            normalizableCaptures.Add((index * 8, Prune(bindings[index].Type)));
-        }
-
-        if (normalizableCaptures.Count == 0)
-        {
-            return;
-        }
-
-        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures, []);
-    }
-
-    // A closure that captured the recursive function it is built in (`uniquePaths` captured by the
-    // closure its first stage returns) holds a closure built at that reference, inside the call's
-    // arena window. Copied out of the arena at the call boundary, it copies that closure too, since
-    // the caller resets the window once the copy is taken; the copy's dropper releases it.
-    // Every other capture is shared word for word, as a copy without a normalizer shares it; only
-    // the self reference is built during the call. A closure holding a resource is left alone.
-    private void AttachCapturedSelfCopyNormalizer(string closureLabel, IReadOnlyList<string> captures, List<Binding> bindings)
-    {
-        List<(int EnvOffset, TypeRef Type)> selfCaptures = [];
         List<int> sharedCaptureOffsets = [];
         for (int index = 0; index < bindings.Count; index++)
         {
-            if (LookupOwnedValue(captures[index]) is { IsResource: true } or { IsResourceBearing: true })
+            string name = captures[index];
+            TypeRef type = Prune(bindings[index].Type);
+            if ((capturesSelf || capturesEvidence)
+                && LookupOwnedValue(name) is { IsResource: true } or { IsResourceBearing: true })
             {
                 return;
             }
 
-            TypeRef captureType = Prune(bindings[index].Type);
-            if (bindings[index] is Binding.Self)
+            // The packed dictionary and its projected methods occupy separate capture slots.
+            // Normalize each so its lifetime follows the copied closure.
+            bool dictionaryTuple = type is TypeRef.TTuple && _traitDictionaryParameterMetadata.ContainsKey(name);
+            if (dictionaryTuple || capturesEvidence && type is TypeRef.TFun
+                || capturesSelf && bindings[index] is Binding.Self
+                || !capturesSelf && CanRuntimeNormalizeClosureCapture(type))
             {
-                selfCaptures.Add((index * 8, captureType));
+                normalizableCaptures.Add((index * 8, type));
             }
-            else
+            else if (capturesSelf || capturesEvidence && type is TypeRef.TVar)
             {
                 sharedCaptureOffsets.Add(index * 8);
             }
+            else
+            {
+                return;
+            }
         }
 
-        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, selfCaptures, sharedCaptureOffsets);
+        if (normalizableCaptures.Count > 0)
+        {
+            SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures, sharedCaptureOffsets);
+        }
     }
 
     private static bool CopiesCapturedSelfClosure

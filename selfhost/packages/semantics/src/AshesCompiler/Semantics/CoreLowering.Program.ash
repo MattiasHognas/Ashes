@@ -80,11 +80,14 @@ import AshesCompiler.Semantics.CoreLowering.Matches
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 import AshesCompiler.Semantics.CoreLowering.Operators
 import AshesCompiler.Semantics.CoreLowering.Expressions
+import AshesCompiler.Semantics.StrictPartialStages.scheduleStrictProgram
 export (
+    value failedCoreLowering,
     value allTopLevelBindingNames,
     value lowerProgramPasses,
     type CoreProgramPassMeasurement(..),
     value lowerProgramPassesMeasured,
+    value lowerProgramPassesMeasuredWithProgress,
     value registeredProgramState,
     value buildProgram,
     value withProgramParameterOwnership,
@@ -311,7 +314,7 @@ let openStoredConstrainedTopLevel name value provisional scheme cursorSlot endSl
                         |> restoreBindings(replaceConstrainedScheme(name)(scheme)(stored.bindings))
                         |> registerConstrainedLogicalReference(name)(scheme), chainPending = PendingTopLevelClose(closeOwnedTypeName = letOwnedTypeName(value)(loweredValue)(saved), closeOwnerSlot = ownerSlot, closeCursorSlot = cursorSlot, closeEndSlot = endSlot, closeSpan = saved.currentSpan, closeOuterBindings = outerBindings, closeBracket = true) :: pending, chainError = None)
 
-let tryOpenConstrainedTopLevel name value annotation (written: Bool) escapeBody tailForwarded outerBindings pending state =
+let tryOpenConstrainedTopLevel name value annotation requirements escapeBody tailForwarded outerBindings pending state =
     match constrainedAliasBinding(value)(state) with
         | Some(binding) ->
             match openArenaBracket(state) with
@@ -321,7 +324,7 @@ let tryOpenConstrainedTopLevel name value annotation (written: Bool) escapeBody 
                     |> openStoredConstrainedTopLevel(name)(value)(false)(binding.scheme)(cursor)(end)(saved)(escapeBody)(tailForwarded)(outerBindings)(pending)
                     |> Some
         | None ->
-            match constrainedBindingPlanWith(written)(name)(false)(value)(annotation)([])(state) with
+            match constrainedBindingPlan(name)(false)(value)(annotation)(requirements)(state) with
                 | None -> None
                 | Some(plan) ->
                     match openArenaBracket(state) with
@@ -368,13 +371,13 @@ let openUnconstrainedArenaBracketedTopLevelLet name value annotation remainingBo
 // bracketed let releases its owner and restores the arena under the declaration's own span, a
 // recursive group only takes its names back out of scope. A failure passes through with each
 // declaration's names taken out of scope, as the nested form's failure did.
-let openUnregisteredArenaTopLevelLet name value annotation (written: Bool) remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
-    match tryOpenConstrainedTopLevel(name)(value)(annotation)(written)(escapeBody)(tailForwarded)(outerBindings)(pending)(state) with
+let openUnregisteredArenaTopLevelLet name value annotation requirements remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
+    match tryOpenConstrainedTopLevel(name)(value)(annotation)(requirements)(escapeBody)(tailForwarded)(outerBindings)(pending)(state) with
         | Some(opened) -> opened
         | None -> openUnconstrainedArenaBracketedTopLevelLet(name)(value)(annotation)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state)
 
-let openArenaBracketedTopLevelLet name value annotation (written: Bool) remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
-    match openUnregisteredArenaTopLevelLet(name)(value)(annotation)(written)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state) with
+let openArenaBracketedTopLevelLet name value annotation requirements remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
+    match openUnregisteredArenaTopLevelLet(name)(value)(annotation)(requirements)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state) with
         | OpenedTopLevelChain { chainState = opened, chainError = None } as result -> result with chainState = registerConcreteSource(name)(value)(false)(opened)
         | failed -> failed
 
@@ -1481,7 +1484,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                         | Some(layout) ->
                                             if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                             then
-                                                match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                                match openArenaBracketedTopLevelLet(name)(value)(annotation)(requirements)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
                                                     | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                     | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
                                             else
@@ -1489,7 +1492,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                     | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
                                         | None ->
-                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(writtenRequirements(requirements))(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
+                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(requirements)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
                                                 | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                 | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
             | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation, requirements = requirements }, true) :: rest ->
@@ -1510,9 +1513,9 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                             | CoreLoweringState { bindings = outerBindings } ->
                                 let pairs = letBindingSyntaxPairs(bindings)(state)
                                 in
-                                    match []
-                                    |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
-                                    |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
+                                    match state
+                                    |> groupMemberStarts(bindings)
+                                    |> openPossiblyConstrainedGroup(bindings)(pairs)(lowerCore) with
                                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                         | LoweredCoreValue { state = opened, error = None } ->
                                             lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
@@ -1962,26 +1965,59 @@ let registeredProgramState items state =
                 | Error(error) -> Error(error)
                 | Ok(typed) -> registerProgramExternals(items)(typed)
 
-// The goals a pass recorded whose type its own substitution has since resolved to a concrete one.
-// A pass lowers the whole program, so by its end the substitution answers what the goal's own site
-// could not.
-let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: CoreLoweringState) (resolved: List((Str, SemanticType))) =
+// Pending goals are stored newest first. Prepending each resolved occurrence leaves
+// each site's list in lowering order, including holes for occurrences that stayed open.
+let recursive resolvedTraitGoals (pending: List((Str, SemanticType, List((Str, SemanticType))))) (state: CoreLoweringState) (sites: MapTree(Str, List(Maybe(CoreTraitGoalAnswer)))) =
     match pending with
-        | [] -> resolved
-        | (key, goalType) :: rest ->
-            let goalResolvedType = resolveType(state)(goalType)
+        | [] -> sites
+        | (key, goalType, candidates) :: rest ->
+            let resolved = resolveType(state)(goalType)
             in
-                match freeTypeVariables(goalResolvedType) with
-                    | [] -> resolvedTraitGoals(rest)(state)((key, goalResolvedType) :: resolved)
-                    | _variables -> resolvedTraitGoals(rest)(state)(resolved)
+                let proof =
+                    match freeTypeVariables(resolved) with
+                        | [] -> Some(ProvenOperandType(resolved))
+                        | _ -> resolvedAmbientAnswer(resolved)(candidates)(state)
+                in
+                    let later =
+                        match Ashes.Collection.Map.getStr(key)(sites) with
+                            | Some(entries) -> entries
+                            | None -> []
+                    in
+                        sites
+                        |> Ashes.Collection.Map.setStr(key)(proof :: later)
+                        |> resolvedTraitGoals(rest)(state)
 
-let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree(Str, SemanticType)) =
-    match entries with
-        | [] -> proven
-        | (key, goalType) :: rest ->
-            proven
-            |> Ashes.Collection.Map.setStr(key)(goalType)
-            |> traitGoalMap(rest)
+// A site that proved just one type uses it on every visit. Only sites that actually
+// proved different types consume one entry per visit, as in a shared implementation
+// body lowered for several different dictionaries.
+// A lexical dictionary belongs to its original visit, even when neighboring
+// visits at the same span did not prove a dictionary.
+let recursive traitGoalProofForSite entries first all =
+    match (entries, first) with
+        | ([], None) -> None
+        | ([], Some(ProvenAmbientMethod(_binding))) -> Some(OrderedTraitGoalProofs(all))
+        | ([], Some(proven)) -> Some(SharedTraitGoalProof(proven))
+        | (None :: rest, _) -> traitGoalProofForSite(rest)(first)(all)
+        | (Some(proven) :: rest, None) -> traitGoalProofForSite(rest)(Some(proven))(all)
+        | (Some(proven) :: rest, Some(earlier)) ->
+            if proven == earlier
+            then traitGoalProofForSite(rest)(first)(all)
+            else Some(OrderedTraitGoalProofs(all))
+
+let traitGoalMap sites equalityGoals =
+    (let initial =
+        Ashes.Collection.List.foldLeft(given (proofs) ->
+            given (entry) ->
+                match entry with
+                    | (key, value) -> Ashes.Collection.Map.setStr(key)(SharedTraitGoalProof(ProvenOperandType(value)))(proofs))(Ashes.Collection.Map.empty)(equalityGoals)
+    in
+        Ashes.Collection.Map.foldLeft(given (acc) ->
+            given (key) ->
+                given (entries) ->
+                    match (acc, traitGoalProofForSite(entries)(None)(entries)) with
+                        | ((proofs, ordered), None) -> (proofs, ordered)
+                        | ((proofs, _ordered), Some(OrderedTraitGoalProofs(_entries) as proof)) -> (Ashes.Collection.Map.setStr(key)(proof)(proofs), true)
+                        | ((proofs, ordered), Some(proof)) -> (Ashes.Collection.Map.setStr(key)(proof)(proofs), ordered))((initial, false))(sites))
 
 // A successful discovery pass validated every body. Final emission only needs
 // lambda bodies reachable from executed code or an escaping value. References inside
@@ -2190,29 +2226,60 @@ let refuseUnansweredGoals (lowered: LoweredCoreValue) =
         | LoweredCoreValue { state = state, error = None } ->
             match statePendingTraitGoals(state) with
                 | [] -> lowered
-                | (key, goalType) :: _rest ->
+                | (key, goalType, _candidates) :: _rest ->
                     goalType
                     |> resolveType(state)
                     |> MissingCoreTraitEvidence(traitOfGoalKey(key))
                     |> failure(state)
         | failed -> failed
 
-let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
+let emitProgramWithProofs items trailingBody environment proofs seed =
+    seed
+    |> withStateProvenTraitGoals(proofs)
+    |> withStateTraitGoalsPinned(true)
+    |> lowerProgramWithCapabilities(items)(trailingBody)(environment)
+    |> refuseUnansweredGoals
+
+let observedRelowerings state =
+    match stateTypeObservation(state) with
+        | Some(observation) -> observation.relowerings
+        | None -> 0
+
+let replayProgramWithProofs items trailingBody environment seed firstState firstError pending equalityGoals =
+    match traitGoalMap(resolvedTraitGoals(pending)(firstState)(Ashes.Collection.Map.empty))(equalityGoals) with
+        | (proofs, ordered) ->
+            let replayItems =
+                match firstError with
+                    | None -> validatedReplayItems(items)(trailingBody)
+                    | Some(_error) -> items
+            in
+                // A pruned body could have consumed an occurrence of a shared site. Keep
+                // unused bodies out of emission, and number the retained traversal afresh.
+                if ordered && length(replayItems) != length(items)
+                then
+                    match lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)(seed) with
+                        | LoweredCoreValue { state = retained } ->
+                            match retained
+                            |> structuralEqualityGoals
+                            |> traitGoalMap(resolvedTraitGoals(statePendingTraitGoals(retained))(retained)(Ashes.Collection.Map.empty)) with
+                                | (retainedProofs, _ordered) ->
+                                    (retained
+                                    |> observedRelowerings
+                                    |> Some, emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed))
+                else (None, emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed))
+
+let lowerScheduledProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                 | ([], []) -> first
                 | (pending, equalityGoals) ->
-                    let replayItems =
-                        match firstError with
-                            | None -> validatedReplayItems(items)(trailingBody)
-                            | Some(_error) -> items
-                    in
-                        seed
-                        |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
-                        |> withStateTraitGoalsPinned(true)
-                        |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
-                        |> refuseUnansweredGoals
+                    match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
+                        | (_retained, emitted) -> emitted
+
+let lowerProgramPasses items trailing environment seed =
+    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
+        | (scheduled, body) -> lowerScheduledProgramPasses(scheduled)(body)(environment)(seed)
 
 // The two passes lowerProgramPasses runs, each with the time `clock` reads around it in
 // milliseconds, and how many trait goals and structural equality goals the first left open.
@@ -2224,6 +2291,9 @@ type CoreProgramPassMeasurement =
     | pendingGoals: Int
     | equalityGoals: Int
     | pendingGoalKeys: List(Str)
+    | equalityGoalKeys: List(Str)
+    | retainedRelowerings: Maybe(Int)
+    | goalDetails: List((ObservedPendingGoal, SemanticType))
 
 // The site keys of a pass's pending trait goals.
 let recursive goalKeysOf (goals: List((Str, SemanticType))) =
@@ -2231,7 +2301,39 @@ let recursive goalKeysOf (goals: List((Str, SemanticType))) =
         | [] -> []
         | (key, _goalType) :: rest -> key :: goalKeysOf(rest)
 
-let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreLoweringState) =
+let recursive indexGoalKeys goals keys =
+    match goals with
+        | [] -> keys
+        | (key, _operand) :: rest ->
+            keys
+            |> Ashes.Collection.Map.setStr(key)(true)
+            |> indexGoalKeys(rest)
+
+let recursive measuredSites sites deferred equalities state =
+    match sites with
+        | [] -> []
+        | (ObservedPendingGoal { key = key, structural = structural, operand = operand } as site) :: rest ->
+            let keys =
+                if structural
+                then equalities
+                else deferred
+            in
+                match Ashes.Collection.Map.getStr(key)(keys) with
+                    | None -> measuredSites(rest)(deferred)(equalities)(state)
+                    | Some(_) -> (site, resolveType(state)(operand)) :: measuredSites(rest)(deferred)(equalities)(state)
+
+let measuredGoalDetails pending equalityGoals state =
+    match stateTypeObservation(state) with
+        | Some(CoreTypeObservation { goalSites = Some(sites) }) ->
+            measuredSites(sites)(indexGoalKeys(pending)(Ashes.Collection.Map.empty))(indexGoalKeys(equalityGoals)(Ashes.Collection.Map.empty))(state)
+        | _ -> []
+
+let pendingGoalPairs goals =
+    Ashes.Collection.List.map(given (goal) ->
+        match goal with
+            | (key, operand, _candidates) -> (key, operand))(goals)
+
+let lowerScheduledProgramPassesMeasured replayStarting clock items trailingBody environment (seed: CoreLoweringState) =
     (let started = clock(Unit)
     in
         match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
@@ -2239,20 +2341,27 @@ let lowerProgramPassesMeasured clock items trailingBody environment (seed: CoreL
                 let firstDone = clock(Unit)
                 in
                     match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
-                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [])
+                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = [])
                         | (pending, equalityGoals) ->
-                            let replayItems =
-                                match firstError with
-                                    | None -> validatedReplayItems(items)(trailingBody)
-                                    | Some(_error) -> items
+                            let beforeProgress = clock(Unit)
                             in
-                                let replayed =
-                                    seed
-                                    |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
-                                    |> withStateTraitGoalsPinned(true)
-                                    |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
-                                    |> refuseUnansweredGoals
-                                in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = clock(Unit) - firstDone, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalKeysOf(pending)))
+                                let _ = replayStarting(Unit)
+                                in
+                                    let afterProgress = clock(Unit)
+                                    in
+                                        match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
+                                            | (retained, replayed) ->
+                                                let elapsed = beforeProgress - firstDone + clock(Unit) - afterProgress
+                                                in
+                                                    let goalPairs = pendingGoalPairs(pending)
+                                                    in CoreProgramPassMeasurement(first = first, replay = Some(replayed), firstMillis = firstDone - started, replayMillis = elapsed, pendingGoals = Ashes.Collection.List.length(pending), equalityGoals = Ashes.Collection.List.length(equalityGoals), pendingGoalKeys = goalPairs |> goalKeysOf, equalityGoalKeys = goalKeysOf(equalityGoals), retainedRelowerings = retained, goalDetails = measuredGoalDetails(goalPairs)(equalityGoals)(firstState)))
+
+let lowerProgramPassesMeasuredWithProgress replayStarting clock items trailing environment seed =
+    match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
+        | (scheduled, body) -> lowerScheduledProgramPassesMeasured(replayStarting)(clock)(scheduled)(body)(environment)(seed)
+
+let lowerProgramPassesMeasured clock items trailing environment seed =
+    lowerProgramPassesMeasuredWithProgress(given (_) -> Unit)(clock)(items)(trailing)(environment)(seed)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
@@ -2426,6 +2535,7 @@ let releaseEntryGeneralRcOwnedSlots (lowered: LoweredCoreValue) =
 
 let buildProgram lowered =
     match lowered
+    |> refuseUnansweredGoals
     |> releaseEntryGeneralRcOwnedSlots
     |> resolveLoweredPendingBlocks with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)

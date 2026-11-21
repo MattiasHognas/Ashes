@@ -3,6 +3,7 @@
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
+import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -283,22 +284,15 @@ let isNullaryConstructorPatternName (name: Str) state =
         | Some(_) -> true
         | None -> false
 
-// The pattern owner fact a binder under the span key `key` carries inside the active loop body:
-// the loop function's classified fact for that binder, when it needs a protective reference. A
+// The classified fact of the binder under the span key `key` in the active loop body. A
 // binder the syntax tree carries no span for (key -1) matches no fact, nor does any binder of a
 // function that may run under a live handler post (stage 0 tracks no pattern owner there).
-let patternOwnerFactFor (key: Int) (state: CoreLoweringState) =
+let patternFactFor (key: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(_frame), Some(loop)) ->
             if key < 0 || ordinaryRcPlacementAllowed(state) == false
             then None
-            else
-                match lookupPatternBindingFact(key)(loop.patternFacts) with
-                    | Some(fact) ->
-                        if patternFactRequiresProtection(fact)
-                        then Some(fact)
-                        else None
-                    | None -> None
+            else lookupPatternBindingFact(key)(loop.patternFacts)
         | _ -> None
 
 let bindPreparedPatternName (name: Str) (key: Int) (state: CoreLoweringState) =
@@ -306,9 +300,9 @@ let bindPreparedPatternName (name: Str) (key: Int) (state: CoreLoweringState) =
         | FreshType { state = typedState, semanticType = semanticType } ->
             match freshLocal(typedState) with
                 | FreshLocal { state = localState, local = local } ->
-                    match patternOwnerFactFor(key)(localState) with
+                    match patternFactFor(key)(localState) with
                         | Some(fact) ->
-                            addPatternOwnerBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(fact)(localState)
+                            addPatternBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(fact)(localState)
                         | None ->
                             addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(localState)
 
@@ -954,7 +948,7 @@ type ArmOwner =
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
-        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(_fact), scheme = TypeScheme { body = bindingType } } ->
+        | CoreBinding { location = CoreLocal(slot), patternFact = Some(fact), scheme = TypeScheme { body = bindingType } } when patternFactRequiresProtection(fact) ->
             bindingType
             |> ArmPatternOwner(slot)
             |> Some
@@ -1030,6 +1024,7 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
         | ArmHeapOwner(slot, typeName) :: rest ->
             state
             |> emitOwnedLetRelease(typeName)(slot)
+            |> retireRuntimeOwner(slot)
             |> emitArmOwnerReleases(body)(rest)
         | ArmPatternOwner(slot, bindingType) :: rest ->
             state
@@ -1207,33 +1202,35 @@ let recursive armScrutineeOwnerOf (owners: List(ArmOwner)) =
         | ArmScrutineeOwner(slot, typeName, isList, valueTemp, scrutineeType) :: _rest -> Some((slot, typeName, isList, valueTemp, scrutineeType))
         | _ :: rest -> armScrutineeOwnerOf(rest)
 
-// Stage 0's `EmitRuntimeManagedParentFieldTransfer`: the child keeps a reference of its own, the
-// owner is read once more (placement releases an owner right after its last use, and a unique
-// owner's structural release would otherwise free the child before it was retained), and the
-// owner is released whole through its structural dropper, its slot named so placement moves the
-// release on every path through the match. The release names the owner's defining temp; the
-// temp stage 0 spends on the owner's own release load stays reserved and unused.
+// With independently owned fields, the wrapper's saved transfer plan must also govern an
+// early release when the arm returns a different, nested binding.
+let releaseParentOfMatchResult (ownerSlot: Int) (typeName: Str) (valueTemp: Int) (scrutineeType: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> stateOwnerReleasePlans
+    |> lookupOwnerReleasePlan(ownerSlot) with
+        | Some((_type, OwnedReleasePlan { matchFieldTransfer = Some(_transfer) })) -> emitOwnedLetRelease(typeName)(ownerSlot)(state)
+        | _ ->
+            match synthesizeStructuralDropperLabel(scrutineeType)(state) with
+                | (dropper, prepared) ->
+                    emit(RcDrop(valueTemp)(typeName)(ownerSlot)(true)(scrutineeType
+                    |> resolveType(state)
+                    |> mayBeEmptyList)(dropper))(prepared)
+
+// Retain the returned child before the wrapper can release its reference to that child.
 let emitScrutineeChildTransfer (childTemp: Int) (childType: SemanticType) (ownerSlot: Int) (typeName: Str) (valueTemp: Int) (scrutineeType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = duplicateState, temp = duplicate } ->
             match freshTempRun(2)(duplicateState) with
                 | FreshTemp { state = loadState, temp = loadTemp } ->
-                    match synthesizeStructuralDropperLabel(scrutineeType)(loadState) with
-                        | (dropperLabel, dropperState) ->
-                            dropperState
-                            |> emit(childType
-                            |> resolveType(state)
-                            |> mayBeEmptyList
-                            |> RcDup(duplicate)(childTemp)(true))
-                            |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
-                            |> emit(LoadLocal(loadTemp)(ownerSlot))
-                            |> emit(RcDrop(valueTemp)(typeName)(ownerSlot)(true)(scrutineeType
-                            |> resolveType(state)
-                            |> mayBeEmptyList)(dropperLabel))
-                            |> (given (released: CoreLoweringState) ->
-                                (withStateRuntimeOwners(released
-                                |> stateRuntimeOwners
-                                |> releaseRuntimeOwner(ownerSlot))(released), duplicate))
+                    loadState
+                    |> emit(childType
+                    |> resolveType(state)
+                    |> mayBeEmptyList
+                    |> RcDup(duplicate)(childTemp)(true))
+                    |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                    |> emit(LoadLocal(loadTemp)(ownerSlot))
+                    |> releaseParentOfMatchResult(ownerSlot)(typeName)(valueTemp)(scrutineeType)
+                    |> (given (released: CoreLoweringState) -> (retireRuntimeOwner(ownerSlot)(released), duplicate))
 
 // Stage 0's `TransferVariableRuntimeManagedMatchResult` for a child of the scrutinee owner: an
 // arm whose result is a heap value its own pattern bound out of the fresh scrutinee (the head of
@@ -1341,15 +1338,97 @@ let adoptScrutineeIntoSlot (ownerSlot: Int) (valueTemp: Int) (scrutineeType: Sem
     |> (given (adopted: CoreLoweringState) ->
         adopted
         |> withStateRuntimeOwners((ownerSlot, true) :: stateRuntimeOwners(adopted))
-        |> withStateOwnerReleasePlans((ownerSlot, scrutineeType, OwnedReleasePlan(deepUnique = false, constructorName = None)) :: stateOwnerReleasePlans(adopted)))
+        |> withStateOwnerReleasePlans((ownerSlot, scrutineeType, OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None)) :: stateOwnerReleasePlans(adopted)))
 
-// Stage 0's `_ownershipAliases` for the arm: every heap-typed binding the pattern bound out of
-// the adopted scrutinee reads a value the owner's release covers.
+let recursive reuseUnwrapPattern (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> reuseUnwrapPattern(inner)
+        | other -> other
+
+let recursive independentMatchFields (patterns: List(Pattern)) (index: Int) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match patterns with
+        | [] -> []
+        | pattern :: rest ->
+            let later = independentMatchFields(rest)(index + 1)(bindings)(state)
+            in
+                match reuseUnwrapPattern(pattern) with
+                    | PatternVar(name) ->
+                        match lookupBinding(name)(bindings) with
+                            | Some(CoreBinding { location = CoreLocal(slot), scheme = TypeScheme { body = fieldType } }) ->
+                                let resolved = resolveType(state)(fieldType)
+                                in
+                                    if name == "_" || resultSurvivesReset(resolved)(state) || resourceTypeNameOf(resolved)(state) != None || stateOwnedTypeNameOf(resolved)(state) == None
+                                    then later
+                                    else
+                                        match generalCopyPlanOf(resolved)(state) with
+                                            | Some(plan) -> (index, slot, resolved, plan) :: later
+                                            | None -> later
+                            | _ -> later
+                    | _ -> later
+
+// Each direct field owns a reference: the wrapper transfers it when unique, and keeps its
+// original reference when shared. The one entry test controls every field and the wrapper drop.
+let recursive retainSharedMatchFields (flagSlot: Int) (fields: List((Int, Int, SemanticType, ArgumentCopyPlan))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> state
+        | (_index, slot, fieldType, plan) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = unique } ->
+                    match freshLabel("rc_match_field_shared")(allocated) with
+                        | FreshLabel { state = labeled, label = shared } ->
+                            match freshLabel("rc_match_field_owned")(labeled) with
+                                | FreshLabel { state = branches, label = doneLabel } ->
+                                    match freshTemp(branches) with
+                                        | FreshTemp { state = loaded, temp = source } ->
+                                            match loaded
+                                            |> emit(LoadLocal(unique)(flagSlot))
+                                            |> emit(JumpIfFalse(unique)(shared))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(shared))
+                                            |> emit(LoadLocal(source)(slot))
+                                            |> emitArgumentCopy(source)(plan) with
+                                                | (copied, retained) ->
+                                                    copied
+                                                    |> emit(StoreLocal(slot)(retained))
+                                                    |> emit(Label(doneLabel))
+                                                    |> withStateRuntimeOwners((slot, true) :: stateRuntimeOwners(copied))
+                                                    |> withStateOwnerReleasePlans((slot, fieldType, OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None)) :: stateOwnerReleasePlans(copied))
+                                                    |> retainSharedMatchFields(flagSlot)(rest)
+
+let adoptMatchFields (ownerSlot: Int) (valueTemp: Int) (scrutineeType: SemanticType) (pattern: Pattern) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match (resolveType(state)(scrutineeType), reuseUnwrapPattern(pattern)) with
+        | (SemNamed(_symbol, _name, _arguments), PatternConstructor(constructor, patterns)) ->
+            match constructorLayout(constructor)(state) with
+                | Some(layout) ->
+                    if constructorArity(layout) != length(patterns)
+                    then state
+                    else
+                        match independentMatchFields(patterns)(0)(bindings)(state) with
+                            | [] -> state
+                            | fields ->
+                                match freshLocal(state) with
+                                    | FreshLocal { state = allocated, local = flagSlot } ->
+                                        match freshTemp(allocated) with
+                                            | FreshTemp { state = tested, temp = unique } ->
+                                                let indices =
+                                                    map(given (field) ->
+                                                        match field with
+                                                            | (index, _slot, _type, _plan) -> index)(fields)
+                                                in
+                                                    tested
+                                                    |> emit(RcIsUnique(unique)(valueTemp))
+                                                    |> emit(StoreLocal(flagSlot)(unique))
+                                                    |> withStateOwnerReleasePlans((ownerSlot, scrutineeType, OwnedReleasePlan(deepUnique = false, constructorName = Some(constructor), matchFieldTransfer = Some((flagSlot, indices)))) :: stateOwnerReleasePlans(tested))
+                                                    |> retainSharedMatchFields(flagSlot)(fields)
+                | None -> state
+        | _ -> state
+
+// A heap binding not independently owned by this arm aliases the scrutinee wrapper.
 let recursive aliasArmBindingsToOwner (ownerSlot: Int) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
     match bindings with
         | [] -> state
         | CoreBinding { location = CoreLocal(slot), scheme = TypeScheme { body = bindingType } } :: rest ->
-            if resultSurvivesReset(resolveType(state)(bindingType))(state)
+            if runtimeOwnerStateOf(slot)(state) == Some(true) || resultSurvivesReset(resolveType(state)(bindingType))(state)
             then aliasArmBindingsToOwner(ownerSlot)(rest)(state)
             else
                 state
@@ -1360,7 +1439,7 @@ let recursive aliasArmBindingsToOwner (ownerSlot: Int) (bindings: List(CoreBindi
 // Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: a plain variable pattern
 // owns the fresh scrutinee through its own slot, released at the arm exit like any owned
 // binding; any other arm that adopts the scrutinee stores it into an owner slot of its own
-// (`$match_rc_N`), released the same way, and its heap-typed bindings alias that owner.
+// before adopting eligible fields and aliasing the other heap bindings to it.
 let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pattern: Pattern) (outerBindings: List(CoreBinding)) (guarded: LoweredCoreValue) =
     match (owner, guarded) with
         | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList, scrutineeType = scrutineeType }), LoweredCoreValue { state = state, error = None }) ->
@@ -1375,19 +1454,14 @@ let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pa
                                 |> emit(StoreLocal(ownerSlot)(valueTemp))
                                 |> adoptScrutineeIntoSlot(ownerSlot)(valueTemp)(scrutineeType)
                                 |> (given (adopted: CoreLoweringState) ->
-                                    aliasArmBindingsToOwner(ownerSlot)(armBindings(length(adopted.bindings) - length(outerBindings))(adopted.bindings))(adopted))
+                                    let bindings = armBindings(length(adopted.bindings) - length(outerBindings))(adopted.bindings)
+                                    in
+                                        adopted
+                                        |> adoptMatchFields(ownerSlot)(valueTemp)(scrutineeType)(pattern)(bindings)
+                                        |> aliasArmBindingsToOwner(ownerSlot)(bindings))
                                 |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)(valueTemp)(scrutineeType)]))
                     else (guarded, [])
         | _ -> (guarded, [])
-
-// OPT-42 consumer hooks: hands a match's dead scrutinee cell to a same-name rebuild inside the
-// same arm as an arena/RC in-place-reuse token (`AshesCompiler.Semantics.ReuseSpecialization`
-// decides the structural safety; this file owns the state-threaded token bookkeeping and the
-// DropReuse/AllocReusing emission the runtime's own uniqueness check gates).
-let recursive reuseUnwrapPattern (pattern: Pattern) =
-    match pattern with
-        | PatternAt(_span, inner) -> reuseUnwrapPattern(inner)
-        | other -> other
 
 // The constructor a match case's pattern names, including a nullary constructor written as a
 // bare `PatternVar` — `None` for a wildcard, a literal, or any pattern that does not name one.
@@ -1819,7 +1893,6 @@ let letAliasesOwnedBinding (value: Expr) (state: CoreLoweringState) =
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | Some(CoreBinding { ownedRead = true }) -> true
-                | Some(CoreBinding { patternOwner = Some(_fact) }) -> true
                 | _ -> false
         | _ -> false
 
@@ -2126,11 +2199,15 @@ let lowerLet name value body lower state =
 
 // `lowerLet` for a value its annotation gives a closed type: the value, once lowered, is bound to
 // that type before the body is lowered against it.
-let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) lower state =
+let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) forwardAnnotation lower state =
     (let lowerValue =
         given (valueExpression) ->
             given (valueState) ->
                 valueState
+                |> (given (current: CoreLoweringState) ->
+                    if forwardAnnotation
+                    then withConsumerRequest((current.consumerRequest with expectedType = annotationType))(current)
+                    else current)
                 |> lower(valueExpression)
                 |> bindLoweredAnnotation(annotationType)
     in
@@ -2345,7 +2422,7 @@ let recursive slotAtOrdinal (ordinal: Int) (slots: List(Int)) =
 let recursive patternOwnerSitesOf (frame: CoreTcoLoopFrame) (insertCount: Int) (heldByTuple: Bool) (sites: List(PatternOwnerSite)) (bindings: List(CoreBinding)) =
     match bindings with
         | [] -> sites
-        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest ->
+        | CoreBinding { location = CoreLocal(slot), patternFact = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest when patternFactRequiresProtection(fact) ->
             match slotAtOrdinal(fact.rootParameterOrdinal)(frame.parameterSlots) with
                 | Some(rootSlot) -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(PatternOwnerSite(siteSlot = slot, siteRootSlot = rootSlot, siteInsertCount = insertCount, siteType = bindingType, siteFact = fact, siteHeldByTuple = heldByTuple) :: sites)(rest)
                 | None -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(sites)(rest)
@@ -2397,8 +2474,29 @@ let noteArmTupleBinders (heldByTuple: Bool) (pattern: Pattern) (slots: List(Mayb
         | (true, PatternTuple(parts), LoweredCorePattern { state = state, error = None }) -> patternResult with state = noteTupleBinderParameters(parts)(slots)(state)
         | _ -> patternResult
 
+// Fix each binder's lexical ownership when the pattern has unified with the scrutinee.
+// A type learned by a later call in the arm cannot retroactively create a scope owner.
+let recursive settlePatternReads count (bindings: List(CoreBinding)) state =
+    if count <= 0
+    then bindings
+    else
+        match bindings with
+            | [] -> []
+            | binding :: rest ->
+                let settled =
+                    match armOwnerOf(state)(binding) with
+                        | Some(_owner) -> binding
+                        | None -> binding with ownedRead = false
+                in settled :: settlePatternReads(count - 1)(rest)(state)
+
+let settleArmOwnership outerCount (result: LoweredCorePattern) =
+    match result with
+        | LoweredCorePattern { state = state, error = None } -> result with state = (state with bindings = settlePatternReads(length(state.bindings) - outerCount)(state.bindings)(state))
+        | _ -> result
+
 let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (scrutineeParameterSlots: List(Maybe(Int))) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
     match patternResult
+    |> settleArmOwnership(length(outerBindings))
     |> noteArmTupleBinders(scrutineeOwnerIsTuple(scrutineeOwner))(pattern)(scrutineeParameterSlots)
     |> registerPatternOwnerSites(outerBindings)(scrutineeOwnerIsTuple(scrutineeOwner))
     |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with

@@ -11,14 +11,26 @@ import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
+import AshesCompiler.Frontend.ModuleInterface.buildModuleInterface
+import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ModuleReferenceRewriting.rewriteStitchedModuleReferences
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrText
+import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ProjectSyntaxStitching
+import AshesCompiler.Semantics.ProjectInference.identifyStitchedProject
+import AshesCompiler.Semantics.ProjectInference.inferIdentifiedStitchedProjectFrom
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProgramInference.identifiedProgramSyntax
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ShippedModuleStitching
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
@@ -3079,7 +3091,7 @@ let testRunStaticExecutableForRealIrMatchNestedModule unit =
 // Compiles `buildModule`'s program through the complete pipeline (codegen, object emission,
 // linking), writes and runs the executable, and asserts its single line of stdout and a `0` exit —
 // the same steps every run test above performs inline.
-let assertProgramPrints buildModule name executablePath expectedLine =
+let assertProgramPrintsLine requireEnd buildModule name executablePath expectedLine =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
@@ -3098,10 +3110,20 @@ let assertProgramPrints buildModule name executablePath expectedLine =
                                             match Ashes.IO.Process.readStdoutLine(process) with
                                                 | None -> test.fail("expected one line of stdout from the linked executable, got none")
                                                 | Some(line) ->
-                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    let _ =
+                                                        if requireEnd
+                                                        then
+                                                            process
+                                                            |> Ashes.IO.Process.readStdoutLine
+                                                            |> test.assertEqual(None)
+                                                        else Unit
                                                     in
-                                                        let _ = test.assertEqual(expectedLine)(line)
-                                                        in test.assertEqual(0)(exitCode)
+                                                        let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                        in
+                                                            let _ = test.assertEqual(expectedLine)(line)
+                                                            in test.assertEqual(0)(exitCode)
+
+let assertProgramPrints buildModule name executablePath expectedLine = assertProgramPrintsLine(false)(buildModule)(name)(executablePath)(expectedLine)
 
 // `assertProgramPrints` with the executable invoked with `args`, so a program reading
 // `Ashes.IO.args` sees a real argument vector.
@@ -3513,7 +3535,7 @@ let recursive assertStdoutLines process expectedLines =
                     |> test.assertEqual(line)
                     |> (given (_) -> assertStdoutLines(process)(rest))
 
-let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
+let compileTestExecutable libraries buildModule name executablePath =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
@@ -3525,14 +3547,18 @@ let assertProgramPrintsLinesWithImports libraries buildModule name executablePat
                         | Ok(_) ->
                             match Ashes.IO.File.makeExecutable(executablePath) with
                                 | Error(message) -> test.fail(message)
-                                | Ok(_) ->
-                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
-                                        | Error(message) -> test.fail(message)
-                                        | Ok(process) ->
-                                            expectedLines
-                                            |> assertStdoutLines(process)
-                                            |> Ashes.IO.Process.waitForExit
-                                            |> test.assertEqual(0)
+                                | Ok(_) -> Unit
+
+let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
+    (let _ = compileTestExecutable(libraries)(buildModule)(name)(executablePath)
+    in
+        match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+            | Error(message) -> test.fail(message)
+            | Ok(process) ->
+                expectedLines
+                |> assertStdoutLines(process)
+                |> Ashes.IO.Process.waitForExit
+                |> test.assertEqual(0))
 
 let assertProgramPrintsLines buildModule name executablePath expectedLines = assertProgramPrintsLinesWithImports([])(buildModule)(name)(executablePath)(expectedLines)
 
@@ -3808,17 +3834,41 @@ let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assert
 
 // `codegenShippedSource` with `IrOptimizer` run in between, as the real compile pipeline does for
 // a program using the standard library.
-let codegenOptimizedShippedSource shipped source name context =
+let codegenOptimizedShippedSourceUsing lower dumpPath shipped source name context =
     match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
         | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
-        | Ok(StitchedSyntaxProject { program = program }) ->
-            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+        | Ok(stitched) ->
+            match lower(name + ".ash")(source)(stitched) with
                 | CoreLoweringResult { program = Some(lowered), error = None } ->
-                    lowered
-                    |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
-                    |> codegenProgram(name)(context)
+                    let _ =
+                        match dumpPath with
+                            | None -> Unit
+                            | Some(path) ->
+                                match Ashes.IO.File.writeText(path)(Ashes.Text.join("\n")(formatIr(lowered)(LoweredIr)(None)) + "\n") with
+                                    | Ok(_) -> Unit
+                                    | Error(message) -> test.fail("could not write " + path + ": " + message)
+                    in
+                        lowered
+                        |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+                        |> codegenProgram(name)(context)
                 | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
                 | _ -> test.fail("lowering produced no program")
+
+let lowerRawFixture path source (stitched: StitchedSyntaxProject) = lowerCoreProgramWithSource(path)(source)(stitched.program)
+
+let lowerNumberedFixture path source stitched =
+    (let identified = identifyStitchedProject(stitched)
+    in
+        match inferIdentifiedStitchedProjectFrom("standalone"
+        |> emptyTypeEnvironmentForPackage
+        |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+            | ProgramInferenceResult { error = Some(error) } -> test.fail("numbered fixture inference failed: " + Ashes.Trait.Show.show(error))
+            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program))(table))
+
+let codegenOptimizedShippedSourceWithDump dumpPath shipped source name context = codegenOptimizedShippedSourceUsing(lowerRawFixture)(dumpPath)(shipped)(source)(name)(context)
+
+let codegenOptimizedShippedSource shipped source name context = codegenOptimizedShippedSourceWithDump(None)(shipped)(source)(name)(context)
 
 // The end-to-end regression programs shared with stage 0 under `tests/` (relative to the
 // repository root the suite runs from), compiled verbatim: their leading `// expect:` directive
@@ -3830,6 +3880,170 @@ let sharedTestSource path =
 
 let buildSharedTestModule shipped path name context =
     codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
+
+let assertSharedProgramPrintsExactly shipped fixture expected =
+    assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("tests/" + fixture + ".ash"))(fixture)("selfhost_backend_" + fixture)(expected)
+
+let testRunGenericAddReadingTopLevelValue shipped unit = assertSharedProgramPrintsExactly(shipped)("generic_add_binding_reading_top_level_value_used_at_int_and_float")("12 4.5")
+
+let testRunTraitGoalsSettledAtBinding shipped unit = assertSharedProgramPrintsExactly(shipped)("trait_goals_of_generic_binding_used_at_one_type_settled_at_site")("41 yes")
+
+let testRunLaterSiblingBesideFreshTupleArm shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursion_later_sibling_result_beside_fresh_tuple_arm")("306")
+
+let testRunConstrainedPartialDeclaredArithmetic shipped unit = assertSharedProgramPrintsExactly(shipped)("constrained_partial_uses_declared_arithmetic_methods")("-1 17")
+
+let testListEqualityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
+
+let assertNumberedFixturePrints shipped fixture expected =
+    (let build =
+        "tests/" + fixture + ".ash"
+        |> sharedTestSource
+        |> codegenOptimizedShippedSourceUsing(lowerNumberedFixture)(None)(shipped)
+    in assertProgramPrintsLine(true)(build)(fixture)("selfhost_backend_numbered_" + fixture)(expected))
+
+// The archived direct-lowering input carries an already flattened Names_collect declaration.
+// Supply its one qualified export to the same reference rewriter used by module stitching.
+let resolveArchivedCallee (unit: SemanticStitchUnit) =
+    match buildStitchedSemanticProject([unit]) with
+        | Ok(StitchedSemanticProject { scopes = scope :: [] } as project) ->
+            let boundary = Ashes.Collection.List.length(scope.definitions)
+            in
+                match resolveStitchedUnqualified(unit.name)(boundary)(StitchedValue)("Names_collect")(project) with
+                    | Some(StitchedDefinition { compilerName = "Names_collect" } as target) ->
+                        let exported = target with sourceName = "collect", qualifiedName = "Names.collect", moduleName = "Names", exported = true
+                        in
+                            let members = Ashes.Collection.Map.setStr("collect")([exported])(Ashes.Collection.Map.empty)
+                            in
+                                let qualified = Ashes.Collection.Map.setStr("Names")([members])(scope.qualifiedImportsByQualifier)
+                                in
+                                    let mappedScope = scope with qualifiedImportsByQualifier = qualified
+                                    in
+                                        let resolved = rewriteStitchedModuleReferences((project with scopes = [mappedScope]))(unit)
+                                        in resolved.program
+                    | _ -> test.fail("missing flattened Names_collect declaration")
+        | _ -> test.fail("could not index archived lowering input")
+
+let buildArchivedQualifiedCallee name context =
+    (let path = "selfhost/tests/backend/fixtures/qualified_callee_fifty_rounds.ash.source"
+    in
+        let source = sharedTestSource(path)
+        in
+            match parseProgram(source) with
+                | ProgramParseResult { program = program, diagnostics = [] } ->
+                    match buildModuleInterface(name)([])(program) with
+                        | Ok(interface) ->
+                            let unit = SemanticStitchUnit(name = name, packageId = "app", sourcePath = path, imports = [], interface = interface, program = program, isEntry = true)
+                            in
+                                match unit
+                                |> resolveArchivedCallee
+                                |> lowerCoreProgramWithSource(path)(source) with
+                                    | CoreLoweringResult { program = Some(lowered), error = None } ->
+                                        lowered
+                                        |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+                                        |> codegenProgram(name)(context)
+                                    | CoreLoweringResult { error = error } -> test.fail("archived callee lowering failed: " + Ashes.Trait.Show.show(error))
+                        | Error(_error) -> test.fail("could not index archived source declarations")
+                | _ -> test.fail("could not parse archived callee source"))
+
+let testOriginalTmcAccumulators shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("tmc_dedup_with_grown_seen_accumulator")("p1,p2,p3")
+    in
+        let _ = assertSharedProgramPrintsExactly(shipped)("qualified_module_call_fresh_list_argument_released")("21")
+        in assertProgramPrintsLine(true)(buildArchivedQualifiedCallee)("qualifiedCalleeFiftyRounds")("selfhost_backend_qualified_callee_fifty_rounds")("300"))
+
+let testOriginalOperatorEvidence shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("logical_not_inferred_predicates")("true|true|1")
+    in
+        let _ = assertSharedProgramPrintsExactly(shipped)("empty_list_equality_lambdas_at_two_element_types")("no no yes")
+        in
+            assertProgramPrintsLine(true)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/empty_list_equality_distinct_element_types.ash.source"))("emptyListEqualityDistinctElementTypes")("selfhost_backend_empty_list_equality_distinct_element_types")("no"))
+
+let testOriginalMatchedFieldOwnership shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("matched_option_field_consed_into_call_argument_released_once")("1-2 10-11 1-2")
+    in assertSharedProgramPrintsExactly(shipped)("match_shared_constructor_keeps_field_references")("left1:right1/left1:right1/left2:right2"))
+
+let testOriginalCapturedDictionaries shipped unit =
+    (let _ = assertSharedProgramPrintsExactly(shipped)("escaping_constrained_partial_keeps_its_captured_evidence")("passed")
+    in
+        let _ =
+            assertProgramPrintsWithArgs(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/escaping_dictionary_rounds.ash.source"))("escapingDictionaryRounds")("selfhost_backend_escaping_dictionary_rounds")(["1000"])("passed")
+        in
+            let _ = assertSharedProgramPrintsExactly(shipped)("constrained_partial_forwards_show_evidence")("n=42 n=true")
+            in assertSharedProgramPrintsExactly(shipped)("constrained_function_uses_helper_from_its_definition")("first"))
+
+let testReturnedAssociationListElement shipped unit = assertSharedProgramPrintsExactly(shipped)("as_pattern_element_returned_from_consumed_list")("0:2/0 1:2/1 2:2/2")
+
+let testNumberedGenericAddReturnsList shipped unit = assertNumberedFixturePrints(shipped)("generic_add_binding_reading_top_level_value_returns_list_at_int_and_float")("12,4 4.5,1.5")
+
+let testNumberedGenericAddReadingTopLevelValue shipped unit = assertNumberedFixturePrints(shipped)("generic_add_binding_reading_top_level_value_used_at_int_and_float")("12 4.5")
+
+let testNumberedListEqualityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_equality_uses_ambient_element_dictionary")("yes no")
+
+let testListInequalityUsesAmbientElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
+
+let testNumberedListInequalityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
+
+let testRecursiveReportShow shipped unit = assertSharedProgramPrintsExactly(shipped)("recursive_report_uses_each_values_show_dictionary")("Some(7):operand:42|Some(7):operand:true")
+
+let testNumberedRecursiveReportShow shipped unit = assertNumberedFixturePrints(shipped)("recursive_report_uses_each_values_show_dictionary")("Some(7):operand:42|Some(7):operand:true")
+
+let testAwaitingReportShow shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_report_keeps_typed_show_dictionaries")("Some(3):custom:5|Some(3):custom:false")
+
+let testNumberedAwaitingReportShow shipped unit = assertNumberedFixturePrints(shipped)("awaiting_report_keeps_typed_show_dictionaries")("Some(3):custom:5|Some(3):custom:false")
+
+let testResultDirectedSeed shipped unit = assertSharedProgramPrintsExactly(shipped)("result_directed_method_uses_concrete_and_supplied_evidence")("17/17/yes")
+
+let testNumberedResultDirectedSeed shipped unit = assertNumberedFixturePrints(shipped)("result_directed_method_uses_concrete_and_supplied_evidence")("17/17/yes")
+
+let testEnclosingEagerSeed shipped unit = assertSharedProgramPrintsExactly(shipped)("local_eager_seed_uses_evidence_of_its_enclosing_function")("Int|true Bool|true")
+
+let testNumberedEnclosingEagerSeed shipped unit = assertNumberedFixturePrints(shipped)("local_eager_seed_uses_evidence_of_its_enclosing_function")("Int|true Bool|true")
+
+let testCustomMethodValue shipped unit = assertSharedProgramPrintsExactly(shipped)("custom_method_value_selects_dictionary_from_argument_type")("tag:tag:int|tag:tag:bool")
+
+let testNumberedCustomMethodValue shipped unit = assertNumberedFixturePrints(shipped)("custom_method_value_selects_dictionary_from_argument_type")("tag:tag:int|tag:tag:bool")
+
+let testMutualTreeRewriteChecksEmptyAliases shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursive_tree_rewrite_checks_empty_aliases")("prefixx x")
+
+let testRunMutualShowDictionariesAtCalls shipped unit = assertSharedProgramPrintsExactly(shipped)("mutually_recursive_show_functions_keep_dictionary_at_call_sites")("42 true")
+
+let testRunForwardedPartialPrefix shipped unit = assertSharedProgramPrintsExactly(shipped)("forwarded_partial_runs_callee_prefix_before_next_binding")("entered|bound|v=42 v=true")
+
+let testRunAmbientEvidenceInPartialPrefix shipped unit = assertSharedProgramPrintsExactly(shipped)("partial_uses_ambient_evidence_during_binding_evaluation")("7|7 true")
+
+// Both programs bind port zero to obtain a private listener. dup(1) reuses the
+// lowest open descriptor slot, exposing a second close of a transferred socket.
+let testSocketCaptureTeardown shipped unit =
+    (let imports = [("dup", "libc.so.6"), ("close", "libc.so.6")]
+    in
+        let run name lines =
+            assertProgramPrintsLinesWithImports(imports)(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/" + name + ".ash.source"))(name)("selfhost_backend_" + name + "_e2e")(lines)
+        in
+            let _ = run("socket_capture_close")(["true", "true"])
+            in run("socket_capture_cancel")(["true"]))
+
+let testSocketHelperTeardown shipped unit =
+    assertProgramPrintsLinesWithImports([("dup", "libc.so.6"), ("close", "libc.so.6")])(buildSharedTestModule(shipped)("selfhost/tests/backend/fixtures/socket_helper_teardown.ash.source"))("socketHelperTeardown")("selfhost_backend_socket_helper_teardown")(["true", "true"])
+
+let testIndirectAwaitingHelperCarriesStringAcrossRestart shipped unit = assertSharedProgramPrintsExactly(shipped)("indirect_awaiting_helper_carries_string_across_restart")("p21|q321")
+
+let testAwaitingListInequalityKeepsElementDictionary shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_list_inequality_keeps_element_dictionary")("no yes")
+
+let testAsyncLoopAccumulator shipped unit = assertSharedProgramPrintsExactly(shipped)("async_loop_accumulator")("15")
+
+let testAwaitingHelperKeepsOwnedBackedgeValues shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_helper_keeps_owned_backedge_values")("2=1=seed")
+
+let testRecursiveAwaitingHelperRemainsCallable shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_remains_callable.ash"))("recursiveAwaitingHelperRemainsCallable")("selfhost_backend_recursive_awaiting_helper")("62")
+
+let testCompileConcurrentHttpServerForReplay shipped unit =
+    (let executable = "selfhost_backend_concurrent_http_server"
+    in
+        let build =
+            "selfhost/tests/backend/fixtures/concurrent_http_server.ash.source"
+            |> sharedTestSource
+            |> codegenOptimizedShippedSourceWithDump(Some(executable + ".lowered.ir"))(shipped)
+        in compileTestExecutable([])(build)("concurrentHttpServer")(executable))
 
 let annotatedCallbackSource rounds =
     (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
@@ -3863,6 +4077,9 @@ let testRunSharedTcoNonTailSelfCallInOperatorOperand shipped unit =
     |> showAsFromInt
     |> codegenOptimizedShippedSource(shipped))("selfhostBackendRunSharedTcoOperatorOperand")("selfhost_backend_shared_tco_operator_operand_e2e")("2 2 2 4 1 1")
 
+let testRecursiveAwaitingHelperPreservesDeclaredResults shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/recursive_awaiting_helper_preserves_declared_results.ash"))("recursiveAwaitingHelperPreservesDeclaredResults")("selfhost_backend_recursive_helper_declared_results")("43")
+
 let testRunSharedTcoLetAliasOfRcParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_alias_of_rc_parameter.ash"))("selfhostBackendRunSharedTcoLetAlias")("selfhost_backend_shared_tco_let_alias_e2e")("xxxxx|abcdefghij|Abc.DeAd.1bc|---|A.B.C.D.E.A.B.C.D.E.A.B.C.D.E")
 
@@ -3875,6 +4092,22 @@ let testRunTcoScalarLoopFixture shipped unit =
 
 let testRunTcoListWalkFixture shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("selfhost/parity/semantics/lowered-ir/tco_list_walk.source"))("selfhostBackendRunTcoListWalk")("selfhost_backend_tco_list_walk_e2e")("3015")
+
+let assertOwnershipFixture shipped directory suffix fixture expected unit =
+    assertProgramPrints(buildSharedTestModule(shipped)(directory + "/" + fixture + suffix))(fixture)("selfhost_backend_" + fixture + "_e2e")(expected)
+
+let testRunOwnershipFixtures shipped unit =
+    (let parity = assertOwnershipFixture(shipped)("selfhost/parity/semantics/lowered-ir")(".source")
+    in
+        unit
+        |> parity("generic_collection_loop_reuses_matched_accumulator")("1")
+        |> parity("collection_threaded_through_helper_releases_by_slot")("1")
+        |> parity("non_tail_self_call_list_result")("1")
+        |> parity("spine_cell_head_bound_by_let_releases_its_binding")("5")
+        |> parity("aggregate_borrowing_owner_kept_by_callee")("1")
+        |> parity("producer_conses_nested_variant_head")("4")
+        |> parity("record_head_list_producer")("2")
+        |> assertOwnershipFixture(shipped)("tests")(".ash")("tail_call_scalar_shadowing_another_arms_list_tail")("7"))
 
 let testRunSharedTcoUnusedChainParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_unused_chain_parameter.ash"))("selfhostBackendRunSharedTcoUnusedChainParameter")("selfhost_backend_shared_tco_unused_chain_parameter_e2e")("0")
@@ -5182,6 +5415,283 @@ let buildRcClosureDropModule name context =
         |> (given (entryFunction) -> handBuiltProgram(entryFunction)([closureFunction]))
         |> codegenProgram(name)(context))
 
+// Inspect the same-size cache through its next allocation. AllocAdt writes the new
+// tag and header but leaves the field for its caller to initialize.
+let buildReallocatedPoisonedCell name context =
+    [
+        42
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        None
+        |> RcDrop(1)("Cell")(0)(true)(false)
+        |> irOf,
+        false
+        |> AllocAdt(2)(1)(1)(true)
+        |> irOf,
+        false
+        |> GetAdtField(3)(2)(0)
+        |> irOf,
+        irOf(PrintInt(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        irOf(Return(0))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(4))
+    |> (given (entryFunction) -> codegenEntryFunction(name)(context)(entryFunction)([]))
+
+let testReallocatedPoisonedCell unit =
+    match Ashes.IO.Environment.get("ASHES_RC_POISON") with
+        | Ok(Some("1")) -> assertProgramPrints(buildReallocatedPoisonedCell)("poisonedCell")("selfhost_backend_poisoned_cell_e2e")("-2459565876494606883")
+        | _ -> Unit
+
+let moduleIrText build name =
+    (let context = contextCreate(Unit)
+    in
+        match build(name)(context) with
+            | (module_, builder) ->
+                let rendered = printModuleToString(module_)
+                in
+                    let _ = disposeBuilder(builder)
+                    in
+                        let _ = disposeModule(module_)
+                        in
+                            let _ = contextDispose(context)
+                            in
+                                match rendered with
+                                    | Error(message) -> test.fail(message)
+                                    | Ok(text) -> text)
+
+let testRcReleaseInstrumentation unit =
+    (let expected =
+        match Ashes.IO.Environment.get("ASHES_RC_POISON") with
+            | Ok(Some("1")) -> true
+            | _ -> false
+    in
+        let text = moduleIrText(buildRcDupDropModule)("rcReleaseInstrumentation")
+        in
+            let _ =
+                "call void @__ashes_rc_release_poison("
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(expected)
+            in
+                "ptr align 1 %rc_poison_ptr, i8 -35, i64 %rc_poison_size"
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(expected))
+
+let testServerShutdownFinishesSpawnedHandler shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/server_shutdown_finishes_spawned_handler.ash"))("serverShutdownFinishesSpawnedHandler")("selfhost_backend_server_shutdown_finishes_spawned_handler")("handler drained")
+
+let testServerShutdownBoundsUnfinishedHandler shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/server_shutdown_bounds_unfinished_handler.ash"))("serverShutdownBoundsUnfinishedHandler")("selfhost_backend_server_shutdown_bounds_unfinished_handler")("bounded")
+
+let testForkedServerWorkerIndex shipped unit =
+    (let source = "import Ashes.Net.Tcp.Server\nimport Ashes.Task\nexternal type WaitStatus\nexternal waitChild(FfiBuffer(WaitStatus)) -> u32 = \"wait@libc.so.6\"\nmatch Ashes.Task.run(Ashes.Net.Tcp.Server.forkWorkers(0)(2)) with\n    | Ok(0) -> let pid = waitChild([]) in Ashes.IO.print(pid != 0u32 && pid != 4294967295u32)\n    | Ok(index) -> Ashes.IO.print(index)\n    | Error(message) -> Ashes.IO.print(message)"
+    in
+        assertProgramPrintsLinesWithImports([("wait", "libc.so.6")])(codegenOptimizedShippedSource(shipped)(source))("forkedServerWorkerIndex")("selfhost_backend_server_worker_index")(["1", "true"]))
+
+let testServerStopSignals unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                0
+                |> LoadConstInt(0)
+                |> irOf,
+                1
+                |> LoadConstInt(1)
+                |> irOf,
+                1
+                |> CreateForkWorkersTask(2)(0)
+                |> irOf,
+                2
+                |> RunTask(3)
+                |> irOf,
+                false
+                |> GetAdtField(4)(3)(0)
+                |> irOf,
+                irOf(RequestServerStop(5)),
+                irOf(PrintInt(4)),
+                irOf(RequestServerStop(6)),
+                "s0"
+                |> LoadConstStr(7)
+                |> irOf,
+                irOf(PanicStr(7))
+            ])(0)(8)
+        in codegenEntryFunction(name)(context)(entry)([IrStringLiteral(label = "s0", value = "second stop returned")])
+    in assertProgramPrints(build)("serverStopSignals")("selfhost_backend_server_stop_signals")("0"))
+
+// Seed the detected CPU count before linking so even a broken override can fork at most one child.
+external lookupWorkerCapGlobal(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedGlobal@libLLVM.so"
+
+let testAutomaticServerWorkerOverride unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                0
+                |> LoadConstInt(0)
+                |> irOf,
+                1
+                |> LoadConstInt(1)
+                |> irOf,
+                irOf(StoreParallelWorkerOverride(1)),
+                0
+                |> CreateForkWorkersTask(2)(0)
+                |> irOf,
+                2
+                |> RunTask(3)
+                |> irOf,
+                false
+                |> GetAdtField(4)(3)(0)
+                |> irOf,
+                ExternalAbiUInt(32)
+                |> CallExternal(5)("wait")(Some("libc.so.6"))([0])([ExternalAbiPointer(ExternalAbiUInt(32))])
+                |> irOf,
+                4294967295
+                |> LoadConstInt(6)
+                |> irOf,
+                6
+                |> CmpIntEq(7)(5)
+                |> irOf,
+                irOf(PrintInt(4)),
+                irOf(PrintBool(7)),
+                irOf(Return(0))
+            ])(0)(8)
+        in
+            match codegenEntryFunction(name)(context)(entry)([]) with
+                | (module_, builder) ->
+                    match printModuleToString(module_) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(text) ->
+                            let _ =
+                                "@__ashes_parallel_cap = internal global i64 0"
+                                |> Ashes.Text.contains(text)
+                                |> test.assertEqual(true)
+                            in
+                                let cap = lookupWorkerCapGlobal(module_)("__ashes_parallel_cap")
+                                in
+                                    let _ =
+                                        false
+                                        |> constInt(int64Type(context))(2u64)
+                                        |> setInitializer(cap)
+                                    in (module_, builder)
+    in assertProgramPrintsLinesWithImports([("wait", "libc.so.6")])(build)("automaticServerWorkerOverride")("selfhost_backend_server_worker_override")(["0", "true"]))
+
+let testServerDrainTimeoutSetting unit =
+    (let build name context =
+        let entry =
+            handBuiltEntryFunction(name)([
+                17
+                |> LoadConstInt(0)
+                |> irOf,
+                0
+                |> SetDrainTimeout(1)
+                |> irOf,
+                29
+                |> LoadConstInt(2)
+                |> irOf,
+                2
+                |> SetDrainTimeout(3)
+                |> irOf,
+                irOf(Return(3))
+            ])(0)(4)
+        in codegenEntryFunction(name)(context)(entry)([])
+    in
+        let text = moduleIrText(build)("serverDrainTimeout")
+        in
+            let _ =
+                "@__ashes_drain_timeout_ms = internal global i64 10000"
+                |> Ashes.Text.contains(text)
+                |> test.assertEqual(true)
+            in
+                let _ =
+                    "store i64 17, ptr @__ashes_drain_timeout_ms,"
+                    |> Ashes.Text.contains(text)
+                    |> test.assertEqual(true)
+                in
+                    "store i64 29, ptr @__ashes_drain_timeout_ms,"
+                    |> Ashes.Text.contains(text)
+                    |> test.assertEqual(true))
+
+// The coroutine and teardown both take the task pointer in environment local 0.
+// Reaping the same completed task again must not run its teardown again.
+let testExplicitTaskFrameDropper unit =
+    (let coroutine =
+        handBuiltLiftedFunction("frame_step")([
+            0
+            |> LoadLocal(0)
+            |> irOf,
+            -1
+            |> LoadConstInt(1)
+            |> irOf,
+            1
+            |> StoreMemOffset(0)(0)
+            |> irOf,
+            1
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(Return(2))
+        ])(2)(3)
+    in
+        let dropper =
+            handBuiltLiftedFunction("frame_cleanup")([
+                0
+                |> LoadLocal(0)
+                |> irOf,
+                160
+                |> LoadMemOffset(1)(0)
+                |> irOf,
+                irOf(PrintInt(1)),
+                irOf(Return(1))
+            ])(2)(2)
+        in
+            let entry =
+                [
+                    42
+                    |> LoadConstInt(0)
+                    |> irOf,
+                    false
+                    |> Alloc(1)(8)
+                    |> irOf,
+                    0
+                    |> StoreMemOffset(1)(0)
+                    |> irOf,
+                    false
+                    |> MakeClosure(2)("frame_step")(1)(8)(false)(false)(false)
+                    |> irOf,
+                    false
+                    |> CreateTask(3)(2)(168)(1)(Some("frame_cleanup"))
+                    |> irOf,
+                    3
+                    |> RunTask(4)
+                    |> irOf,
+                    3
+                    |> RunTask(5)
+                    |> irOf,
+                    false
+                    |> CreateTask(6)(2)(168)(1)(None)
+                    |> irOf,
+                    6
+                    |> RunTask(7)
+                    |> irOf,
+                    7
+                    |> LoadConstInt(8)
+                    |> irOf,
+                    irOf(PrintInt(8)),
+                    irOf(Return(8))
+                ]
+            in
+                let build name context =
+                    [coroutine, dropper]
+                    |> handBuiltProgram(handBuiltEntryFunction(name)(entry)(0)(9))
+                    |> codegenProgram(name)(context)
+                in assertProgramPrintsLines(build)("explicitTaskFrameDropper")("selfhost_backend_frame_dropper_e2e")(["42", "7"]))
+
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
 let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["true", "false", "false", "5"])
@@ -5900,8 +6410,10 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunSharedTcoNonTailSelfCallInOperatorOperand(shipped)
     |> testRunSharedTcoLetAliasOfRcParameter(shipped)
+    |> testRecursiveAwaitingHelperPreservesDeclaredResults(shipped)
     |> testRunTcoScalarLoopFixture(shipped)
     |> testRunTcoListWalkFixture(shipped)
+    |> testRunOwnershipFixtures(shipped)
     |> testRunSharedTcoUnusedChainParameter(shipped)
     |> testRunSharedTcoGenericCurriedHelperResult(shipped)
     |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
@@ -5926,6 +6438,35 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
     |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
+    |> testRunGenericAddReadingTopLevelValue(shipped)
+    |> testOriginalTmcAccumulators(shipped)
+    |> testOriginalOperatorEvidence(shipped)
+    |> testOriginalMatchedFieldOwnership(shipped)
+    |> testOriginalCapturedDictionaries(shipped)
+    |> testReturnedAssociationListElement(shipped)
+    |> testNumberedGenericAddReadingTopLevelValue(shipped)
+    |> testNumberedGenericAddReturnsList(shipped)
+    |> testRunTraitGoalsSettledAtBinding(shipped)
+    |> testRunLaterSiblingBesideFreshTupleArm(shipped)
+    |> testRunConstrainedPartialDeclaredArithmetic(shipped)
+    |> testRunMutualShowDictionariesAtCalls(shipped)
+    |> testListEqualityUsesAmbientElementDictionary(shipped)
+    |> testNumberedListEqualityUsesAmbientElementDictionary(shipped)
+    |> testRecursiveReportShow(shipped)
+    |> testNumberedRecursiveReportShow(shipped)
+    |> testAwaitingReportShow(shipped)
+    |> testNumberedAwaitingReportShow(shipped)
+    |> testResultDirectedSeed(shipped)
+    |> testNumberedResultDirectedSeed(shipped)
+    |> testEnclosingEagerSeed(shipped)
+    |> testNumberedEnclosingEagerSeed(shipped)
+    |> testCustomMethodValue(shipped)
+    |> testNumberedCustomMethodValue(shipped)
+    |> testListInequalityUsesAmbientElementDictionary(shipped)
+    |> testNumberedListInequalityUsesAmbientElementDictionary(shipped)
+    |> testMutualTreeRewriteChecksEmptyAliases(shipped)
+    |> testRunForwardedPartialPrefix(shipped)
+    |> testRunAmbientEvidenceInPartialPrefix(shipped)
     |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedCurriedLoopCapturingRecordWithOwnedChild(shipped)
@@ -5993,6 +6534,23 @@ let run shipped =
     |> testCopyOutListScopedInline
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
+    |> testRcReleaseInstrumentation
+    |> testForkedServerWorkerIndex(shipped)
+    |> testServerShutdownFinishesSpawnedHandler(shipped)
+    |> testServerShutdownBoundsUnfinishedHandler(shipped)
+    |> testServerStopSignals
+    |> testAutomaticServerWorkerOverride
+    |> testServerDrainTimeoutSetting
+    |> testReallocatedPoisonedCell
+    |> testExplicitTaskFrameDropper
+    |> testSocketCaptureTeardown(shipped)
+    |> testSocketHelperTeardown(shipped)
+    |> testAwaitingHelperKeepsOwnedBackedgeValues(shipped)
+    |> testAsyncLoopAccumulator(shipped)
+    |> testAwaitingListInequalityKeepsElementDictionary(shipped)
+    |> testIndirectAwaitingHelperCarriesStringAcrossRestart(shipped)
+    |> testRecursiveAwaitingHelperRemainsCallable(shipped)
+    |> testCompileConcurrentHttpServerForReplay(shipped)
     |> testRcDupDrop
     |> testIsReferenceCounted
     |> testImmortalNullary

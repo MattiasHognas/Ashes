@@ -27,7 +27,7 @@ export (
     value buildStitchedSemanticProject,
     value resolveStitchedUnqualified,
     value resolveStitchedQualified,
-    value resolveStitchedShippedType,
+    value resolveStitchedUnimported,
     value resolveStitchedModuleAlias,
     value resolveStitchedIntrinsicSelector,
     value stitchedModulePlainImports,
@@ -1039,27 +1039,27 @@ let resolveShippedModuleExport qualifier kind name (project: StitchedSemanticPro
                         |> Some
     else None
 
-// A type a shipped module exports is in scope by its bare name wherever the program reaches that
-// module, imported or not, as stage 0's one type namespace holds every loaded standard-library
-// type: `MapTree(Str, Bool)` names the map type in a program that reaches `Ashes.Collection.Map`
-// through qualified references alone.
-let recursive resolveShippedTypeIn name (scopes: List(StitchedModuleScope)) =
+// An exported type or constructor (`kind`) of a module other than `moduleName` that answers to a
+// name `moduleName` does not import. An exported type or constructor of a user module keeps its
+// source name as its compiler name, so a name left as written would reach it in a module that
+// does not import it; the reference rewriter marks such a name instead.
+let recursive unimportedDefinitionIn moduleName kind name (scopes: List(StitchedModuleScope)) =
     match scopes with
         | [] -> None
         | moduleScope :: rest ->
-            if Ashes.Text.startsWith(moduleScope.name)("Ashes.")
-            then
+            if moduleScope.name == moduleName
+            then unimportedDefinitionIn(moduleName)(kind)(name)(rest)
+            else
                 match moduleScope.definitionsBySourceName
                 |> definitionsNamed(name)
-                |> findExportedDefinition(name)(StitchedType) with
+                |> findExportedDefinition(name)(kind) with
                     | Some(definition) ->
-                        if definition.kind == StitchedType
+                        if definition.kind == kind
                         then Some(definition)
-                        else resolveShippedTypeIn(name)(rest)
-                    | None -> resolveShippedTypeIn(name)(rest)
-            else resolveShippedTypeIn(name)(rest)
+                        else unimportedDefinitionIn(moduleName)(kind)(name)(rest)
+                    | None -> unimportedDefinitionIn(moduleName)(kind)(name)(rest)
 
-let resolveStitchedShippedType name (project: StitchedSemanticProject) = resolveShippedTypeIn(name)(project.scopes)
+let resolveStitchedUnimported moduleName kind name (project: StitchedSemanticProject) = unimportedDefinitionIn(moduleName)(kind)(name)(project.scopes)
 
 // A file reaches its own inline modules by qualified path with no import (`Geometry.area` in the
 // file that declares `module Geometry =`). Their scopes are named `<file>#<module>`.

@@ -184,13 +184,13 @@ static byte[] CompileToImage(
         new LoweringConfiguration(
             EnableReuse: !disableReuse,
             EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization,
-            CollectHoverTypes: false));
+            CollectHoverTypes: false, AllowFlattenedQualifiedValues: false));
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);
     }
 
-    var ir = CompilePhaseTiming.Measure("lower", () => lowering.Lower(program));
+    var ir = CompilePhaseTiming.Measure("lower", () => lowering.LowerExecutable(program));
     diag.ThrowIfAny();
 
     WriteIrDump(emitIr, IrDumpStage.Lowered, ir);
@@ -487,7 +487,7 @@ static bool TryAnalyzeReplSubmission(IReadOnlyList<ReplBinding> bindings, string
         var program = new Parser(compositeSource, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var lowering = new Lowering(diag);
+        var lowering = new Lowering(diag, configuration: new LoweringConfiguration(AllowFlattenedQualifiedValues: false));
         lowering.Lower(program);
         diag.ThrowIfAny();
 

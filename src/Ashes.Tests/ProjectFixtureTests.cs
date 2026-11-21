@@ -53,11 +53,7 @@ public sealed class ProjectFixtureTests
                 var ast = new Parser(layout.Source, diag).ParseProgram();
                 diag.ThrowIfAny();
 
-                _ = new Lowering(
-                    diag,
-                    plan.ImportedStdModules,
-                    plan.MergedAliases,
-                    layout.ConstructorModules).Lower(ast);
+                _ = LowerProject(layout, plan, diag, ast);
                 diag.ThrowIfAny();
             });
 
@@ -110,6 +106,23 @@ public sealed class ProjectFixtureTests
         return (expected, compileError);
     }
 
+    // The lowering as the CLI runs it: with the layout's source context, which gives every stitched
+    // declaration its module, so a derived implementation names the standard trait it implements.
+    private static IrProgram LowerProject(
+        CombinedCompilationLayout layout,
+        ProjectCompilationPlan plan,
+        Diagnostics diagnostics,
+        Ashes.Frontend.Program ast)
+    {
+        Lowering lowering = new(
+            diagnostics,
+            plan.ImportedStdModules,
+            plan.MergedAliases,
+            layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+        return lowering.Lower(ast);
+    }
+
     private static async Task<string> CompileRunCaptureAsync(
         CombinedCompilationLayout layout,
         ProjectCompilationPlan plan)
@@ -118,11 +131,7 @@ public sealed class ProjectFixtureTests
         var ast = new Parser(layout.Source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(
-            diag,
-            plan.ImportedStdModules,
-            plan.MergedAliases,
-            layout.ConstructorModules).Lower(ast);
+        var ir = LowerProject(layout, plan, diag, ast);
         diag.ThrowIfAny();
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-project-fixtures");

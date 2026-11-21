@@ -589,7 +589,7 @@ let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (s
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeOwnedAggregateReleaseIndexed(listTemp)(elementType
             |> resolveType(state)
-            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | (None, queryContext) -> withStateDropperContext(queryContext)(state)
                 | (Some(synthesis), _queryContext) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
 
@@ -628,7 +628,7 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | (None, queryContext) ->
                             state
                             |> withStateDropperContext(queryContext)
@@ -835,6 +835,9 @@ let emitClosureCaptureDrop (capturedTemp: Int) (resolved: SemanticType) (state: 
             emit(RcDrop(capturedTemp)("Bytes")(-1)(true)(false)(None))(state)
         | SemBigInt ->
             emit(RcDrop(capturedTemp)("BigInt")(-1)(true)(false)(None))(state)
+        | SemFunction(_argument, _result, _row) ->
+            emit(RcDrop(capturedTemp)("Function")(-1)(true)(false)(None))(state)
+        | SemTuple(_elements) as tuple -> emitOwnedValueRelease(emit)(capturedTemp)(tuple)(state)
         | SemNamed(_symbolId, _name, _arguments) as named -> emitOwnedValueRelease(emit)(capturedTemp)(named)(state)
         | _ -> state
 
@@ -951,20 +954,82 @@ let canNormalizeClosureCapture (resolved: SemanticType) (state: CoreLoweringStat
                 | Some(_text) -> true
                 | None -> false
 
-// `(environment offset, type text, copy plan, type)` per capture, in environment order, when every
-// capture is one the normalizer re-establishes through the deep copy.
-let recursive deepCopyCaptureLayout (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
-    match types with
+// Evidence fields are either method closures or nested dictionaries of methods.
+let recursive dictionaryCopyPlan semanticType =
+    match semanticType with
+        | SemFunction(_argument, _result, _row) -> Some(ClosureArgumentCopy)
+        | SemTuple(elements) ->
+            match dictionaryFieldPlans(elements) with
+                | Some(plans) -> Some(TupleArgumentCopy(plans))
+                | None -> None
+        | _ -> None
+and dictionaryFieldPlans elements =
+    match elements with
         | [] -> Some([])
-        | captureType :: rest ->
+        | element :: rest ->
+            match (dictionaryCopyPlan(element), dictionaryFieldPlans(rest)) with
+                | (Some(first), Some(remaining)) -> Some(first :: remaining)
+                | _ -> None
+
+let recursive capturesTraitEvidence captures =
+    match captures with
+        | [] -> false
+        | CoreBinding { name = name } :: rest -> Ashes.Text.startsWith(name)("__trait_") || capturesTraitEvidence(rest)
+
+let isSelfCapture location =
+    match location with
+        | CoreSelf(_label, _slot) -> true
+        | _ -> false
+
+let recursive capturesSelfClosure captures =
+    match captures with
+        | [] -> false
+        | CoreBinding { location = location } :: rest -> isSelfCapture(location) || capturesSelfClosure(rest)
+
+// A copied recursive environment owns its normalized self reference. Its other words remain
+// shared unless they carry trait evidence. Copy shared words after the owned slots and leave
+// them out of the dropper and the normalizer's owned layout.
+let recursive deepCopyCaptureLayout (self: Bool) (evidence: Bool) (captures: List(CoreBinding)) (index: Int) (state: CoreLoweringState) =
+    match captures with
+        | [] -> Some(([], []))
+        | CoreBinding { name = name, location = location, ownedRead = owned, scheme = TypeScheme { body = captureType } } :: rest ->
             let resolved = resolveType(state)(captureType)
             in
-                if canNormalizeClosureCapture(resolved)(state)
-                then
-                    match (captureTypeText(resolved), generalCopyPlanOf(resolved)(state), deepCopyCaptureLayout(rest)(index + 1)(state)) with
-                        | (Some(text), Some(plan), Some(layout)) -> Some((index * 8, text, plan, resolved) :: layout)
-                        | _ -> None
-                else None
+                if (self || evidence) && owned && (isResourceHandle(resolved)(state) || heapResourceOf(resolved)(state))
+                then None
+                else
+                    match deepCopyCaptureLayout(self)(evidence)(rest)(index + 1)(state) with
+                        | None -> None
+                        | Some((normalized, shared)) ->
+                            let specialPlan =
+                                match resolved with
+                                    | SemFunction(_arg, _result, _row) ->
+                                        if evidence || isSelfCapture(location)
+                                        then Some(ClosureArgumentCopy)
+                                        else None
+                                    | SemTuple(_fields) ->
+                                        if evidence && Ashes.Text.startsWith(name)("__trait_")
+                                        then dictionaryCopyPlan(resolved)
+                                        else None
+                                    | _ -> None
+                            in
+                                match specialPlan with
+                                    | Some(plan) -> Some(((index * 8, Ashes.Trait.Show.show(resolved), plan, resolved) :: normalized, shared))
+                                    | None ->
+                                        let sharedVariable =
+                                            match resolved with
+                                                | SemVariable(_id) -> evidence
+                                                | _ -> false
+                                        in
+                                            if self || sharedVariable
+                                            then Some((normalized, (index * 8, "word", ScalarArgumentCopy, resolved) :: shared))
+                                            else
+                                                if canNormalizeClosureCapture(resolved)(state)
+                                                then
+                                                    match (captureTypeText(resolved), generalCopyPlanOf(resolved)(state)) with
+                                                        | (Some(text), Some(plan)) -> Some(((index * 8, text, plan, resolved) :: normalized, shared))
+                                                        | _ -> None
+                                                else None
 
 let recursive deepCopyOwnedCaptures (layout: List((Int, Str, ArgumentCopyPlan, SemanticType))) =
     match layout with
@@ -995,7 +1060,7 @@ let recursive emitEnvironmentCaptureCopies (layout: List((Int, Str, ArgumentCopy
 // the helper's body is built on a scratch frame that keeps the label counter, reads each capture
 // from the source environment in slot 0, copies it, and stores it into the target environment in
 // slot 1; it answers the dropper of the owned captures, or zero when every capture is a scalar.
-let synthesizeDeepCopyClosureNormalizer (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, ArgumentCopyPlan, SemanticType))) (dropperLabel: Maybe(Str)) (state: CoreLoweringState) =
+let synthesizeDeepCopyClosureNormalizer (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, ArgumentCopyPlan, SemanticType))) (shared: List((Int, Str, ArgumentCopyPlan, SemanticType))) (dropperLabel: Maybe(Str)) (state: CoreLoweringState) =
     match freshLocal(withStateRetiredLocals([])((state with reversedInstructions = [], nextTemp = 0, nextLocal = 0))) with
         | FreshLocal { state = sourceSlotState, local = sourceSlot } ->
             match freshLocal(sourceSlotState) with
@@ -1006,6 +1071,7 @@ let synthesizeDeepCopyClosureNormalizer (closureLabel: Str) (closureOrigin: IrFu
                             |> emit(LoadLocal(sourceTemp)(sourceSlot))
                             |> emit(LoadLocal(sourceTemp + 1)(targetSlot))
                             |> emitEnvironmentCaptureCopies(layout)(sourceTemp)(sourceTemp + 1)
+                            |> emitEnvironmentCaptureCopies(shared)(sourceTemp)(sourceTemp + 1)
                             |> freshTemp with
                                 | FreshTemp { state = resultState, temp = resultTemp } ->
                                     match resultState
@@ -1041,14 +1107,15 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
     match captures with
         | [] -> state
         | _ ->
-            match deepCopyCaptureLayout(captureTypes(captures))(0)(state) with
-                | Some(layout) ->
+            match deepCopyCaptureLayout(capturesSelfClosure(captures))(capturesTraitEvidence(captures))(captures)(0)(state) with
+                | Some(([], _shared)) -> state
+                | Some((layout, shared)) ->
                     match match deepCopyOwnedCaptures(layout) with
                         | [] -> (state, None)
                         | owned ->
                             match synthesizeClosureDropper(owned)(state) with
                                 | (synthesized, label) -> (synthesized, Some(label)) with
-                        | (dropped, dropperLabel) -> synthesizeDeepCopyClosureNormalizer(closureLabel)(closureOrigin)(layout)(dropperLabel)(dropped)
+                        | (dropped, dropperLabel) -> synthesizeDeepCopyClosureNormalizer(closureLabel)(closureOrigin)(layout)(shared)(dropperLabel)(dropped)
                 | None -> withStatePendingClosureNormalizers((closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: statePendingClosureNormalizers(state))(state)
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =

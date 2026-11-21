@@ -77,7 +77,7 @@ inference-fields|-|selfhost/tests/inference-fields/ashes.json|1|record field inf
 ir-program-parity|-|selfhost/tests/ir-program-parity/ashes.json|selfhost/parity/semantics/lowered-ir|-
 join-backedge-provenance|bash scripts/selfhost-dev/render-join-backedge-provenance.sh|work/join-backedge-provenance/ashes.json|1000|ok
 lexer-unicode-classification|-|selfhost/tests/lexer-unicode-classification/ashes.json|@unicode-reference|all Unicode classifications match bundled PCRE2
-logical-not-inference|bash selfhost/tests/logical-not-inference/render.sh|work/logical-not-inference/ashes.json|expression;program|-
+logical-not-inference|bash selfhost/tests/logical-not-inference/render.sh|work/logical-not-inference/ashes.json|-|logical-not inference passed
 logical-not-lifetime|bash selfhost/tests/logical-not-inference/render-lifetime.sh|work/logical-not-lifetime/ashes.json|1000|bindings passed
 mixed-constrained-bootstrap|bash selfhost/tests/mixed-constrained-bootstrap/render.sh|file:work/mixed-constrained-bootstrap/Main.ash|1|mixed constrained lookup passed
 mixed-constrained-snapshot-loop|bash selfhost/tests/mixed-constrained-bootstrap/render.sh|file:work/mixed-constrained-bootstrap/SnapshotLoop.ash|1|9

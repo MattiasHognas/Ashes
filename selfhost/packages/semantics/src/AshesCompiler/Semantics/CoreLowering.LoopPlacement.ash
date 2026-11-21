@@ -1269,7 +1269,7 @@ let recursive retainUnplacedAggregateMarkersOf (sites: List(PatternOwnerSite)) (
     match sites with
         | [] -> state
         | site :: rest ->
-            if patternOwnerSiteIn(site)(placed)
+            if resultSurvivesReset(site.siteType)(state) || patternOwnerSiteIn(site)(placed)
             then retainUnplacedAggregateMarkersOf(rest)(placed)(state)
             else
                 state
@@ -1673,25 +1673,24 @@ let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (ownerSlots: 
 let finishTcoManagedPlacement (label: Str) (ownerSlots: List(Int)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(managedStrs)(state) with
         | [] ->
-            state
-            |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(bodyTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
-            |> success(bodyTemp)(semanticType)
+            match closeTmcChain(label)(bodyTemp)(semanticType)(state) with
+                | (closed, resultTemp) ->
+                    closed
+                    |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(resultTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
+                    |> success(resultTemp)(semanticType)
         | entries ->
-            state
-            |> (given (current: CoreLoweringState) -> withStateTcoLoopFrame(Some((frame with runtimeManagedListSlots = managedLists, runtimeManagedAdtSlots = managedAdts, runtimeManagedStrSlots = managedStrs)))(current))
-            |> promoteAffineAppends(managedStrs)
-            |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
-            |> recordTcoNormalizedArgumentLabel(label)(entries)
-            |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(ownerSlots)(frameLoopParameters(frame))(bodyTemp)(semanticType)
-            |> (given (finished: (CoreLoweringState, Int)) ->
-                match finished with
-                    | (finishedState, resultTemp) ->
-                        finishedState
-                        |> copyArenaTupleParameters(managedLists)(managedAdts)(candidates)
-                        |> emitTcoExitDrops(resultTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
-                        |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(resultTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
-                        |> success(resultTemp)(semanticType))
+            match state |> (given (current: CoreLoweringState) -> withStateTcoLoopFrame(Some((frame with runtimeManagedListSlots = managedLists, runtimeManagedAdtSlots = managedAdts, runtimeManagedStrSlots = managedStrs)))(current)) |> promoteAffineAppends(managedStrs) |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs) |> recordTcoNormalizedArgumentLabel(label)(entries) |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries) |> closeTmcChain(label)(bodyTemp)(semanticType) with
+                | (closed, closedTemp) ->
+                    closed
+                    |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(closedTemp)(closed))(label)(ownerSlots)(frameLoopParameters(frame))(closedTemp)(semanticType)
+                    |> (given (finished: (CoreLoweringState, Int)) ->
+                        match finished with
+                            | (finishedState, resultTemp) ->
+                                finishedState
+                                |> copyArenaTupleParameters(managedLists)(managedAdts)(candidates)
+                                |> emitTcoExitDrops(tcoExitTransferTemp(resultTemp)(finishedState))(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
+                                |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(resultTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
+                                |> success(resultTemp)(semanticType))
 
 // A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
 // reference-counted heap: the candidates whose active flag the loop allocates.

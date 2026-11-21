@@ -313,11 +313,15 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, alreadyDone, doneBlock, workBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, workBlock);
+        LlvmValueHandle awaited = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "cancel_awaited_value");
+        LlvmValueHandle noChild = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_no_child");
         LlvmValueHandle waitHandle = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "cancel_wait_handle");
-        LlvmValueHandle hasSocket = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitHandle, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_has_socket");
-        LlvmApi.BuildCondBr(builder, hasSocket, closeBlock, afterCloseBlock);
+        LlvmValueHandle hasSocket = EmitHasSocketWait(state, taskPtr);
+        // A parent mirrors its pending child's wait handle. The leaf owns that registration.
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, noChild, hasSocket, "cancel_owns_wait"), closeBlock, afterCloseBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, closeBlock);
+        EmitRelinquishFrameSocket(state, taskPtr, waitHandle);
         _ = EmitTcpClose(state, waitHandle);
         StoreMemory(state, taskPtr, TaskStructLayout.WaitHandle, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_clear_wait_handle");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitKind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitNone, 0), "cancel_clear_wait_kind");
@@ -328,9 +332,7 @@ internal static partial class LlvmCodegen
         {
             EmitCancelStructuredScopeChildren(state, taskPtr, stateIdx);
         }
-        LlvmValueHandle awaited = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "cancel_awaited_value");
-        LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_has_awaited");
-        LlvmApi.BuildCondBr(builder, hasAwaited, cancelAwaitedBlock, afterAwaitedBlock);
+        LlvmApi.BuildCondBr(builder, noChild, afterAwaitedBlock, cancelAwaitedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, cancelAwaitedBlock);
         _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [awaited], "cancel_recurse");
@@ -349,6 +351,16 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    private static LlvmValueHandle EmitHasSocketWait(LlvmCodegenState state, LlvmValueHandle task)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle kind = LoadMemory(state, task, TaskStructLayout.WaitKind, "cancel_wait_kind");
+        return LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, kind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitSocketRead, 0), "cancel_at_socket_wait"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, kind, LlvmApi.ConstInt(state.I64, TaskStructLayout.WaitTlsWantWrite, 0), "cancel_through_tls_wait"),
+            "cancel_has_socket");
     }
 
     private static void EmitCancelStructuredScopeChildren(
@@ -784,11 +796,37 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStepTcpCloseTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
     {
+        LlvmValueHandle socket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_close_socket");
+        EmitRelinquishFrameSocket(state, taskPtr, socket);
         return EmitCompleteLeafTask(
             state,
             taskPtr,
-            EmitTcpClose(state, LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tcp_close_socket")),
+            EmitTcpClose(state, socket),
             "step_tcp_close_complete");
+    }
+
+    private static void EmitRelinquishFrameSocket(LlvmCodegenState state, LlvmValueHandle task, LlvmValueHandle socket)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle socketSlot = EmitEntryScratchSlot(state, state.I64, "closing_socket");
+        LlvmApi.BuildStore(builder, socket, socketSlot);
+        LlvmValueHandle request = LlvmApi.BuildPtrToInt(builder, socketSlot, state.I64, "closing_socket_ref");
+        LlvmValueHandle cursor = EmitEntryScratchSlot(state, state.I64, "socket_waiter_cursor");
+        LlvmApi.BuildStore(builder, task, cursor);
+        LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "socket_waiter_loop");
+        LlvmBasicBlockHandle inspect = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "socket_waiter_inspect");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "socket_waiter_done");
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, loop);
+        LlvmValueHandle current = LlvmApi.BuildLoad2(builder, state.I64, cursor, "socket_waiter_current");
+        LlvmValueHandle waiter = LoadMemory(state, current, TaskStructLayout.Waiter, "socket_waiter");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "socket_has_waiter"), inspect, done);
+        LlvmApi.PositionBuilderAtEnd(builder, inspect);
+        EmitTaskFrameDropperCall(state, waiter, request, "socket_handoff");
+        LlvmApi.BuildStore(builder, waiter, cursor);
+        LlvmApi.BuildBr(builder, loop);
+        LlvmApi.PositionBuilderAtEnd(builder, done);
     }
 
     /// <summary>

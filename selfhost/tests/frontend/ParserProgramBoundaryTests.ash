@@ -1,6 +1,7 @@
 import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token
 import ParserExpressionTests
 import ParserProgramTests
 let expectNoDiagnostics result =
@@ -84,6 +85,11 @@ let checkLetBangChainEndsItsDeclaration unit =
                 | _ -> test.fail("expected the declaration work")
         | _ -> test.fail("a let! chain must not run its declaration into the trailing expression")
 
+let checkMissingParenthesisAtNextItem unit =
+    match parseProgram("let x = 1\nlet y = (1\n1") with
+        | ProgramParseResult { diagnostics = DiagnosticEntry { span = TextSpan { start = 21 }, message = "Expected RParen but found Int." } :: [] } -> Unit
+        | _ -> test.fail("a missing closing parenthesis should be reported at the next top-level item")
+
 let run unit =
     unit
     |> checkLoneExpression
@@ -92,6 +98,7 @@ let run unit =
     |> checkIndentedTrailingExpression
     |> checkContinuationAfterCompletedCall
     |> checkLetBangChainEndsItsDeclaration
+    |> checkMissingParenthesisAtNextItem
     |> (given (_) -> expectDiagnostics(""))
     |> (given (_) -> expectDiagnostics("and x = 1"))
     |> (given (_) -> expectDiagnostics("let x = 1 and y = 2"))

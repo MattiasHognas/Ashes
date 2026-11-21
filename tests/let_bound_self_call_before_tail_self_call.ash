@@ -1,5 +1,6 @@
 // expect: 11 11 4 k1,k2,k3,k4
 
+import Ashes.Collection.Map
 type T =
     | Leaf
     | Node(T, Int, T)

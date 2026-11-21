@@ -941,6 +941,9 @@ let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (
             |> shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(shapeWithoutNames([name])(callParts))
             |> shapeWithArmNames(walk.innerTails)(walk.ownBinders)
         | ExprCall(_function, _argument, _sugar, _layout) -> shapeWalkCall(self)(parameters)(expression)(shadowed)(tailOwners)(letValues)(callParts)(walk)
+        // A self call in the tail of a cons becomes a back edge of the same loop under
+        // tail-modulo-cons, so its arguments are edges too (stage 0's `TcoParamFactsWalk`).
+        | ExprCons(_head, tail) -> shapeWalkCall(self)(parameters)(tail)(shadowed)(tailOwners)(letValues)(callParts)(walk)
         | _ -> walk
 and shapeWalkCases (self: Str) (parameters: List(Str)) (value: Expr) (scrutinee: Maybe(Int)) (cases: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match cases with

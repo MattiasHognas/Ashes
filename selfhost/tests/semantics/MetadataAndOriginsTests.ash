@@ -13,6 +13,7 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
+import AshesCompiler.Semantics.StitchedSources.regionSourceText
 import AshesCompiler.Semantics.Types
 // Tests source maps, definition/hover identities, diagnostic locations, function origins, and explanation metadata.
 export (
@@ -127,6 +128,28 @@ let expectLocation (label: Str) (path: Str) (line: Int) (column: Int) (location:
                     let _ = test.assertEqual(column)(actualColumn)
                     in Unit
         | None -> test.fail(label + ": expected a location")
+
+// A module is parsed with its import header's lines blanked, so a region's text is the blanked one:
+// an offset into the parsed text lands on the line and column the file has there.
+let testRegionTextBlanksImportHeader unit =
+    match regionSourceText("Main.ash")("import Ashes.Number.UInt as uint\nlet x = 1\nx")("Main.ash") with
+        | None -> test.fail("the entry region should have a text")
+        | Some(text) ->
+            text
+            |> buildSourceTextIndex
+            |> (given (index) ->
+                "x ="
+                |> Ashes.Text.indexOf(text)
+                |> resolvePositionInIndex(index))
+            |> test.assertEqual((2, 5))
+
+// A column counts Unicode scalars, as stage 0 counts it: the `+` after a two-byte `é` is at byte 13
+// and column 13, and a line after it counts from its own start.
+let testColumnsCountUnicodeScalars unit =
+    "let s = \"é\" + 1\nlet t = 2"
+    |> buildSourceTextIndex
+    |> (given (index) -> (resolvePositionInIndex(index)(13), resolvePositionInIndex(index)(21)))
+    |> test.assertEqual(((1, 13), (2, 5)))
 
 let testStitchedSourceContext unit =
     (let ctx = stitchedContext(Unit)
@@ -523,17 +546,21 @@ let runMetadataAndOriginsTests unit =
         in
             let _ = testStitchedSourceContext(Unit)
             in
-                let _ = testLoweredDependencyItemCarriesItsOwnFileLines(Unit)
+                let _ = testRegionTextBlanksImportHeader(Unit)
                 in
-                    let _ = testRuntimeMachineryTagging(Unit)
+                    let _ = testColumnsCountUnicodeScalars(Unit)
                     in
-                        let _ = testFunctionOriginsCreation(Unit)
+                        let _ = testLoweredDependencyItemCarriesItsOwnFileLines(Unit)
                         in
-                            let _ = testFunctionOriginsDiscovery(Unit)
+                            let _ = testRuntimeMachineryTagging(Unit)
                             in
-                                let _ = testHoverTypeInfo(Unit)
+                                let _ = testFunctionOriginsCreation(Unit)
                                 in
-                                    let _ = testDecisionSnapshot(Unit)
+                                    let _ = testFunctionOriginsDiscovery(Unit)
                                     in
-                                        let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
-                                        in Unit)
+                                        let _ = testHoverTypeInfo(Unit)
+                                        in
+                                            let _ = testDecisionSnapshot(Unit)
+                                            in
+                                                let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
+                                                in Unit)

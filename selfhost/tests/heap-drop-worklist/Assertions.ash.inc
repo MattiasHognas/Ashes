@@ -22,7 +22,7 @@ let recursive testGroups mask leaf id =
 
 let compareDrop semanticType environment =
     let old = referenceCanDropValueGraph(semanticType)(environment)
-    in let current = heapCanDropValueGraph(semanticType)(environment)
+    in let current = classifyHeapOwnedChildrenDroppable(semanticType)(environment)
     in if old == current then Unit else Ashes.IO.panic("drop graph mismatch")
 
 let recursive checkRoots environment id =
@@ -43,7 +43,7 @@ let genericEnvironment leaf = emptyTypeEnvironment(Unit) with constructorFieldGr
 let specialCases unit =
     let resource = SemNamed(99)("FileHandle")([])
     in let environment = genericEnvironment(resource)
-    in if heapResourceBearing(genericA(SemInt))(environment) == false && heapCanDropValueGraph(genericA(SemInt))(environment) == false
+    in if classifyHeapResource(genericA(SemInt))(environment) == false && classifyHeapOwnedChildrenDroppable(genericA(SemInt))(environment) == false
        then compareDrop(genericA(SemInt))(environment)
          |> (given (_) -> compareDrop(genericB(SemInt))(environment))
          |> (given (_) -> compareDrop(genericA(SemInt))(genericEnvironment(SemVariable(88))))
@@ -76,13 +76,13 @@ let recursive diamond depth =
 
 let benchmark useOld =
     let environment = emptyTypeEnvironment(Unit) with constructorFieldGroups = diamond(18)
-    in let result = if useOld then referenceCanDropValueGraph(testNode(18))(environment) else heapCanDropValueGraph(testNode(18))(environment)
+    in let result = if useOld then referenceCanDropValueGraph(testNode(18))(environment) else classifyHeapOwnedChildrenDroppable(testNode(18))(environment)
     in if result then Ashes.IO.print("droppable") else Ashes.IO.panic("diamond mismatch")
 
 let recursive fresh count useOld =
     if count == 0 then Ashes.IO.print("done")
     else let environment = emptyTypeEnvironment(Unit) with constructorFieldGroups = testGroups(count % 512)(testLeaf(count % 4))(0)
-         in let actual = if useOld then referenceCanDropValueGraph(testNode(count % 3))(environment) else heapCanDropValueGraph(testNode(count % 3))(environment)
+         in let actual = if useOld then referenceCanDropValueGraph(testNode(count % 3))(environment) else classifyHeapOwnedChildrenDroppable(testNode(count % 3))(environment)
          in if actual == referenceCanDropValueGraph(testNode(count % 3))(environment)
             then fresh(count - 1)(useOld)
             else Ashes.IO.panic("fresh mismatch")

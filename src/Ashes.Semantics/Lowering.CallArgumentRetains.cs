@@ -51,6 +51,25 @@ public sealed partial class Lowering
         return previous;
     }
 
+    // Whether the current frame already collected this retain for its release after the call.
+    private bool CollectsCallArgumentRetain(int temp)
+    {
+        if (_callArgumentRetainFrame is not { } frame)
+        {
+            return false;
+        }
+
+        foreach ((int Temp, TypeRef Type, int PendingSlot) retain in frame.Retains)
+        {
+            if (retain.Temp == temp)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void EndCallArgumentRetains(bool previous)
     {
         if (_callArgumentRetainFrame is { } frame)

@@ -1,3 +1,6 @@
+import CoreOrderedInferenceTests.standardTraits
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
@@ -15,7 +18,7 @@ let lowerSource source =
 let expectBool source =
     match lowerSource(source) with
         | CoreLoweringResult { semanticType = SemBool, error = None } -> Unit
-        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("logical-not lowering failed: " + Ashes.Trait.Show.show(error))
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("logical-not lowering failed: " + Ashes.Trait.Show.show(error) + "\n" + source)
         | _ -> Ashes.IO.panic("logical-not did not infer Bool")
 
 let checkUnresolvedOperands unit =
@@ -25,7 +28,7 @@ let checkUnresolvedOperands unit =
     |> (given (_) -> expectBool("let invert : Bool -> Bool = given value -> !value\ninvert(false)"))
     |> (given (_) -> expectBool("let recursive even n = if n == 0 then true else !even(n - 1)\neven(10)"))
     |> (given (_) -> expectBool("let recursive first n = if n == 0 then true else !second(n - 1) and second n = if n == 0 then true else !first(n - 1)\nfirst(10)"))
-    |> (given (_) -> expectBool("let recursive retained values rejected = match values with | [] -> [] | value :: rest -> if !contains(value)(rejected) then value :: retained(rest)(rejected) else retained(rest)(rejected) and contains value values = match values with | [] -> false | candidate :: rest -> candidate == value || contains(value)(rest)\nmatch retained([1, 2])([2]) with | value :: [] -> value == 1 | _ -> false"))
+    |> (given (_) -> expectBool(standardTraits(Unit) + "\nlet recursive retained values rejected = match values with | [] -> [] | value :: rest -> if !contains(value)(rejected) then value :: retained(rest)(rejected) else retained(rest)(rejected) and contains value values = match values with | [] -> false | candidate :: rest -> candidate == value || contains(value)(rest)\nmatch retained([1, 2])([2]) with | value :: [] -> value == 1 | _ -> false"))
 
 let checkInvalidOperand unit =
     match lowerSource("!1") with
@@ -55,6 +58,58 @@ let checkMixedNotEvidence unit =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("mixed generic Not did not lower: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("mixed generic Not uses must each keep their own operand type")
 
+// Each lambda is lowered before the argument that settles its goal. Share its
+// unnumbered source span across calls, as can happen between stitched modules.
+let operatorApplication body argument =
+    ExprCall(ExprLambda("x")(ExprAt(TextSpan(start = 0, end = 1))(body))(None))(argument)(false)(callArgumentsInline)
+
+let coincidentOperatorCalls unit =
+    (let x = ExprVar("x")
+    in
+        ExprTuple([
+            operatorApplication(ExprLogicalNot(x))(ExprBool(false)),
+            callArgumentsInline
+            |> ExprCall(ExprVar("Bit"))(ExprBool(false))(false)
+            |> operatorApplication(ExprLogicalNot(x)),
+            operatorApplication(ExprLessThan(x)(x))(ExprInt(1)),
+            "1.5"
+            |> ExprFloat(1.5)
+            |> operatorApplication(ExprLessThan(x)(x))
+        ]))
+
+let checkCoincidentOperatorIr program =
+    match lowerCoreProgram(program) with
+        | CoreLoweringResult { program = Some(ir), semanticType = SemTuple(SemBool :: SemNamed(_id, "Bit", []) :: SemBool :: SemBool :: []), error = None } ->
+            let text =
+                None
+                |> formatIr(ir)(LoweredIr)
+                |> Ashes.Text.join("\n")
+            in
+                if Ashes.Text.contains(text)("CmpIntLt") && Ashes.Text.contains(text)("CmpFloatLt")
+                then Unit
+                else Ashes.IO.panic("coincident comparisons lost an operand type")
+        | _ -> Ashes.IO.panic("coincident operator sites lost their result types")
+
+let checkCoincidentOperatorSpans unit =
+    match parseProgram(bitNotPrelude) with
+        | ProgramParseResult { program = declarations, diagnostics = [] } ->
+            let program =
+                declarations with body = Some(coincidentOperatorCalls(Unit))
+            in
+                match measureCoreProgramLowering(given (_) -> 0)(None)("colliding.ash")(bitNotPrelude)(program) with
+                    | CoreLoweringMeasurement { pendingGoalKeys = keys, replayed = true, replay = CorePassCounts { error = None } } ->
+                        let count =
+                            given (key) ->
+                                keys
+                                |> Ashes.Collection.List.filter(given (entry) -> entry == key)
+                                |> Ashes.Collection.List.length
+                        in
+                            if count("0:1:Not:not") == 2 && count("0:1:Ord:less") == 2
+                            then checkCoincidentOperatorIr(program)
+                            else Ashes.IO.panic("operator fixture did not defer both visits: " + Ashes.Trait.Show.show(keys))
+                    | CoreLoweringMeasurement { replay = CorePassCounts { error = error } } -> Ashes.IO.panic("coincident operator sites did not replay: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("Not instance did not parse")
+
 let lowerExpressionSource source =
     match parseExpression(source) with
         | ExpressionParseResult { expression = expression, diagnostics = [] } -> lowerCoreExpression(expression)
@@ -82,6 +137,11 @@ let checkShowExpressionBoundary unit =
         | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Show", SemVariable(_id))) } -> Unit
         | _ -> Ashes.IO.panic("non-replaying Show expression accepted an unresolved goal")
 
+let checkEscapingDictionary unit =
+    match lowerExpressionSource("let invert x = !x in invert") with
+        | CoreLoweringResult { program = None, error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
+        | _ -> Ashes.IO.panic("unresolved dictionary escaped the expression boundary")
+
 let checkRecursiveExpressionBoundary unit =
     match lowerExpressionSource("let recursive even n = if n == 0 then true else !even(n - 1) in even(10)") with
         | CoreLoweringResult { program = Some(program), semanticType = SemBool, error = None } ->
@@ -90,7 +150,7 @@ let checkRecursiveExpressionBoundary unit =
             |> Ashes.Text.join("\n"))("CmpIntEq")
             then
                 match lowerExpressionSource("let recursive invert x = !x in invert") with
-                    | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
+                    | CoreLoweringResult { program = None, error = Some(MissingCoreTraitEvidence("Not", SemVariable(_id))) } -> Unit
                     | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("escaping recursive Not changed its diagnostic: " + Ashes.Trait.Show.show(error))
                     | _ -> Ashes.IO.panic("recursive discovery placeholder escaped")
             else Ashes.IO.panic("recursive expression did not emit negation")
@@ -105,6 +165,8 @@ let runCoreLogicalNotInferenceTests unit =
     |> (given (_) -> checkGenericNotEvidence(" : a -> a requires {Not(a)}"))
     |> (given (_) -> checkGenericNotEvidence(""))
     |> checkMixedNotEvidence
+    |> checkCoincidentOperatorSpans
     |> checkExpressionBoundary
     |> checkShowExpressionBoundary
+    |> checkEscapingDictionary
     |> checkRecursiveExpressionBoundary
