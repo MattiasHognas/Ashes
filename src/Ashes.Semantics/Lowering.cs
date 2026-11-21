@@ -3779,7 +3779,7 @@ public sealed partial class Lowering
         switch (b)
         {
             case Binding.Local loc:
-                LoadLocalWithBytesProvenance(temp, loc, v);
+                LoadLocalWithBytesProvenance(temp, loc.Slot, loc.Type, v);
                 result = (temp, loc.Type);
                 break;
             case Binding.Env env:
@@ -3818,8 +3818,8 @@ public sealed partial class Lowering
                 break;
 
             case Binding.Scheme sch:
-                Emit(new IrInst.LoadLocal(temp, sch.Slot));
                 result = (temp, Instantiate(sch.S));
+                LoadLocalWithBytesProvenance(temp, sch.Slot, result.Type, v);
                 break;
 
             default:
@@ -3874,10 +3874,10 @@ public sealed partial class Lowering
         || function.ReturnType is FfiType.NativeString
         || function.ParameterTypes.Any(type => type is FfiType.Buffer or FfiType.Out);
 
-    private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
+    private void LoadLocalWithBytesProvenance(int temp, int slot, TypeRef type, Expr.Var variable)
     {
-        Emit(new IrInst.LoadLocal(temp, local.Slot));
-        if (TryStampAffineAppendLoad(temp, local.Slot))
+        Emit(new IrInst.LoadLocal(temp, slot));
+        if (TryStampAffineAppendLoad(temp, slot))
         {
             return;
         }
@@ -3885,9 +3885,9 @@ public sealed partial class Lowering
         RecordUnknownBorrowedTemp(
             temp,
             ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
-            local.Type);
+            type);
         if (_localBytesProvenance.TryGetValue(
-                local.Slot,
+                slot,
                 out BuiltinRegistry.BytesOwnershipProvenance provenance))
         {
             RefineTempBytesProvenance(temp, provenance);
