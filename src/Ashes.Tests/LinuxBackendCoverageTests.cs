@@ -9948,6 +9948,14 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<string> HttpRequestRawWithRetryAsync(int port, string request)
     {
+        var (_, bytes) = await HttpExchangeRawWithRetryAsync(port, request).ConfigureAwait(false);
+        using var buffer = new MemoryStream(bytes);
+        using var reader = new StreamReader(buffer, Encoding.UTF8);
+        return reader.ReadToEnd().Trim();
+    }
+
+    private static async Task<(int ClientPort, byte[] Bytes)> HttpExchangeRawWithRetryAsync(int port, string request)
+    {
         var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
         while (true)
         {
@@ -9959,8 +9967,9 @@ public sealed class LinuxBackendCoverageTests
                 await using (stream.ConfigureAwait(false))
                 {
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(request)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-                    using var reader = new StreamReader(stream, Encoding.UTF8);
-                    return (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                    using var buffer = new MemoryStream();
+                    await stream.CopyToAsync(buffer).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    return (((IPEndPoint)client.Client.LocalEndPoint!).Port, buffer.ToArray());
                 }
             }
             catch (Exception) when (DateTime.UtcNow < deadline)
@@ -10654,25 +10663,26 @@ public sealed class LinuxBackendCoverageTests
             // test only needs enough simultaneous clients to keep every reactor busy.
             const int total = 120;
             const int waveSize = 8;
-            int ok = 0;
+            const string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            var failures = new List<string>();
             for (int offset = 0; offset < total; offset += waveSize)
             {
                 int count = Math.Min(waveSize, total - offset);
-                Task<bool>[] tasks = Enumerable.Range(0, count).Select(async _ =>
+                var tasks = Enumerable.Range(0, count).Select(_ => HttpExchangeRawWithRetryAsync(port, request)).ToArray();
+                var replies = await Task.WhenAll(tasks).ConfigureAwait(false);
+                for (int i = 0; i < replies.Length; i++)
                 {
-                    var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
-                    return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
-                }).ToArray();
-                foreach (bool succeeded in await Task.WhenAll(tasks).ConfigureAwait(false))
-                {
-                    if (succeeded)
+                    var (clientPort, bytes) = replies[i];
+                    if (!bytes.AsSpan().StartsWith("HTTP/1.1 200 OK\r\n"u8))
                     {
-                        ok++;
+                        string reply = bytes.Length == 0 ? "EOF before any response bytes"
+                            : $"{bytes.Length} bytes, prefix (hex) {Convert.ToHexString(bytes.AsSpan(0, Math.Min(128, bytes.Length)))}";
+                        failures.Add($"Request {offset + i + 1}/{total}, client port {clientPort}, server port {port}, server PID {proc.Id}: {reply}");
                     }
                 }
             }
 
-            ok.ShouldBe(total);
+            failures.ShouldBeEmpty();
             proc.HasExited.ShouldBeFalse();
         }
         finally
