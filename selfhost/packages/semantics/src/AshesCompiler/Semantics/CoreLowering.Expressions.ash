@@ -3009,6 +3009,33 @@ let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
         | [] -> false
         | _ -> true
 
+let visibleCalleeScheme name (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(binding) -> Some(binding.scheme)
+        | None ->
+            match state
+            |> stateTopLevelFunctionRefIndex
+            |> lookupTopLevelFunctionRef(name) with
+                | Some((_label, scheme)) -> Some(scheme)
+                | None -> None
+
+// A wrapper's result can forward the dictionary ABI of its callee even when no trait
+// method occurs in the wrapper itself. The binding's own inference selects which
+// requirements survive application to its arguments.
+let recursive forwardsCalleeRequirements value parameters state =
+    match lambdaParts(value) with
+        | Some((parameter, body, _annotation)) -> forwardsCalleeRequirements(body)(parameter :: parameters)(state)
+        | None ->
+            match callSpineRootOf(value)(0) with
+                | Some((name, supplied)) ->
+                    if supplied == 0 || containsName(name)(parameters)
+                    then false
+                    else
+                        match visibleCalleeScheme(name)(state) with
+                            | Some(TypeScheme { constraints = _first :: _rest }) -> true
+                            | _ -> false
+                | None -> false
+
 // A direct partial application of a constrained binding can generalize requirements
 // on its remaining arguments even when its right-hand side is not itself a lambda.
 let constrainedPartialApplication value (state: CoreLoweringState) =
@@ -3017,19 +3044,9 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
             if supplied == 0
             then false
             else
-                let scheme =
-                    match lookupBinding(name)(state.bindings) with
-                        | Some(binding) -> Some(binding.scheme)
-                        | None ->
-                            match state
-                            |> stateTopLevelFunctionRefIndex
-                            |> lookupTopLevelFunctionRef(name) with
-                                | Some((_label, registered)) -> Some(registered)
-                                | None -> None
-                in
-                    match scheme with
-                        | Some(TypeScheme { constraints = _first :: _rest, body = body }) -> supplied < arrowCountOf(body)(state)
-                        | _ -> false
+                match visibleCalleeScheme(name)(state) with
+                    | Some(TypeScheme { constraints = _first :: _rest, body = body }) -> supplied < arrowCountOf(body)(state)
+                    | _ -> false
         | None -> false
 
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
@@ -3039,7 +3056,9 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
         match lambdaParts(value) with
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
-                in (written || !constrainedPlanCannotApply(value)(requirements)(state), written || mentionsStandardMethod(value))
+                in
+                    let forwards = written || mentionsStandardMethod(value) || forwardsCalleeRequirements(value)([])(state)
+                    in (forwards || !constrainedPlanCannotApply(value)(requirements)(state), forwards)
             | None ->
                 let partial = !isRecursive && constrainedPartialApplication(value)(state)
                 in (partial, partial)
