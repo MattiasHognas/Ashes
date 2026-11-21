@@ -2,6 +2,7 @@
 // under tail-modulo-cons, and `lowerCore`, the dispatch over every expression form. A part of
 // `AshesCompiler.Semantics.CoreLowering`.
 
+import Ashes.Core.Maybe.map as mapMaybe
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
@@ -3292,7 +3293,9 @@ let recursive planGroupMembers pairs environment state =
     match pairs with
         | [] -> Some([])
         | (name, source) :: rest ->
-            match resolveWrittenTypeBinding(name)(environment) with
+            match environment
+            |> resolveWrittenTypeBinding(name)
+            |> mapMaybe(coreGeneralizedScheme) with
                 | Some(scheme) ->
                     if constrainedPlanSupportedIn(true)(scheme.constraints)(state)
                     then

@@ -12,6 +12,7 @@ export (
     type CoreConstrainedInference(..),
     type CoreConstrainedLayout(..),
     value inferCoreConstrainedBinding,
+    value coreGeneralizedScheme,
     value coreConstrainedLayout,
     value coreConstrainedPhysicalType,
     value dictionaryMethodType,
@@ -56,6 +57,9 @@ let recursive selectRequirements generalized constraints quantified =
             then constraint :: selectRequirements(generalized)(rest)(quantified)
             else selectRequirements(generalized)(rest)(quantified)
 
+// Only requirements selected by this binding's quantified variables become hidden parameters.
+let coreGeneralizedScheme (scheme: TypeScheme) = scheme with constraints = selectRequirements(true)(scheme.constraints)(scheme.quantified)
+
 // A recursive binding must be inferred monomorphically inside its own body, and
 // generalized only outside that self environment. Inferring a synthetic let keeps
 // that rule in the existing inference engine instead of duplicating it here.
@@ -76,7 +80,7 @@ let inferCoreConstrainedBinding name isRecursive value annotation requirements e
                         constraints
                         |> applyInferenceConstraints(substitution)
                         |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(environment))(substitution)(resolved)
-                    in CoreConstrainedInference(scheme = (scheme with constraints = selectRequirements(true)(scheme.constraints)(scheme.quantified)), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = nextSupply, error = error))
+                    in CoreConstrainedInference(scheme = coreGeneralizedScheme(scheme), boundaryRequirements = selectRequirements(false)(scheme.constraints)(scheme.quantified), substitution = substitution, supply = nextSupply, error = error))
 
 let recursive traitParameterSubstitution parameters arguments =
     match (parameters, arguments) with

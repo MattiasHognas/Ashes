@@ -17,7 +17,7 @@ let lowerSource source =
 let expectBool source =
     match lowerSource(source) with
         | CoreLoweringResult { semanticType = SemBool, error = None } -> Unit
-        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("logical-not lowering failed: " + Ashes.Trait.Show.show(error))
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("logical-not lowering failed: " + Ashes.Trait.Show.show(error) + "\n" + source)
         | _ -> Ashes.IO.panic("logical-not did not infer Bool")
 
 let checkUnresolvedOperands unit =
