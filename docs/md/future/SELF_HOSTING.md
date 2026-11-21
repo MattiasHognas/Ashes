@@ -435,6 +435,8 @@ Worker/signals slice `49cd9475` is committed on `fix/r10-external-next`, pending
 
 Worker tests `f87ab65b` add actual forked-index and SIGTERM stop children. Its source preflight rejected a wrongly nested `RequestServerStop` match: formatter success did not establish correct opcode dispatch structure. Fix `9dc76556` uses a typed accessor and restores the exact previous dispatch tail; the worker compared it against the parent, excluding comments, with no difference. Test refinement `97867ec6` uses a real `wait(NULL)` in the supervisor so child output precedes parent output, avoiding scheduling-dependent parent death. Both repairs are committed and need the main-owned source-inference retry plus native execution. The agent's single source preflight was consumed; no extra agent load was authorized. The peer drain/accounting work continues.
 
+Drain slice `2389ced1` and regressions `ff002244` are committed on `fix/r10-server-drain`, awaiting integration. They implement signal fanout, monotonic deadline, nonblocking child reaping, 50 ms scheduler wakeups and spawned-root accounting. The two new unchanged-source controls pass stage 0 with exact `handler drained` and `bounded` output; they are being registered in the backend harness for stage-1 execution. The drain agent is combining the worker commits and may run its one allowed whole-source inference check for this separate assignment. The worker agent has a short follow-up to cover auto worker count under an explicit one-worker Parallel cap; the existing signal test uses explicit count 1 and does not establish that cap behavior. Main-owned normal/poison execution remains pending.
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
