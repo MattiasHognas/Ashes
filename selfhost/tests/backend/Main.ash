@@ -3981,19 +3981,25 @@ let testListInequalityUsesAmbientElementDictionary shipped unit = assertSharedPr
 
 let testNumberedListInequalityUsesAmbientElementDictionary shipped unit = assertNumberedFixturePrints(shipped)("list_inequality_uses_ambient_element_dictionary")("no yes")
 
-let checkMixedMethodDictionaries verify shipped =
-    (let _ = verify(shipped)("recursive_report_uses_each_values_show_dictionary")("Some(7):operand:42|Some(7):operand:true")
-    in
-        let _ = verify(shipped)("awaiting_report_keeps_typed_show_dictionaries")("Some(3):custom:5|Some(3):custom:false")
-        in
-            let _ = verify(shipped)("result_directed_method_uses_concrete_and_supplied_evidence")("17/17/yes")
-            in
-                let _ = verify(shipped)("local_eager_seed_uses_evidence_of_its_enclosing_function")("Int|true Bool|true")
-                in verify(shipped)("custom_method_value_selects_dictionary_from_argument_type")("tag:tag:int|tag:tag:bool"))
+let testRecursiveReportShow shipped unit = assertSharedProgramPrintsExactly(shipped)("recursive_report_uses_each_values_show_dictionary")("Some(7):operand:42|Some(7):operand:true")
 
-let testMixedMethodDictionaries shipped unit = checkMixedMethodDictionaries(assertSharedProgramPrintsExactly)(shipped)
+let testNumberedRecursiveReportShow shipped unit = assertNumberedFixturePrints(shipped)("recursive_report_uses_each_values_show_dictionary")("Some(7):operand:42|Some(7):operand:true")
 
-let testNumberedMixedMethodDictionaries shipped unit = checkMixedMethodDictionaries(assertNumberedFixturePrints)(shipped)
+let testAwaitingReportShow shipped unit = assertSharedProgramPrintsExactly(shipped)("awaiting_report_keeps_typed_show_dictionaries")("Some(3):custom:5|Some(3):custom:false")
+
+let testNumberedAwaitingReportShow shipped unit = assertNumberedFixturePrints(shipped)("awaiting_report_keeps_typed_show_dictionaries")("Some(3):custom:5|Some(3):custom:false")
+
+let testResultDirectedSeed shipped unit = assertSharedProgramPrintsExactly(shipped)("result_directed_method_uses_concrete_and_supplied_evidence")("17/17/yes")
+
+let testNumberedResultDirectedSeed shipped unit = assertNumberedFixturePrints(shipped)("result_directed_method_uses_concrete_and_supplied_evidence")("17/17/yes")
+
+let testEnclosingEagerSeed shipped unit = assertSharedProgramPrintsExactly(shipped)("local_eager_seed_uses_evidence_of_its_enclosing_function")("Int|true Bool|true")
+
+let testNumberedEnclosingEagerSeed shipped unit = assertNumberedFixturePrints(shipped)("local_eager_seed_uses_evidence_of_its_enclosing_function")("Int|true Bool|true")
+
+let testCustomMethodValue shipped unit = assertSharedProgramPrintsExactly(shipped)("custom_method_value_selects_dictionary_from_argument_type")("tag:tag:int|tag:tag:bool")
+
+let testNumberedCustomMethodValue shipped unit = assertNumberedFixturePrints(shipped)("custom_method_value_selects_dictionary_from_argument_type")("tag:tag:int|tag:tag:bool")
 
 let testMutualTreeRewriteChecksEmptyAliases shipped unit = assertSharedProgramPrintsExactly(shipped)("mutual_recursive_tree_rewrite_checks_empty_aliases")("prefixx x")
 
@@ -6443,8 +6449,16 @@ let run shipped =
     |> testRunMutualShowDictionariesAtCalls(shipped)
     |> testListEqualityUsesAmbientElementDictionary(shipped)
     |> testNumberedListEqualityUsesAmbientElementDictionary(shipped)
-    |> testMixedMethodDictionaries(shipped)
-    |> testNumberedMixedMethodDictionaries(shipped)
+    |> testRecursiveReportShow(shipped)
+    |> testNumberedRecursiveReportShow(shipped)
+    |> testAwaitingReportShow(shipped)
+    |> testNumberedAwaitingReportShow(shipped)
+    |> testResultDirectedSeed(shipped)
+    |> testNumberedResultDirectedSeed(shipped)
+    |> testEnclosingEagerSeed(shipped)
+    |> testNumberedEnclosingEagerSeed(shipped)
+    |> testCustomMethodValue(shipped)
+    |> testNumberedCustomMethodValue(shipped)
     |> testListInequalityUsesAmbientElementDictionary(shipped)
     |> testNumberedListInequalityUsesAmbientElementDictionary(shipped)
     |> testMutualTreeRewriteChecksEmptyAliases(shipped)
