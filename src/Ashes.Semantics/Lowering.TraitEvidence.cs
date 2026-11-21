@@ -1466,9 +1466,10 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type)? TryLowerActiveTraitMethod(
         TraitConstraint constraint,
-        TraitMethodSymbol method)
+        TraitMethodSymbol method,
+        bool exactOnly = false)
     {
-        ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint);
+        ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint, exactOnly);
         if (active is null)
         {
             return null;

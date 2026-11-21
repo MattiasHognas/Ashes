@@ -756,11 +756,10 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter)
+        if (plan is TraitEvidencePlan.Parameter || HasMissingTraitParameter(plan))
         {
             (int Temp, TypeRef Type)? active = TryLowerActiveTraitMethod(
-                prunedConstraint,
-                method);
+                prunedConstraint, method, exactOnly: plan is TraitEvidencePlan.Instance);
             if (active is null)
             {
                 RequireLateTraitTypeHint();
@@ -910,8 +909,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter
-            && FindActiveTraitDictionaryParameter(constraint) is null)
+        if (HasMissingTraitParameter(plan)
+            && FindActiveTraitDictionaryParameter(constraint, exactOnly: plan is TraitEvidencePlan.Instance) is null)
         {
             RequireLateTraitTypeHint();
             if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
@@ -923,7 +922,7 @@ public sealed partial class Lowering
             }
             plan = deferred;
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method, exactOnly: plan is TraitEvidencePlan.Instance)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int first = NewTemp();
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
@@ -992,8 +991,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter
-            && FindActiveTraitDictionaryParameter(constraint) is null)
+        if (HasMissingTraitParameter(plan)
+            && FindActiveTraitDictionaryParameter(constraint, exactOnly: plan is TraitEvidencePlan.Instance) is null)
         {
             RequireLateTraitTypeHint();
             if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
@@ -1004,7 +1003,7 @@ public sealed partial class Lowering
             }
             plan = deferred;
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method, exactOnly: plan is TraitEvidencePlan.Instance)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, methodTemp, operandTemp));

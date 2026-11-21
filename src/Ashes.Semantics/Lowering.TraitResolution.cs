@@ -497,6 +497,16 @@ public sealed partial class Lowering
         return valid;
     }
 
+    // Selecting a generic instance proves only its head. Its element or supertrait
+    // evidence may still depend on a type that a later use in the caller will settle.
+    private bool HasMissingTraitParameter(TraitEvidencePlan plan) => plan switch
+    {
+        TraitEvidencePlan.Parameter parameter => FindActiveTraitDictionaryParameter(parameter.Constraint) is null,
+        TraitEvidencePlan.Instance implementation =>
+            implementation.Requirements.Any(HasMissingTraitParameter) || implementation.Supertraits.Any(HasMissingTraitParameter),
+        _ => false,
+    };
+
     private void ReportTraitResolutionFailure(
         string key,
         TextSpan span,
