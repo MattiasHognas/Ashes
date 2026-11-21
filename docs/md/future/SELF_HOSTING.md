@@ -420,9 +420,15 @@ modules, focused native policy tests all pass. Queued, pushed implementation com
 | `fix/r10-ir-ownership-audit` | `37bf8d78`, `85a4e368` | Two concrete correctness repairs: finish the TMC spine before ownership publication and loop-input release; do not apply runtime pointer retain to scalar pattern fields. Source formatting passes. Semantics-manifest inference reached the previously documented `ResultReachTests.ash:34:69` ConsoleIO mismatch; native checks required. |
 
 Active workers: `lowering_evidence` in `r10-callback-evidence` finishes the recursive callback
-interaction; `tmc_repair` in `r10-ir-ownership-audit` audits remaining ownership deltas, 40-minute
-brief from `da06e40d`. The completed inference boundary worktree is clean. Two active agents,
-no agent load. All commits above are pushed; main integrates only between reader jobs.
+interaction; `tmc_repair` has handed back the ownership batch clean and resumed the existing
+`r10-evidence-boundaries` branch at `0918689b`, with a 20-minute brief for the same trait-free
+recursive peer formal-use issue. Exact paired witnesses are
+`recursive_peer_returns_callback_without_invoking_it.ash` and
+`recursive_peer_invokes_callback_during_binding.ash` in the callback worktree. Existing `0918689b`
+does not prove that interaction. Two active agents, no agent load. All commits above are pushed;
+main integrates only between reader jobs. The ownership handoff lists seven unchanged fixtures
+for current-stage backend execution in normal/poison modes, with expected stdout, in
+`r10-ir-ownership-audit/work/PROGRESS.md`.
 
 Ownership audit details: `LoopPlacement.finishTcoManagedPlacement` previously published the base
 tail and released loop inputs before Bindings/RecursiveGroups closed the returned TMC spine,
