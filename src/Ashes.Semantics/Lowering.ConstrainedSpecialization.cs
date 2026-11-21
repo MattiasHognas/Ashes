@@ -260,6 +260,10 @@ public sealed partial class Lowering
     private void RecordConstrainedCallTypes(Expr rootExpression, int argumentCount, TypeRef calleeType)
     {
         NoteCallDemands(calleeType, argumentCount);
+        if (_collectInferredTraitElaboration && _instantiatedCallbackSources.TryGetValue(Prune(calleeType), out Expr? source))
+        {
+            _callbackCallTargets[rootExpression] = source;
+        }
         if (!_collectInferredTraitElaboration
             || !ConstrainedSpecializationEnabled
             || _elementSpecializationDepth != 0

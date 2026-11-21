@@ -3641,6 +3641,7 @@ public sealed partial class Lowering
 
         RecordElementSpecializationRecursion(v.Name);
         var result = LowerVarBound(v, b, request);
+        RecordCallbackReference(v, result.Type);
 
         RecordHoverType(
             GetSpan(v),
@@ -15021,7 +15022,9 @@ public sealed partial class Lowering
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
 
+            int firstArgumentDemand = _traitDemands.Count;
             (int argTemp, TypeRef argType) = LowerCallArgumentValue(rootExpr, collectedArgs, i, funType);
+            NoteCallbackArgument(rootExpr, collectedArgs, i, argType, firstArgumentDemand);
             if (i == 0 && elementCandidate is not null)
             {
                 elementSpecializationScopeDepth = TryRouteToElementSpecialization(
