@@ -415,6 +415,52 @@ inference replaces discovery/replay and repeated lowering; parallel LLVM/codegen
 Blocking leaks are fixed immediately. After multithreading, **all** remaining compiler and generated
 program leaks must be fixed; this round's leak exclusions are temporary.
 
+**Latest status (2026-11-21, integration `503dc64f`, pushed):** the user explicitly requested both
+agents work toward full inference coverage. The new evidence and type-table batches are integrated
+but await native validation. Static inventory covers 19 semantic type constructors, 48 expression
+constructors and 14 pattern constructors; this is not a claim of complete tested coverage.
+`fix/r10-evidence-audit` supplied partial/generalization/evidence fixes through `ce420878` and the
+still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` supplied recording,
+translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
+because `ef95138d` was integrated as `b2f0f591`. Oracle repairs `e8b2074d` and `592c3a8b` are also
+integrated. Every cherry-pick was pushed. Main's next build must include all these batches.
+
+The native preflight at `4a6478c7` (`work/r10pre/native-port/`) passed solution build/format,
+C# 3,064 passed / 13 failed / 2 skipped, LSP 88/88 and compiler inference 9,995 items / 182 modules.
+The 13 C# failures were eight structural assertions (now repaired, not yet rerun) and five genuine
+RSS checks (deferred). The combined native semantics/parity driver built in 14.99 minutes.
+Semantics stopped at a stale `PatternInferenceTests` expectation for the newly contextualized match
+diagnostic; corrected in `503dc64f`. Parity captured **35/95 differences**, full actual IR in
+`work/r10-shared-capture/actual/`. Initial analysis: 29 carry extra `rc_transfer_inactive` guards
+for runtime/arena representations, not automatically correctness defects. Six others still need
+classification. The no-reuse rebuild was cancelled after the known diagnostic expectation failed;
+it supplies no result. No load job is currently reading integration; no shared round 10 has run.
+
+Use `r10-type-coverage/work/render-parity-capture.sh` for the next native batch. It renders to
+`work/r10-named-capture/`, adds `case <test-function>`, and writes `cases.txt` (95 module-level
+test functions). Run cases individually under caps to collect all failures rather than stopping
+after the first panic. Keep both normal/no-reuse checks at the agreed gate. Focused drivers can
+use `--debug -O0`; the shared stage-1 build retains the specified `--debug -O2`.
+
+**Open semantic decision, asked asynchronously:** `r10-evidence-audit/work/early-open-dictionary.ash`
+binds `check = pick(Unit)` before a marker, then uses `check` at Int and Bool. Strict evaluation
+requires an earlier effect once, but that effect depends on the not-yet-selected trait instance.
+Current stage 0 prints `bound|Int|Bool|true true`. The reference does not settle how to select one
+instance. User was asked: require concrete evidence at binding (recommended; annotate ambiguity),
+or make these bindings monomorphic so all uses must agree. **No answer yet; do not choose a policy.**
+The independent early-callee effect case has a unique required order and remains a blocking compiler
+bug: `generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
+`entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. Agent is implementing a
+declaration-site split preserving lexical captures and the ordinary full-call ABI.
+
+Active workers are now `lowering_evidence` in `r10-evidence-audit` (independent strict-callee fix;
+extra 30-minute implementation batch, one bounded CLI build authorized) and `tmc_repair` in
+`r10-type-coverage` (coverage inventory, native diagnostic failure, IR classification). Both use
+GPT-6.2 Astra; no third active worker. Their `work/BRIEF.md` and `work/PROGRESS.md` hold details.
+`imports_diagnostics` is idle. The type-coverage manifest preflight reached an unchanged
+`ResultReachTests` row mismatch in the older standalone tool after fixing a new-test member read;
+compare inference binaries/current-source behavior before treating it as a compiler regression.
+
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
 integration head, and hand back a `BATCH READY` batch with the load work they need listed in their
@@ -529,7 +575,7 @@ suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 bein
 passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
 items).
 
-**Latest checkpoint (2026-11-21 01:51):** integration is pushed through `c787ed37`.
+**Earlier checkpoint (2026-11-21 01:51):** integration was pushed through `c787ed37`.
 The combined batch at `ba570923` passed build, format, LSP 88/88 and stage-0 e2e
 1,281 passed / 0 failed / 80 skipped. C#: 3,045 passed / 32 failed / 2 skipped. Logs:
 `work/r10pre/combined/`. Its orchestration was intentionally stopped after e2e finished, before
@@ -639,8 +685,8 @@ The combined source is on origin at `8da62f16`. Lowering-evidence integration is
 `8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
 
 **Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
-- `tmc_repair` resumed in `r10-test-oracles`, from `c787ed37`, 45 minutes: classify and repair the
-  15 non-fixture C# failures. Previous ownership/fixture batch is integrated; native parity pending.
+- `tmc_repair` resumed in `r10-type-coverage`, from `4a6478c7`: inference/table coverage and native
+  failure classification. Previous ownership/fixture/oracle batches are integrated.
 - `lowering_evidence` resumed in `r10-evidence-audit`: remaining constrained-binding/evidence audit.
 `imports_diagnostics` is idle. All three first batches handed back clean and are integrated; their
 old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
@@ -694,6 +740,13 @@ example compiles, and bugs 9/10 plus the corrected C# failure audit still requir
 12. Generalized constrained partial application: preserve polymorphism and evaluate supplied
     arguments once, before the dictionary lambda. Fresh stage-0 double evaluation is a correctness
     bug; stage-1 current-source acceptance still needs proof (bootstrap54 rejects the second type).
+13. Independent early-callee effects must run once before the next binding; declaration-site fix
+    in progress. Dependent early evidence requires the user decision above.
+14. Newly found mutual-group dictionary ABI and higher-order/operator evidence cases are fixed in
+    source in both compilers; their new regressions await fresh native validation.
+15. Type-table handler/guard scopes, primitive integer complement and shadowed-let scheme selection
+    have source fixes and dedicated coverage; exact deriving and full recorded-layout checks await
+    the new per-module native suite.
 Leaks stay out: 150 leak-only behaviour rows and demonstrated leak-only C# failures. The old blanket
 exemption for ten C# rows was based on incorrect classification and must not be used.
 
