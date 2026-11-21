@@ -404,6 +404,13 @@ behavioural check for all of them, then stage 2, its behavioural check, and stag
 This section is the handoff: a session that starts fresh reads it first. Keep it current with each
 integration, and replace it when round 10 has run.
 
+Integration `selfhost/round10` is pushed through `c15807b7`, with compiler source at
+`b438d259`. The callback, recursive-peer inference and ownership batches are integrated.
+The lexical-binding repair's compiler-source check passed for 10,090 items in 184 modules.
+Main is running combined policy preflight and full validation under `work/r10pre/policy-combined/`
+and `policy-shared/`. The current-source native results and the shared round remain pending.
+The only implementation worker is in `r10-phantom-query`; a second worker is consolidating this handoff.
+
 **Integrated checkpoint (2026-11-21 03:38):** the queued source batches below are now integrated
 through `b12affe3` and pushed: callback `cd1c9795`/`5b452baf`/`5df945b3`/`961e5983`/`0db26650`
 became `abebebf6`/`d9089104`/`3cc24de0`/`e2f8459b`/`acd6c19d`; inference
