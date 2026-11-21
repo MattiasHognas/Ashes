@@ -279,6 +279,26 @@ let aggregateFields value sites =
                         | _ -> None
         | _ -> None
 
+let recursive useNestedFlow flow applied depth escapes found =
+    match flow with
+        | AggregateEvidenceFlow(fields) ->
+            Ashes.Collection.List.foldLeft(given (acc) ->
+                given (entry) ->
+                    match entry with
+                        | (_name, child) -> useNestedFlow(child)(applied)(depth)(escapes)(acc))(found)(fields)
+        | MemberEvidenceFlow(demands, inner) ->
+            found
+            |> projectSites(demands)(applied)(depth)(escapes)
+            |> useNestedFlow(inner)(applied)(depth)(escapes)
+        | AlternativeEvidenceFlow(flows) ->
+            Ashes.Collection.List.foldLeft(given (acc) ->
+                given (child) -> useNestedFlow(child)(applied)(depth)(escapes)(acc))(found)(flows)
+        | FormalEvidenceParameter(id, _path) ->
+            addFormalUse(["*"]
+            |> FormalEvidenceParameter(id)
+            |> Some)(applied)(depth)(escapes)(found)
+        | other -> useFlow(other)(applied)(depth)(escapes)(found)
+
 let recursive sourceParameterIds value ordinal found =
     match bare(value) with
         | ExprLambda(_parameter, body, _annotation) -> sourceParameterIds(body)(ordinal + 1)((expressionId(value), ordinal) :: found)
@@ -429,7 +449,7 @@ and walkCallArgument callee arg applied depth escapes sites found =
                                     found
                                     |> walk(arg)(0)(depth)(false)(sites)
                                     |> walkScheduledUses(publishUses(sourceParameterIds(root)(0)([]))(inline.uses))(ordinal)(arg)(total)(depth)(escapes)(sites)
-                            | _ -> walk(arg)(-1)(depth)(false)(sites)(found)
+                            | _ -> walkNestedProjection(arg)(-1)(depth)(false)(sites)(found)
 and walkScheduledUses uses ordinal arg total depth escapes sites found =
     match uses with
         | [] -> found
@@ -453,9 +473,21 @@ and walkScheduledUses uses ordinal arg total depth escapes sites found =
                         found
                         |> walkProjection(path)(arg)(moreArguments(passed)(extra))(depth + delayed)(returned && escapes)(sites)
                         |> walkScheduledUses(rest)(ordinal)(arg)(total)(depth)(escapes)(sites)
+and walkNestedProjection value applied depth escapes sites found =
+    match aggregateFields(value)(sites) with
+        | Some(fields) ->
+            Ashes.Collection.List.foldLeft(given (acc) ->
+                given (entry) ->
+                    match entry with
+                        | (_field, child) -> walkNestedProjection(child)(applied)(depth)(escapes)(sites)(acc))(found)(fields)
+        | None ->
+            let visited = walk(value)(applied)(depth)(escapes)(sites)(found)
+            in
+                useNestedFlow(siteFlow(sites)(value))(applied)(depth)(escapes)(visited)
 and walkProjection path value applied depth escapes sites found =
     match path with
         | [] -> walk(value)(applied)(depth)(escapes)(sites)(found)
+        | "*" :: _rest -> walkNestedProjection(value)(applied)(depth)(escapes)(sites)(found)
         | field :: rest ->
             match bare(value) with
                 | ExprIf(_condition, yes, no) ->

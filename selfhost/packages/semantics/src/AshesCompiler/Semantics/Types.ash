@@ -108,6 +108,7 @@ type EvidenceCallFlow =
     | FormalEvidenceParameter(Int, List(Str))
     | AggregateEvidenceFlow(List((Str, EvidenceCallFlow)))
     | ConstructorEvidenceFlow(Int)
+    | RecursiveEvidenceReference(Str)
     | AlternativeEvidenceFlow(List(EvidenceCallFlow))
     | MemberEvidenceFlow(List((TraitConstraint, Int)), EvidenceCallFlow)
     | UnknownEvidenceFlow

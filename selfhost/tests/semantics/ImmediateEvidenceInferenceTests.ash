@@ -181,6 +181,35 @@ let checkAggregateEvidence unit =
                         |> infer
                         |> expectSuccess))
 
+let checkRecursiveEvidence unit =
+    (let eager = "let recursive relay u = worker(u) and worker u = around(Seed.first(Unit))\n"
+    in
+        let delayed = "let recursive relay u = given x -> worker(u)(x) and worker u = around(Seed.first(Unit))\n"
+        in
+            let callbacks = "let recursive relay f = called(f) and called f = f(Unit)\n"
+            in
+                let cycle = "let recursive relay n = if n == 0 then around(Seed.first(Unit)) else later(n - 1) and later n = relay(n)\n"
+                in
+                    stagedSource + eager + "let check = relay(Unit)\ntrue"
+                    |> parsed
+                    |> infer
+                    |> expectImmediate
+                    |> (given (_) ->
+                        stagedSource + delayed + "let check = relay(Unit)\n(check(1),check(true))"
+                        |> parsed
+                        |> infer
+                        |> expectSuccess)
+                    |> (given (_) ->
+                        stagedSource + callbacks + "let check = relay(pick)\ntrue"
+                        |> parsed
+                        |> infer
+                        |> expectImmediate)
+                    |> (given (_) ->
+                        stagedSource + cycle + "let check = later(0)\ntrue"
+                        |> parsed
+                        |> infer
+                        |> expectImmediate))
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -201,3 +230,4 @@ let runImmediateEvidenceInferenceTests unit =
             |> checkLocalBindings)
     |> checkHigherOrderEvidence
     |> checkAggregateEvidence
+    |> checkRecursiveEvidence
