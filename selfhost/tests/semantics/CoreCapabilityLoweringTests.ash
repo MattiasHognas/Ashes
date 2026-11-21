@@ -394,8 +394,11 @@ let testHandleArmWithoutResumeIsRejected unit =
                 )
             in
                 match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
-                    | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
-                    | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                    | CoreLoweringResult { error = Some(CoreCapabilityDiagnostic("ASH020", message)) } ->
+                        "State.get': every path of an operation arm must call resume(...)"
+                        |> Ashes.Text.contains(message)
+                        |> test.assertEqual(true)
+                    | CoreLoweringResult { error = Some(other) } -> test.fail("expected ASH020 for the non-resuming State.get arm, got " + Ashes.Trait.Show.show(other))
                     | _ -> test.fail("expected an operation arm without resume to be rejected"))
 
 // A non-resuming `let` prefix before a bare tail resume (`let y = u + 1 in resume(y * 2)`) is an
