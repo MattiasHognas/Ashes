@@ -409,7 +409,7 @@ unless one blocks something. The inference content for round 10 is complete; all
 to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
 and matched origin at `a5eef21e`. The installed Claude CLI supports Opus, but both worker attempts
 stopped on the account's weekly usage limit (reset reported November 22 at 11:00 Stockholm time).
-The coordinator has asked whether GPT-6.2 Astra may substitute; no answer is recorded yet.
+The user authorized GPT-6.2 Astra as the substitute, and both prepared workers are now running.
 
 **How work is done.** One coordinator session integrates and runs every load job (builds, suites,
 sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
@@ -546,14 +546,14 @@ There is no ASH048 result to act on. Whole-compiler compilation remains pending 
 
 The integrated commits are on origin. The TMC change must not land without its crash regression fixed.
 
-**Active workers:** none. Two Opus CLI workers were attempted from integration `a5bf718f`, each
-with a self-contained `work/BRIEF.md`, a 50-minute budget, no load work and no pushes. Both exited
-without implementation on `usage_limit_reached` (HTTP 429); `work/agent.jsonl` captures the failures.
-The TMC worktree has the held fix cherry-picked as `7f3d3e00` (pushed). Both branches are on origin.
-Resume these briefs when Opus is available or the user authorizes another model.
+**Active workers:** two GPT-6.2 Astra workers, authorized by the user on 2026-11-21:
+`tmc_repair` in `r10-tmc-regressions` and `imports_diagnostics` in `r10-import-diagnostics`.
+Each follows its self-contained `work/BRIEF.md`, a 50-minute batch budget, no load work and no
+pushes. Both branches are on origin; the TMC worktree includes held patch `7f3d3e00`.
+Their `work/PROGRESS.md` files are the handbacks. The earlier Opus attempts made no changes.
 
-**Open bugs** (the gate; prepared briefs cover 0 and optionally 1 in the TMC worktree, 7/6/5 in
-the imports worktree; no worker is running):
+**Open bugs** (the gate; active assignments cover 0 and optionally 1 in the TMC worktree,
+7/6/5 in the imports worktree; 2/3/4/8/9/10 remain unassigned):
 0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
    qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
 1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
