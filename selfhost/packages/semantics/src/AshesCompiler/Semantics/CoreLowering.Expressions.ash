@@ -3006,22 +3006,47 @@ let writtenRequirements (requirements: List(TraitConstraintSyntax)) =
         | [] -> false
         | _ -> true
 
+// A direct partial application of a constrained binding can generalize requirements
+// on its remaining arguments even when its right-hand side is not itself a lambda.
+let constrainedPartialApplication value (state: CoreLoweringState) =
+    match callSpineRootOf(value)(0) with
+        | Some((name, supplied)) ->
+            if supplied == 0
+            then false
+            else
+                let scheme =
+                    match lookupBinding(name)(state.bindings) with
+                        | Some(binding) -> Some(binding.scheme)
+                        | None ->
+                            match state
+                            |> stateTopLevelFunctionRefIndex
+                            |> lookupTopLevelFunctionRef(name) with
+                                | Some((_label, registered)) -> Some(registered)
+                                | None -> None
+                in
+                    match scheme with
+                        | Some(TypeScheme { constraints = _first :: _rest, body = body }) -> supplied < arrowCountOf(body)(state)
+                        | _ -> false
+        | None -> false
+
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
 let constrainedBindingPlanWith (written: Bool) name isRecursive value annotation requirements (state: CoreLoweringState) =
-    match lambdaParts(value) with
-        | None -> None
-        | Some(_parts) ->
-            if written == false && constrainedPlanCannotApply(value)(requirements)(state)
-            then None
-            else
-                match inferCoreConstrainedBinding(name)(isRecursive)(value)(annotation)(requirements)(constrainedInferenceEnvironment(state))(state.typeSupply) with
-                    | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
-                    | CoreConstrainedInference { error = Some(_error) } -> None
-                    | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                        if constrainedPlanSupportedIn(written)(constraints)(state)
-                        then Some(plan)
-                        else None
+    (let candidate =
+        match lambdaParts(value) with
+            | Some(_parts) -> written || !constrainedPlanCannotApply(value)(requirements)(state)
+            | None -> !isRecursive && constrainedPartialApplication(value)(state)
+    in
+        if candidate
+        then
+            match inferCoreConstrainedBinding(name)(isRecursive)(value)(annotation)(requirements)(constrainedInferenceEnvironment(state))(state.typeSupply) with
+                | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
+                | CoreConstrainedInference { error = Some(_error) } -> None
+                | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
+                    if constrainedPlanSupportedIn(written)(constraints)(state)
+                    then Some(plan)
+                    else None
+        else None)
 
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
     constrainedBindingPlanWith(writtenRequirements(requirements))(name)(isRecursive)(value)(annotation)(requirements)(state)
@@ -3125,6 +3150,38 @@ let constrainedPlanSourceType (plan: CoreConstrainedInference) =
     (let scheme = plan.scheme
     in withoutCapabilityRows(scheme.body))
 
+let recursive capturePartialArguments root arguments site index captured =
+    match arguments with
+        | [] -> (root, captured)
+        | argument :: rest ->
+            let name = "$partial" + Ashes.Text.fromInt(site) + "_" + Ashes.Text.fromInt(index)
+            in
+                capturePartialArguments(ExprCall(root)(ExprVar(name))(false)(callArgumentsInline))(rest)(site)(index + 1)((name, argument) :: captured)
+
+let recursive bindPartialArguments reversed body =
+    match reversed with
+        | [] -> body
+        | (name, argument) :: rest ->
+            []
+            |> ExprLet(name)(argument)(body)([])(None)
+            |> bindPartialArguments(rest)
+
+let constrainedRuntimeValue value requirements (state: CoreLoweringState) =
+    match stripExprAt(value) with
+        | ExprCall(_callee, _argument, _space, _layout) ->
+            match collectCallSpine(value) with
+                | CoreCallSpine { root = root, arguments = arguments } ->
+                    match capturePartialArguments(root)(arguments)(state.nextLocal)(0)([]) with
+                        | (application, captured) ->
+                            state
+                            |> stateTraitEnvironment
+                            |> rewriteCoreConstrainedValue(application)(requirements)
+                            |> bindPartialArguments(captured)
+        | _ ->
+            state
+            |> stateTraitEnvironment
+            |> rewriteCoreConstrainedValue(value)(requirements)
+
 let lowerConstrainedBindingValue name (plan: CoreConstrainedInference) value lower state =
     match adoptConstrainedPlan(plan)(state) with
         | (failed, Some(error)) -> failure(failed)(error)
@@ -3139,9 +3196,7 @@ let lowerConstrainedBindingValue name (plan: CoreConstrainedInference) value low
                     |> failure(adopted)
                 | CoreConstrainedLayout { parameterTypes = parameters, methods = methods, error = None } ->
                     let rewritten =
-                        adopted
-                        |> stateTraitEnvironment
-                        |> rewriteCoreConstrainedValue(value)(constrainedPlanRequirements(plan))
+                        adopted |> constrainedRuntimeValue(value)(constrainedPlanRequirements(plan))
                     in
                         adopted
                         |> withStateActiveTraitMethods(state

@@ -4664,14 +4664,51 @@ public sealed partial class Lowering
 
     private Expr TransformTraitDictionaryLetValue(
         Expr.Let let,
-        TraitDictionaryFunctionInfo info) =>
-        TransformTraitDictionaryValue(
-            let.Value,
+        TraitDictionaryFunctionInfo info)
+    {
+        Expr Transform(Expr value) => TransformTraitDictionaryValue(
+            value,
             info,
             threadDictionaryFunctions: true,
             rewriteMethodReferences: !let.Name.StartsWith(
                 "__trait_validate_implementation_",
                 StringComparison.Ordinal));
+
+        if (let.Value is not Expr.Call)
+        {
+            return Transform(let.Value);
+        }
+
+        List<Expr> arguments = [];
+        Expr root = CollectCallArgs(let.Value, arguments);
+        if (ResolveSpecializableCalleeName(root) is not { } callee
+            || !TryGetTraitDictionaryInfo(callee, Lookup(callee), out _)
+            || TryGetKnownBindingType(Lookup(callee)) is not { } calleeType
+            || NthCurriedArgType(calleeType, arguments.Count) is null)
+        {
+            return Transform(let.Value);
+        }
+
+        // The hidden dictionary is supplied at each use. Evaluate the source arguments
+        // when the partial is bound and capture their values in that dictionary closure.
+        string CaptureName(int index) =>
+            $"$partial{info.SourceOffset}_{index}";
+        Expr application = root;
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            Expr read = new Expr.Var(CaptureName(index));
+            AstSpans.Set(read, AstSpans.GetOrDefault(arguments[index]));
+            application = new Expr.Call(application, read);
+            AstSpans.Set(application, AstSpans.GetOrDefault(let.Value));
+        }
+        Expr closure = Transform(application);
+        for (int index = arguments.Count - 1; index >= 0; index--)
+        {
+            closure = new Expr.Let(CaptureName(index), arguments[index], closure);
+            AstSpans.Set(closure, AstSpans.GetOrDefault(let.Value));
+        }
+        return closure;
+    }
 
     private (int Temp, TypeRef Type) LowerLetValue(
         Expr.Let let,
