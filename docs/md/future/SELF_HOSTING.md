@@ -441,6 +441,10 @@ All worktree names below are relative to `.claude/worktrees/`. Generated scripts
 
 #### Current evidence and next validation
 
+**Parallel validation, 2026-11-21.** The user requested overlapping independent work instead of serializing the entire queue. At frozen integration `db54fdb9`, the coordinator is running the preserved input in `work/r10pre/shared-native3-exact/` alongside the expanded no-reuse input in `work/r10pre/shared-native4-no-reuse/`. Both combined-source inference preflights passed explicitly; native build results remain pending. Each build has a 24 GiB cap, no swap, and a timeout. The first uses the coordinator slot; the second is coordinator-owned work admitted through the existing auxiliary slot script. Keep at most two such load jobs, check available memory before admission, and do not add worker compile/inference jobs while both occupy the memory budget. Workers may implement independently.
+
+The auxiliary `shared-native-build-only.sh` stops after producing the driver. `shared-native-run.sh` then runs its cases without rebuilding, requiring the recorded source commit and a clean tree. Serialize the two backend runtime suites where their network fixtures may share ports. Start `original-backedge-check.sh` in the freed slot while the other job continues: its compiler-host check has no network dependency. Integration remains frozen until all source readers finish. This checkpoint is committed separately while the integration worktree is being read; integrate it between runs.
+
 | Completed check | Result |
 | --- | --- |
 | Final trait reference, `b5551092` | `work/r10pre/method-reference/`: build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **88/88**, e2e **1,323 passed / 0 failed / 80 skipped** in 5.67 minutes. The prior eager-Seed and hover failures are resolved. Fresh reference CLI: `s0/ashes`. |
