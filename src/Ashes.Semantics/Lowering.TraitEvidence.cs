@@ -48,6 +48,8 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TraitDictionaryParameterMetadata> _traitDictionaryParameterMetadata =
         new(StringComparer.Ordinal);
 
+    private readonly HashSet<string> _selectedTraitMethodBindings = new(StringComparer.Ordinal);
+
     private readonly HashSet<string> _borrowedTraitDictionaryBindings = new(StringComparer.Ordinal);
 
     private readonly HashSet<IrInst> _traitEvidenceConstructionInstructions =
@@ -2604,6 +2606,7 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, methodValue.Temp));
             string bindingName = TraitImplementationMethodBindingName(implementation.Goal.Trait, method.Name);
+            _selectedTraitMethodBindings.Add(bindingName);
             SetCurrentScopeBinding(
                 bindingName,
                 new Binding.Local(slot, methodValue.Type, method.Span));
