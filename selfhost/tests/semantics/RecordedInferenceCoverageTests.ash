@@ -175,22 +175,22 @@ let checkDerivedTree unit =
                 |> readShippedSources
                 |> stitchWithShippedModules("regression")(path)(source) with
                     | Ok(project) ->
-                        let identified = identifyStitchedProject(project)
-                        in
-                            match identified.program.error with
-                                | Some(error) -> Ashes.IO.panic("recursive deriving expansion failed before numbering: " + Ashes.Trait.Show.show(error))
-                                | None ->
-                                    let environment =
-                                        "standalone"
-                                        |> emptyTypeEnvironmentForPackage
-                                        |> withIntrinsicBuiltinSignatures
-                                    in
-                                        match inferIdentifiedStitchedProjectFrom(environment)(project)(identified) with
-                                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
-                                                if identified.program.nodeCount > 0 && table.typeCount == identified.program.nodeCount
-                                                then Unit
-                                                else Ashes.IO.panic("derived implementations contain untyped numbered expressions")
-                                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("recursive deriving inference failed: " + Ashes.Trait.Show.show(error))
+                        match identifyStitchedProject(project) with
+                            | IdentifiedStitchedProject { program = numbered } as identified ->
+                                match numbered.error with
+                                    | Some(error) -> Ashes.IO.panic("recursive deriving expansion failed before numbering: " + Ashes.Trait.Show.show(error))
+                                    | None ->
+                                        let environment =
+                                            "standalone"
+                                            |> emptyTypeEnvironmentForPackage
+                                            |> withIntrinsicBuiltinSignatures
+                                        in
+                                            match inferIdentifiedStitchedProjectFrom(environment)(project)(identified) with
+                                                | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                                    if numbered.nodeCount > 0 && table.typeCount == numbered.nodeCount
+                                                    then Unit
+                                                    else Ashes.IO.panic("derived implementations contain untyped numbered expressions")
+                                                | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("recursive deriving inference failed: " + Ashes.Trait.Show.show(error))
                     | Error(error) -> Ashes.IO.panic("recursive deriving fixture failed to stitch: " + Ashes.Trait.Show.show(error))
             | (Error(message), _) -> Ashes.IO.panic(message)
             | (_, Error(message)) -> Ashes.IO.panic(message))
