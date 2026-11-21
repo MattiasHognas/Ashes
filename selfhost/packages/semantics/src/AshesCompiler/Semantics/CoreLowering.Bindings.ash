@@ -20,7 +20,7 @@ import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoroutineSocketFrame
-import AshesCompiler.Semantics.TaskStructLayout.taskStructLayout
+import AshesCompiler.Semantics.TaskStructLayout
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -941,10 +941,14 @@ let recursive localSocketOffsets captures body offset (outer: CoreLoweringState)
                 else following
         | _ :: rest -> localSocketOffsets(rest)(body)(offset + 8)(outer)(finished)
 
+let taskHeaderSize =
+    match taskStructLayout with
+        | TaskStructLayout { headerSize = size } -> size
+
 let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
     if outer.functionState.pendingCoroutineBody
     then
-        match localSocketOffsets(survivors)(body)(taskStructLayout.headerSize)(outer)(finished) with
+        match localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished) with
             | [] -> value with state = withCompletedTaskFrameDropper(None)(value.state)
             | offsets ->
                 let dropper = makeSocketFrameDropper(label)(offsets)

@@ -62,6 +62,10 @@ let offsetCoroutineFunction =
     match taskStructLayout with
         | TaskStructLayout { coroutineFunction = offset } -> offset
 
+let offsetFrameDropper =
+    match taskStructLayout with
+        | TaskStructLayout { frameDropper = offset } -> offset
+
 let offsetFrameSizeBytes =
     match taskStructLayout with
         | TaskStructLayout { frameSizeBytes = offset } -> offset
@@ -466,7 +470,7 @@ let emitFrameTeardown (sc: SchedulerContext) function_ task name =
             in
                 let after = appendBasicBlock(sc.schedContext)(function_)(name + "_done")
                 in
-                    let dropper = schedWord(sc)(task)(taskStructLayout.frameDropper)(name + "_fn")
+                    let dropper = schedWord(sc)(task)(offsetFrameDropper)(name + "_fn")
                     in
                         let zero = schedConst(sc)(0)
                         in
@@ -475,7 +479,7 @@ let emitFrameTeardown (sc: SchedulerContext) function_ task name =
                             in
                                 let _ = schedAt(sc)(callBlock)
                                 in
-                                    let _ = schedStore(sc)(task)(taskStructLayout.frameDropper)(zero)
+                                    let _ = schedStore(sc)(task)(offsetFrameDropper)(zero)
                                     in
                                         let _ =
                                             buildCall(sc.schedBuilder)(dropperType)(buildIntToPtr(sc.schedBuilder)(dropper)(sc.schedPtr)(name + "_ptr"))([task, zero, zero])(3u32)(name + "_result")
@@ -654,7 +658,7 @@ let disarmSocketFrames (sc: SchedulerContext) function_ task socket =
                                                 in
                                                     let _ = schedAt(sc)(visit)
                                                     in
-                                                        let dropper = schedWord(sc)(current)(taskStructLayout.frameDropper)("disarm_dropper")
+                                                        let dropper = schedWord(sc)(current)(offsetFrameDropper)("disarm_dropper")
                                                         in
                                                             let _ =
                                                                 schedIf(sc)(schedEq(sc)(dropper)(zero)("disarm_no_callback"))(advance)(call)
