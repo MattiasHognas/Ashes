@@ -98,7 +98,18 @@ and restartCases factory restart params cases =
         | [] -> []
         | (pattern, body, guard) :: rest -> (pattern, restartTail(factory)(restart)(params)(body), guard) :: restartCases(factory)(restart)(params)(rest)
 
-let helperRewrite name value continuation id =
+let recursive factoryAnnotation parameters annotation =
+    match (parameters, annotation) with
+        | ([], result) -> TypeApplied("Task")([TypeNamed("Str"), result])
+        | (_, TypeAt(span, inner)) ->
+            inner
+            |> factoryAnnotation(parameters)
+            |> TypeAt(span)
+        | (_ :: rest, TypeArrow(argument, result, capabilities, tail)) ->
+            TypeArrow(argument)(factoryAnnotation(rest)(result))(capabilities)(tail)
+        | _ -> annotation
+
+let helperRewrite name value continuation annotation id =
     (let params = collectLambdaParamNames([])(value)
     in
         let inner = collectInnermostBody(value)
@@ -134,7 +145,12 @@ let helperRewrite name value continuation id =
                                                     []
                                                     |> ExprLetRecursive(factory)([step]
                                                     |> internal("task")
-                                                    |> replaceInner(nextValue))(nextBody)([])(None)
+                                                    |> replaceInner(nextValue))(nextBody)([])(match annotation with
+                                                        | Some(declared) ->
+                                                            declared
+                                                            |> factoryAnnotation(params)
+                                                            |> Some
+                                                        | None -> None)
                                                     |> Some
                                     | _ -> None)
 

@@ -3560,7 +3560,7 @@ let alreadyReturnsAsyncTask value state =
 let lowerPossiblyConstrainedLetRecursive name value body annotation requirements lower (state: CoreLoweringState) =
     if stateCoroutineBody(state) && !Ashes.Text.startsWith(name)("$async_helper_") && requirements == [] && !alreadyReturnsAsyncTask(value)(state)
     then
-        match helperRewrite(name)(bindingLambdaValue(annotation)(value)(state))(body)(state.nextLambdaId) with
+        match helperRewrite(name)(bindingLambdaValue(annotation)(value)(state))(body)(annotation)(state.nextLambdaId) with
             | Some(rewritten) -> lowerSynthesized(lower)(rewritten)(state)
             | None -> lowerOrdinaryLetRecursive(name)(value)(body)(annotation)(requirements)(lower)(state)
     else lowerOrdinaryLetRecursive(name)(value)(body)(annotation)(requirements)(lower)(state)
