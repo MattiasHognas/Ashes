@@ -369,6 +369,7 @@ public sealed partial class Lowering
         // cell, which becomes the function's result.
         public bool TmcShapePresent { get; set; }
         public bool TmcActivated { get; set; }
+        public (int ClosedResult, int Base)? TmcExitTransfer { get; set; }
         public int TmcDestSlot { get; set; } = -1;
         public int TmcResultSlot { get; set; } = -1;
 

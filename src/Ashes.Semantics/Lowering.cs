@@ -19300,6 +19300,10 @@ public sealed partial class Lowering
         if (tco.ResultType is { } resultType)
         {
             RecordControlFlowJoinTemp(resultTemp, Prune(resultType), bodyRuntimeManaged, bodyNewlyProduced);
+            if (bodyRuntimeManaged)
+            {
+                tco.TmcExitTransfer = (resultTemp, bodyTemp);
+            }
         }
         return resultTemp;
     }

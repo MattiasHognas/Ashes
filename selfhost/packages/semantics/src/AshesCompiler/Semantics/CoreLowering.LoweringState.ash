@@ -316,6 +316,7 @@ export (
     value withGeneralRcFinishedResult,
     value withClosedProducerChain,
     value isClosedProducerChain,
+    value tcoExitTransferTemp,
     value isGeneralRcFinishedResult,
     value ownedSlotsOf,
     value ownedSlotsOfActiveFunction,
@@ -1126,7 +1127,7 @@ type CoreOwnerState =
     | generalRcFinishedResult: Maybe((Maybe(IrFunctionOrigin), Int))
     // The result a function's tail-modulo-cons spine closed into, with that function: a spine its
     // own cells built, taken over at the return rather than retained again.
-    | closedProducerChain: Maybe((Maybe(IrFunctionOrigin), Int))
+    | closedProducerChain: Maybe((Maybe(IrFunctionOrigin), Int, Int))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -2562,17 +2563,26 @@ let withGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFinishedResult = Some((stateActiveFunctionOrigin(state), temp))))
 
-let withClosedProducerChain (temp: Int) (state: CoreLoweringState) =
+let withClosedProducerChain (temp: Int) (transferTemp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
-    in state with ownerState = (group with closedProducerChain = Some((stateActiveFunctionOrigin(state), temp))))
+    in state with ownerState = (group with closedProducerChain = Some((stateActiveFunctionOrigin(state), temp, transferTemp))))
 
 // Whether `temp` is the spine the function being lowered closed its tail-modulo-cons chain into.
 let isClosedProducerChain (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in
         match group.closedProducerChain with
-            | Some((origin, closed)) -> closed == temp && origin == stateActiveFunctionOrigin(state)
+            | Some((origin, closed, _transferTemp)) -> closed == temp && origin == stateActiveFunctionOrigin(state)
             | None -> false)
+
+// The slot that supplied the base case hands its reference to the last cell of a closed chain.
+let tcoExitTransferTemp (result: Int) (state: CoreLoweringState) =
+    match state.ownerState.closedProducerChain with
+        | Some((origin, closed, transferTemp)) ->
+            if closed == result && origin == stateActiveFunctionOrigin(state)
+            then transferTemp
+            else result
+        | None -> result
 
 // Whether `temp` is the result the function being lowered already made its own.
 let isGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =

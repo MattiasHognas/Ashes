@@ -1689,7 +1689,7 @@ let finishTcoManagedPlacement (label: Str) (ownerSlots: List(Int)) (frame: CoreT
                     | (finishedState, resultTemp) ->
                         finishedState
                         |> copyArenaTupleParameters(managedLists)(managedAdts)(candidates)
-                        |> emitTcoExitDrops(resultTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
+                        |> emitTcoExitDrops(tcoExitTransferTemp(resultTemp)(finishedState))(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
                         |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(resultTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
                         |> success(resultTemp)(semanticType))
 

@@ -172,7 +172,9 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (bodyTyp
                                                             |> emit(Label(doneLabel))
                                                             |> emit(LoadLocal(outTemp)(joinSlot))
                                                             |> markClosedChainResult(bodyTemp)(bodyType)(outTemp)
-                                                            |> withClosedProducerChain(outTemp), outTemp)
+                                                            |> withClosedProducerChain(outTemp)(if isRuntimeTemp(bodyTemp)(state)
+                                                            then bodyTemp
+                                                            else outTemp), outTemp)
 
 // Closes a tail-modulo-constructor spine at the function's single return, before any ownership
 // finalization: from here on the function's result IS the spine and the body value is only the last
