@@ -431,6 +431,8 @@ At 05:46 local (04:46 UTC), both workers received 45-minute implementation budge
 
 The arithmetic batch is BATCH READY through `e944cdfc`, pending integration after the measurement reader. It retains the actual written trait requirements through scheduled binding probes and uses program-signature semantics for declared constrained probes, rather than inferring parsed negation as integer-only subtraction. The unchanged stage-0 program prints `-1 17`. Source inference and rebuilt native normal/no-reuse verification of this third fix remain coordinator-owned. The measurement tool built in **5.02 minutes** and is running its legacy measurement before typed mode, still reading `75fb346f`.
 
+Worker/signals slice `49cd9475` is committed on `fix/r10-external-next`, pending integration and runtime validation. It installs SIGTERM/SIGINT handling before forking, shares the Parallel worker cap, returns worker indices, records child PIDs and parent-death behavior, and routes `RequestServerStop` to the supervisor. Direct generated-child signal and one-worker-cap tests are in progress; the peer still implements draining and task accounting. No graceful-stop acceptance claim follows from these unexecuted changes. `fix/r10-server-drain` is pushed with setter/contract prerequisites `920168b8` and `df918941` (duplicates of `3502ed04` and `0a59931f`; integrate each source change once).
+
 #### Orientation and responsibilities
 
 1. Read this handoff, then the root `AGENTS.md` / `CLAUDE.md`.
