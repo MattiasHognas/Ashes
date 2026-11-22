@@ -1590,6 +1590,20 @@ let answerPartlyOpenEqualityFromTable operator (methodName: Str) lower (binary: 
 // A constructed operand can still contain an unknown type, as in xs == []. The list
 // implementation is known, but its element dictionary may depend on a later application.
 // Defer that comparison as a whole unless all its evidence is already in scope.
+// Throwaway instrumentation: which branch a non-ordered binary operator takes, at which span, with
+// which operand types, recorded as observed goals (`trace:<tag>:<span>:left|right`) that the
+// measurement driver prints with --goal-details.
+let traceOperator (tag: Str) (leftType: SemanticType) (rightType: SemanticType) (state: CoreLoweringState) =
+    match stateTypeObservation(state) with
+        | None -> state
+        | Some(_observation) ->
+            let key =
+                "trace:" + tag + ":" + Ashes.Trait.Show.show(state.currentSpan) + ":item=" + Ashes.Trait.Show.show(stateCurrentItem(state))
+            in
+                state
+                |> observeDeferredOperatorGoal(key + ":left")(leftType)
+                |> observeDeferredOperatorGoal(key + ":right")(rightType)
+
 let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary) =
     match binary with
         | LoweredCoreBinary { state = state, leftType = operandType, error = None } ->
@@ -1603,13 +1617,15 @@ let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary)
                             if constrainedPlanLacksEvidence(plan)(state)
                             then
                                 match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
-                                    | (pinnedState, pinnedType) ->
-                                        match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
-                                            | Some(key) ->
-                                                match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
-                                                    | Some(answered) -> answered
-                                                    | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
-                                            | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+                                    | (untracedPinnedState, pinnedType) ->
+                                        let pinnedState = traceOperator("partly-open-equality-pin")(operandType)(pinnedType)(untracedPinnedState)
+                                        in
+                                            match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
+                                                | Some(key) ->
+                                                    match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
+                                                        | Some(answered) -> answered
+                                                        | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
+                                                | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
                             else emitResolvedCoreBinary(operator)(lower)(binary)
                         | _ -> emitResolvedCoreBinary(operator)(lower)(binary)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
@@ -1651,9 +1667,12 @@ let emitPreparedCoreBinary operator lower binary =
         | (None, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
                 | (Some(emitDeferred), SemVariable(leftId), SemVariable(rightId)) ->
-                    if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
+                    if state
+                    |> traceOperator("open-open")(leftType)(rightType)
+                    |> activeEvidenceCoversOperator(operator)(SemVariable(leftId))
                     then
                         binary
+                        |> withCoreBinaryState(traceOperator("active-evidence")(leftType)(rightType)(state))
                         |> unifyEqualityOperands(operator)
                         |> resolveCoreBinaryOwnTypes
                         |> emitResolvedCoreBinary(operator)(lower)
@@ -1661,7 +1680,7 @@ let emitPreparedCoreBinary operator lower binary =
                         match pinProvenEqualityGoal(operator)(SemVariable(leftId))(state) with
                             | Some(pinnedState) ->
                                 binary
-                                |> withCoreBinaryState(pinnedState)
+                                |> withCoreBinaryState(traceOperator("pinned-proven")(leftType)(rightType)(pinnedState))
                                 |> unifyEqualityOperands(operator)
                                 |> resolvedCoreBinary
                                 |> emitResolvedCoreBinary(operator)(lower)
@@ -1670,6 +1689,7 @@ let emitPreparedCoreBinary operator lower binary =
                                     | Some(recordedState) ->
                                         binary
                                         |> withCoreBinaryState(recordedState
+                                        |> traceOperator("pinned-recorded")(leftType)(rightType)
                                         |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(SemVariable(leftId)) :: stateUnresolvedCallResults(recordedState))
                                         |> observeLoweringEvent(0))
                                         |> unifyEqualityOperands(operator)
@@ -1678,6 +1698,7 @@ let emitPreparedCoreBinary operator lower binary =
                                     | None ->
                                         binary
                                         |> withCoreBinaryState(state
+                                        |> traceOperator("deferred")(leftType)(rightType)
                                         |> observeLoweringEvent(1)
                                         |> observeDeferredOperator(operator)(SemVariable(leftId)))
                                         |> emitDeferred
@@ -1685,7 +1706,9 @@ let emitPreparedCoreBinary operator lower binary =
                     match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with
                         | Some(recordedState) ->
                             binary
-                            |> withCoreBinaryState(observeLoweringEvent(0)(recordedState))
+                            |> withCoreBinaryState(recordedState
+                            |> traceOperator("partly-open-recorded")(resolvedLeft)(resolvedRight)
+                            |> observeLoweringEvent(0))
                             |> unifyEqualityOperands(operator)
                             |> resolvedCoreBinary
                             |> emitUnifiedCoreBinary(operator)(lower)
