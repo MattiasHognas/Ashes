@@ -793,15 +793,15 @@ let recursive checkExternalResourceArguments (abi: ExternalFunctionAbi) (paramet
             match (externalParameterOwnership(parameter), abi.destructorForResource) with
                 | (ExternalOwnershipConsume, Some(_resource)) ->
                     match checkResourceArgumentClose(argument)(state) with
-                        | Some(error) -> Some(error)
+                        | Some(error) -> Some((error, argument))
                         | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
                 | (ExternalOwnershipConsume, None) ->
                     match checkResourceArgumentUse(argument)(state) with
-                        | Some(error) -> Some(error)
+                        | Some(error) -> Some((error, argument))
                         | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
                 | (ExternalOwnershipBorrow, _destructor) ->
                     match checkResourceArgumentUse(argument)(state) with
-                        | Some(error) -> Some(error)
+                        | Some(error) -> Some((error, argument))
                         | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
                 | _ -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
         | _ -> None

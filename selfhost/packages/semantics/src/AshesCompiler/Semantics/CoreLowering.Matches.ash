@@ -778,9 +778,19 @@ let lowerOrPattern alternatives valueTemp valueType failLabel lowerPattern state
             let lowerAlternatives = lowerOrAlternatives(alternatives)(valueTemp)(valueType)(failLabel)(successLabel)
             in lowerAlternatives(lowerPattern)(LoweredCorePattern(state = labelState, error = None))
 
+// A pattern lowering error is recorded at the innermost located pattern it left, where stage 0
+// reports it.
+let notePatternFailure (span: TextSpan) (lowered: LoweredCorePattern) =
+    match lowered with
+        | LoweredCorePattern { state = state, error = Some(error) } -> lowered with state = noteFailureSite(span)(Some(error))(state)
+        | _ -> lowered
+
 let recursive lowerPattern pattern valueTemp valueType failLabel state =
     match pattern with
-        | PatternAt(_span, inner) -> lowerPattern(inner)(valueTemp)(valueType)(failLabel)(state)
+        | PatternAt(span, inner) ->
+            state
+            |> lowerPattern(inner)(valueTemp)(valueType)(failLabel)
+            |> notePatternFailure(span)
         | PatternWildcard -> LoweredCorePattern(state = state, error = None)
         | PatternVar(name) ->
             if isNullaryConstructorPatternName(name)(state)

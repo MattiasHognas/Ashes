@@ -573,7 +573,7 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                     then
                         value
                         |> armResumeDiagnostic(capName)(opName)
-                        |> failure(state)
+                        |> (given (diagnostic) -> failureAt(value)(diagnostic)(state))
                     else
                         match state with
                             | CoreLoweringState { bindings = outerBindings } ->
@@ -677,7 +677,7 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                 | None ->
                     body
                     |> armResumeDiagnostic(capName)(opName)
-                    |> failure(state)
+                    |> (given (diagnostic) -> failureAt(body)(diagnostic)(state))
 // Mirrors lowerMatchArm, except the guard (which must not reference resume, checked here) still
 // lowers via the arm's own ordinary `lower`, while the arm body lowers via a wrapper back into
 // resolveOperationArmBody — the same split lowerOperationArmParameters/resolveOperationArmBody

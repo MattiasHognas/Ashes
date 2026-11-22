@@ -2410,14 +2410,15 @@ and anyTypeHoldsJoinHandle (types: List(SemanticType)) (state: CoreLoweringState
 let joinHandleEscapeMessage = "A JoinHandle cannot escape in the result of an async task."
 
 // Stage 0's scope-escape check on an `async` task: its value may not hold a join handle, which
-// belongs to the task scope that ends with the task.
-let rejectEscapingJoinHandle (lowered: LoweredCoreValue) =
+// belongs to the task scope that ends with the task. It is reported at the task body, as stage 0
+// reports it.
+let rejectEscapingJoinHandle (body: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, semanticType = taskType, error = None } ->
             match resolveType(state)(taskType) with
                 | SemNamed(_symbolId, _name, _errorType :: valueType :: []) ->
                     if typeHoldsJoinHandle(valueType)(state)
-                    then failure(state)(UnsupportedCoreBuiltinLowering(joinHandleEscapeMessage))
+                    then failureAt(body)(UnsupportedCoreBuiltinLowering(joinHandleEscapeMessage))(state)
                     else lowered
                 | _ -> lowered
         | failed -> failed
@@ -2427,11 +2428,11 @@ let lowerAsyncTask body lower (state: CoreLoweringState) =
     then
         state
         |> lowerCoroutineTask(false)(body)(lower)
-        |> rejectEscapingJoinHandle
+        |> rejectEscapingJoinHandle(body)
     else
         state
         |> lowerCompletedAsyncTask(body)(lower)
-        |> rejectEscapingJoinHandle
+        |> rejectEscapingJoinHandle(body)
 
 // The newest `RunTask` into `target` made an `AwaitTask`: inside an `async` body an `await`
 // suspends the task instead of running the awaited one inline.

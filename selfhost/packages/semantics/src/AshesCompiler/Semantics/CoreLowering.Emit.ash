@@ -99,6 +99,7 @@ export (
     value currentLocation,
     value withCurrentSpanOf,
     value noteFailureSite,
+    value failureAt,
     value spanStart,
     value sourceFunctionOriginFor,
     value canTestRepresentation,
@@ -1225,6 +1226,20 @@ let failure state error =
         semanticType = SemNever,
         error = Some(error)
     )
+
+let recursive ownSpanOf (expression: Expr) =
+    match expression with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> ownSpanOf(inner)
+        | _ -> None
+
+// A failure stage 0 reports at `expression`, an argument the error is about, rather than at the
+// expression whose lowering found it.
+let failureAt (expression: Expr) (error: CoreLoweringError) (state: CoreLoweringState) =
+    match ownSpanOf(expression) with
+        | Some(span) ->
+            failure(noteFailureSite(span)(Some(error))(state))(error)
+        | None -> failure(state)(error)
 
 let bindingScheme binding =
     match binding with

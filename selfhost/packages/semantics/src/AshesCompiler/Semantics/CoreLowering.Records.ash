@@ -221,7 +221,7 @@ let lowerExternalCallArguments abi arguments lower state =
 // checked before lowering and their bindings released after it.
 let lowerExternalCallWithResources (abi: ExternalFunctionAbi) arguments lower state =
     match checkExternalResourceArguments(abi)(externalInputParameters(abi.parameters))(arguments)(state) with
-        | Some(error) -> failure(state)(error)
+        | Some((error, argument)) -> failureAt(argument)(error)(state)
         | None ->
             state
             |> lowerExternalCallArguments(abi)(arguments)(lower)
