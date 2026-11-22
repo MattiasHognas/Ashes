@@ -3778,7 +3778,10 @@ let lowerCoreDispatch expression lowerCore state =
                 | CoreLoweringState { currentSpan = previous } ->
                     match lowerCore(inner)((state with currentSpan = Some(span))) with
                         | LoweredCoreValue { state = innerState, temp = temp, semanticType = semanticType, error = error } ->
-                            let restored = innerState with currentSpan = previous
+                            let restored =
+                                innerState
+                                |> noteFailureSite(span)(error)
+                                |> withCurrentSpanOf(previous)
                             in
                                 LoweredCoreValue(
                                     state = restored,

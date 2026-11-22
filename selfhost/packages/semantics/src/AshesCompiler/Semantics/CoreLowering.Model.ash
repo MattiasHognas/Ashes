@@ -110,6 +110,8 @@ type CoreLoweringResult =
     | program: Maybe(IrProgram)
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
+    // Where the error was raised when lowering located it, as stage 0 reports it.
+    | errorLocation: Maybe(IrSourceLocation)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
     | joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))
 

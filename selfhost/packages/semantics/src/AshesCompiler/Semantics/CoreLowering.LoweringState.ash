@@ -113,6 +113,8 @@ export (
     value withStateCapabilityGlobalCount,
     value stateCapabilityOperationSchemes,
     value withStateCapabilityOperationSchemes,
+    value stateFailureSite,
+    value withStateFailureSite,
     value stateHandledCapabilities,
     value withStateHandledCapabilities,
     value stateSourceContext,
@@ -902,6 +904,9 @@ type CoreProgramState =
     // The capabilities an enclosing `handle` discharges where lowering stands: an operation of one
     // resolves through handler evidence, never through a static provider.
     | handledCapabilities: List(Str)
+    // The first lowering error that left an expression with a span, with the location of the
+    // innermost such expression, where stage 0 reports it.
+    | failureSite: Maybe((CoreLoweringError, IrSourceLocation))
     | sourceContext: Maybe(SourceContext)
     // For a stitched program, the source region (an item region of `sourceContext`) each top-level
     // binding was declared in, by compiler name, so its spans resolve against its own file.
@@ -1709,6 +1714,14 @@ let stateCapabilityOperationSchemes (state: CoreLoweringState) =
 let withStateCapabilityOperationSchemes value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with capabilityOperationSchemes = value))
+
+let stateFailureSite (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.failureSite)
+
+let withStateFailureSite value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with failureSite = value))
 
 let stateHandledCapabilities (state: CoreLoweringState) =
     (let group = state.programState

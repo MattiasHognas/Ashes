@@ -297,6 +297,13 @@ let checkFixtureLowered mode path lowered =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic(mode + " lowering failed for " + path + ": " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(mode + " lowering produced no program for " + path)
 
+// A lowering error is reported at the innermost located expression it left, where stage 0
+// reports it: the moved resource's later use.
+let checkUseAfterMoveLocated mode path lowered =
+    match lowered with
+        | CoreLoweringResult { error = Some(_error), errorLocation = Some(IrSourceLocation { line = 13, column = 46 }) } -> Unit
+        | CoreLoweringResult { error = error, errorLocation = location } -> Ashes.IO.panic(mode + " lowering of " + path + " reported " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+
 let checkRawAndTypedIr verify shipped path =
     match Ashes.IO.File.readText(path) with
         | Error(message) -> Ashes.IO.panic(message)
@@ -354,6 +361,7 @@ let checkStitchedLibraryContext unit =
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/local_eager_seed_uses_evidence_of_its_enclosing_function.ash"))
                 |> (given (_) -> checkRawAndTypedIr(checkFixtureLowered)(shipped)("tests/custom_method_value_selects_dictionary_from_argument_type.ash"))
                 |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
+                |> (given (_) -> checkRawAndTypedIr(checkUseAfterMoveLocated)(shipped)("tests/resource_use_after_move.ash"))
 
 let checkExpressionBoundary unit =
     match parseExpression("given left -> given right -> left <= right") with

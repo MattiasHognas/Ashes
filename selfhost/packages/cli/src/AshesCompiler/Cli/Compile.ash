@@ -359,18 +359,25 @@ let codePrefix (code: Maybe(Str)) =
 
 // A lowering error with a stage-0 rendering prints as stage 0 prints it, `path:line:col CODE
 // message`; every other error prints its structural form.
-let loweringErrorText (error: CoreLoweringError) =
+// `recorded` is where lowering found the error, used when the error carries no location itself.
+let loweringErrorTextAt (recorded: Maybe(IrSourceLocation)) (error: CoreLoweringError) =
     match loweringErrorDiagnostic(error) with
         | Some(DiagnosticEntry { message = message, code = code }) ->
-            locationPrefix(loweringErrorLocation(error)) + codePrefix(code) + message
+            let location =
+                match loweringErrorLocation(error) with
+                    | Some(own) -> Some(own)
+                    | None -> recorded
+            in locationPrefix(location) + codePrefix(code) + message
         | None -> Ashes.Trait.Show.show(error)
+
+let loweringErrorText (error: CoreLoweringError) = loweringErrorTextAt(None)(error)
 
 let loweredStitchedResult (lowering: CoreLoweringResult) =
     match lowering with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
-        | CoreLoweringResult { error = Some(error) } ->
+        | CoreLoweringResult { error = Some(error), errorLocation = recorded } ->
             error
-            |> loweringErrorText
+            |> loweringErrorTextAt(recorded)
             |> Error
         | _ -> Error("Lowering produced no program.")
 

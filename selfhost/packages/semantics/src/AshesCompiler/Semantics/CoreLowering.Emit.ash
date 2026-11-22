@@ -97,6 +97,8 @@ export (
     value emitGuardedRestoreAndReclaimBy,
     value emitGuardedRestoreAndReclaim,
     value currentLocation,
+    value withCurrentSpanOf,
+    value noteFailureSite,
     value spanStart,
     value sourceFunctionOriginFor,
     value canTestRepresentation,
@@ -534,6 +536,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 capabilityGlobalCount = capabilityGlobalCount,
                 capabilityOperationSchemes = [],
                 handledCapabilities = [],
+                failureSite = None,
                 sourceContext = None,
                 sourceRegionOfName = Ashes.Collection.Map.empty,
                 topLevelNames = Ashes.Collection.Map.empty,
@@ -984,6 +987,26 @@ let currentLocation (state: CoreLoweringState) =
         | (Some(span), Some(context)) ->
             resolveItemSpanLocation(context)(stateCurrentItem(state))(span)
         | _ -> None
+
+let recordFailureSite (span: TextSpan) (failed: CoreLoweringError) (state: CoreLoweringState) =
+    match currentLocation((state with currentSpan = Some(span))) with
+        | Some(location) -> withStateFailureSite(Some((failed, location)))(state)
+        | None -> state
+
+let withCurrentSpanOf (span: Maybe(TextSpan)) (state: CoreLoweringState) = state with currentSpan = span
+
+// Records an error leaving the expression spanned `span` at that expression's location, unless
+// the same error was already recorded, by an inner expression, so the innermost location stays.
+let noteFailureSite (span: TextSpan) (error: Maybe(CoreLoweringError)) (state: CoreLoweringState) =
+    match error with
+        | None -> state
+        | Some(failed) ->
+            match stateFailureSite(state) with
+                | Some((recorded, _location)) ->
+                    if recorded == failed
+                    then state
+                    else recordFailureSite(span)(failed)(state)
+                | None -> recordFailureSite(span)(failed)(state)
 
 let spanStart (span: Maybe(TextSpan)) =
     match span with

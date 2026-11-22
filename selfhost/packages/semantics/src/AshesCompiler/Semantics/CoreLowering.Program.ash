@@ -117,14 +117,26 @@ let entryInstructions temp instructions =
         location = None
     ) :: instructions)
 
-let failedCoreLowering error =
+let failedCoreLoweringAt location error =
     CoreLoweringResult(
         program = None,
         semanticType = SemNever,
         error = Some(error),
+        errorLocation = location,
         valuePlacements = [],
         joinRepresentations = []
     )
+
+let failedCoreLowering error = failedCoreLoweringAt(None)(error)
+
+// The location the failing state recorded for `error`, when it recorded that error.
+let failureLocationOf (error: CoreLoweringError) (state: CoreLoweringState) =
+    match stateFailureSite(state) with
+        | Some((recorded, location)) ->
+            if recorded == error
+            then Some(location)
+            else None
+        | None -> None
 
 type CoreProgramUses =
     | printInt: Bool
@@ -2620,7 +2632,8 @@ let buildProgram lowered =
     |> refuseUnansweredGoals
     |> releaseEntryGeneralRcOwnedSlots
     |> resolveLoweredPendingBlocks with
-        | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
+        | LoweredCoreValue { state = failedState, error = Some(error) } ->
+            failedCoreLoweringAt(failureLocationOf(error)(failedState))(error)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state with
                 | CoreLoweringState { reversedInstructions = instructions, functions = functions, externalFunctions = externalFunctions, externalOpaqueTypes = externalOpaqueTypes, nextLocal = localCount, nextTemp = tempCount, stringLiterals = stringLiterals, functionState = CoreFunctionState { pendingOperatorDefaults = pendingOperatorDefaults, sealedOperatorDefaults = sealedOperatorDefaults } } ->
@@ -2682,6 +2695,7 @@ let buildProgram lowered =
                                                     |> Some,
                                                     semanticType = resolveType(state)(semanticType),
                                                     error = None,
+                                                    errorLocation = None,
                                                     valuePlacements = state.valuePlacements
                                                     |> dedupeValuePlacements
                                                     |> finalizeValuePlacements(state),
