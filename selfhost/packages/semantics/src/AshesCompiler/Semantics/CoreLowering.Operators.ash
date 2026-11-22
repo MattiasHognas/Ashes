@@ -1562,6 +1562,31 @@ let recordedSettledEqualityOperand (operandType: SemanticType) (state: CoreLower
                 | None -> None
         | None -> None
 
+// Under typed lowering, the comparison a partly open equality whose plan lacks evidence is lowered
+// to instead of deferring its goal; None without a node table, and when neither answer applies.
+// A body lowered as a constrained binding that carries an Eq dictionary for the whole operand type
+// (`Eq(List(a))` for `selected != []`) compares through that dictionary, as when the operand
+// matches an active requirement directly. Otherwise the operand takes the recorded type closed by
+// the program's settled uses.
+let answerPartlyOpenEqualityFromTable operator (methodName: Str) lower (binary: LoweredCoreBinary) (operandType: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(_table) ->
+            let resolved = resolveType(state)(operandType)
+            in
+                if hasActiveTraitEvidence("Eq")(resolved)(state)
+                then
+                    (binary with state = observeLoweringEvent(0)(state), leftType = resolved, rightType = resolved)
+                    |> emitCoreTraitPlanCalls(TraitEvidenceParameter(TraitConstraint(traitName = "Eq", typeArguments = [resolved])))(methodName)(lower)
+                    |> Some
+                else
+                    match recordedSettledEqualityOperand(operandType)(state) with
+                        | Some((recordedState, recordedType)) ->
+                            (binary with state = recordedState, leftType = recordedType, rightType = recordedType)
+                            |> emitResolvedCoreBinary(operator)(lower)
+                            |> Some
+                        | None -> None
+
 // A constructed operand can still contain an unknown type, as in xs == []. The list
 // implementation is known, but its element dictionary may depend on a later application.
 // Defer that comparison as a whole unless all its evidence is already in scope.
@@ -1581,8 +1606,8 @@ let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary)
                                     | (pinnedState, pinnedType) ->
                                         match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
                                             | Some(key) ->
-                                                match recordedSettledEqualityOperand(pinnedType)(pinnedState) with
-                                                    | Some((recordedState, recordedType)) -> emitResolvedCoreBinary(operator)(lower)((binary with state = recordedState, leftType = recordedType, rightType = recordedType))
+                                                match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
+                                                    | Some(answered) -> answered
                                                     | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
                                             | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
                             else emitResolvedCoreBinary(operator)(lower)(binary)
