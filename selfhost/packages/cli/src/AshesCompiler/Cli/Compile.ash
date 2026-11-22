@@ -56,6 +56,8 @@ import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
 import AshesCompiler.Frontend.Parser.parseProgram
 import AshesCompiler.Frontend.Parser.ProgramParseResult
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.SourceContext.buildSourceTextIndex
+import AshesCompiler.Semantics.SourceContext.resolvePositionInIndex
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
@@ -857,6 +859,52 @@ let duplicateConstructorOwner (source: Str) (name: Str) =
                 | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
         | Error(_error) -> None
 
+let recursive bindingSpanOf (value: Expr) =
+    match value with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> bindingSpanOf(inner)
+        | _ -> None
+
+// The value span of the second top-level binding named `name`, `seen` telling whether the
+// first was passed.
+let recursive secondBindingValueSpan (name: Str) (seen: Bool) (items: List(TopLevelItem)) =
+    match items with
+        | [] -> None
+        | TopLevelAt(_span, inner) :: rest -> secondBindingValueSpan(name)(seen)(inner :: rest)
+        | TopLevelLet(LetBindingSyntax { name = bound, value = value }, _isRecursive) :: rest ->
+            if bound == name
+            then
+                if seen
+                then bindingSpanOf(value)
+                else secondBindingValueSpan(name)(true)(rest)
+            else secondBindingValueSpan(name)(seen)(rest)
+        | TopLevelRecursiveGroup(bindings) :: rest -> secondBindingValueSpanInGroup(name)(seen)(bindings)(rest)
+        | _item :: rest -> secondBindingValueSpan(name)(seen)(rest)
+and secondBindingValueSpanInGroup (name: Str) (seen: Bool) (bindings: List(LetBindingSyntax)) (rest: List(TopLevelItem)) =
+    match bindings with
+        | [] -> secondBindingValueSpan(name)(seen)(rest)
+        | LetBindingSyntax { name = bound, value = value } :: others ->
+            if bound == name
+            then
+                if seen
+                then bindingSpanOf(value)
+                else secondBindingValueSpanInGroup(name)(true)(others)(rest)
+            else secondBindingValueSpanInGroup(name)(seen)(others)(rest)
+
+// `path:line:column ` of the value of the entry binding declared a second time, where stage 0
+// reports the duplicate, or `` when the entry text does not show it.
+let duplicateBindingPrefix (inputPath: Str) (source: Str) (name: Str) =
+    match parseImportHeader(source) with
+        | Ok(ParsedImportHeader { sourceWithoutImports = body }) ->
+            match parseProgram(body) with
+                | ProgramParseResult { program = ProgramSyntax { items = items } } ->
+                    match secondBindingValueSpan(name)(false)(items) with
+                        | Some(TextSpan { start = start }) ->
+                            match resolvePositionInIndex(buildSourceTextIndex(body))(start) with
+                                | (line, column) -> inputPath + ":" + Ashes.Text.fromInt(line) + ":" + Ashes.Text.fromInt(column) + " "
+                        | None -> ""
+        | Error(_error) -> ""
+
 // Stage 0's standard-library module set, in the order its unknown-module diagnostic lists it.
 let knownStandardModulesText = "Ashes, Ashes.Trait, Ashes.IO, Ashes.Core.Result, Ashes.Collection.List, Ashes.Number.Math, Ashes.Collection.Array, Ashes.Collection.Map, Ashes.Collection.HashMap, Ashes.Collection.HashTrie, Ashes.Task.Parallel, Ashes.Core.Maybe, Ashes.Test, Ashes.Internal, Ashes.Internal.Regex, Ashes.IO.File, Ashes.IO.Directory, Ashes.IO.Path, Ashes.IO.Environment, Ashes.Text, Ashes.Text.Source, Ashes.Rune, Ashes.Number.BigInt, Ashes.Byte, Ashes.Ffi, Ashes.Number.UInt, Ashes.Net.Http, Ashes.Net.Tcp, Ashes.Net.Tcp.Server, Ashes.Net.Http.Server, Ashes.Net.Tls.Server, Ashes.Net.Tls, Ashes.Task, Ashes.IO.Process, Ashes.IO.Console, Ashes.Text.Json, Ashes.Net.Rpc, Ashes.Text.Regex"
 
@@ -869,7 +917,7 @@ let stitchFailureText (inputPath: Str) (source: Str) (error: ShippedStitchError)
         | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
-                | None -> "ASH013 Duplicate top-level binding '" + name + "'."
+                | None -> duplicateBindingPrefix(inputPath)(source)(name) + "ASH013 Duplicate top-level binding '" + name + "'."
         | ShippedModuleMissing(_importer, name) -> fileFailureText(inputPath)("Unknown standard library module '" + name + "'. Known modules: " + knownStandardModulesText + ".")
         | ShippedParseError(path, message) -> fileFailureText(path)(message)
         | other -> Ashes.Trait.Show.show(other)

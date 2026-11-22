@@ -13,6 +13,8 @@ import AshesCompiler.Cli.Restore
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 import AshesCompiler.Semantics.ShippedModuleStitching.ShippedStitchError
+import AshesCompiler.Semantics.ProjectSyntaxStitching.ProjectSyntaxStitchError
+import AshesCompiler.Semantics.ModuleSemanticStitching.ModuleSemanticStitchError
 let testParseFmtArgumentsHelp unit =
     match parseFmtArguments(["--help"]) with
         | FmtHelpRequested -> test.assertEqual(true)(true)
@@ -1433,6 +1435,15 @@ let testRunProjectRelaysProgramOutput unit =
                 |> (given (_) -> removeProjectScratch(Unit)))
 
 // An explicit manifest that does not exist is stage 0's "Project file not found" input error.
+// A binding the entry declares twice is reported at the second binding's value, as stage 0 reports it.
+let testDuplicateBindingIsLocatedAtSecondValue unit =
+    "x"
+    |> DuplicateModuleDeclaration("Main")
+    |> ProjectSyntaxSemanticError
+    |> ShippedSyntaxStitchError
+    |> stitchErrorText("Main.ash")("let x = 1\n\nlet x = 2\n\nx")
+    |> test.assertEqual("Main.ash:3:9 ASH013 Duplicate top-level binding 'x'.")
+
 // An inline module the entry may not declare fails the file as a whole, worded as stage 0 words it.
 let testInlineModuleErrorReadsAsFileFailure unit =
     "[ASH021] Inline module 'Bad' may not contain a trailing expression (Main.ash)."
@@ -1599,6 +1610,7 @@ let run unit =
     |> testRunProjectRelaysProgramOutput
     |> testCompileMissingProjectReportsNotFound
     |> testInlineModuleErrorReadsAsFileFailure
+    |> testDuplicateBindingIsLocatedAtSecondValue
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 // `--as-cli <args...>` re-enters this executable as the `ashes` CLI itself, so a test can observe
