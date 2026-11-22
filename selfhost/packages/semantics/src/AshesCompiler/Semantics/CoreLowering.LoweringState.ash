@@ -730,6 +730,9 @@ type CoreTcoReset =
     // the ordinals of the successors that are a call's result reaching its slot (stage 0's
     // `ArenaSuccessorMayHoldPartOf`).
     | ownedDropFacts: List((Int, List(Int), List(Int)))
+    // Per owned drop, the ordinals of the successors that are no call's result and whose value can
+    // have been read from its slot: a join, an alias or a cell of this iteration naming its value.
+    | ownedDropPlainSuccessors: List((Int, List(Int)))
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one

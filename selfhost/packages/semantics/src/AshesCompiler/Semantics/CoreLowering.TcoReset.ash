@@ -2124,6 +2124,40 @@ let recursive resetArgumentAt (ordinal: Int) (arguments: List(TcoResetArgument))
             then Some(argument)
             else resetArgumentAt(ordinal)(rest)
 
+// Whether a successor at one of these ordinals is stored as it is: not handed on unchanged, of a
+// parameter on no heap of its own, of a type a reset does not leave alone.
+let recursive unnormalizedSuccessorAmong (ordinals: List(Int)) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match ordinals with
+        | [] -> false
+        | ordinal :: rest ->
+            (match resetArgumentAt(ordinal)(arguments) with
+                | Some(argument) -> !argument.passesThrough && !resetArgumentIsManaged(argument) && !resultSurvivesReset(argument.argumentType)(state)
+                | None -> false) || unnormalizedSuccessorAmong(rest)(arguments)(state)
+
+let recursive plainSuccessorOrdinalsOf (slot: Int) (facts: List((Int, List(Int)))) =
+    match facts with
+        | [] -> []
+        | (candidate, ordinals) :: rest ->
+            if candidate == slot
+            then ordinals
+            else plainSuccessorOrdinalsOf(slot)(rest)
+
+// On a back edge that normalizes only the successors of parameters on the reference-counted heap,
+// the successor of a parameter on no heap of its own is stored as it is. One that is a join, an
+// alias or a cell of this iteration naming an iteration-local owner's value holds no reference of
+// its own to it, and the next iteration would read it after the owner's release: such an owner is
+// left unreleased, as an arena successor that may hold a part of an owned value leaves it.
+let recursive ownedDropsLeftByUnnormalizedSuccessors (drops: List((Int, Str))) (facts: List((Int, List(Int)))) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match drops with
+        | [] -> []
+        | (slot, typeName) :: rest ->
+            if unnormalizedSuccessorAmong(plainSuccessorOrdinalsOf(slot)(facts))(arguments)(state)
+            then ownedDropsLeftByUnnormalizedSuccessors(rest)(facts)(arguments)(state)
+            else (slot, typeName) :: ownedDropsLeftByUnnormalizedSuccessors(rest)(facts)(arguments)(state)
+
+let emitOwnedDropsBesideUnnormalizedSuccessors (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    emitResolvedOwnedDrops(ownedDropsLeftByUnnormalizedSuccessors(reset.ownedDrops)(reset.ownedDropPlainSuccessors)(arguments)(state))(state)
+
 // Stage 0's `successorsOwnTheirParts` in `EmitGeneralRcBackEdgeDrops`: each successor is inline,
 // handed on unchanged, a loop parameter's part in a tail-modulo-cons loop, or a parameter
 // normalized onto the reference-counted heap on this path.
@@ -2462,7 +2496,7 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
-                    |> emitResolvedOwnedDrops(reset.ownedDrops)
+                    |> emitOwnedDropsBesideUnnormalizedSuccessors(reset)(arguments)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitGuardedRuntimeManagedTcoRestore(reset)(arguments)(preRestoreSlot)
                     |> emitRuntimeManagedBackEdgeStores(stores)
@@ -3125,7 +3159,7 @@ let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: L
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
-                    |> emitResolvedOwnedDrops(reset.ownedDrops)
+                    |> emitOwnedDropsBesideUnnormalizedSuccessors(reset)(arguments)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitRuntimeManagedBackEdgeStores(stores)
 
