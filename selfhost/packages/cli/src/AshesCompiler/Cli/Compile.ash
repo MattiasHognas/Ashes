@@ -718,27 +718,41 @@ let leakCheckRequested unit =
         | Ok(Some(value)) -> value == "1"
         | _ -> false
 
-// The lowered program as a linux-x64 relocatable object, through `codegenProgram` and real LLVM.
-let emitObject lowered =
+// The link map path `ASHES_LINK_MAP` names, if any.
+let requestedLinkMapPath unit =
+    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
+        | Ok(Some(path)) when path != "" -> Some(path)
+        | _ -> None
+
+// The program built into an LLVM module, with what emission and linking still read from it: its
+// runtime payloads, its external libraries, and, when a link map was requested, the origin text of
+// every function. The program itself is not part of the result, so a caller that took the program
+// from a call's result releases it before the module is optimized and emitted.
+let preparedEmission optimized =
     (let _ = initializeX86Target(Unit)
     in
         let context = contextCreate(Unit)
         in
             let _ = reportDiagnosticPhase("codegen-start")
             in
-                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(lowered) with
+                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(optimized) with
                     | (module_, builder) ->
                         let _ = reportDiagnosticPhase("codegen-done")
                         in
-                            match resolveHostTargetMachine(linuxX64Triple) with
-                                | Error(message) -> Error(message)
-                                | Ok(machine) ->
-                                    emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
+                            let linkNames =
+                                match requestedLinkMapPath(Unit) with
+                                    | Some(_path) ->
+                                        optimized
+                                        |> linkNamesText
+                                        |> Some
+                                    | None -> None
+                            in (module_, builder, context, runtimePayloadsFor(optimized), externalLibraries(optimized), linkNames))
 
-let linkExecutable program objectBytes =
-    program
-    |> externalLibraries
-    |> linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)
+// The prepared module as a linux-x64 relocatable object, through real LLVM.
+let emitPreparedObject module_ builder context payloads =
+    match resolveHostTargetMachine(linuxX64Triple) with
+        | Error(message) -> Error(message)
+        | Ok(machine) -> emitObjectWithMachine(payloads)(machine)(builder)(module_)(context)
 
 // The output's directory is created first, as stage 0 does, so a fresh project's
 // `<outDir>/<name>` needs no prior `mkdir`.
@@ -768,35 +782,38 @@ let writeExecutable outputPath executableBytes =
 
 // With `ASHES_LINK_MAP` set to a path, the link map of the executable (one line per function,
 // `<hex address> <hex size> <name>`, sorted by address) is written there, and the origin of every
-// IR function to `<path>.names`. The executable itself is the same either way.
-let writeLinkMapFiles path optimized objectBytes =
+// IR function (`namesText`, read from the program before code generation) to `<path>.names`. The
+// executable itself is the same either way.
+let writeLinkMapFiles path (namesText: Str) objectBytes =
     match linuxLinkMapText(objectBytes) with
         | Error(message) -> Error(message)
         | Ok(mapText) ->
             match Ashes.IO.File.writeText(path)(mapText) with
                 | Error(message) -> Error("Could not write " + path + ": " + message)
                 | Ok(_) ->
-                    match optimized
-                    |> linkNamesText
-                    |> Ashes.IO.File.writeText(path + ".names") with
+                    match Ashes.IO.File.writeText(path + ".names")(namesText) with
                         | Error(message) -> Error("Could not write " + path + ".names: " + message)
                         | Ok(_) -> Ok(Unit)
 
-let writeRequestedLinkMap optimized objectBytes =
-    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
-        | Ok(Some(path)) when path != "" -> writeLinkMapFiles(path)(optimized)(objectBytes)
+let writeRequestedLinkMap (linkNames: Maybe(Str)) objectBytes =
+    match (requestedLinkMapPath(Unit), linkNames) with
+        | (Some(path), Some(namesText)) -> writeLinkMapFiles(path)(namesText)(objectBytes)
         | _ -> Ok(Unit)
 
-let emitAndLink outputPath optimized =
-    match emitObject(optimized) with
-        | Error(message) -> Error(message)
-        | Ok(objectBytes) ->
-            match writeRequestedLinkMap(optimized)(objectBytes) with
+// Optimizes and emits a prepared module, writes the requested link map, and links and writes the
+// executable to `outputPath`, returning the written byte count.
+let emitAndLinkPrepared outputPath prepared =
+    match prepared with
+        | (module_, builder, context, payloads, libraries, linkNames) ->
+            match emitPreparedObject(module_)(builder)(context)(payloads) with
                 | Error(message) -> Error(message)
-                | Ok(_) ->
-                    match linkExecutable(optimized)(objectBytes) with
+                | Ok(objectBytes) ->
+                    match writeRequestedLinkMap(linkNames)(objectBytes) with
                         | Error(message) -> Error(message)
-                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                        | Ok(_) ->
+                            match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                                | Error(message) -> Error(message)
+                                | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
@@ -849,11 +866,11 @@ let optimizedStitchedProgram (explain: ExplainRequest) (reuseEnabled: Bool) inpu
                             | Error(message) -> Error(message)
                             | Ok(_) -> Ok(optimized))
 
-// Emits and links an optimized program to `outputPath`, returning the written byte count.
-let compileOptimizedToExecutable outputPath (program: Result(Str, IrProgram)) =
-    match program with
+// Emits and links a prepared module to `outputPath`, returning the written byte count.
+let compilePreparedToExecutable outputPath prepared =
+    match prepared with
         | Error(message) -> Error(message)
-        | Ok(optimized) -> emitAndLink(outputPath)(optimized)
+        | Ok(emission) -> emitAndLinkPrepared(outputPath)(emission)
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
@@ -975,12 +992,22 @@ let optimizedFileProgram inputPath (explain: ExplainRequest) (reuseEnabled: Bool
                             |> Error
                         | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
+// The file `inputPath` built into an LLVM module. The optimized program is held by this frame
+// alone, so it is released when this returns, before the module is optimized and emitted.
+let preparedFileEmission inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match optimizedFileProgram(inputPath)(explain)(reuseEnabled) with
+        | Error(message) -> Error(message)
+        | Ok(optimized) ->
+            optimized
+            |> preparedEmission
+            |> Ok
+
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
 let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     reuseEnabled
-    |> optimizedFileProgram(inputPath)(explain)
-    |> compileOptimizedToExecutable(outputPath)
+    |> preparedFileEmission(inputPath)(explain)
+    |> compilePreparedToExecutable(outputPath)
 
 // The optimized program of the project at `layout`: its modules, its dependencies' modules, and
 // the shipped modules they reach stitched into one program and lowered against the entry module's
@@ -999,12 +1026,22 @@ let optimizedProjectProgram (layout: ProjectLayout) (explain: ExplainRequest) (r
                             |> Error
                         | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
 
+// The project at `layout` built into an LLVM module, released from its program as
+// `preparedFileEmission` is.
+let preparedProjectEmission (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match optimizedProjectProgram(layout)(explain)(reuseEnabled) with
+        | Error(message) -> Error(message)
+        | Ok(optimized) ->
+            optimized
+            |> preparedEmission
+            |> Ok
+
 // Compiles the project at `layout` to the executable at `outputPath`, printing the `explain`
 // reports to stderr on the way, and returns the written byte count.
 let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     reuseEnabled
-    |> optimizedProjectProgram(layout)(explain)
-    |> compileOptimizedToExecutable(outputPath)
+    |> preparedProjectEmission(layout)(explain)
+    |> compilePreparedToExecutable(outputPath)
 
 let compileResolvedInput resolved outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match resolved with
