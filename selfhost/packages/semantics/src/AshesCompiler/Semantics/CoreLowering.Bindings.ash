@@ -59,6 +59,7 @@ export (
     value enterInlineTypeVariables,
     value lowerLambdaParameterType,
     value bindingLambdaValue,
+    value topLevelBindingLambdaValue,
     value annotatedValueType,
     value bindLoweredAnnotation,
     value recordLetLambdaLabel,
@@ -1304,6 +1305,17 @@ let bindingLambdaValue annotation value (state: CoreLoweringState) =
                 match annotationTypeVariableNames(expanded)([]) with
                     | [] -> annotateBindingLambdaChain(expanded)(value)
                     | _ -> value
+
+// A non-recursive top-level binding's annotation reaches its parameters whether or not it names
+// type variables, as stage 0 reads the signature. A variable repeated inside one parameter's type
+// relates its parts, and a curry stage shares its enclosing stage's inline type variables
+// (`enterInlineTypeVariables`). Without it, a part the body never uses keeps a type of its own, and
+// a constrained function passed there has nothing to settle its requirement.
+let topLevelBindingLambdaValue annotation value (state: CoreLoweringState) =
+    match annotation with
+        | None -> value
+        | Some(signature) ->
+            value |> annotateBindingLambdaChain(expandTypeAliases(stateTypeAliases(state))(32)(signature))
 
 let recursive annotatedValueIsLambda (value: Expr) =
     match value with

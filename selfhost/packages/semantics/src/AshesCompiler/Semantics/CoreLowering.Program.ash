@@ -337,7 +337,7 @@ let tryOpenConstrainedTopLevel name value annotation requirements escapeBody tai
 let openUnconstrainedArenaBracketedTopLevelLet name value annotation remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
-            match rewriteTraitConstrainedTopLevelValue(name)(bindingLambdaValue(annotation)(value)(state))(environment) with
+            match rewriteTraitConstrainedTopLevelValue(name)(topLevelBindingLambdaValue(annotation)(value)(state))(environment) with
                 | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> openedChainFailure(pending)(UnresolvedTraitEvidenceForwarding(error))(saved)
                 | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
                     match saved
