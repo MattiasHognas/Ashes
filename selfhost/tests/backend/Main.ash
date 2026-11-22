@@ -6332,6 +6332,37 @@ let testCopyOutClosureArena unit = assertProgramPrintsLines(buildCopyOutClosureA
 
 let testCopyOutClosureRcNormalizer unit = assertProgramPrintsLines(buildCopyOutClosureRcNormalizerModule)("selfhostBackendCopyOutClosureRcNormalizer")("selfhost_backend_copy_out_closure_rc_normalizer_e2e")(["43", "42", "true", "7"])
 
+let recursive countLinesWith (lines: List(Str)) (first: Str) (second: Str) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.contains(line)(first) && Ashes.Text.contains(line)(second)
+            then 1 + countLinesWith(rest)(first)(second)
+            else countLinesWith(rest)(first)(second)
+
+// The two runtime-managed closure copies of the module above share one out-of-line dispatch:
+// the module defines `__ashes_closure_env_normalize` once, the normalizer is called from it alone
+// (one call, not one per copy site), and each copy site calls the dispatch, so a copy's size does
+// not grow with the number of normalizers in the program.
+let testCopyOutClosureSharesNormalizerDispatch unit =
+    (let text = moduleIrText(buildCopyOutClosureRcNormalizerModule)("copyOutClosureSharedDispatch")
+    in
+        let lines = Ashes.Text.split(text)("\n")
+        in
+            Unit
+            |> (given (_) ->
+                "@__ashes_closure_env_normalize("
+                |> countLinesWith(lines)("define internal i64")
+                |> test.assertEqual(1))
+            |> (given (_) ->
+                "copy_closure_normalizer_call"
+                |> countLinesWith(lines)("= call")
+                |> test.assertEqual(1))
+            |> (given (_) ->
+                "@__ashes_closure_env_normalize("
+                |> countLinesWith(lines)("= call")
+                |> test.assertEqual(2)))
+
 let testAllocAdtToSpaceSurvivesResets unit = assertProgramPrints(buildAllocAdtToSpaceSurvivesResetsModule)("selfhostBackendAllocAdtToSpace")("selfhost_backend_alloc_adt_to_space_e2e")("45")
 
 let testAllocAdtStack unit = assertProgramPrints(buildAllocAdtStackModule)("selfhostBackendAllocAdtStack")("selfhost_backend_alloc_adt_stack_e2e")("45")
@@ -6570,6 +6601,7 @@ let run shipped =
     |> testCopyOutListRcStringHeads
     |> testCopyOutClosureArena
     |> testCopyOutClosureRcNormalizer
+    |> testCopyOutClosureSharesNormalizerDispatch
     |> testAllocAdtToSpaceSurvivesResets
     |> testAllocAdtStack
     |> testCopyOutArenaToSpace

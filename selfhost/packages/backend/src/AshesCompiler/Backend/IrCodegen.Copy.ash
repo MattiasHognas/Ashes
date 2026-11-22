@@ -40,6 +40,8 @@ export (
     value emitCopyStringIntoOrFresh,
     value emitCopyFixedIntoOrFresh,
     value collectClosureNormalizers,
+    type ClosureEnvironmentNormalizer(..),
+    value defineClosureEnvironmentNormalizer,
     value emitCopyOutClosure,
     value emitCopyOutTcoListCell,
 )
@@ -309,11 +311,19 @@ let recursive collectClosureNormalizers (liftedFunctions: MapTree(Str, LLVMValue
                     | None -> collectClosureNormalizers(liftedFunctions)(rest)
             else collectClosureNormalizers(liftedFunctions)(rest)
 
-// The runtime-managed environment copy's normalizer dispatch: one code-address compare per
-// known normalizer, calling the matching one (its returned dropper replaces the source's) and
-// branching to `copiedBlock`; the builder is left in the block that falls through to the raw
-// copy when no closure matched.
-let recursive emitNormalizerDispatch context function_ builder i64 closureFnType code sourceEnv destinationEnv dropperSlot copiedBlock normalizers =
+// The module's one environment-normalizer dispatch, stage 0's `__ashes_closure_env_normalize`:
+// `i64 (i64 code, i64 source, i64 destination, i64 size, i64 dropper)`, kept out of line
+// (`noinline`). A normalizer copies the closures its environment captured, so an inline dispatch
+// over every normalizer at every runtime-managed closure copy would grow with the square of the
+// number of normalizers.
+type ClosureEnvironmentNormalizer =
+    | normalizeFn: LLVMValueRef
+    | normalizeType: LLVMTypeRef
+
+// One code-address compare per known normalizer: the matching normalizer is called and its
+// returned dropper is the helper's result; the builder is left in the block that falls through
+// when no closure matched.
+let recursive emitNormalizerDispatch context function_ builder i64 closureFnType code sourceEnv destinationEnv normalizers =
     match normalizers with
         | [] -> Unit
         | (closure, normalizer) :: rest ->
@@ -324,29 +334,67 @@ let recursive emitNormalizerDispatch context function_ builder i64 closureFnType
                         buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(code)(buildPtrToInt(builder)(closure)(i64)("copy_closure_known_code"))("copy_closure_has_normalizer"))(normalizeBlock)(nextBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(normalizeBlock))
                     |> (given (_) -> buildCall(builder)(closureFnType)(normalizer)([sourceEnv, destinationEnv, arenaConst(i64)(0)])(3u32)("copy_closure_normalizer_call"))
-                    |> (given (normalizedDropper) -> buildStore(builder)(normalizedDropper)(dropperSlot))
-                    |> (given (_) -> buildBr(builder)(copiedBlock))
+                    |> (given (normalizedDropper) -> buildRet(builder)(normalizedDropper))
                     |> (given (_) -> positionBuilderAtEnd(builder)(nextBlock))
-                    |> (given (_) -> emitNormalizerDispatch(context)(function_)(builder)(i64)(closureFnType)(code)(sourceEnv)(destinationEnv)(dropperSlot)(copiedBlock)(rest))
+                    |> (given (_) -> emitNormalizerDispatch(context)(function_)(builder)(i64)(closureFnType)(code)(sourceEnv)(destinationEnv)(rest))
 
-// Fills the fresh environment block: an arena copy is the raw bytes; a runtime-managed copy runs
-// the closure's normalizer when the program has one for its code address, else the raw bytes.
-let emitNormalizeOrCopyClosureEnvironment context function_ builder i64 ptrType (copyOut: CopyOutRuntime) closureFnType normalizers runtimeManaged code sourceEnv destinationEnv envSize dropperSlot =
+// Defines the dispatch for `normalizers` (every closure with an environment normalizer, paired with
+// it): the matching normalizer's dropper, or, for a closure without one, the environment's words
+// moved across and the incoming `dropper` returned.
+let defineClosureEnvironmentNormalizer module_ context builder i64 ptrType (copyOut: CopyOutRuntime) closureFnType normalizers =
+    (let normalizeType = functionType(i64)([i64, i64, i64, i64, i64])(5u32)(false)
+    in
+        let normalizeFn = addInternalFunction(module_)("__ashes_closure_env_normalize")(normalizeType)
+        in
+            let _ = addFunctionEnumAttribute(context)(normalizeFn)("noinline")
+            in
+                let _ =
+                    "entry"
+                    |> appendBasicBlock(context)(normalizeFn)
+                    |> positionBuilderAtEnd(builder)
+                in
+                    let code = getParam(normalizeFn)(0u32)
+                    in
+                        let source = getParam(normalizeFn)(1u32)
+                        in
+                            let destination = getParam(normalizeFn)(2u32)
+                            in
+                                let _ = emitNormalizerDispatch(context)(normalizeFn)(builder)(i64)(closureFnType)(code)(source)(destination)(normalizers)
+                                in
+                                    let _ =
+                                        emitMoveBytes(builder)(i64)(ptrType)(copyOut)(destination)(source)(getParam(normalizeFn)(3u32))("copy_closure_env")
+                                    in
+                                        let _ =
+                                            4u32
+                                            |> getParam(normalizeFn)
+                                            |> buildRet(builder)
+                                        in ClosureEnvironmentNormalizer(normalizeFn = normalizeFn, normalizeType = normalizeType))
+
+// The dispatch a runtime-managed closure copy calls; `codegenFunctions` defines it for every module
+// whose IR copies a closure into the reference-counted heap.
+let closureEnvironmentNormalizerOf (normalizer: Maybe(ClosureEnvironmentNormalizer)) =
+    match normalizer with
+        | Some(helper) -> helper
+        | None -> Ashes.IO.panic("codegen: the closure environment normalizer was not defined for this module")
+
+// Fills the fresh environment block: an arena copy is the raw bytes; a runtime-managed copy calls
+// the module's dispatch, which runs the closure's normalizer when the program has one for its code
+// address and copies the raw bytes otherwise, and answers the copy's dropper.
+let emitNormalizeOrCopyClosureEnvironment context function_ builder i64 ptrType (copyOut: CopyOutRuntime) closureFnType normalizer runtimeManaged code sourceEnv destinationEnv envSize dropperSlot =
     if runtimeManaged == false
     then
         Unit
         |> (given (_) -> emitMoveBytes(builder)(i64)(ptrType)(copyOut)(destinationEnv)(sourceEnv)(envSize)("copy_closure_env"))
         |> (given (_) -> Unit)
     else
-        match (appendBasicBlock(context)(function_)("copy_closure_raw_env"), appendBasicBlock(context)(function_)("copy_closure_env_copied")) with
-            | (rawCopyBlock, copiedBlock) ->
-                Unit
-                |> (given (_) -> normalizers |> emitNormalizerDispatch(context)(function_)(builder)(i64)(closureFnType)(code)(sourceEnv)(destinationEnv)(dropperSlot)(copiedBlock))
-                |> (given (_) -> buildBr(builder)(rawCopyBlock))
-                |> (given (_) -> positionBuilderAtEnd(builder)(rawCopyBlock))
-                |> (given (_) -> emitMoveBytes(builder)(i64)(ptrType)(copyOut)(destinationEnv)(sourceEnv)(envSize)("copy_closure_env"))
-                |> (given (_) -> buildBr(builder)(copiedBlock))
-                |> (given (_) -> positionBuilderAtEnd(builder)(copiedBlock))
+        match closureEnvironmentNormalizerOf(normalizer) with
+            | ClosureEnvironmentNormalizer { normalizeFn = normalizeFn, normalizeType = normalizeType } ->
+                let incomingDropper = buildLoad(builder)(i64)(dropperSlot)("copy_closure_incoming_dropper")
+                in
+                    let normalizedDropper = buildCall(builder)(normalizeType)(normalizeFn)([code, sourceEnv, destinationEnv, envSize, incomingDropper])(5u32)("copy_closure_normalized_dropper")
+                    in
+                        let _ = buildStore(builder)(normalizedDropper)(dropperSlot)
+                        in Unit
 
 // A fresh block of `sizeRef` bytes for a closure copy: an RC cell, or a word-aligned arena bump.
 let emitClosureCopyBlock context function_ builder i64 i8 (arena: ArenaRuntime) mallocFn mallocType runtimeManaged sizeRef name =
@@ -400,7 +448,7 @@ let loadClosureCopyState builder i64 i8 ptrType runtimeManaged srcRef =
 
 // A nil environment (no captures) is kept as nil; otherwise a fresh block of the environment's
 // size is filled by `emitNormalizeOrCopyClosureEnvironment` and its address stored in the slot.
-let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizers runtimeManaged (state: ClosureCopyState) =
+let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizer runtimeManaged (state: ClosureCopyState) =
     match (appendBasicBlock(context)(function_)("copy_closure_env_copy"), appendBasicBlock(context)(function_)("copy_closure_env_merge")) with
         | (copyBlock, mergeBlock) ->
             Unit
@@ -410,19 +458,19 @@ let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (aren
             |> (given (_) -> emitClosureCopyBlock(context)(function_)(builder)(i64)(i8)(arena)(mallocFn)(mallocType)(runtimeManaged)(state.closureEnvSize)("copy_closure_new_env"))
             |> (given (newEnv) ->
                 Unit
-                |> (given (_) -> emitNormalizeOrCopyClosureEnvironment(context)(function_)(builder)(i64)(ptrType)(copyOut)(closureFnType)(normalizers)(runtimeManaged)(state.closureCode)(state.closureEnv)(newEnv)(state.closureEnvSize)(state.newDropperSlot))
+                |> (given (_) -> emitNormalizeOrCopyClosureEnvironment(context)(function_)(builder)(i64)(ptrType)(copyOut)(closureFnType)(normalizer)(runtimeManaged)(state.closureCode)(state.closureEnv)(newEnv)(state.closureEnvSize)(state.newDropperSlot))
                 |> (given (_) -> buildStore(builder)(newEnv)(state.newEnvSlot)))
             |> (given (_) -> buildBr(builder)(mergeBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(mergeBlock))
 
 // `CopyOutClosure`: the environment copied first (see above), then a fresh 32-byte closure holding
 // the same code word and packed size, the new environment, and the possibly normalized dropper.
-let emitCopyOutClosure context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizers runtimeManaged srcRef name =
+let emitCopyOutClosure context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType normalizer runtimeManaged srcRef name =
     srcRef
     |> loadClosureCopyState(builder)(i64)(i8)(ptrType)(runtimeManaged)
     |> (given (state) ->
         Unit
-        |> (given (_) -> emitCopyOutClosureEnvironment(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType)(closureFnType)(normalizers)(runtimeManaged)(state))
+        |> (given (_) -> emitCopyOutClosureEnvironment(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType)(closureFnType)(normalizer)(runtimeManaged)(state))
         |> (given (_) ->
             emitClosureCopyBlock(context)(function_)(builder)(i64)(i8)(arena)(mallocFn)(mallocType)(runtimeManaged)(arenaConst(i64)(closureSizeBytes))(name))
         |> (given (newClosure) ->
