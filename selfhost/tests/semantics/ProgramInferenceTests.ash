@@ -336,6 +336,13 @@ let expectRequirementSites unit =
         |> siteStart("Default")
         |> test.assertEqual(0))
 
+// A local recursive binding whose value does not unify with its written signature is reported at
+// the value, as stage 0 reports it.
+let expectRecursiveSignatureMismatchAtValue unit =
+    "let recursive helper : Int -> Bool = given (k) -> 1 in helper(2)"
+    |> rejectionStart
+    |> test.assertEqual(37)
+
 // An alias cycle is reported at the declaration of the alias that reached itself again.
 let expectAliasCycleAtDeclaration unit =
     match parseProgram("type alias Other = Int\ntype alias First = Second\ntype alias Second = First\n0") with
@@ -363,4 +370,5 @@ let runProgramInferenceTests unit =
     |> expectPatternAndArityPositions
     |> expectRequirementSites
     |> expectAliasCycleAtDeclaration
+    |> expectRecursiveSignatureMismatchAtValue
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))
