@@ -2209,7 +2209,7 @@ let lowerAnnotatedLet name value body (annotationType: Maybe(SemanticType)) forw
                     then withConsumerRequest((current.consumerRequest with expectedType = annotationType))(current)
                     else current)
                 |> lower(valueExpression)
-                |> bindLoweredAnnotation(annotationType)
+                |> bindLoweredAnnotation(valueExpression)(annotationType)
     in
         match collectPendingBorrowedOwners(name)(value)(state) with
             | CoreLoweringState { bindings = outerBindings } as collected ->

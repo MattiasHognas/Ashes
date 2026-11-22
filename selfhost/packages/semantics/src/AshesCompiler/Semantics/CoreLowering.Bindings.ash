@@ -19,6 +19,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.CoroutineSocketFrame
 import AshesCompiler.Semantics.TaskStructLayout
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
@@ -1329,13 +1330,37 @@ let annotatedValueType (annotation: Maybe(TypeExpr)) (value: Expr) (state: CoreL
                         | [] -> typeExprToSemanticType(expanded)([])
                         | _ -> None
 
-// A lowered `let` value bound to the type its annotation gives it.
-let bindLoweredAnnotation (annotationType: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
+// The span a `let` value is written at.
+let recursive annotatedValueSpan (value: Expr) =
+    match value with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_node, inner) -> annotatedValueSpan(inner)
+        | _ -> None
+
+// A value that does not fit its annotation reads the written type first, as stage 0 reports a
+// value against the type its context expects.
+let writtenTypeFirstMismatch (error: CoreLoweringError) =
+    match error with
+        | CoreCallTypeMismatch(TypeMismatch(valueType, writtenType), site) ->
+            CoreCallTypeMismatch(TypeMismatch(writtenType)(valueType))(site)
+        | other -> other
+
+// A lowered `let` value bound to the type its annotation gives it. A value that does not fit is
+// reported at the value, where stage 0 reports it, rather than at the declaration that holds it.
+let bindLoweredAnnotation (value: Expr) (annotationType: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
     match (annotationType, lowered) with
         | (Some(expected), LoweredCoreValue { state = state, semanticType = valueType, error = None }) ->
-            match bindType(valueType)(expected)(state) with
-                | (failedState, Some(error)) -> failure(failedState)(error)
-                | (boundState, None) -> lowered with state = boundState
+            let located =
+                match annotatedValueSpan(value) with
+                    | Some(span) -> state with currentSpan = Some(span)
+                    | None -> state
+            in
+                match bindType(valueType)(expected)(located) with
+                    | (failedState, Some(error)) ->
+                        error
+                        |> writtenTypeFirstMismatch
+                        |> failure(failedState)
+                    | (boundState, None) -> lowered with state = (boundState with currentSpan = state.currentSpan)
         | _ -> lowered
 
 // A let-bound lambda's generated label is remembered under the let's name, so a call through the

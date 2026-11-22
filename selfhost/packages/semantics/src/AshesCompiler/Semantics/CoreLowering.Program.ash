@@ -344,7 +344,7 @@ let openUnconstrainedArenaBracketedTopLevelLet name value annotation remainingBo
                     |> withConsumerRequest(letValueRequest(name)(rewrittenValue)(remainingBody)(saved))
                     |> armSourceFunction(name)(rewrittenValue)(stackClosure)
                     |> lowerCore(rewrittenValue)
-                    |> bindLoweredAnnotation(annotatedValueType(annotation)(rewrittenValue)(saved)) with
+                    |> bindLoweredAnnotation(rewrittenValue)(annotatedValueType(annotation)(rewrittenValue)(saved)) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> openedChainFailure(pending)(error)(failedState)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
