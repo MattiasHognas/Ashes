@@ -1115,9 +1115,10 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
             in
                 // Replay can revisit a now-concrete operand without consulting the proof it
                 // consumed on the first traversal. The next body starts after that traversal.
-                // A pass without proofs has none to keep, so this holds for a recursive group's
-                // final member pass too, which lowers its bodies with the pinned boundary lifted.
-                result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
+                if stateTraitGoalsPinned(entered)
+                then
+                    result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
+                else result with state = resumed
 
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
@@ -1139,10 +1140,32 @@ let keepFirstSelfResultDeferral (names: List(Str)) (prepare: CoreLoweringState -
         |> stateSelfResultDeferredNames
         |> withMissingNames(names))(prepared))
 
+// The first lowering of a body that may be lowered again. Discovery defers a trait goal whose
+// operand is still open there, and the body's later code, or the deferred site's own result,
+// often closes that operand, so the body is lowered again with it settled and the record is
+// dropped. The replay then has no proof for the site. Its first lowering therefore defers the same
+// way, with the pinned boundary lifted, and the lowering again stays pinned. A record that outlives
+// the body is refused when the pinned pass ends.
+let lowerBodyProvisionally (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
+    if stateTraitGoalsPinned(entered)
+    then
+        match entered
+        |> withStateTraitGoalsPinned(false)
+        |> prepare
+        |> lower(body) with
+            | LoweredCoreValue { state = lowered } as first -> first with state = withStateTraitGoalsPinned(true)(lowered)
+    else
+        entered
+        |> prepare
+        |> lower(body)
+
 let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
-    match entered
-    |> prepare
-    |> lower(body) with
+    match if stateResolvingCallsAgain(entered)
+    then
+        entered
+        |> prepare
+        |> lower(body)
+    else lowerBodyProvisionally(body)(prepare)(lower)(entered) with
         | LoweredCoreValue { error = Some(_error) } as failed -> failed
         | LoweredCoreValue { state = firstState } as first ->
             if stateResolvingCallsAgain(entered)
@@ -1166,9 +1189,7 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
 let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
     if stateResolvingCallsAgain(entered)
     then
-        match entered
-        |> prepare
-        |> lower(body) with
+        match lowerBodyProvisionally(body)(prepare)(lower)(entered) with
             | LoweredCoreValue { error = Some(_error) } as failed -> failed
             | first ->
                 match close(first) with

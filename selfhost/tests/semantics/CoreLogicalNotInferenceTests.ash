@@ -49,6 +49,13 @@ let checkRecursiveGroupNegationReplay unit = expectBool(standardTraits(Unit) + "
 
 let checkRecursiveGroupComparisonReplay unit = expectBool(standardTraits(Unit) + "\nlet lower (value: Int) = value - 1\nlet recursive count limit floor values = if limit < floor then 0 else match values with | [] -> 0 | _value :: rest -> step(count(limit)(floor))(rest) + count(lower(limit))(lower(floor))([]) and step recur rest = 1 + recur(rest)\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && count(3)(1)([5, 6, 7]) == 3")
 
+// Any function body: its first lowering in the pinned replay defers a goal whose operand the body
+// closes later, here through the negation's own Bool result and through a later addition.
+let checkFunctionBodyReplay unit =
+    Unit
+    |> (given (_) -> expectBool(standardTraits(Unit) + "\nlet pick exact value = if !exact then value else 0\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && pick(false)(5) + pick(true)(2) == 5"))
+    |> (given (_) -> expectBool(standardTraits(Unit) + "\nlet below a b = if a < b then a + 1 else 0\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && below(1)(3) == 2"))
+
 let checkActiveGenericEvidence unit = expectBool("type Bit = | Bit(Bool) deriving {Eq}\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\ntype Box(a) = | Box(a)\nimplement Eq(Box(a)) requires {Not(a), Eq(a)} = | equal = given left -> given right -> match (left, right) with | (Box(x), Box(y)) -> !x == y\nlet same (left: Box(Bit)) (right: Box(Bit)) = left == right\nsame(Box(Bit(false)))(Box(Bit(true)))")
 
 let bitNotPrelude = "type Bit = | Bit(Bool)\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\n"
@@ -174,6 +181,7 @@ let runCoreLogicalNotInferenceTests unit =
     |> checkRecursiveGroupEqualityReplay
     |> checkRecursiveGroupNegationReplay
     |> checkRecursiveGroupComparisonReplay
+    |> checkFunctionBodyReplay
     |> checkActiveGenericEvidence
     |> (given (_) -> checkGenericNotEvidence(" : a -> a requires {Not(a)}"))
     |> (given (_) -> checkGenericNotEvidence(""))

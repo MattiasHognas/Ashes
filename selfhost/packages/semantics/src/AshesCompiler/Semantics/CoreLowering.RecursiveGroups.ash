@@ -432,12 +432,6 @@ let recursive settledSiblingCallResults (pending: List((Str, SemanticType))) (co
                 else settledSiblingCallResults(rest)(count - 1)(state)(proven)(settled)
         | _ -> (proven, settled)
 
-// The caller's pinned boundary put back on a member pass's result.
-let restorePinnedBoundary (environmentState: CoreLoweringState) lowered =
-    match lowered with
-        | LoweredCoreValue { state = state } ->
-            lowered with state = withStateTraitGoalsPinned(stateTraitGoalsPinned(environmentState))(state)
-
 // A group whose members call a later member before its result is known is lowered twice, as stage 0
 // lowers the whole program twice: the first lowering settles each such call's result type, and the
 // one that stands starts over from the state before the group with those types pinned at their
@@ -464,19 +458,11 @@ let lowerRecursiveMembersPinningSiblingResults members selfBindings captures env
                                 | [] -> false
                                 | _goals -> stateTraitGoalsPinned(environmentState)
                         in
-                            // The final pass lowers each body first with its parameters open, as
-                            // the disposable one did: a goal whose operand the body's own later
-                            // code closes is recorded and dropped when the body is lowered again.
-                            // Under a pinned boundary it would be refused at that first lowering.
-                            // A record that outlives the group is refused when the pinned pass
-                            // ends.
                             if settled || needsPinnedReplay
                             then
                                 environmentState
                                 |> withStateProvenSiblingCallResults(proven)
-                                |> withStateTraitGoalsPinned(false)
                                 |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
-                                |> restorePinnedBoundary(environmentState)
                             else
                                 first with state = withStateTraitGoalsPinned(stateTraitGoalsPinned(environmentState))(firstState)
 
