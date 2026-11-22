@@ -1517,6 +1517,27 @@ let patternFailure semanticType environment substitution supply names error =
         error
     ))
 
+// A pattern diagnostic at the pattern's own span, as stage 0 reports it; unlocated when the
+// pattern carries no span.
+let locatedAtPattern (pattern: Pattern) (error: TypeInferenceError) =
+    match pattern with
+        | PatternAt(span, _inner) -> InferenceErrorAt(span)(error)
+        | _ -> error
+
+let recursive lastPatternEnd (patterns: List(Pattern)) =
+    match patterns with
+        | [] -> None
+        | PatternAt(TextSpan { end = patternEnd }, _inner) :: [] -> Some(patternEnd)
+        | _last :: [] -> None
+        | _head :: rest -> lastPatternEnd(rest)
+
+// A constructor pattern's arity diagnostic spans its argument patterns, from the first to the
+// last, as stage 0 reports it; unlocated without arguments or spans.
+let locatedAtArgumentPatterns (patterns: List(Pattern)) (error: TypeInferenceError) =
+    match (patterns, lastPatternEnd(patterns)) with
+        | (PatternAt(TextSpan { start = patternStart }, _inner) :: _rest, Some(patternEnd)) -> InferenceErrorAt(TextSpan(start = patternStart, end = patternEnd))(error)
+        | _ -> error
+
 let mergePatternUnification currentSubstitution result supply fallbackType environment names =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
@@ -1615,6 +1636,7 @@ let tuplePatternArityError (scrutineeType: SemanticType) pattern =
                     else
                         actual
                         |> TuplePatternArityMismatch(expected)
+                        |> locatedAtPattern(pattern)
                         |> Some
         | _ -> None
 
@@ -2214,12 +2236,39 @@ and coverageConstructorCombinations (name: Str) (combinations: List(List(Pattern
         | [] -> reverse(acc)
         | arguments :: rest -> coverageConstructorCombinations(name)(rest)(PatternConstructor(name)(arguments) :: acc)
 
+let recursive coverageAtSpan (span: TextSpan) (patterns: List(Pattern)) =
+    match patterns with
+        | [] -> []
+        | pattern :: rest -> PatternAt(span)(pattern) :: coverageAtSpan(span)(rest)
+
+// An arm's pattern expanded for coverage, each alternative it expands to keeping the span of the
+// written pattern it came from (an or-pattern's alternative its own), so an arm diagnostic is
+// located there as stage 0 locates it.
+let recursive coverageExpandArmPattern pattern environment =
+    match pattern with
+        | PatternAt(span, inner) ->
+            match coverageUnwrap(inner) with
+                | PatternOr(alternatives) -> coverageExpandArmAlternatives(alternatives)(environment)
+                | _ ->
+                    environment
+                    |> coverageExpandPattern(inner)
+                    |> coverageAtSpan(span)
+        | PatternOr(alternatives) -> coverageExpandArmAlternatives(alternatives)(environment)
+        | other -> coverageExpandPattern(other)(environment)
+and coverageExpandArmAlternatives alternatives environment =
+    match alternatives with
+        | [] -> []
+        | alternative :: rest ->
+            environment
+            |> coverageExpandArmAlternatives(rest)
+            |> append(coverageExpandArmPattern(alternative)(environment))
+
 let recursive coverageExpandCases cases environment acc =
     match cases with
         | [] -> reverse(acc)
         | (pattern, body, guard) :: rest ->
             acc
-            |> coverageExpandedArms(coverageExpandPattern(pattern)(environment))(body)(guard)
+            |> coverageExpandedArms(coverageExpandArmPattern(pattern)(environment))(body)(guard)
             |> coverageExpandCases(rest)(environment)
 and coverageExpandedArms patterns body guard acc =
     match patterns with
@@ -2253,7 +2302,10 @@ let recursive coverageUnreachable cases environment (hasCatchAll: Bool) (composi
         | [] -> None
         | (pattern, _body, guard) :: rest ->
             if hasCatchAll
-            then Some(UnreachableMatchArm("Unreachable match arm: a catch-all pattern was already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: a catch-all pattern was already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else
                 match guard with
                     | Some(_guard) -> coverageUnreachable(rest)(environment)(hasCatchAll)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
@@ -2266,30 +2318,48 @@ let recursive coverageUnreachable cases environment (hasCatchAll: Bool) (composi
                                 let key = coverageFormatPattern(pattern)
                                 in
                                     if coverageContainsText(key)(composites)
-                                    then Some(UnreachableMatchArm("Unreachable match arm: pattern " + key + " is already matched earlier."))
+                                    then
+                                        UnreachableMatchArm("Unreachable match arm: pattern " + key + " is already matched earlier.")
+                                        |> locatedAtPattern(pattern)
+                                        |> Some
                                     else coverageUnreachableConstructor(pattern)(rest)(environment)(Ashes.Internal.deepCopy(key) :: composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
                             else coverageUnreachableLiteral(pattern)(rest)(environment)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
 and coverageUnreachableLiteral pattern rest environment composites ints texts seenTrue seenFalse constructors =
     match coverageUnwrap(pattern) with
         | PatternInt(value) ->
             if coverageContainsInt(value)(ints)
-            then Some(UnreachableMatchArm("Unreachable match arm: integer literal " + Ashes.Text.fromInt(value) + " is already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: integer literal " + Ashes.Text.fromInt(value) + " is already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else coverageUnreachable(rest)(environment)(false)(composites)(value :: ints)(texts)(seenTrue)(seenFalse)(constructors)
         | PatternRune(value) ->
             if coverageContainsInt(value)(ints)
-            then Some(UnreachableMatchArm("Unreachable match arm: rune literal U+" + coverageHex(value) + " is already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: rune literal U+" + coverageHex(value) + " is already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else coverageUnreachable(rest)(environment)(false)(composites)(value :: ints)(texts)(seenTrue)(seenFalse)(constructors)
         | PatternString(value) ->
             if coverageContainsText(value)(texts)
-            then Some(UnreachableMatchArm("Unreachable match arm: string literal \"" + value + "\" is already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: string literal \"" + value + "\" is already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else coverageUnreachable(rest)(environment)(false)(composites)(ints)(value :: texts)(seenTrue)(seenFalse)(constructors)
         | PatternBool(true) ->
             if seenTrue
-            then Some(UnreachableMatchArm("Unreachable match arm: 'true' is already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: 'true' is already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(true)(seenFalse)(constructors)
         | PatternBool(false) ->
             if seenFalse
-            then Some(UnreachableMatchArm("Unreachable match arm: 'false' is already matched earlier."))
+            then
+                UnreachableMatchArm("Unreachable match arm: 'false' is already matched earlier.")
+                |> locatedAtPattern(pattern)
+                |> Some
             else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(true)(constructors)
         | _ -> coverageUnreachableConstructor(pattern)(rest)(environment)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
 and coverageUnreachableConstructor pattern rest environment composites ints texts seenTrue seenFalse constructors =
@@ -2299,7 +2369,10 @@ and coverageUnreachableConstructor pattern rest environment composites ints text
             match coverageConstructorShape(name)(environment) with
                 | Some((_adtName, 0)) ->
                     if coverageContainsText(name)(constructors)
-                    then Some(UnreachableMatchArm("Unreachable match arm: constructor " + name + " is already matched earlier."))
+                    then
+                        UnreachableMatchArm("Unreachable match arm: constructor " + name + " is already matched earlier.")
+                        |> locatedAtPattern(pattern)
+                        |> Some
                     else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(seenFalse)(name :: constructors)
                 | _ -> coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(seenFalse)(name :: constructors)
 
@@ -2667,23 +2740,43 @@ let callSiteWorded function (environment: TypeEnvironment) =
         | ExprQualifiedVar(_moduleName, _member) -> false
         | _ -> true
 
+// The first argument of a call chain whose callee is `function` and whose last argument is
+// `argument`.
+let recursive firstChainArgument (function: Expr) (argument: Expr) =
+    match function with
+        | ExprAt(_span, inner) -> firstChainArgument(inner)(argument)
+        | ExprNode(_id, inner) -> firstChainArgument(inner)(argument)
+        | ExprCall(inner, innerArgument, _whitespace, _layout) -> firstChainArgument(inner)(innerArgument)
+        | _ -> argument
+
 // A call whose callee is no function: the chain passed more arguments than its root takes. The
-// error is located at the root, as stage 0 locates it.
-let callArityFailure function (calleeType: SemanticType) (failure: TypeInferenceResult) =
+// error is located at the root, as stage 0 locates it, or for a constructor at the chain's first
+// argument, where stage 0 reports a constructor's arity.
+let callArityFailure function argument (calleeType: SemanticType) (failure: TypeInferenceResult) =
     (let taken = callChainLength(function)
     in
         let error =
             CallChainArityMismatch(callRootName(function))(taken)(taken + 1)(calleeType)
         in
-            match callChainRootSpan(function)(None) with
-                | Some(span) ->
-                    failure with error = Some(InferenceErrorAt(span)(error))
-                | None -> failure with error = Some(error))
+            let located =
+                if callRootIsConstructor(function)
+                then
+                    match argument
+                    |> firstChainArgument(function)
+                    |> expressionSpan with
+                        | Some(argumentSpan) -> Some(argumentSpan)
+                        | None -> callChainRootSpan(function)(None)
+                else callChainRootSpan(function)(None)
+            in
+                match located with
+                    | Some(span) ->
+                        failure with error = Some(InferenceErrorAt(span)(error))
+                    | None -> failure with error = Some(error))
 
 // A failed call as stage 0 words it at the call site: an argument that does not fit its
 // parameter, with the parameter's side first, or a callee that is no function. A failure of the
 // capability row or of a constructor's argument keeps the error it has.
-let callSiteFailure function functionType argumentType argumentSubstitution (environment: TypeEnvironment) (failure: TypeInferenceResult) =
+let callSiteFailure function argument functionType argumentType argumentSubstitution (environment: TypeEnvironment) (failure: TypeInferenceResult) =
     if environment.programInferenceRules && callSiteWorded(function)(environment)
     then
         match applySubstitution(argumentSubstitution)(functionType) with
@@ -2706,7 +2799,7 @@ let callSiteFailure function functionType argumentType argumentSubstitution (env
                         | UnificationResult { error = None } -> failure
             | SemVariable(_id) -> failure
             | SemNever -> failure
-            | calleeType -> callArityFailure(function)(calleeType)(failure)
+            | calleeType -> callArityFailure(function)(argument)(calleeType)(failure)
     else failure
 
 let sameCallee (left: Maybe(Str)) (right: Maybe(Str)) =
@@ -4106,6 +4199,7 @@ and inferConstructorPatternArguments constructorName patterns parameterTypes res
                 0
                 |> coverageLength(patterns)
                 |> ConstructorPatternArityMismatch(constructorName)(coverageLength(parameterTypes)(0))
+                |> locatedAtArgumentPatterns(patterns)
             )
 and inferRecordPatternFields constructorName fields fieldNames fieldTypes resultType environment substitution supply names seenFields =
     match fields with
@@ -4120,7 +4214,9 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                     substitution,
                     supply,
                     names,
-                    DuplicateRecordPatternField(constructorName)(fieldName)
+                    fieldName
+                    |> DuplicateRecordPatternField(constructorName)
+                    |> locatedAtPattern(fieldPattern)
                 )
             else
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
@@ -4131,7 +4227,9 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                             substitution,
                             supply,
                             names,
-                            UnknownRecordPatternField(constructorName)(fieldName)
+                            fieldName
+                            |> UnknownRecordPatternField(constructorName)
+                            |> locatedAtPattern(fieldPattern)
                         )
                     | Some(fieldType) ->
                         match inferPattern(fieldPattern)(environment)(substitution)(supply)(names) with
@@ -4935,7 +5033,9 @@ and inferPattern pattern environment substitution supply names =
                                                     substitution,
                                                     constructorSupply,
                                                     names,
-                                                    ConstructorPatternArityMismatch(name)(expectedCount)(actualCount)
+                                                    actualCount
+                                                    |> ConstructorPatternArityMismatch(name)(expectedCount)
+                                                    |> locatedAtArgumentPatterns(patterns)
                                                 )
                                             else
                                                 inferConstructorPatternArguments(
@@ -5393,7 +5493,7 @@ and inferCallApplication function argument (expected: Maybe(SemanticType)) envir
                                                     | failure ->
                                                         failure
                                                         |> builtinArgumentFailure(function)(argumentType)
-                                                        |> callSiteFailure(function)(functionType)(argumentType)(argumentSubstitution)(environment)
+                                                        |> callSiteFailure(function)(argument)(functionType)(argumentType)(argumentSubstitution)(environment)
                     | failure -> failure
             | failure -> countedChainFailure(function)(failure)
 // A call's argument: a call written there is inferred with the callee's parameter type as the

@@ -1,6 +1,8 @@
 import Ashes.IO
 import Ashes.Test as test
+import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TypeInference
@@ -257,6 +259,35 @@ let rejectInconsistentOrPattern unit =
             | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InconsistentOrPatternBindings)) } -> Unit
             | _ -> test.fail("or-pattern alternatives should bind the same names"))
 
+// The start of the span the inference located the rejection of `source` at.
+let rejectionStart source =
+    match parseProgram(source) with
+        | ProgramParseResult { program = program, diagnostics = [] } ->
+            match inferProgram(program) with
+                | ProgramInferenceResult { error = Some(_error), errorLocation = Some(InferenceErrorLocation { span = Some(TextSpan { start = start }) }) } -> start
+                | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("expected a located rejection: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+        | _ -> test.fail("position fixture should parse")
+
+// Stage 0's positions: a constructor call's arity at its first argument, a constructor
+// pattern's at its first argument pattern, an unreachable arm at its pattern (an or-pattern's
+// redundant alternative).
+let expectPatternAndArityPositions unit =
+    (let boxType = "type Box =\n    | Box(Int)\n"
+    in
+        Unit
+        |> (given (_) ->
+            boxType + "Box(1)(2)"
+            |> rejectionStart
+            |> test.assertEqual(Ashes.Text.length(boxType) + 4))
+        |> (given (_) ->
+            boxType + "match Box(1) with\n    | Box(a, b) -> a"
+            |> rejectionStart
+            |> test.assertEqual(Ashes.Text.length(boxType) + 28))
+        |> (given (_) ->
+            "match 1 with\n    | 1 | 1 -> 1\n    | _ -> 0"
+            |> rejectionStart
+            |> test.assertEqual(23)))
+
 let runProgramInferenceTests unit =
     unit
     |> expectSequentialBindings
@@ -272,4 +303,5 @@ let runProgramInferenceTests unit =
     |> rejectWrongConstructorPatternArity
     |> rejectUnknownRecordPatternField
     |> rejectInconsistentOrPattern
+    |> expectPatternAndArityPositions
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))

@@ -3231,10 +3231,11 @@ let lowerMatchArmsDispatch allCases lower (plan: CoreMatchPlan) =
                     | Some((groups, defaultIndex)) -> lowerMatchArmsViaTagGroups(cases)(groups)(defaultIndex)(lower)(plan)
                     | None -> lowerMatchArms(cases)(lower)(plan)
 
-let coverageErrorMessage inferenceError =
+let recursive coverageErrorMessage inferenceError =
     match inferenceError with
         | NonExhaustiveMatch(message) -> message
         | UnreachableMatchArm(message) -> message
+        | InferenceErrorAt(_span, inner) -> coverageErrorMessage(inner)
         | other -> Ashes.Trait.Show.show(other)
 
 let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
