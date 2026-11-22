@@ -708,6 +708,17 @@ let expectEachArmReleasesItsMatchedPairOnce unit =
     |> loopLines("[ClosureHelper from rounds]")
     |> (given (lines) -> check("two tail-calling arms release the owned and predecessor slots once each, and the exit releases both")(countContaining("TypeName=Tuple RuntimeManaged=true")(lines) == 6))
 
+let selfCallOnMatchedTailSource = "type Pattern =\n    | PatternWildcard\n    | PatternConstructor(Str, List(Pattern))\n\ntype Expr =\n    | ExprBool(Bool)\n    | ExprMatch(Expr, List((Pattern, Expr, Maybe(Expr))), Maybe(Int))\n\nlet orderingCase name = (PatternConstructor(name)([]), ExprBool(true), None)\n\nlet cases accepted =\n    (let recursive acceptedCases names =\n        match names with\n            | [] -> [(PatternWildcard, ExprBool(false), None)]\n            | name :: tail -> orderingCase(name) :: acceptedCases(tail)\n    in ExprMatch(ExprBool(true), acceptedCases(accepted), None))\n\nAshes.IO.print(1)"
+
+// A lone recursive binding's call to itself on a matched tail its result reaches: the call reads
+// no ownership summary, so the tail goes under the closure's adoption bit and nothing waits in an
+// owned slot for it. A forced retain there was adopted by the callee and released again from the
+// caller's owned slot.
+let expectSelfCallOnMatchedTailIsNotHandedOver unit =
+    selfCallOnMatchedTailSource
+    |> loopFunctionLines("from acceptedCases]")
+    |> (given (lines) -> check("the self call's tail argument is not kept in an owned slot")(countContaining("rc_handed_over_kept")(lines) == 0))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -734,4 +745,5 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
     |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
+    |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))

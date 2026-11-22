@@ -758,6 +758,17 @@ let readsDemotedLoopList (argument: Expr) (state: CoreLoweringState) =
                 | None -> false
         | _ -> false
 
+// Stage 0 registers a lone recursive binding's label with its ownership summary only once its body
+// is lowered, so within that body the binding's call to itself reads no summary and its callee
+// result never forces a retain (`CalleeResultMayReachOrKeepPatternBinding` and
+// `CalleeResultMayReachParameter` both answer false); a member of a recursive group is registered
+// before its body is lowered and keeps its summary. The closure such a self call goes through is
+// built without the `AcceptsRuntimeManagedArgument` bit while the body adopts an argument handed
+// over with the ownership flag set, so a forced retain there is released twice: once by the
+// callee's exit and once by the caller's owned slot.
+let selfCallReadsNoSummary (selfCallee: Bool) (state: CoreLoweringState) =
+    selfCallee && length(stateRecursiveGroupNames(state)) == 1
+
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending. A value of
 // the contract's types is always passed borrowed, whatever the callee's own summary says; the type
@@ -783,7 +794,7 @@ let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argum
                                     borrowsForPlacement = contractBorrow || calleeBorrows || isVariableArgument(argument) && contractValue,
                                     fresh = fresh,
                                     runtimeArgument = runtimeArgument || rootSlot != None,
-                                    mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(queried) || (patternBindingArgumentRootSlot(argument)(queried) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(queried)) && calleeResultReachesArgument(facts)(index),
+                                    mayReach = !selfCallReadsNoSummary(selfCallee)(queried) && (argumentMayReachResult(facts)(index)(argumentTemp)(queried) || (patternBindingArgumentRootSlot(argument)(queried) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(queried)) && calleeResultReachesArgument(facts)(index)),
                                     transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(queried),
                                     keptWholeUnderOwnedResult = keptWhole,
                                     normalizes = calleeNormalizesArgument(facts)(index)(queried),
@@ -1641,7 +1652,7 @@ let curryStageOwnerReach (context: CoreCallContext) (arity: Int) (argument: Expr
         match handOff.pendingRootSlot with
             | Some(_slot) -> handOff
             | None ->
-                if isFunctionType(resolveType(state)(resultType)) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
+                if !selfCallReadsNoSummary(context.selfCallee)(state) && isFunctionType(resolveType(state)(resultType)) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
                 then handOff with mayReach = true
                 else handOff
 
