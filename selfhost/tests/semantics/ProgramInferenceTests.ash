@@ -271,7 +271,7 @@ let rejectionStart source =
 
 // Stage 0's positions: a constructor call's arity at its first argument, a constructor
 // pattern's at its first argument pattern, an unreachable arm at its pattern (an or-pattern's
-// redundant alternative).
+// redundant alternative), an unknown constructor pattern at itself.
 let expectPatternAndArityPositions unit =
     (let boxType = "type Box =\n    | Box(Int)\n"
     in
@@ -287,7 +287,11 @@ let expectPatternAndArityPositions unit =
         |> (given (_) ->
             "match 1 with\n    | 1 | 1 -> 1\n    | _ -> 0"
             |> rejectionStart
-            |> test.assertEqual(23)))
+            |> test.assertEqual(23))
+        |> (given (_) ->
+            "match 1 with\n    | Nope(x) -> 1\n    | _ -> 0"
+            |> rejectionStart
+            |> test.assertEqual(19)))
 
 let siteStart traitName source =
     match parseExpression(source) with

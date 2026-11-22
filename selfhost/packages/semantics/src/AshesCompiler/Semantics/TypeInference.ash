@@ -1539,6 +1539,13 @@ let locatedAtArgumentPatterns (patterns: List(Pattern)) (error: TypeInferenceErr
         | (PatternAt(TextSpan { start = patternStart }, _inner) :: _rest, Some(patternEnd)) -> InferenceErrorAt(TextSpan(start = patternStart, end = patternEnd))(error)
         | _ -> error
 
+// A pattern naming no constructor in scope is reported at the pattern, as stage 0 reports it.
+let locateUnknownPatternConstructor (span: TextSpan) (result: PatternInferenceResult) =
+    match result with
+        | PatternInferenceResult { error = Some(UnknownPatternConstructor(name)) } ->
+            result with error = Some(InferenceErrorAt(span)(UnknownPatternConstructor(name)))
+        | _ -> result
+
 let mergePatternUnification currentSubstitution result supply fallbackType environment names =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
@@ -4934,7 +4941,10 @@ and inferOrPatternAlternatives alternatives baseEnvironment expectedEnvironment 
                 | failure -> failure
 and inferPattern pattern environment substitution supply names =
     match pattern with
-        | PatternAt(_span, inner) -> inferPattern(inner)(environment)(substitution)(supply)(names)
+        | PatternAt(span, inner) ->
+            names
+            |> inferPattern(inner)(environment)(substitution)(supply)
+            |> locateUnknownPatternConstructor(span)
         | PatternEmptyList ->
             match freshTypeVariable(supply) with
                 | (elementType, nextSupply) ->
@@ -6444,6 +6454,15 @@ let noteEvaluationRow value ambientRow (result: TypeInferenceResult) =
 
 // As `inferTopLevelExpressionLocated`, for the value of a binding that may write a signature,
 // noting the row its evaluation performs.
+// A top-level value's unsupplied or undetermined requirement, or the capability its evaluation
+// leaves unsatisfied, located at the site in the value that raised it, as stage 0 reports it.
+let locateValueRequirement (value: Expr) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(NoTraitImplementation(traitName, _arguments)) } -> locateAtRequirementSite(traitName)(value)(leaveUnlocated)(result)
+        | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(traitName, _arguments)) } -> locateAtRequirementSite(traitName)(value)(leaveUnlocated)(result)
+        | TypeInferenceResult { error = Some(UnsatisfiedCapability(capabilityName)) } -> locateAtRequirementSite(capabilityName)(value)(leaveUnlocated)(result)
+        | _ -> result
+
 let inferTopLevelValueLocated annotation value environment substitution supply =
     match freshTypeVariable(supply) with
         | (ambientRow, nextSupply) ->
@@ -6451,6 +6470,7 @@ let inferTopLevelValueLocated annotation value environment substitution supply =
             |> inferAnnotatedValue(annotation)(value)(environment)(substitution)(nextSupply)
             |> checkResidualRow(ambientRow)(environment)
             |> noteEvaluationRow(value)(ambientRow)
+            |> locateValueRequirement(value)
 
 let inferExpressionFrom expression environment substitution supply =
     unlocatedInferenceResult(
