@@ -720,6 +720,46 @@ let rejectProviderImplementationType unit =
             | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
             | _ -> test.fail("provider implementations should match operation signatures"))
 
+// A provider implementation is checked against its operation's declared `needs` row: one that
+// performs a capability the row names is accepted, one whose operation declares no row is not.
+let rowLogDeclaration =
+    CapabilityDecl(name = "Log", typeParameters = [], operations = [CapabilityOperation(name = "write", signature = None
+    |> TypeArrow(TypeNamed("Str"))(TypeUnit)([])
+    |> Some)])
+
+let rowStoreDeclaration row =
+    CapabilityDecl(name = "Store", typeParameters = [], operations = [CapabilityOperation(name = "load", signature = None
+    |> TypeArrow(TypeUnit)(TypeNamed("Str"))(row)
+    |> Some)])
+
+let loggingLoadProvider =
+    ProvideDecl(capabilityName = "Store", typeArguments = [], bindings = [ProvideBinding(operationName = "load", implementation = ExprLambda(
+        "ignored",
+        ExprLet("_logged")(ExprCall(ExprQualifiedVar("Log")("write"))(ExprString("loading"))(false)(callArgumentsInline))(ExprString("loaded"))([])(None)([]),
+        None
+    ))])
+
+let expectProviderOperationRow unit =
+    (let accepted =
+        match inferProgram(
+            ProgramSyntax(items = [TopLevelCapability(rowLogDeclaration), [("Log", [])]
+            |> rowStoreDeclaration
+            |> TopLevelCapability, TopLevelProvide(loggingLoadProvider)], body = None)
+        ) with
+            | ProgramInferenceResult { error = None } -> Unit
+            | ProgramInferenceResult { error = Some(error) } ->
+                test.fail(
+                    "a provider performing a capability its operation's row names should infer: " + Ashes.Trait.Show.show(error)
+                )
+    in
+        match inferProgram(
+            ProgramSyntax(items = [TopLevelCapability(rowLogDeclaration), []
+            |> rowStoreDeclaration
+            |> TopLevelCapability, TopLevelProvide(loggingLoadProvider)], body = None)
+        ) with
+            | ProgramInferenceResult { error = Some(_error) } -> accepted
+            | ProgramInferenceResult { error = None } -> test.fail("a provider performing a capability outside its operation's row should be rejected"))
+
 let expectInvalidProviders unit =
     unit
     |> rejectDuplicateProvider
@@ -749,4 +789,5 @@ let runCapabilityInferenceTests unit =
     |> expectProviderSatisfaction
     |> expectProviderHandlerAmbiguity
     |> expectInvalidProviders
+    |> expectProviderOperationRow
     |> (given (_) -> Ashes.IO.print("all self-hosted capability provider inference tests passed"))

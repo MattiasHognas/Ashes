@@ -2,9 +2,12 @@
 import Persistence
 provide Store =
     | load =
-        given (_) -> "seeded"
+        given (_) ->
+            match Ashes.IO.File.readText("capability_provide_imported_absent.txt") with
+                | Ok(contents) -> contents
+                | Error(_missing) -> "seeded"
     | save =
-        given (_text) -> Unit
+        given (text) -> Ashes.IO.writeErrorLine("saving " + text)
 
 let saved =
     given (text) ->

@@ -111,10 +111,14 @@ type ConstructorFieldGroup =
     | groupFields: List((Str, List(SemanticType)))
     | groupGenericFields: List((Str, List(SemanticType), List(SemanticType)))
 
+// `scheme` types a perform site: the declared signature with the capability itself as the row of
+// its innermost arrow. `declaredSignature` is that signature as written, over the same quantified
+// variables, which a static provider implementation is checked against.
 type CapabilityOperationInferenceDefinition =
     | name: Str
     | scheme: TypeScheme
     | hasExplicitSignature: Bool
+    | declaredSignature: SemanticType
 
 type CapabilityInferenceDefinition =
     | name: Str
@@ -610,11 +614,11 @@ let resolveCapabilityBinding name environment =
 let recursive findCapabilityOperation name operations =
     match operations with
         | [] -> None
-        | CapabilityOperationInferenceDefinition { name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature } :: tail ->
+        | CapabilityOperationInferenceDefinition { name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature, declaredSignature = declaredSignature } :: tail ->
             if name == candidateName
             then
                 Some(
-                    CapabilityOperationInferenceDefinition(name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature)
+                    CapabilityOperationInferenceDefinition(name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature, declaredSignature = declaredSignature)
                 )
             else findCapabilityOperation(name)(tail)
 

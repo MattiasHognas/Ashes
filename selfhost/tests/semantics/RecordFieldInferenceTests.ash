@@ -149,7 +149,7 @@ let checkPrecedence unit =
         |> addTypeBinding("item.value")(scheme(SemString))
         |> addCapabilityBinding("item")([]
         |> SemCapability("item")
-        |> scheme)([CapabilityOperationInferenceDefinition(name = "value", scheme = scheme(SemBool), hasExplicitSignature = true)])
+        |> scheme)([CapabilityOperationInferenceDefinition(name = "value", scheme = scheme(SemBool), hasExplicitSignature = true, declaredSignature = SemBool)])
         |> infer(valueField)
         |> expectType("capability precedes qualified value")("Bool"))
     |> (given (_) ->

@@ -807,7 +807,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                     | (operationType, nextSupply) ->
                                         let scheme = TypeScheme(quantified = [], body = operationType, constraints = [])
                                         in
-                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = false)
+                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = false, declaredSignature = operationType)
                                             in
                                                 registerCapabilityOperations(
                                                     capabilityName,
@@ -837,7 +837,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                     | Some(operationType) ->
                                         let scheme = TypeScheme(quantified = quantified, body = operationType, constraints = [])
                                         in
-                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = true)
+                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = true, declaredSignature = resolvedSignature)
                                             in
                                                 registerCapabilityOperations(
                                                     capabilityName,
@@ -1022,20 +1022,17 @@ let recursive providerOperationCapability capabilityName semanticType =
                         | _ -> None
         | _ -> None
 
-let recursive detachProviderOperationRow semanticType =
-    match semanticType with
-        | SemFunction(argument, result, row) ->
-            match result with
-                | SemFunction(_, _, _) ->
-                    SemFunction(argument)(detachProviderOperationRow(result))(row)
-                | _ -> SemFunction(argument)(result)(None)
-        | _ -> semanticType
-
+// Stage 0's `LowerProviderOperationImplementation`: a provider implementation is checked against
+// the operation's declared signature instantiated at the provided instance, its `needs` rows as
+// written (`load : Unit -> Str needs {FileRead}` admits a `FileRead` implementation, and an
+// arrow with no row a pure one). The perform-site scheme and the declared signature are
+// instantiated together, so the capability in the perform-site row pins the instance's type
+// arguments in the declared signature too.
 let prepareProviderExpectedType capabilityName capabilityType operation substitution supply =
     match operation with
-        | CapabilityOperationInferenceDefinition { name = _operationName, scheme = scheme, hasExplicitSignature = hasExplicitSignature } ->
-            match instantiate(scheme)(supply) with
-                | InstantiationResult { semanticType = operationType, constraints = _constraints, supply = operationSupply } ->
+        | CapabilityOperationInferenceDefinition { name = _operationName, scheme = TypeScheme { quantified = quantified, body = performType, constraints = constraints }, hasExplicitSignature = hasExplicitSignature, declaredSignature = declaredSignature } ->
+            match instantiate(TypeScheme(quantified = quantified, body = SemTuple([performType, declaredSignature]), constraints = constraints))(supply) with
+                | InstantiationResult { semanticType = SemTuple(operationType :: expectedType :: []), constraints = _constraints, supply = operationSupply } ->
                     if hasExplicitSignature
                     then
                         match providerOperationCapability(capabilityName)(operationType) with
@@ -1049,17 +1046,16 @@ let prepareProviderExpectedType capabilityName capabilityType operation substitu
                                 |> unify(applySubstitution(substitution)(operationCapability)) with
                                     | UnificationResult { substitution = operationSubstitution, error = None } ->
                                         let combined = appendProgramSubstitution(operationSubstitution)(substitution)
-                                        in
-                                            TypeInferenceResult(semanticType = operationType
-                                            |> detachProviderOperationRow
-                                            |> applySubstitution(
-                                                combined
-                                            ), substitution = combined, supply = operationSupply, constraints = [], error = None)
+                                        in TypeInferenceResult(semanticType = applySubstitution(combined)(expectedType), substitution = combined, supply = operationSupply, constraints = [], error = None)
                                     | UnificationResult { substitution = _operationSubstitution, error = Some(error) } ->
                                         TypeInferenceResult(semanticType = SemNever, substitution = substitution, supply = operationSupply, constraints = [], error = Some(
                                             InferenceUnificationError(error)
                                         ))
                     else TypeInferenceResult(semanticType = operationType, substitution = substitution, supply = operationSupply, constraints = [], error = None)
+                | InstantiationResult { semanticType = _unexpected, constraints = _constraints, supply = operationSupply } ->
+                    TypeInferenceResult(semanticType = SemNever, substitution = substitution, supply = operationSupply, constraints = [], error = Some(
+                        UnsupportedInferenceExpression("provider operation signature did not instantiate as a pair")
+                    ))
 
 let recursive registerProviderOperations capabilityName capabilityType operationDefinitions bindings environment substitution supply reversed =
     match operationDefinitions with
