@@ -3923,12 +3923,19 @@ let checkValueBindingSignature (value: Expr) annotation requirements expectedTyp
     |> checkInferenceBindingSignature(annotation)(requirements)(expectedType)(inferredConstraints)(environment)(substitution)
     |> locateAtValue(value)
 
-let checkTrailingRequirements expression (environment: TypeEnvironment) (result: TypeInferenceResult) =
+// The trailing expression's requirement errors, located at the expression. Stage 0 reports a
+// requirement left ambiguous there at the program body as a whole, which has a position only when
+// the entry module declares a top-level binding ahead of it (`bodyLocated`); otherwise that error
+// carries the file alone.
+let checkTrailingRequirements (bodyLocated: Bool) expression (environment: TypeEnvironment) (result: TypeInferenceResult) =
     match expression with
         | ExprAt(span, _inner) ->
-            result
-            |> checkSettledTrailingRequirements(environment)
-            |> locateInferenceError(span)
+            match checkSettledTrailingRequirements(environment)(result) with
+                | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(_traitName, _typeArguments)) } as undetermined ->
+                    if bodyLocated
+                    then locateInferenceError(span)(undetermined)
+                    else undetermined
+                | checked -> locateInferenceError(span)(checked)
         | _ -> checkSettledTrailingRequirements(environment)(result)
 
 // The empty tuple a standard trait's method scheme writes for `Unit` (`Default.default`), as the

@@ -31,6 +31,7 @@ export (
     type IdentifiedProgramUnits(..),
     value identifyProgramUnits,
     value inferIdentifiedProgramUnitsFrom,
+    value inferIdentifiedProgramUnitsLocated,
     value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
     value inferRecursiveGroupForLowering,
@@ -2936,7 +2937,7 @@ let recursive appendResolvedSubstitution entries substitution =
 let withResolvedSubstitution (resolved: MapTree(Int, SemanticType)) (result: ProgramInferenceResult) =
     result with substitution = appendResolvedSubstitution(result.substitution)(Ashes.Collection.Map.toList(resolved))
 
-let inferProgramUnitBody body entryPackageId (nodeTypes: NodeTypeTable) state =
+let inferProgramUnitBody (bodyLocated: Bool) body entryPackageId (nodeTypes: NodeTypeTable) state =
     match stateWithInferencePackage(entryPackageId)(state) with
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
             match body with
@@ -2953,7 +2954,7 @@ let inferProgramUnitBody body entryPackageId (nodeTypes: NodeTypeTable) state =
                 | Some(expression) ->
                     match supply
                     |> inferTopLevelExpressionLocated(expression)(environment)(substitution)
-                    |> checkTrailingRequirements(expression)(environment) with
+                    |> checkTrailingRequirements(bodyLocated)(expression)(environment) with
                         | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = bodySupply, constraints = _constraints, error = None } ->
                             ProgramInferenceResult(
                                 semanticType = semanticType,
@@ -2992,9 +2993,9 @@ let inferProgramUnitBody body entryPackageId (nodeTypes: NodeTypeTable) state =
                 error = Some(error)
             )
 
-let inferProgramProgressBody body entryPackageId (progress: ProgramInferenceProgress) =
+let inferProgramProgressBody (bodyLocated: Bool) body entryPackageId (progress: ProgramInferenceProgress) =
     progress.state
-    |> inferProgramUnitBody(body)(entryPackageId)(progress.nodeTypes)
+    |> inferProgramUnitBody(bodyLocated)(body)(entryPackageId)(progress.nodeTypes)
     |> withResolvedSubstitution(progress.resolved)
 
 // The supply starts above every id a statically embedded scheme already quantifies over — the
@@ -3026,7 +3027,7 @@ let attachExternalAbi declarations (result: ProgramInferenceResult) =
                 | ExternalAbiValidation { metadata = Some(metadata), error = None } -> withExternalAbi(metadata)(result)
                 | ExternalAbiValidation { error = Some(error) } -> withExternalAbiError(error)(result)
 
-let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion =
+let inferExpandedProgramUnitsFrom baseEnvironment (bodyLocated: Bool) body entryPackageId expansion =
     match expansion with
         | ProgramUnitExpansion { units = _units, error = Some(error) } ->
             ProgramInferenceResult(
@@ -3053,7 +3054,7 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                         |> startProgramInferenceProgress
                         |> inferExpandedProgramUnits(units)(externalDeclarations)
                         |> advanceProgramInference(validateTraitDefaults(declarations))
-                        |> inferProgramProgressBody(body)(entryPackageId)
+                        |> inferProgramProgressBody(bodyLocated)(body)(entryPackageId)
                         |> attachExternalAbi(externalDeclarations)
                         |> withProgramErrorLocation
 
@@ -3078,7 +3079,12 @@ let identifyProgramUnits units (body: Maybe(Expr)) =
                             match identifyExpression(afterUnits)(expression) with
                                 | (identifiedBody, after) -> IdentifiedProgramUnits(units = identified, body = Some(identifiedBody), nodeCount = after, error = None)
 
-let inferIdentifiedProgramUnitsFrom baseEnvironment entryPackageId (identified: IdentifiedProgramUnits) = inferExpandedProgramUnitsFrom(baseEnvironment)(identified.body)(entryPackageId)(ProgramUnitExpansion(units = identified.units, error = identified.error))
+// `bodyLocated` is false when the entry module declares no top-level binding: stage 0 then reports a
+// requirement the trailing expression leaves ambiguous without a position (see
+// `checkTrailingRequirements`).
+let inferIdentifiedProgramUnitsLocated baseEnvironment (bodyLocated: Bool) entryPackageId (identified: IdentifiedProgramUnits) = inferExpandedProgramUnitsFrom(baseEnvironment)(bodyLocated)(identified.body)(entryPackageId)(ProgramUnitExpansion(units = identified.units, error = identified.error))
+
+let inferIdentifiedProgramUnitsFrom baseEnvironment entryPackageId (identified: IdentifiedProgramUnits) = inferIdentifiedProgramUnitsLocated(baseEnvironment)(true)(entryPackageId)(identified)
 
 let inferProgramUnitsFrom baseEnvironment units body entryPackageId =
     body
@@ -3102,7 +3108,7 @@ let inferExpandedProgramFromPackage packageId baseEnvironment program =
                         |> startProgramInferenceProgress
                         |> inferTopLevelItems(items)(externalDeclarations)
                         |> advanceProgramInference(validateTraitDefaults(declarations))
-                        |> inferProgramProgressBody(body)(packageId)
+                        |> inferProgramProgressBody(true)(body)(packageId)
                         |> attachExternalAbi(externalDeclarations)
                         |> withProgramErrorLocation
 

@@ -957,7 +957,8 @@ let locationOffset (location: InferenceErrorLocation) =
         | (None, Some(TextSpan { start = start })) -> Some(start)
         | _ -> None
 
-// `path:line:column ` for a located error, from the text of the file the error was raised in.
+// `path:line:column ` for a located error, from the text of the file the error was raised in, or
+// `path ` for an error that names its file but no offset in it, as stage 0 prints one.
 let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(InferenceErrorLocation)) =
     match location with
         | None -> ""
@@ -971,6 +972,7 @@ let locationPrefix (entryPath: Str) (entrySource: Str) (location: Maybe(Inferenc
                             | Some(text) ->
                                 match resolvePositionInIndex(buildSourceTextIndex(text))(offset) with
                                     | (line, column) -> path + ":" + Ashes.Text.fromInt(line) + ":" + Ashes.Text.fromInt(column) + " "
+                | (Some(sourcePath), None) -> regionFilePath(sourcePath) + " "
                 | _ -> ""
 
 let codePrefix (code: Maybe(Str)) =
