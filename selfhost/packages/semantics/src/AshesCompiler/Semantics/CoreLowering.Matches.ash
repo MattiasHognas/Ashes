@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.CoreLowering.CallResults
 import AshesCompiler.Semantics.CoreLowering.ResultHandOver
 export (
     value lowerIfThenBranch,
+    value resultMayViewCallArgument,
     value finishIfElseBranch,
     value lowerIf,
     value isNullaryConstructorPatternName,
@@ -1971,6 +1972,7 @@ let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
     else
         match body with
             | ExprAt(_span, inner) -> resultMayViewCallArgument(name)(depth)(inner)
+            | ExprNode(_node, inner) -> resultMayViewCallArgument(name)(depth)(inner)
             | ExprLet(_bound, _value, nested, _parameters, _annotation, _requirements) -> resultMayViewCallArgument(name)(depth + 1)(nested)
             | ExprIf(_condition, thenBranch, elseBranch) -> resultMayViewCallArgument(name)(depth + 1)(thenBranch) || resultMayViewCallArgument(name)(depth + 1)(elseBranch)
             | ExprMatch(scrutinee, cases, _position) -> scrutineeCallReads(name)(scrutinee) || anyArmMayViewCallArgument(name)(depth + 1)(cases)
