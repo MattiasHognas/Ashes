@@ -42,6 +42,7 @@ export (
     value deferTraitGoal,
     value deferTraitGoalWithMethods,
     value dictionaryGoalCandidates,
+    value observeDeferredOperator,
     value emitCoreTraitUnaryDispatch,
     value applyDeferredOperators,
     value applySealedDeferredOperators,
@@ -1578,6 +1579,32 @@ let emitUnifiedCoreBinary operator lower binary =
         | Some(methodName) -> emitPartlyOpenEquality(operator)(methodName)(lower)(binary)
         | None -> emitResolvedCoreBinary(operator)(lower)(binary)
 
+// The trait and method of an operator lowering emits speculatively over two open operands.
+let deferredOperatorTraitMethod operator =
+    match operator with
+        | CoreAddOperator -> Some(("Add", "add"))
+        | CoreSubtractOperator -> Some(("Subtract", "subtract"))
+        | CoreMultiplyOperator -> Some(("Multiply", "multiply"))
+        | CoreEqualOperator -> Some(("Eq", "equal"))
+        | CoreNotEqualOperator -> Some(("Eq", "notEqual"))
+        | _ -> None
+
+// Records a deferred operator site when the lowering observes its goal sites, under the site's
+// goal key, or under its trait and method alone when the site has no span (a node lowering
+// synthesized). Without an observation the state is returned as it is.
+let observeDeferredOperator operator (operandType: SemanticType) (state: CoreLoweringState) =
+    match stateTypeObservation(state) with
+        | None -> state
+        | Some(_observation) ->
+            match deferredOperatorTraitMethod(operator) with
+                | None -> state
+                | Some((traitName, methodName)) ->
+                    let key =
+                        match traitGoalKey(traitName)(methodName)(state) with
+                            | Some(siteKey) -> siteKey
+                            | None -> "unspanned:" + traitName + ":" + methodName
+                    in observeDeferredOperatorGoal(key)(operandType)(state)
+
 let emitPreparedCoreBinary operator lower binary =
     match (coreOrderedOperatorName(operator), binary) with
         | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
@@ -1610,7 +1637,9 @@ let emitPreparedCoreBinary operator lower binary =
                                         |> emitResolvedCoreBinary(operator)(lower)
                                     | None ->
                                         binary
-                                        |> withCoreBinaryState(observeLoweringEvent(1)(state))
+                                        |> withCoreBinaryState(state
+                                        |> observeLoweringEvent(1)
+                                        |> observeDeferredOperator(operator)(SemVariable(leftId)))
                                         |> emitDeferred
                 | (_emitter, resolvedLeft, resolvedRight) ->
                     match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with

@@ -2309,18 +2309,24 @@ let recursive indexGoalKeys goals keys =
             |> Ashes.Collection.Map.setStr(key)(true)
             |> indexGoalKeys(rest)
 
+// The observed goal sites a pass left open, each with its operand type resolved: the pending trait
+// goals and structural equality goals among `deferred` and `equalities`, and every operator the
+// pass emitted speculatively over two open operands.
 let recursive measuredSites sites deferred equalities state =
     match sites with
         | [] -> []
-        | (ObservedPendingGoal { key = key, structural = structural, operand = operand } as site) :: rest ->
-            let keys =
-                if structural
-                then equalities
-                else deferred
-            in
-                match Ashes.Collection.Map.getStr(key)(keys) with
-                    | None -> measuredSites(rest)(deferred)(equalities)(state)
-                    | Some(_) -> (site, resolveType(state)(operand)) :: measuredSites(rest)(deferred)(equalities)(state)
+        | (ObservedPendingGoal { key = key, structural = structural, deferredOperator = deferredOperator, operand = operand } as site) :: rest ->
+            if deferredOperator
+            then (site, resolveType(state)(operand)) :: measuredSites(rest)(deferred)(equalities)(state)
+            else
+                let keys =
+                    if structural
+                    then equalities
+                    else deferred
+                in
+                    match Ashes.Collection.Map.getStr(key)(keys) with
+                        | None -> measuredSites(rest)(deferred)(equalities)(state)
+                        | Some(_) -> (site, resolveType(state)(operand)) :: measuredSites(rest)(deferred)(equalities)(state)
 
 let measuredGoalDetails pending equalityGoals state =
     match stateTypeObservation(state) with
@@ -2341,7 +2347,7 @@ let lowerScheduledProgramPassesMeasured replayStarting clock items trailingBody 
                 let firstDone = clock(Unit)
                 in
                     match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
-                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = [])
+                        | ([], []) -> CoreProgramPassMeasurement(first = first, replay = None, firstMillis = firstDone - started, replayMillis = 0, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = measuredGoalDetails([])([])(firstState))
                         | (pending, equalityGoals) ->
                             let beforeProgress = clock(Unit)
                             in

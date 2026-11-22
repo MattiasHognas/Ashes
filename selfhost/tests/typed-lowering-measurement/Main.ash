@@ -96,11 +96,14 @@ let activeMethodText (entry: (Str, SemanticType, Str, Str)) =
 let recursive reportSites regions sites =
     match sites with
         | [] -> Unit
-        | (ObservedPendingGoal { key = key, structural = structural, region = region, node = node, operand = operand, activeMethods = methods }, resolved) :: rest ->
+        | (ObservedPendingGoal { key = key, structural = structural, deferredOperator = deferredOperator, region = region, node = node, operand = operand, activeMethods = methods }, resolved) :: rest ->
             let kind =
-                if structural
-                then "equality"
-                else "trait"
+                if deferredOperator
+                then "deferred-operator"
+                else
+                    if structural
+                    then "equality"
+                    else "trait"
             in
                 let _ =
                     Ashes.IO.writeErrorLine(kind + " goal " + key + " source=" + regionPath(regions)(region) + " node=" + Ashes.Trait.Show.show(node) + " operand=" + Ashes.Trait.Show.show(operand) + " resolved=" + Ashes.Trait.Show.show(resolved) + " active_methods=" + "[" + Ashes.Text.join(", ")(Ashes.Collection.List.map(activeMethodText)(methods)) + "]")

@@ -55,6 +55,7 @@ export (
     type ObservedPendingGoal(..),
     value withPendingGoalObservation,
     value observePendingGoal,
+    value observeDeferredOperatorGoal,
     type CoreTraitGoalAnswer(..),
     type CoreTraitGoalProof(..),
     type CoreProgramState(..),
@@ -838,9 +839,13 @@ let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = em
 // What a lowering asked to observe its types records for a comparison with the standalone
 // inference: the bindings in scope where the trailing expression is lowered, and every binary
 // operator site lowered, by its span, with its trait and left operand type, most recent first.
+// A goal site is a pending trait goal, a speculative equality (`structural`), or an operator whose
+// two operands were both still open, emitted in its integer form for the finalization rewrite
+// (`deferredOperator`).
 type ObservedPendingGoal =
     | key: Str
     | structural: Bool
+    | deferredOperator: Bool
     | region: Int
     | node: Maybe(Int)
     | operand: SemanticType
@@ -3267,11 +3272,17 @@ let withPendingGoalObservation regionOfName (state: CoreLoweringState) =
                 | None -> configured
                 | Some(observation) -> configured with programState = (group with typeObservation = Some((observation with goalSites = Some([])))))
 
-let observePendingGoal structural key operand (state: CoreLoweringState) =
+let observeGoalSite structural deferredOperator key operand (state: CoreLoweringState) =
     (let group = state.programState
     in
         match group.typeObservation with
             | Some(CoreTypeObservation { goalSites = Some(sites) } as observation) ->
-                let site = ObservedPendingGoal(key = key, structural = structural, region = stateCurrentItem(state), node = state.currentNode, operand = operand, activeMethods = stateActiveTraitMethods(state))
+                let site = ObservedPendingGoal(key = key, structural = structural, deferredOperator = deferredOperator, region = stateCurrentItem(state), node = state.currentNode, operand = operand, activeMethods = stateActiveTraitMethods(state))
                 in state with programState = (group with typeObservation = Some((observation with goalSites = Some(Ashes.Internal.deepCopy(site) :: sites))))
             | _ -> state)
+
+let observePendingGoal structural key operand (state: CoreLoweringState) = observeGoalSite(structural)(false)(key)(operand)(state)
+
+// Records an operator site lowering deferred because both operands were still open, when the
+// lowering observes its goal sites; otherwise the state is unchanged.
+let observeDeferredOperatorGoal key operand (state: CoreLoweringState) = observeGoalSite(false)(true)(key)(operand)(state)

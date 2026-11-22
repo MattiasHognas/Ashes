@@ -20,6 +20,15 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallTy
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTypeParameters
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
+import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithGoalDetails
+import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
+import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
+import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withTypeObservation
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withPendingGoalObservation
+import AshesCompiler.Semantics.CoreLowering.LoweringState.stateTypeObservation
 export (
     value runRecordedInferenceCoverageTests,
 )
@@ -352,8 +361,81 @@ let checkCopyRowAndScope unit =
                         | (Some(SemFunction(SemFloat, SemList(SemFloat), None)), None, None, None) -> Unit
                         | _ -> Ashes.IO.panic("concrete copy lost its enclosing instantiation, guessed an open type, or erased a capability"))
 
+let observedGoalSites state =
+    match stateTypeObservation(state) with
+        | Some(CoreTypeObservation { goalSites = Some(sites) }) -> sites
+        | _ -> []
+
+// A deferred `+` is named under its trait and method when its site has no span, an operator
+// lowering never defers names nothing, and a lowering that observes nothing is left without an
+// observation.
+let checkDeferredOperatorObservation unit =
+    (let observed =
+        Unit
+        |> initialState
+        |> withTypeObservation
+        |> withPendingGoalObservation(Ashes.Collection.Map.empty)
+    in
+        let added = observeDeferredOperator(CoreAddOperator)(SemVariable(5))(observed)
+        in
+            let divided = observeDeferredOperator(CoreDivideOperator)(SemVariable(6))(observed)
+            in
+                let unobserved =
+                    Unit
+                    |> initialState
+                    |> observeDeferredOperator(CoreAddOperator)(SemVariable(5))
+                in
+                    match (observedGoalSites(added), observedGoalSites(divided), stateTypeObservation(unobserved)) with
+                        | (ObservedPendingGoal { key = key, structural = structural, deferredOperator = deferredOperator, operand = operand } :: [], [], None) ->
+                            if key == "unspanned:Add:add" && structural == false && deferredOperator && operand == SemVariable(5)
+                            then Unit
+                            else Ashes.IO.panic("deferred operator site recorded the wrong key, kind or operand")
+                        | _ -> Ashes.IO.panic("deferred operator observation recorded the wrong number of sites or created an observation"))
+
+let recursive countDeferredOperatorSites (details: List((ObservedPendingGoal, SemanticType))) count =
+    match details with
+        | [] -> count
+        | (ObservedPendingGoal { deferredOperator = deferredOperator }, _resolved) :: rest ->
+            if deferredOperator
+            then countDeferredOperatorSites(rest)(count + 1)
+            else countDeferredOperatorSites(rest)(count)
+
+// Every operator the first pass deferred over two open operands is named in the goal details, also
+// when no replay runs: the program has no ordered comparison, so the pass's deferred operator count
+// is exactly its speculative arithmetic sites.
+let checkDeferredOperatorDetails unit =
+    match parseProgram("let twice x = [x + x, x]\n(twice(1), twice(1.5))") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            let clock =
+                                given (_unit) -> 0
+                            in
+                                let typed = measureCoreProgramLoweringWithGoalDetails(Ashes.Collection.Map.empty)(clock)(Some(table))("details.ash")("")(program)
+                                in
+                                    let legacy =
+                                        measureCoreProgramLoweringWithGoalDetails(rawOperatorDeclarationSchemes(table))(clock)(None)("details.ash")("")(program)
+                                    in
+                                        let firstTyped = typed.first
+                                        in
+                                            let firstLegacy = legacy.first
+                                            in
+                                                let typedSites = countDeferredOperatorSites(typed.goalDetails)(0)
+                                                in
+                                                    let legacySites = countDeferredOperatorSites(legacy.goalDetails)(0)
+                                                    in
+                                                        if firstTyped.error == None && firstLegacy.error == None && typedSites == firstTyped.deferredOperators && legacySites == firstLegacy.deferredOperators
+                                                        then Unit
+                                                        else Ashes.IO.panic("deferred operator details: typed sites=" + Ashes.Text.fromInt(typedSites) + " of " + Ashes.Text.fromInt(firstTyped.deferredOperators) + ", legacy sites=" + Ashes.Text.fromInt(legacySites) + " of " + Ashes.Text.fromInt(firstLegacy.deferredOperators))
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("deferred operator inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("deferred operator fixture did not parse")
+
 let runRecordedInferenceCoverageTests unit =
     unit
+    |> checkDeferredOperatorObservation
+    |> checkDeferredOperatorDetails
     |> checkHandlerBindings
     |> checkPrimitiveComplements
     |> checkArmBodyShadowing
