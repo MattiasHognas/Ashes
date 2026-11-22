@@ -2000,12 +2000,47 @@ let isUserDeclaredTrait (traitName: Str) (state: CoreLoweringState) =
                 | Some(_declared) -> true
                 | None -> false
 
+// Stage 0's `TryGetTraitMethod`: `X.op`, where `X` is a declared capability with an operation
+// `op`, names that operation even when a trait named `X` has a method `op` (a program's
+// `capability Ord` with `compare` beside the shipped `Ord` trait, which a derived or written
+// `Ord.compare` names bare), unless the calling module declares that trait itself. Stitching gives
+// a trait of a non-entry module a module-qualified compiler name, so a program-declared trait
+// under the capability's very name is the entry module's own.
+let capabilityOperationShadowsTrait (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
+    match state
+    |> stateCapabilityLayouts
+    |> findCapabilityLayout(qualifier) with
+        | Some(CoreCapabilityLayout { operations = operations }) ->
+            match findCapabilityOperationIndex(methodName)(operations) with
+                | Some(_index) ->
+                    if isUserDeclaredTrait(qualifier)(state)
+                    then
+                        match state
+                        |> stateTraitEnvironment
+                        |> resolveTraitMethod(qualifier)(methodName) with
+                            | Some(_method) -> false
+                            | None -> true
+                    else true
+                | None -> false
+        | None -> false
+
+// A call spine rooted at a capability operation `capabilityOperationShadowsTrait` prefers to a
+// same-named trait method.
+let callShadowsTraitMethod expression (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = root, arguments = _argument :: _rest } ->
+            match stripExprAt(root) with
+                | ExprQualifiedVar(qualifier, methodName) -> capabilityOperationShadowsTrait(qualifier)(methodName)(state)
+                | _ -> false
+        | _ -> false
+
 // The method scheme is also the fallback for direct references to an unstitched
-// standard trait. A module qualifier other than the trait itself is not an alias.
+// standard trait. A module qualifier other than the trait itself is not an alias, and a capability
+// operation that shadows a same-named trait method is not a method.
 let declaredMethodScheme (qualifier: Str) (methodName: Str) (state: CoreLoweringState) =
     (let traitName = standardTraitName(qualifier)
     in
-        if qualifier == traitName || isShippedTraitQualifier(qualifier) || qualifier == "Ashes.Trait." + traitName || isUserDeclaredTrait(traitName)(state)
+        if capabilityOperationShadowsTrait(qualifier)(methodName)(state) == false && (qualifier == traitName || isShippedTraitQualifier(qualifier) || qualifier == "Ashes.Trait." + traitName || isUserDeclaredTrait(traitName)(state))
         then
             match state
             |> stateTraitEnvironment
@@ -3733,27 +3768,33 @@ let lowerCoreDispatch expression lowerCore state =
             match resourcePipelineStageLet(function)(argument)(layout)(state) with
                 | Some(stageLet) -> lowerCore(stageLet)(state)
                 | None ->
-                    match traitOperatorCall(function)(argument) with
-                        | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
-                        | None ->
-                            match traitCompareCall(expression)(function)(argument)(state) with
-                                | Some((left, right)) -> lowerCoreTraitCompare(left)(right)(lowerCore)(state)
-                                | None ->
-                                    match traitUnaryMethodCall(function) with
-                                        | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
-                                        | None ->
-                                            match shippedTraitUnaryOperator(function) with
-                                                | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
-                                                | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
-                                                | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
-                                                | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
-                                                | None ->
-                                                    match userTraitMethodCall(expression)(state) with
-                                                        | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
-                                                        | None ->
-                                                            state
-                                                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
-                                                            |> describeCallArity(expression)
+                    if callShadowsTraitMethod(expression)(state)
+                    then
+                        state
+                        |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                        |> describeCallArity(expression)
+                    else
+                        match traitOperatorCall(function)(argument) with
+                            | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
+                            | None ->
+                                match traitCompareCall(expression)(function)(argument)(state) with
+                                    | Some((left, right)) -> lowerCoreTraitCompare(left)(right)(lowerCore)(state)
+                                    | None ->
+                                        match traitUnaryMethodCall(function) with
+                                            | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
+                                            | None ->
+                                                match shippedTraitUnaryOperator(function) with
+                                                    | Some("negate") -> lowerCoreBinary(CoreSubtractOperator)(ExprInt(0))(argument)(lowerCore)(state)
+                                                    | Some("not") -> lowerCoreLogicalNot(argument)(lowerCore)(state)
+                                                    | Some("bitwiseNot") -> lowerCoreBitwiseNot(argument)(lowerCore)(state)
+                                                    | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
+                                                    | None ->
+                                                        match userTraitMethodCall(expression)(state) with
+                                                            | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
+                                                            | None ->
+                                                                state
+                                                                |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                                                                |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->
