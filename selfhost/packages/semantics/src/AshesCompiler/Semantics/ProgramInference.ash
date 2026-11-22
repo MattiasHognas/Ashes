@@ -34,6 +34,7 @@ export (
     value identifiedProgramSyntax,
     value inferProgramUnitsFrom,
     value inferRecursiveGroupForLowering,
+    value addCapabilityToInnermostArrow,
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,

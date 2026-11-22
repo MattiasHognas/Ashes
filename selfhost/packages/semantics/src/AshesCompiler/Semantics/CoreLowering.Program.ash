@@ -61,6 +61,7 @@ import AshesCompiler.Semantics.OwnershipInference.collectAllCallSites
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TraitEvidenceRewriting
+import AshesCompiler.Semantics.ProgramInference.addCapabilityToInnermostArrow
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
@@ -1323,6 +1324,53 @@ let recursive capabilityOperationSchemes (aliases: MapTree(Str, (List(Str), Type
                                 |> SemCapability(capabilityName)
                             in (capabilityName, name, TypeScheme(quantified = quantified, body = SemTuple([instance, operationType]), constraints = [])) :: capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
 
+let recursive capabilityOperationSchemeNamed (operationName: Str) (schemes: List((Str, Str, TypeScheme))) =
+    match schemes with
+        | [] -> None
+        | (_capabilityName, candidate, scheme) :: rest ->
+            if candidate == operationName
+            then Some(scheme)
+            else capabilityOperationSchemeNamed(operationName)(rest)
+
+// An operation lowering has no signature for, typed by a fresh variable as the standalone
+// inference types an unsigned operation.
+let unsignedCapabilityInferenceOperation (operationName: Str) (supply: TypeVariableSupply) =
+    match freshTypeVariable(supply) with
+        | (operationType, nextSupply) -> (CapabilityOperationInferenceDefinition(name = operationName, scheme = TypeScheme(quantified = [], body = operationType, constraints = []), hasExplicitSignature = false, declaredSignature = operationType), nextSupply)
+
+// A capability's operations as the standalone inference registers them
+// (`registerCapabilityOperations`): the perform-site scheme carries the capability itself as the
+// row of the innermost arrow, beside the declared signature.
+let recursive capabilityInferenceOperations (operations: List(CapabilityOperation)) (schemes: List((Str, Str, TypeScheme))) (supply: TypeVariableSupply) =
+    match operations with
+        | [] -> ([], supply)
+        | CapabilityOperation { name = operationName } :: rest ->
+            match capabilityInferenceOperations(rest)(schemes)(supply) with
+                | (restDefinitions, restSupply) ->
+                    match capabilityOperationSchemeNamed(operationName)(schemes) with
+                        | Some(TypeScheme { quantified = quantified, body = SemTuple(instance :: operationType :: []) }) ->
+                            match addCapabilityToInnermostArrow(instance)(operationType) with
+                                | Some(performType) -> (CapabilityOperationInferenceDefinition(name = operationName, scheme = TypeScheme(quantified = quantified, body = performType, constraints = []), hasExplicitSignature = true, declaredSignature = operationType) :: restDefinitions, restSupply)
+                                | None ->
+                                    match unsignedCapabilityInferenceOperation(operationName)(restSupply) with
+                                        | (definition, nextSupply) -> (definition :: restDefinitions, nextSupply)
+                        | _ ->
+                            match unsignedCapabilityInferenceOperation(operationName)(restSupply) with
+                                | (definition, nextSupply) -> (definition :: restDefinitions, nextSupply)
+
+// Lowering infers bindings it plans (`inferCoreConstrainedBinding`, the concrete-copy queries) in
+// its trait environment, so the environment carries the program's capabilities too: an inference
+// lowering runs then resolves `Cap.op` to the capability's operation before any same-named trait
+// method, as the standalone inference and stage 0 do.
+let withCapabilityInInferenceEnvironment (name: Str) (operations: List(CapabilityOperation)) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (schemes: List((Str, Str, TypeScheme))) (state: CoreLoweringState) =
+    match capabilityInferenceOperations(operations)(schemes)(state.typeSupply) with
+        | (definitions, nextSupply) ->
+            (state with typeSupply = nextSupply) |> withStateTraitEnvironment(state
+            |> stateTraitEnvironment
+            |> addCapabilityBinding(name)(TypeScheme(quantified = quantified, body = parameterTypes
+            |> parameterTableTypes
+            |> SemCapability(name), constraints = []))(definitions))
+
 // Registers one `CoreCapabilityLayout` per top-level `capability` declaration, numbered in
 // declaration order: the number is the capability's handler-evidence global, and the operations
 // are numbered in declaration order within the handler frame. The operations' signatures are
@@ -1352,6 +1400,7 @@ let registerTopLevelCapabilityDeclaration (declaration: CapabilityDecl) (state: 
                                             |> withStateCapabilityLayouts(append(stateCapabilityLayouts(state))([CoreCapabilityLayout(name = name, index = stateCapabilityGlobalCount(state), operations = operationLayouts)]))
                                             |> withStateCapabilityGlobalCount(stateCapabilityGlobalCount(state) + 1)
                                             |> withStateCapabilityOperationSchemes(append(stateCapabilityOperationSchemes(state))(schemes))
+                                            |> withCapabilityInInferenceEnvironment(name)(operations)(typeParameterQuantified(namedIds))(typeParameterResolutionTable(namedIds))(schemes)
                                             |> Ok
 
 let recursive providerBindingOperations (bindings: List(ProvideBinding)) =

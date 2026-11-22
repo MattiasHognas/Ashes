@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.deferredEvaluationKey
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.withRawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.Owners.pendingOperatorScheme
 import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
+import AshesCompiler.Semantics.CoreLowering.Program.registeredProgramState
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreConstrainedBindings
 import AshesCompiler.Semantics.Types
@@ -246,6 +247,24 @@ let checkForwardedCallbackPlan unit =
             | None -> Unit
             | Some(_plan) -> Ashes.IO.panic("a constrained value that is not a function was given a dictionary plan"))
 
+// A program's `capability Ord` with a `compare` operation shadows the shipped `Ord` trait's method
+// in the bindings lowering plans: `Ord.compare` in an unannotated lambda is the operation, whose
+// row carries the capability, so the binding needs no `Ord` dictionary.
+let checkCapabilityOperationPlan unit =
+    (let source = "capability Ord(a) =\n    | compare : a -> a -> Int\n\nlet cmp = given (x) -> given (y) -> Ord.compare(x)(y)\n"
+    in
+        match parseProgram(source) with
+            | ProgramParseResult { program = parsed, diagnostics = [] } ->
+                match Unit
+                |> initialState
+                |> registeredProgramState(parsed.items) with
+                    | Ok(state) ->
+                        match constrainedBindingPlan("cmp")(false)(parse("given (x) -> given (y) -> Ord.compare(x)(y)"))(None)([])(state) with
+                            | None -> Unit
+                            | Some(_plan) -> Ashes.IO.panic("a capability operation call was planned as the shipped Ord trait's method")
+                    | Error(_error) -> Ashes.IO.panic("the capability declaration did not register")
+            | _ -> Ashes.IO.panic("the capability program did not parse"))
+
 let runCoreConstrainedBindingsTests unit =
     (let environment = standardTraitEnvironment(Unit)
     in
@@ -255,6 +274,7 @@ let runCoreConstrainedBindingsTests unit =
         |> checkPendingEvidenceBoundary
         |> checkDictionaryGoalCandidates
         |> checkForwardedCallbackPlan
+        |> checkCapabilityOperationPlan
         |> checkAwaitQueryIdentity
         |> (given (_) -> checkBoundaryRequirements(environment))
         |> (given (_) -> checkLayouts(environment))
