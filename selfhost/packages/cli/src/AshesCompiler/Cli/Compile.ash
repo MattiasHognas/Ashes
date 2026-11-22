@@ -377,7 +377,7 @@ let loweringErrorText (error: CoreLoweringError) = loweringErrorTextAt(None)(err
 
 let loweredStitchedResult (lowering: CoreLoweringResult) =
     match lowering with
-        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
+        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, (valuePlacements, joinRepresentations)))
         | CoreLoweringResult { error = Some(error), errorLocation = recorded } ->
             error
             |> loweringErrorTextAt(recorded)
@@ -505,7 +505,7 @@ let lowerStitched reuseEnabled inputPath source (stitched: StitchedSyntaxProject
     then lowerUnchecked(reuseEnabled)(inputPath)(source)(stitched)
     else lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
         | Error(message) -> Error(message)
-        | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
+        | Ok((lowered, valuePlacements)) -> Ok((stitched, lowered, optimizeIrProgram(lowered), valuePlacements))
 
 // The module-qualified name of a stitched binding for the reports. The single-file form is stage
 // 0's standalone layout, whose entry module is named `Main`; every other definition reports under
