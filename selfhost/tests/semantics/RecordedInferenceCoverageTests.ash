@@ -23,6 +23,7 @@ import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithGoalDetails
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
 import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
 import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
 import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
@@ -434,8 +435,9 @@ let checkDeferredOperatorDetails unit =
 
 // A partly open equality lowering meets before the element type is known, in a program that uses
 // the binding at one element type: the typed first pass answers it from the table, leaves no trait
-// goal and runs no replay. `legacyMustLower` also requires the legacy passes to lower it.
-let checkTypedEqualityLeavesNoGoal (label: Str) (legacyMustLower: Bool) (source: Str) =
+// goal and runs no replay (`noReplay`); where another goal of the program still replays, that
+// replay must lower the site too. Both modes must lower without an error.
+let checkTypedEqualityLeavesNoGoal (label: Str) (noReplay: Bool) (source: Str) =
     match parseProgram(source) with
         | ProgramParseResult { program = parsed, diagnostics = [] } ->
             match identifyProgram(0)(parsed) with
@@ -455,18 +457,40 @@ let checkTypedEqualityLeavesNoGoal (label: Str) (legacyMustLower: Bool) (source:
                                             in
                                                 let replayLegacy = legacy.replay
                                                 in
-                                                    if firstTyped.error == None && typed.pendingGoals == 0 && typed.equalityGoals == 0 && typed.replayed == false && (!legacyMustLower || firstLegacy.error == None && replayLegacy.error == None)
-                                                    then Unit
-                                                    else Ashes.IO.panic(label + ": typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals))
+                                                    let replayTyped = typed.replay
+                                                    in
+                                                        if firstTyped.error == None && replayTyped.error == None && firstLegacy.error == None && replayLegacy.error == None && typed.equalityGoals == 0 && (if noReplay
+                                                        then typed.pendingGoals == 0 && typed.replayed == false
+                                                        else true)
+                                                        then Unit
+                                                        else Ashes.IO.panic(label + ": typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals))
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(label + " inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic(label + " fixture did not parse")
 
 // `xs == []` in a recursive binding used at `List(Str)`.
 let checkPartlyOpenEqualitySettled unit = checkTypedEqualityLeavesNoGoal("partly open equality")(true)("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)")
 
-// `selected != []` in a helper whose only reference is at a generic wrapper's own variable; the
-// wrapper is used at `List(Str)`, so the helper's variable settles through it.
+// `selected != []` in a constrained helper used only from a generic wrapper: the first pass compares
+// through the helper's own Eq dictionary, and the replay the wrapper's dictionary goal still asks for
+// does too instead of failing on the list's element evidence.
 let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(false)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
+
+let trailingBody (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { body = Some(body) } -> body
+        | _ -> Ashes.IO.panic("fixture has no trailing expression")
+
+// The view test of a `let` result sees through the identity wrappers of a numbered body: a match on
+// a call reading `text` can hand back a view of it, numbered or not.
+let checkNumberedResultView unit =
+    match parseProgram("let text = \"ab\"\nmatch Ashes.Text.unconsText(text) with\n    | Some((_head, tail)) -> tail\n    | None -> \"\"") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    if resultMayViewCallArgument("text")(0)(trailingBody(parsed)) && resultMayViewCallArgument("text")(0)(trailingBody(program))
+                    then Unit
+                    else Ashes.IO.panic("a numbered let body lost the view of its scrutinized call argument")
+        | _ -> Ashes.IO.panic("result view fixture did not parse")
 
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
@@ -494,6 +518,7 @@ let checkTransitiveSettlement unit =
 let runRecordedInferenceCoverageTests unit =
     unit
     |> checkTransitiveSettlement
+    |> checkNumberedResultView
     |> checkPartlyOpenEqualitySettled
     |> checkWrappedInequalitySettled
     |> checkDeferredOperatorObservation

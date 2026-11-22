@@ -1587,6 +1587,20 @@ let answerPartlyOpenEqualityFromTable operator (methodName: Str) lower (binary: 
                             |> Some
                         | None -> None
 
+// A partly open equality in a pass lowering with proofs pinned, where the site's goal is no
+// longer deferred: an operand no proof closed (the first pass answered the site from the table,
+// so it recorded no goal to prove) takes the same table answer again; a closed one, or one the
+// table does not answer, compares at its type as before.
+let emitPinnedPartlyOpenEquality operator (methodName: Str) lower (binary: LoweredCoreBinary) (pinnedType: SemanticType) (pinnedState: CoreLoweringState) =
+    match (pinnedType
+    |> resolveType(pinnedState)
+    |> freeTypeVariables, stateNodeTypes(pinnedState)) with
+        | (_ :: _, Some(_table)) ->
+            match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
+                | Some(answered) -> answered
+                | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+        | _ -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+
 // A constructed operand can still contain an unknown type, as in xs == []. The list
 // implementation is known, but its element dictionary may depend on a later application.
 // Defer that comparison as a whole unless all its evidence is already in scope.
@@ -1609,7 +1623,7 @@ let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary)
                                                 match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
                                                     | Some(answered) -> answered
                                                     | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
-                                            | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+                                            | None -> emitPinnedPartlyOpenEquality(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState)
                             else emitResolvedCoreBinary(operator)(lower)(binary)
                         | _ -> emitResolvedCoreBinary(operator)(lower)(binary)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
