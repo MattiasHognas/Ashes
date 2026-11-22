@@ -1303,6 +1303,31 @@ let recursive parameterTableTypes (parameterTypes: List((Str, SemanticType))) =
         | [] -> []
         | (_name, parameterType) :: rest -> parameterType :: parameterTableTypes(rest)
 
+// A signature's arrows without their `needs` rows. Lowering types a perform site by the values of
+// the operation's declared signature, as stage 0 does whatever row the signature states; the row
+// itself is checked by the type inference.
+let recursive withoutTypeExprRows (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(span, inner) ->
+            inner
+            |> withoutTypeExprRows
+            |> TypeAt(span)
+        | TypeArrow(argument, result, _capabilities, _tail) ->
+            TypeArrow(withoutTypeExprRows(argument))(withoutTypeExprRows(result))([])(None)
+        | TypeApplied(name, arguments) ->
+            arguments
+            |> withoutTypeExprRowsIn
+            |> TypeApplied(name)
+        | TypeTuple(elements) ->
+            elements
+            |> withoutTypeExprRowsIn
+            |> TypeTuple
+        | other -> other
+and withoutTypeExprRowsIn (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | head :: rest -> withoutTypeExprRows(head) :: withoutTypeExprRowsIn(rest)
+
 // An operation's declared signature as a scheme quantified over the capability's own type
 // parameters; an unsigned operation, or one whose signature this resolver cannot express, gets no
 // scheme and is typed by a fresh variable at each perform site. The scheme's body pairs the
@@ -1315,7 +1340,9 @@ let recursive capabilityOperationSchemes (aliases: MapTree(Str, (List(Str), Type
             match signature with
                 | None -> capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
                 | Some(typeExpr) ->
-                    match typeExprToSemanticType(expandTypeAliases(aliases)(32)(typeExpr))(parameterTypes) with
+                    match typeExprToSemanticType(typeExpr
+                    |> expandTypeAliases(aliases)(32)
+                    |> withoutTypeExprRows)(parameterTypes) with
                         | None -> capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
                         | Some(operationType) ->
                             let instance =
