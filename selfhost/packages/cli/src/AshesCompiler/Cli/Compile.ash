@@ -47,6 +47,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.IO.Path
 import AshesCompiler.Cli.DiagnosticIrDump
+import AshesCompiler.Cli.DiagnosticLlvmStats
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
@@ -668,22 +669,30 @@ let emitObjectWithMachine (payloads: List(Str)) machine builder module_ context 
             match verifyGeneratedModule(module_) with
                 | Error(message) -> Error(message)
                 | Ok(_) ->
-                    let _ = runOptimizationPasses(module_)(machine)
+                    let _ = reportDiagnosticPhase("verified")
                     in
-                        match linkRuntimePayloads(context)(module_)(payloads) with
-                            | Error(message) -> Error(message)
-                            | Ok(_) ->
-                                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
-                                    | (false, _, None) -> Error("LLVM produced no object buffer.")
-                                    | (false, _, Some(buffer)) ->
-                                        let bytesResult =
-                                            buffer
-                                            |> getBufferSize
-                                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                                        in
-                                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
-                                            in bytesResult)
+                        let _ = writeDiagnosticLlvmStats(module_)
+                        in
+                            let _ = runOptimizationPasses(module_)(machine)
+                            in
+                                let _ = reportDiagnosticPhase("optimized")
+                                in
+                                    match linkRuntimePayloads(context)(module_)(payloads) with
+                                        | Error(message) -> Error(message)
+                                        | Ok(_) ->
+                                            match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                                                | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
+                                                | (false, _, None) -> Error("LLVM produced no object buffer.")
+                                                | (false, _, Some(buffer)) ->
+                                                    let bytesResult =
+                                                        buffer
+                                                        |> getBufferSize
+                                                        |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                                                    in
+                                                        let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
+                                                        in
+                                                            let _ = reportDiagnosticPhase("emitted")
+                                                            in bytesResult)
 
 // A target machine for `triple` tuned to the host CPU, as `selfhost/tests/backend` resolves it:
 // LLVM's default optimization level and static relocations, matching stage 0's own default build
@@ -715,12 +724,16 @@ let emitObject lowered =
     in
         let context = contextCreate(Unit)
         in
-            match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(lowered) with
-                | (module_, builder) ->
-                    match resolveHostTargetMachine(linuxX64Triple) with
-                        | Error(message) -> Error(message)
-                        | Ok(machine) ->
-                            emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
+            let _ = reportDiagnosticPhase("codegen-start")
+            in
+                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(lowered) with
+                    | (module_, builder) ->
+                        let _ = reportDiagnosticPhase("codegen-done")
+                        in
+                            match resolveHostTargetMachine(linuxX64Triple) with
+                                | Error(message) -> Error(message)
+                                | Ok(machine) ->
+                                    emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
 
 let linkExecutable program objectBytes =
     program
@@ -829,9 +842,11 @@ let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabl
                 optimized
                 |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
                 |> (given (_) ->
-                    match writeDiagnosticIrDump(lowered)(optimized) with
-                        | Error(message) -> Error(message)
-                        | Ok(_) -> emitAndLink(outputPath)(optimized)))
+                    let _ = reportDiagnosticPhase("ir-optimized")
+                    in
+                        match writeDiagnosticIrDump(lowered)(optimized) with
+                            | Error(message) -> Error(message)
+                            | Ok(_) -> emitAndLink(outputPath)(optimized)))
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
