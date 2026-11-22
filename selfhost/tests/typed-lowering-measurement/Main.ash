@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.ShippedModuleStitching
 import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types.SemanticType
+import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 let isAshSourceName name = Ashes.Text.length(name) > 4 && Ashes.Text.substring(name)(Ashes.Text.length(name) - 4)(4) == ".ash"
 
 let recursive readShippedModules root names loaded =
@@ -93,7 +94,27 @@ let activeMethodText (entry: (Str, SemanticType, Str, Str)) =
     match entry with
         | (traitName, operand, method, binding) -> traitName + "." + method + "(" + Ashes.Trait.Show.show(operand) + ")=" + binding
 
-let recursive reportSites regions sites =
+let instanceText (instance: NodeOperatorInstance) =
+    match instance with
+        | PrimitiveInstance -> "primitive"
+        | DeclaredInstance -> "declared"
+        | DictionaryInstance -> "dictionary"
+
+// What the table recorded for the node a site was lowered at: its operator (trait, operand type
+// and instance kind) and its type. A site whose node records no operator was lowered at a node
+// lowering synthesized, under the identity of the node enclosing it.
+let recordedSiteText (node: Maybe(Int)) (table: Maybe(NodeTypeTable)) =
+    match (node, table) with
+        | (Some(identity), Some(recorded)) ->
+            let operatorText =
+                match nodeOperatorAt(identity)(recorded) with
+                    | Some(NodeOperator { traitName = traitName, operandType = operandType, instance = instance }) -> traitName + "(" + Ashes.Trait.Show.show(operandType) + ") " + instanceText(instance)
+                    | None -> "none"
+            in
+                " recorded_operator=" + operatorText + " recorded_type=" + Ashes.Trait.Show.show(nodeTypeAt(identity)(recorded))
+        | _ -> ""
+
+let recursive reportSites regions table sites =
     match sites with
         | [] -> Unit
         | (ObservedPendingGoal { key = key, structural = structural, deferredOperator = deferredOperator, region = region, node = node, operand = operand, activeMethods = methods }, resolved) :: rest ->
@@ -106,10 +127,10 @@ let recursive reportSites regions sites =
                     else "trait"
             in
                 let _ =
-                    Ashes.IO.writeErrorLine(kind + " goal " + key + " source=" + regionPath(regions)(region) + " node=" + Ashes.Trait.Show.show(node) + " operand=" + Ashes.Trait.Show.show(operand) + " resolved=" + Ashes.Trait.Show.show(resolved) + " active_methods=" + "[" + Ashes.Text.join(", ")(Ashes.Collection.List.map(activeMethodText)(methods)) + "]")
-                in reportSites(regions)(rest)
+                    Ashes.IO.writeErrorLine(kind + " goal " + key + " source=" + regionPath(regions)(region) + " node=" + Ashes.Trait.Show.show(node) + " operand=" + Ashes.Trait.Show.show(operand) + " resolved=" + Ashes.Trait.Show.show(resolved) + " active_methods=" + "[" + Ashes.Text.join(", ")(Ashes.Collection.List.map(activeMethodText)(methods)) + "]" + recordedSiteText(node)(table))
+                in reportSites(regions)(table)(rest)
 
-let reportTraversal regions (measurement: CoreLoweringMeasurement) =
+let reportTraversal regions table (measurement: CoreLoweringMeasurement) =
     (let first = measurement.first
     in
         let replay = measurement.replay
@@ -130,7 +151,7 @@ let reportTraversal regions (measurement: CoreLoweringMeasurement) =
                             match measurement.equalityGoalKeys with
                                 | [] -> Unit
                                 | keys -> Ashes.IO.writeErrorLine("structural equality keys: " + Ashes.Text.join(" ")(keys))
-                        in reportSites(regions)(measurement.goalDetails))
+                        in reportSites(regions)(table)(measurement.goalDetails))
 
 let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProject) =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch complete")
@@ -176,8 +197,13 @@ let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProj
                                                             then "first lowering and replay complete"
                                                             else "first lowering complete, replay skipped")
                                                         in
-                                                            let _ = reportTraversal(stitched.moduleRegions)(measured)
-                                                            in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
+                                                            let recordedTable =
+                                                                if mode == "typed"
+                                                                then Some(nodeTypes)
+                                                                else None
+                                                            in
+                                                                let _ = reportTraversal(stitched.moduleRegions)(recordedTable)(measured)
+                                                                in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
 
 let run details path mode =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
