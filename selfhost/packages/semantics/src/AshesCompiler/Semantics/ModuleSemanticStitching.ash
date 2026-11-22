@@ -111,7 +111,9 @@ type ModuleSemanticStitchError =
 // `global` marks a definition whose compiler name is its source name in every module: an
 // external opaque type, which stage 0 never renames (its private-member renaming covers the
 // module's declared types only), so a bare reference to the handle type from a module that
-// imports the declaring module whole names the same declaration.
+// imports the declaring module whole names the same declaration; an external function; and a
+// capability, which stage 0 hoists into one program-wide scope under its declared name, so
+// `provide`, handler arms, performs and `needs` rows in any module of the program name it.
 type PendingDefinition =
     | name: Str
     | kind: StitchedNameKind
@@ -305,7 +307,7 @@ let addUnspannedItem item span collection =
                     | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
                     | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
                     | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) ->
-                        addPending(
+                        addPendingWith(true)(
                             name,
                             StitchedCapability,
                             span,
@@ -492,27 +494,37 @@ let recursive duplicateDefinition (definitions: List(StitchedDefinition)) (bySou
             then Some(name)
             else duplicateDefinition(rest)(bySourceName)
 
-// The completed modules' owner of each compiler name a new module's definitions carry.
+// The completed modules' owner of each compiler name a new module's definitions carry. A
+// capability is left out: capabilities live in their own program-wide namespace, beside types
+// and values of the same name, and the inference reports a capability two modules declare
+// (`DuplicateCapabilityDeclaration`) as stage 0's capability registration does.
 let recursive validateCompilerNames definitions (owners: MapTree(Str, Str)) =
     match definitions with
         | [] -> None
-        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            match Ashes.Collection.Map.getStr(compilerName)(owners) with
-                | Some(owner) ->
-                    qualifiedName
-                    |> CompilerPrivateNameCollision(compilerName)(owner)
-                    |> Some
-                | None -> validateCompilerNames(rest)(owners)
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            if kind == StitchedCapability
+            then validateCompilerNames(rest)(owners)
+            else
+                match Ashes.Collection.Map.getStr(compilerName)(owners) with
+                    | Some(owner) ->
+                        qualifiedName
+                        |> CompilerPrivateNameCollision(compilerName)(owner)
+                        |> Some
+                    | None -> validateCompilerNames(rest)(owners)
 
-// Records a completed module's compiler names over the earlier modules'. Taking the definitions
-// last first leaves each name with the module's first definition carrying it.
+// Records a completed module's compiler names over the earlier modules', capabilities aside.
+// Taking the definitions last first leaves each name with the module's first definition carrying
+// it.
 let recursive recordCompilerNames (reversedDefinitions: List(StitchedDefinition)) (owners: MapTree(Str, Str)) =
     match reversedDefinitions with
         | [] -> owners
-        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName } :: rest ->
-            owners
-            |> Ashes.Collection.Map.setStr(compilerName)(qualifiedName)
-            |> recordCompilerNames(rest)
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, kind = kind } :: rest ->
+            if kind == StitchedCapability
+            then recordCompilerNames(rest)(owners)
+            else
+                owners
+                |> Ashes.Collection.Map.setStr(compilerName)(qualifiedName)
+                |> recordCompilerNames(rest)
 
 let resolvedModule resolved =
     match resolved with

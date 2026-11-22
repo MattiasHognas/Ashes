@@ -136,6 +136,22 @@ let rewriteTypeName project moduleName boundary typeParameters name =
                     | Some(definition) -> definitionCompilerName(definition)
                     | None -> unimportedOrWritten(project)(moduleName)(StitchedType)(name)
 
+// A capability named by a `provide`, a handler arm or a `needs` row. Capabilities keep their
+// declared names program-wide, so an unqualified name stays as written in every module, whether
+// or not the module imports the declaring one and whatever type or trait of the same name it
+// sees; a qualified name resolves like a qualified type.
+let rewriteCapabilityName project moduleName name =
+    match parentAndLeaf(name) with
+        | Some((qualifier, leaf)) ->
+            resolveQualifiedCompilerName(
+                project,
+                moduleName,
+                qualifier,
+                StitchedCapability,
+                leaf
+            )
+        | None -> deepCopy(name)
+
 // A record literal or record pattern names the record's constructor, which the lowering looks
 // up by constructor name; a private record's type and constructor carry different compiler
 // names, so the name is resolved as a constructor rather than as the type.
@@ -166,13 +182,7 @@ and rewriteCapabilityTypes project moduleName boundary typeParameters capabiliti
     match capabilities with
         | [] -> []
         | (name, arguments) :: rest ->
-            (rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                typeParameters,
-                name
-            ), rewriteTypes(
+            (rewriteCapabilityName(project)(moduleName)(name), rewriteTypes(
                 project,
                 moduleName,
                 boundary,
@@ -245,13 +255,7 @@ and rewriteCapabilityRefs project moduleName boundary typeParameters capabilitie
     match capabilities with
         | [] -> []
         | CapabilityRefSyntax { name = name, args = arguments } :: rest ->
-            CapabilityRefSyntax(name = rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                typeParameters,
-                name
-            ), args = rewriteTypes(
+            CapabilityRefSyntax(name = rewriteCapabilityName(project)(moduleName)(name), args = rewriteTypes(
                 project,
                 moduleName,
                 boundary,
@@ -557,7 +561,7 @@ and rewriteHandlerArms project moduleName boundary locals arms =
                             | None -> None
                             | Some(name) ->
                                 name
-                                |> rewriteTypeName(project)(moduleName)(boundary)([])
+                                |> rewriteCapabilityName(project)(moduleName)
                                 |> Some
                     in
                         (rewrittenInstance, operation, rewrittenPatterns, rewriteExpression(
@@ -1002,13 +1006,7 @@ let recursive rewriteProvideBindings project moduleName boundary bindings =
 let rewriteProvideDeclaration project moduleName boundary declaration =
     match declaration with
         | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } ->
-            ProvideDecl(capabilityName = rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                [],
-                name
-            ), typeArguments = rewriteTypes(
+            ProvideDecl(capabilityName = rewriteCapabilityName(project)(moduleName)(name), typeArguments = rewriteTypes(
                 project,
                 moduleName,
                 boundary,
