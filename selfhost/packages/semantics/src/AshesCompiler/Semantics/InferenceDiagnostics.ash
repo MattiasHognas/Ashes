@@ -764,8 +764,18 @@ let externalAbiDiagnostic (error: ExternalAbiError) =
         | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
         | _ -> None
 
-let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (environment: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
+// A diagnostic with stage 0's context appended.
+let withDiagnosticContext (context: Str) (diagnostic: Maybe((Maybe(Str), Str))) =
+    match diagnostic with
+        | Some((code, message)) -> Some((code, message + " Context: " + context + "."))
+        | None -> None
+
+let recursive expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items: List(TopLevelItem)) (builtins: TypeEnvironment) (environment: TypeEnvironment) (location: Maybe(InferenceErrorLocation)) (error: TypeInferenceError) =
     match error with
+        | InferenceErrorInContext(context, inner) ->
+            inner
+            |> expressionDiagnostic(placements)(items)(builtins)(environment)(location)
+            |> withDiagnosticContext(context)
         | UnknownValue(name) ->
             name
             |> unknownValueDiagnostic(placements)(builtins)(location)
@@ -876,6 +886,11 @@ let recursive inferenceErrorDiagnosticIn (placements: List(StitchedDefinitionPla
     match error with
         | ProgramErrorAt(_location, inner) -> inferenceErrorDiagnosticIn(placements)(items)(builtins)(environment)(location)(inner)
         | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorDiagnosticIn(placements)(items)(builtins)(environment)(location)(ProgramExpressionError(inner))
+        | ProgramExpressionError(InferenceErrorInContext(context, inner)) ->
+            inner
+            |> ProgramExpressionError
+            |> inferenceErrorDiagnosticIn(placements)(items)(builtins)(environment)(location)
+            |> withDiagnosticContext(context)
         | ProgramExpressionError(inner) -> expressionDiagnostic(placements)(items)(builtins)(environment)(location)(inner)
         | ProgramTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
         | DuplicateCapabilityDeclaration(name) -> uncoded("Duplicate capability name '" + sourceNameOf(placements)(name) + "'.")
@@ -940,6 +955,7 @@ let recursive inferenceErrorWantsCallSiteWording (placements: List(StitchedDefin
     match error with
         | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(placements)(inner)
         | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
+        | ProgramExpressionError(InferenceErrorInContext(_context, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail)))) -> false
         | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
         | ProgramExpressionError(InferenceUnificationError(_unification)) -> true

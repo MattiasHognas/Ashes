@@ -20,6 +20,7 @@ import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
+import AshesCompiler.Semantics.RequirementSites.requirementSiteWithContext
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.sortBy
@@ -407,8 +408,12 @@ let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substit
 // A `print` argument error located at the `print` call in `value` that raised it, as stage 0
 // reports it.
 let printArgumentErrorAt (value: Expr) (error: TypeInferenceError) =
-    match requirementSiteSpan("$PrintArgument")(value) with
-        | Some(site) -> InferenceErrorAt(site)(error)
+    match requirementSiteWithContext("$PrintArgument")(value) with
+        | Some((site, None)) -> InferenceErrorAt(site)(error)
+        | Some((site, Some(context))) ->
+            error
+            |> InferenceErrorInContext(context)
+            |> InferenceErrorAt(site)
         | None -> error
 
 // The `print` argument a member of the group would generalize over, once the group's defaults are
