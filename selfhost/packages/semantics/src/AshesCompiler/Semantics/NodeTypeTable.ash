@@ -250,39 +250,114 @@ let settleNodeNotes (substitution: List((Int, SemanticType))) (notes: List(NodeT
         | _ ->
             settleNotes(extendSubstitutionMap(substitution)(Ashes.Collection.Map.empty))(notes)(table)
 
-// One instantiation's arguments weighed against the settled arguments so far: a closed argument
-// settles its variable unless another reference instantiated it differently; an open one, or two
-// references that disagree, leave it unsettled.
-let recursive weighArguments (arguments: List((Int, SemanticType))) (weighed: (MapTree(Int, SemanticType), MapTree(Int, Bool))) =
-    match (arguments, weighed) with
-        | ([], _) -> weighed
-        | ((variable, semanticType) :: rest, (settled, unsettled)) ->
-            match Ashes.Collection.Map.getInt(variable)(unsettled) with
-                | Some(_unsettled) -> weighArguments(rest)(weighed)
-                | None ->
-                    if freeTypeVariables(semanticType) == []
-                    then
-                        match Ashes.Collection.Map.getInt(variable)(settled) with
-                            | None -> weighArguments(rest)((Ashes.Collection.Map.setInt(variable)(semanticType)(settled), unsettled))
-                            | Some(previous) ->
-                                if previous == semanticType
-                                then weighArguments(rest)(weighed)
-                                else weighArguments(rest)((settled, Ashes.Collection.Map.setInt(variable)(true)(unsettled)))
-                    else weighArguments(rest)((settled, Ashes.Collection.Map.setInt(variable)(true)(unsettled)))
+// What the references to generic bindings say about each quantified variable so far: the one
+// closed type its closed arguments agree on, the variables two references instantiate differently,
+// and the arguments still holding a variable, which another binding's settled variables may close.
+// `changed` records whether a round closed any argument.
+type ArgumentSettlement =
+    | settled: MapTree(Int, SemanticType)
+    | unsettled: MapTree(Int, Bool)
+    | pending: MapTree(Int, List(SemanticType))
+    | changed: Bool
 
-let weighInstantiation (weighed: (MapTree(Int, SemanticType), MapTree(Int, Bool))) (_node: Int) (instantiation: NodeInstantiation) =
+let isUnsettled (variable: Int) (weighed: ArgumentSettlement) =
+    match Ashes.Collection.Map.getInt(variable)(weighed.unsettled) with
+        | Some(_unsettled) -> true
+        | None -> false
+
+let pendingArgumentsOf (variable: Int) (weighed: ArgumentSettlement) =
+    match Ashes.Collection.Map.getInt(variable)(weighed.pending) with
+        | Some(arguments) -> arguments
+        | None -> []
+
+// A closed argument settles its variable unless another reference instantiated it differently.
+let weighClosedArgument (variable: Int) (semanticType: SemanticType) (weighed: ArgumentSettlement) =
+    match Ashes.Collection.Map.getInt(variable)(weighed.settled) with
+        | None -> weighed with settled = Ashes.Collection.Map.setInt(variable)(semanticType)(weighed.settled)
+        | Some(previous) ->
+            if previous == semanticType
+            then weighed
+            else weighed with unsettled = Ashes.Collection.Map.setInt(variable)(true)(weighed.unsettled)
+
+// One instantiation's arguments weighed against the settlement so far: a closed argument is
+// weighed at once, an open one waits until the variables it holds are settled.
+let recursive weighArguments (arguments: List((Int, SemanticType))) (weighed: ArgumentSettlement) =
+    match arguments with
+        | [] -> weighed
+        | (variable, semanticType) :: rest ->
+            if isUnsettled(variable)(weighed)
+            then weighArguments(rest)(weighed)
+            else
+                if freeTypeVariables(semanticType) == []
+                then
+                    weighed
+                    |> weighClosedArgument(variable)(semanticType)
+                    |> weighArguments(rest)
+                else weighArguments(rest)((weighed with pending = Ashes.Collection.Map.setInt(variable)(semanticType :: pendingArgumentsOf(variable)(weighed))(weighed.pending)))
+
+let weighInstantiation (weighed: ArgumentSettlement) (_node: Int) (instantiation: NodeInstantiation) =
     match instantiation with
         | NodeInstantiation { arguments = arguments } -> weighArguments(arguments)(weighed)
 
-let keepSettled (unsettled: MapTree(Int, Bool)) (kept: MapTree(Int, SemanticType)) (variable: Int) (semanticType: SemanticType) =
-    match Ashes.Collection.Map.getInt(variable)(unsettled) with
-        | Some(_unsettled) -> kept
-        | None -> Ashes.Collection.Map.setInt(variable)(semanticType)(kept)
+// A settled variable no reference contradicts and no open argument still waits on.
+let keepFinal (weighed: ArgumentSettlement) (kept: MapTree(Int, SemanticType)) (variable: Int) (semanticType: SemanticType) =
+    if isUnsettled(variable)(weighed) || pendingArgumentsOf(variable)(weighed) != []
+    then kept
+    else Ashes.Collection.Map.setInt(variable)(semanticType)(kept)
+
+let finalSettlement (weighed: ArgumentSettlement) =
+    Ashes.Collection.Map.foldLeft(keepFinal(weighed))(Ashes.Collection.Map.empty)(weighed.settled)
+
+let withoutPendingArguments (variable: Int) (weighed: ArgumentSettlement) = weighed with pending = Ashes.Collection.Map.setInt(variable)([])(weighed.pending)
+
+let settlementChanged (weighed: ArgumentSettlement) = weighed.changed
+
+// A variable's open arguments read through the final settlement: each one that closes is weighed,
+// the rest wait for a later round. A contradiction leaves the variable unsettled and waiting on
+// nothing.
+let recursive settleOpenArguments (variable: Int) (substitution: MapTree(Int, SemanticType)) (arguments: List(SemanticType)) (waiting: List(SemanticType)) (weighed: ArgumentSettlement) =
+    match arguments with
+        | [] -> weighed with pending = Ashes.Collection.Map.setInt(variable)(waiting)(weighed.pending)
+        | argument :: rest ->
+            let resolved = applySubstitutionMap(substitution)(argument)
+            in
+                if freeTypeVariables(resolved) == []
+                then
+                    let next = weighClosedArgument(variable)(resolved)(weighed)
+                    in
+                        if isUnsettled(variable)(next)
+                        then withoutPendingArguments(variable)(next) with changed = true
+                        else settleOpenArguments(variable)(substitution)(rest)(waiting)((next with changed = true))
+                else settleOpenArguments(variable)(substitution)(rest)(resolved :: waiting)(weighed)
+
+let settlePendingEntry (substitution: MapTree(Int, SemanticType)) (weighed: ArgumentSettlement) (variable: Int) (_snapshot: List(SemanticType)) =
+    match pendingArgumentsOf(variable)(weighed) with
+        | [] -> weighed
+        | arguments ->
+            if isUnsettled(variable)(weighed)
+            then withoutPendingArguments(variable)(weighed)
+            else settleOpenArguments(variable)(substitution)(arguments)([])(weighed)
+
+// Rounds until no open argument closes: each round reads the open arguments through the variables
+// settled for good so far, so a binding used only from another binding the program uses at one
+// type is settled by that use too.
+let recursive settlePendingArguments (weighed: ArgumentSettlement) =
+    (let round =
+        Ashes.Collection.Map.foldLeft(weighed
+        |> finalSettlement
+        |> settlePendingEntry)((weighed with changed = false))(weighed.pending)
+    in
+        if settlementChanged(round)
+        then settlePendingArguments(round)
+        else round)
 
 // The closed type of every quantified variable that all references to its binding instantiate at
-// that one type. A binding the program uses at a single type is settled by its uses there; a
-// variable instantiated at two types, or at a type still holding a variable, is left out.
+// that one type. A binding the program uses at a single type is settled by its uses there; so is a
+// binding whose references instantiate it at variables of enclosing bindings that are themselves
+// settled. A variable instantiated at two types, or at a type that stays open, is left out.
 let settledInstantiationArguments (table: NodeTypeTable) =
-    match Ashes.Collection.Map.foldLeft(weighInstantiation)((Ashes.Collection.Map.empty, Ashes.Collection.Map.empty))(table.instantiations) with
-        | (settled, unsettled) ->
-            Ashes.Collection.Map.foldLeft(keepSettled(unsettled))(Ashes.Collection.Map.empty)(settled)
+    (let weighed = Ashes.Collection.Map.foldLeft(weighInstantiation)(ArgumentSettlement(settled = Ashes.Collection.Map.empty, unsettled = Ashes.Collection.Map.empty, pending = Ashes.Collection.Map.empty, changed = false))(table.instantiations)
+    in
+        weighed
+        |> settlePendingArguments
+        |> finalSettlement)

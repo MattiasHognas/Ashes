@@ -432,11 +432,11 @@ let checkDeferredOperatorDetails unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("deferred operator inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("deferred operator fixture did not parse")
 
-// `xs == []` in a recursive binding the program uses at one element type: lowering meets the
-// element type open, and the table's operand type closes through the settled use, so the typed
-// first pass leaves no trait goal and runs no replay.
-let checkPartlyOpenEqualitySettled unit =
-    match parseProgram("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)") with
+// A partly open equality lowering meets before the element type is known, in a program that uses
+// the binding at one element type: the typed first pass answers it from the table, leaves no trait
+// goal and runs no replay. `legacyMustLower` also requires the legacy passes to lower it.
+let checkTypedEqualityLeavesNoGoal (label: Str) (legacyMustLower: Bool) (source: Str) =
+    match parseProgram(source) with
         | ProgramParseResult { program = parsed, diagnostics = [] } ->
             match identifyProgram(0)(parsed) with
                 | (program, _count) ->
@@ -455,15 +455,47 @@ let checkPartlyOpenEqualitySettled unit =
                                             in
                                                 let replayLegacy = legacy.replay
                                                 in
-                                                    if firstTyped.error == None && typed.pendingGoals == 0 && typed.equalityGoals == 0 && typed.replayed == false && firstLegacy.error == None && replayLegacy.error == None
+                                                    if firstTyped.error == None && typed.pendingGoals == 0 && typed.equalityGoals == 0 && typed.replayed == false && (!legacyMustLower || firstLegacy.error == None && replayLegacy.error == None)
                                                     then Unit
-                                                    else Ashes.IO.panic("partly open equality: typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals))
-                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("partly open equality inference failed: " + Ashes.Trait.Show.show(error))
-        | _ -> Ashes.IO.panic("partly open equality fixture did not parse")
+                                                    else Ashes.IO.panic(label + ": typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals))
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(label + " inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(label + " fixture did not parse")
+
+// `xs == []` in a recursive binding used at `List(Str)`.
+let checkPartlyOpenEqualitySettled unit = checkTypedEqualityLeavesNoGoal("partly open equality")(true)("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)")
+
+// `selected != []` in a helper whose only reference is at a generic wrapper's own variable; the
+// wrapper is used at `List(Str)`, so the helper's variable settles through it.
+let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(false)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
+
+let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
+
+// A binding referenced only at another binding's quantified variable is settled through that
+// binding's own uses: 10 through 20 at Str; 30 is used at Float directly and at 40 (Int), so it stays
+// open; 50 waits on a variable no reference settles; 70 is used at two types.
+let checkTransitiveSettlement unit =
+    (let instantiations =
+        Ashes.Collection.Map.empty
+        |> Ashes.Collection.Map.setInt(1)(instantiationAt([(10, SemList(SemVariable(20)))]))
+        |> Ashes.Collection.Map.setInt(2)(instantiationAt([(20, SemString)]))
+        |> Ashes.Collection.Map.setInt(3)(instantiationAt([(30, SemVariable(40))]))
+        |> Ashes.Collection.Map.setInt(4)(instantiationAt([(40, SemInt)]))
+        |> Ashes.Collection.Map.setInt(5)(instantiationAt([(30, SemFloat)]))
+        |> Ashes.Collection.Map.setInt(6)(instantiationAt([(50, SemVariable(60))]))
+        |> Ashes.Collection.Map.setInt(7)(instantiationAt([(70, SemInt), (80, SemVariable(20))]))
+        |> Ashes.Collection.Map.setInt(8)(instantiationAt([(70, SemBool)]))
+    in
+        let settled = settledInstantiationArguments((emptyNodeTypeTable with instantiations = instantiations))
+        in
+            match (Ashes.Collection.Map.getInt(10)(settled), Ashes.Collection.Map.getInt(20)(settled), Ashes.Collection.Map.getInt(30)(settled), Ashes.Collection.Map.getInt(40)(settled), Ashes.Collection.Map.getInt(50)(settled), Ashes.Collection.Map.getInt(70)(settled), Ashes.Collection.Map.getInt(80)(settled)) with
+                | (Some(SemList(SemString)), Some(SemString), None, Some(SemInt), None, None, Some(SemString)) -> Unit
+                | _ -> Ashes.IO.panic("settled instantiation arguments did not follow settled enclosing variables, or settled a contradicted or open one"))
 
 let runRecordedInferenceCoverageTests unit =
     unit
+    |> checkTransitiveSettlement
     |> checkPartlyOpenEqualitySettled
+    |> checkWrappedInequalitySettled
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings
