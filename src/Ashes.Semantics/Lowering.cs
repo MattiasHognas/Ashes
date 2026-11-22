@@ -7698,9 +7698,9 @@ public sealed partial class Lowering
     // dropped it), so unlike a match arm, whose scope exit can transfer the owner into the result,
     // the branch must retain; the marker becomes a runtime retain when the root parameter is
     // runtime-managed. Every other returned binding transfers exactly as a match arm's would, except
-    // that only a match arm (`matchArm`) owns bindings of its own: an `if` branch returning an owner
-    // bound before the `if` takes a reference of its own, since the binding's release follows the
-    // whole `if`.
+    // that only a match arm (`matchArm`) owns bindings of its own: an `if` branch outside tail
+    // position returning an owner bound before the `if` takes a reference of its own, since the
+    // binding's release follows the whole `if` and code after it may read the binding.
     private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp, bool tailPosition, bool matchArm)
     {
         Expr result = branch;
@@ -7745,7 +7745,7 @@ public sealed partial class Lowering
             return NormalizeBranchResultBorrowingRuntimeOwner(branchTemp);
         }
 
-        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp, matchArm);
+        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp, matchArm, tailPosition);
     }
 
     // An arena binding that stores children of a reference-counted owner still alive in this frame:

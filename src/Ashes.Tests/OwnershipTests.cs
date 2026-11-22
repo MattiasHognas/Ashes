@@ -209,6 +209,58 @@ public sealed class OwnershipTests
         }
     }
 
+    [Test]
+    public void Loop_exit_branch_returning_an_owner_bound_before_the_if_moves_it()
+    {
+        // `next` is an owned runtime-managed let of the loop body and the exit branch returns it in
+        // tail position: nothing reads it after the join, so its one reference moves into the
+        // result (a retain and the owner's release in the branch). A retain alone would leave the
+        // exit's passthrough hand-over one reference short of balancing and leak the list per call.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive bump (order: List(Int)) (xs: List(Int)) =
+                match order with
+                    | [] -> xs
+                    | o :: rest ->
+                        if o < 0
+                        then bump(rest)(o :: xs)
+                        else bump(rest)(xs)
+
+            let recursive settle (k: Int) (xs: List(Int)) =
+                (let next = bump([1, 2])(xs)
+                in
+                    if k == 0
+                    then next
+                    else settle(k - 1)(next))
+
+            match settle(1)([1, 2, 3]) with
+                | [] -> Ashes.IO.print(0)
+                | _ -> Ashes.IO.print(1)
+            """);
+
+        ir.Functions.Any(function => ExitBranchMovesListOwner(function.Instructions)).ShouldBeTrue(
+            "the loop's exit branch must move the let owner it returns into the result");
+    }
+
+    // A branch ending `RcDup; RcDrop <List owner>; StoreLocal; Jump endif`: the returned owner's
+    // reference moved into the join.
+    private static bool ExitBranchMovesListOwner(List<IrInst> instructions)
+    {
+        for (int i = 0; i + 3 < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.RcDup
+                && instructions[i + 1] is IrInst.RcDrop { TypeName: "List", OwnerSlot: >= 0 }
+                && instructions[i + 2] is IrInst.StoreLocal
+                && instructions[i + 3] is IrInst.Jump jump
+                && jump.Target.StartsWith("endif", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // Whether an owner slot is loaded after a release of that slot with no store into it between,
     // in instruction order.
     private static bool OwnerSlotReadAfterRelease(List<IrInst> instructions)

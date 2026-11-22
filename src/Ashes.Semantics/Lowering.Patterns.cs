@@ -1909,7 +1909,7 @@ public sealed partial class Lowering
 
     // `matchArm` is true for a match arm, whose own ownership scope is the innermost one while its
     // result is transferred, and false for an `if` branch, which opens no scope of its own.
-    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp, bool matchArm)
+    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp, bool matchArm, bool tailPosition)
     {
         Expr result = body;
         while (result is Expr.Let let)
@@ -1920,7 +1920,7 @@ public sealed partial class Lowering
         if (result is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { IsDropped: false } owner)
         {
-            return TransferVariableRuntimeManagedMatchResult(variable, bodyTemp, owner, matchArm);
+            return TransferVariableRuntimeManagedMatchResult(variable, bodyTemp, owner, matchArm, tailPosition);
         }
 
         return bodyTemp;
@@ -1946,12 +1946,13 @@ public sealed partial class Lowering
         return false;
     }
 
-    // A branch returning the owner binding itself. An arm returning an owner its own pattern bound
-    // transfers the owner's one reference into the match result: the arm's scope ends with the arm,
-    // so nothing reads the binding after it. An owner bound before the match or `if` is released by
-    // its own scope after the join and may still be read there, so the branch takes a reference of
-    // its own and the owner stays live.
-    private int TransferOwnerBindingResult(int bodyTemp, OwnershipInfo owner, bool matchArm)
+    // A branch returning the owner binding itself. The owner's one reference moves into the join
+    // when nothing can read the binding after it: an arm returning an owner its own pattern bound,
+    // whose scope ends with the arm, and any branch in tail position, whose join is the function's
+    // result (a loop's exit hands that reference on as the result). Otherwise the owner was bound
+    // before the match or `if`, is released by its own scope after the join and may still be read
+    // there, so the branch takes a reference of its own and the owner stays live.
+    private int TransferOwnerBindingResult(int bodyTemp, OwnershipInfo owner, bool matchArm, bool tailPosition)
     {
         if (!owner.RuntimeManaged)
         {
@@ -1959,7 +1960,7 @@ public sealed partial class Lowering
         }
 
         int duplicatedTemp = DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
-        if (!matchArm || !OwnedByInnermostScope(owner))
+        if (!tailPosition && (!matchArm || !OwnedByInnermostScope(owner)))
         {
             return duplicatedTemp;
         }
@@ -1978,7 +1979,8 @@ public sealed partial class Lowering
         Expr.Var variable,
         int bodyTemp,
         OwnershipInfo owner,
-        bool matchArm)
+        bool matchArm,
+        bool tailPosition)
     {
         // EmitRuntimeManagedParentFieldTransfer is only for an extracted child whose protective
         // parent must still be released. Treating the root as its own child drops the unique cell
@@ -1992,7 +1994,7 @@ public sealed partial class Lowering
         };
         if (resultSlot == owner.Slot)
         {
-            return TransferOwnerBindingResult(bodyTemp, owner, matchArm);
+            return TransferOwnerBindingResult(bodyTemp, owner, matchArm, tailPosition);
         }
 
         // A captured binding is owned by the current closure environment, not by the outer
