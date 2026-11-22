@@ -98,6 +98,7 @@ export (
     value projectOutputPath,
     value formatByteSize,
     value inputStem,
+    value stitchErrorText,
     value explainValidValuesText,
     value compileFileToExecutable,
     value compileProjectToExecutable,
@@ -852,13 +853,18 @@ let duplicateConstructorOwner (source: Str) (name: Str) =
 // Stage 0's standard-library module set, in the order its unknown-module diagnostic lists it.
 let knownStandardModulesText = "Ashes, Ashes.Trait, Ashes.IO, Ashes.Core.Result, Ashes.Collection.List, Ashes.Number.Math, Ashes.Collection.Array, Ashes.Collection.Map, Ashes.Collection.HashMap, Ashes.Collection.HashTrie, Ashes.Task.Parallel, Ashes.Core.Maybe, Ashes.Test, Ashes.Internal, Ashes.Internal.Regex, Ashes.IO.File, Ashes.IO.Directory, Ashes.IO.Path, Ashes.IO.Environment, Ashes.Text, Ashes.Text.Source, Ashes.Rune, Ashes.Number.BigInt, Ashes.Byte, Ashes.Ffi, Ashes.Number.UInt, Ashes.Net.Http, Ashes.Net.Tcp, Ashes.Net.Tcp.Server, Ashes.Net.Http.Server, Ashes.Net.Tls.Server, Ashes.Net.Tls, Ashes.Task, Ashes.IO.Process, Ashes.IO.Console, Ashes.Text.Json, Ashes.Net.Rpc, Ashes.Text.Regex"
 
-let stitchFailureText (source: Str) (error: ShippedStitchError) =
+// A failure stage 0 reports for the file as a whole, `compile error: <message>` with the file on
+// the next line.
+let fileFailureText (path: Str) (message: Str) = "compile error: " + message + "\n  --> " + path
+
+let stitchFailureText (inputPath: Str) (source: Str) (error: ShippedStitchError) =
     match error with
         | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
             match duplicateConstructorOwner(source)(name) with
                 | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
                 | None -> "ASH013 Duplicate top-level binding '" + name + "'."
-        | ShippedModuleMissing(_importer, name) -> "Unknown standard library module '" + name + "'. Known modules: " + knownStandardModulesText + "."
+        | ShippedModuleMissing(_importer, name) -> fileFailureText(inputPath)("Unknown standard library module '" + name + "'. Known modules: " + knownStandardModulesText + ".")
+        | ShippedParseError(path, message) -> fileFailureText(path)(message)
         | other -> Ashes.Trait.Show.show(other)
 
 // A stitching failure as stage 0 words it: the parse diagnostics of a module the parser rejected,
@@ -867,7 +873,7 @@ let stitchFailureText (source: Str) (error: ShippedStitchError) =
 let stitchErrorText (inputPath: Str) (source: Str) (error: ShippedStitchError) =
     match shippedStitchParseDiagnostics(error) with
         | Some(diagnostics) -> parseDiagnosticsText(inputPath)(source)(diagnostics)
-        | None -> stitchFailureText(source)(error)
+        | None -> stitchFailureText(inputPath)(source)(error)
 
 // A project stitching failure: the parse diagnostics of the files the parser rejected as stage 0
 // words them, every other failure in its structural form.

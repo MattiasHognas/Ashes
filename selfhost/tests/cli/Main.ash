@@ -12,6 +12,7 @@ import AshesCompiler.Cli.Remove
 import AshesCompiler.Cli.Restore
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
+import AshesCompiler.Semantics.ShippedModuleStitching.ShippedStitchError
 let testParseFmtArgumentsHelp unit =
     match parseFmtArguments(["--help"]) with
         | FmtHelpRequested -> test.assertEqual(true)(true)
@@ -1432,6 +1433,13 @@ let testRunProjectRelaysProgramOutput unit =
                 |> (given (_) -> removeProjectScratch(Unit)))
 
 // An explicit manifest that does not exist is stage 0's "Project file not found" input error.
+// An inline module the entry may not declare fails the file as a whole, worded as stage 0 words it.
+let testInlineModuleErrorReadsAsFileFailure unit =
+    "[ASH021] Inline module 'Bad' may not contain a trailing expression (Main.ash)."
+    |> ShippedParseError("Main.ash")
+    |> stitchErrorText("Main.ash")("")
+    |> test.assertEqual("compile error: [ASH021] Inline module 'Bad' may not contain a trailing expression (Main.ash).\n  --> Main.ash")
+
 let testCompileMissingProjectReportsNotFound unit =
     match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "compile", "--project", "cli-no-such-dir/ashes.json"]) with
         | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
@@ -1590,6 +1598,7 @@ let run unit =
     |> testCompileProjectWritesRunnableExecutable
     |> testRunProjectRelaysProgramOutput
     |> testCompileMissingProjectReportsNotFound
+    |> testInlineModuleErrorReadsAsFileFailure
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 // `--as-cli <args...>` re-enters this executable as the `ashes` CLI itself, so a test can observe
