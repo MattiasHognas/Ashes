@@ -775,6 +775,13 @@ let recursive addCapabilityToInnermostArrow capabilityType semanticType =
                     |> Some
         | _ -> None
 
+// The environment binding that keeps an operation's type in scope. Performs, handler arms and
+// operation values reach an operation through its capability (`resolveCapabilityOperation`), as
+// stage 0 reaches it through its capability symbols, never through a value binding. So the key is
+// one no written name forms: `Ord.compare` stays the shipped `Ord` trait's method binding when a
+// program declares `capability Ord` with a `compare` operation.
+let capabilityOperationBindingName (capabilityName: Str) (operationName: Str) = "$capability." + capabilityName + "." + operationName
+
 let recursive registerCapabilityOperations capabilityName declarations capabilityType capabilityScheme quantified context environment supply reversed =
     match declarations with
         | [] ->
@@ -817,7 +824,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                                     quantified,
                                                     context,
                                                     addTypeBinding(
-                                                        capabilityName + "." + operationName,
+                                                        capabilityOperationBindingName(capabilityName)(operationName),
                                                         scheme,
                                                         environment
                                                     ),
@@ -847,7 +854,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                                     quantified,
                                                     context,
                                                     addTypeBinding(
-                                                        capabilityName + "." + operationName,
+                                                        capabilityOperationBindingName(capabilityName)(operationName),
                                                         scheme,
                                                         environment
                                                     ),
