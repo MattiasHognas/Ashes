@@ -39,6 +39,11 @@ let checkInvalidOperand unit =
 // provisional member pass must still settle its later sibling before final emission.
 let checkCombinedReplay unit = expectBool("let invert value = !value\nlet recursive even n = if n == 0 then true else !odd(n - 1) and odd n = if n == 0 then true else !even(n - 1)\ninvert(false) && even(10)")
 
+// A recursive group's final member pass during a pinned whole-program replay first lowers a body
+// with its parameter still open. An equality over that parameter, closed later in the same body,
+// is recorded rather than rejected, and the body's lowering again answers it.
+let checkRecursiveGroupEqualityReplay unit = expectBool(standardTraits(Unit) + "\nlet recursive hide names name = match names with | [] -> [] | other :: rest -> if other != name then other :: hide(rest)(name) else hide(rest)(name)\nlet recursive count names values = if names == [] then 0 else match values with | [] -> 0 | _value :: rest -> step(count(names))(rest) + count(hide(names)(\"x\"))([]) and step recur rest = 1 + recur(rest)\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && count([\"x\", \"y\"])([5, 6, 7]) == 3")
+
 let checkActiveGenericEvidence unit = expectBool("type Bit = | Bit(Bool) deriving {Eq}\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\ntype Box(a) = | Box(a)\nimplement Eq(Box(a)) requires {Not(a), Eq(a)} = | equal = given left -> given right -> match (left, right) with | (Box(x), Box(y)) -> !x == y\nlet same (left: Box(Bit)) (right: Box(Bit)) = left == right\nsame(Box(Bit(false)))(Box(Bit(true)))")
 
 let bitNotPrelude = "type Bit = | Bit(Bool)\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\n"
@@ -161,6 +166,7 @@ let runCoreLogicalNotInferenceTests unit =
     |> checkUnresolvedOperands
     |> checkInvalidOperand
     |> checkCombinedReplay
+    |> checkRecursiveGroupEqualityReplay
     |> checkActiveGenericEvidence
     |> (given (_) -> checkGenericNotEvidence(" : a -> a requires {Not(a)}"))
     |> (given (_) -> checkGenericNotEvidence(""))
