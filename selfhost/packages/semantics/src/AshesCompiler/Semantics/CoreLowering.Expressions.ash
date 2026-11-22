@@ -55,6 +55,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeTypeTable.nodeEvidenceStagesAt
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -3169,19 +3170,69 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
                     | _ -> false
         | None -> false
 
+// A call of a function that states no requirement of its own can still return a function needing
+// evidence from a constrained argument it keeps, as `keep(pick)` or `choose((pick, other))` do. Its
+// requirements stay on the binding when the call needs none of them to evaluate.
+let recursive appliedResultMayBeFunction (semanticType: SemanticType) (supplied: Int) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemFunction(_argument, result, _row) ->
+            if supplied == 0
+            then true
+            else appliedResultMayBeFunction(result)(supplied - 1)(state)
+        | SemVariable(_id) -> true
+        | _ -> false
+
+let forwardedCallbackApplication value (state: CoreLoweringState) =
+    match callSpineRootOf(value)(0) with
+        | Some((name, supplied)) ->
+            if supplied == 0
+            then false
+            else
+                match visibleCalleeScheme(name)(state) with
+                    | Some(TypeScheme { body = body }) -> appliedResultMayBeFunction(body)(supplied)(state) && forwardsRequirementsOf(value)(state)
+                    | None -> forwardsRequirementsOf(value)(state)
+        | None -> false
+
+let recursive everyStageLatent (stages: List(Int)) =
+    match stages with
+        | [] -> true
+        | stage :: rest -> stage != 0 && everyStageLatent(rest)
+
+// A value that is a function, with no requirement the standalone inference recorded as needed
+// while evaluating it: a dictionary-taking form of it evaluates nothing earlier than the source
+// does.
+let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) value (state: CoreLoweringState) =
+    (let scheme = plan.scheme
+    in
+        match scheme.body with
+            | SemFunction(_argument, _result, _row) ->
+                match stateNodeTypes(state) with
+                    | None -> true
+                    | Some(table) ->
+                        match nodeEvidenceStagesAt(nodeIdentityOf(value))(table) with
+                            | Some(stages) -> everyStageLatent(stages)
+                            | None -> true
+            | _ -> false)
+
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
-    let (candidate, forwardsRequirements) =
+    let (candidate, forwardsRequirements, callback) =
         match lambdaParts(value) with
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
                 in
                     let forwards = written || forwardsRequirementsOf(value)(state)
-                    in (forwards || canOriginateRequirement(value)(state), forwards)
+                    in (forwards || canOriginateRequirement(value)(state), forwards, false)
             | None ->
-                let partial = !isRecursive && constrainedPartialApplication(value)(state)
-                in (partial, partial)
+                if isRecursive
+                then (false, false, false)
+                else
+                    if constrainedPartialApplication(value)(state)
+                    then (true, true, false)
+                    else
+                        let forwarded = forwardedCallbackApplication(value)(state)
+                        in (forwarded, forwarded, forwarded)
     in
         if candidate
         then
@@ -3189,7 +3240,7 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                 | CoreConstrainedInference { error = Some(_error) } -> None
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state)
+                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan)(value)(state))
                     then Some(plan)
                     else None
         else None
@@ -3293,13 +3344,20 @@ let constrainedPlanSourceType (plan: CoreConstrainedInference) =
     (let scheme = plan.scheme
     in withoutCapabilityRows(scheme.body))
 
-let recursive capturePartialArguments root arguments site index captured =
+// Each argument is evaluated once, before the dictionary parameters, except one that reads a
+// constrained binding: it needs the dictionaries itself, so it stays in the application they are
+// supplied to.
+let recursive capturePartialArguments root arguments site index captured (state: CoreLoweringState) =
     match arguments with
         | [] -> (root, captured)
         | argument :: rest ->
-            let name = "$partial" + Ashes.Text.fromInt(site) + "_" + Ashes.Text.fromInt(index)
-            in
-                capturePartialArguments(ExprCall(root)(ExprVar(name))(false)(callArgumentsInline))(rest)(site)(index + 1)((name, argument) :: captured)
+            if forwardsRequirementsOf(argument)(state)
+            then
+                capturePartialArguments(ExprCall(root)(argument)(false)(callArgumentsInline))(rest)(site)(index + 1)(captured)(state)
+            else
+                let name = "$partial" + Ashes.Text.fromInt(site) + "_" + Ashes.Text.fromInt(index)
+                in
+                    capturePartialArguments(ExprCall(root)(ExprVar(name))(false)(callArgumentsInline))(rest)(site)(index + 1)((name, argument) :: captured)(state)
 
 let recursive bindPartialArguments reversed body =
     match reversed with
@@ -3314,7 +3372,7 @@ let constrainedRuntimeValue value requirements (state: CoreLoweringState) =
         | ExprCall(_callee, _argument, _space, _layout) ->
             match collectCallSpine(value) with
                 | CoreCallSpine { root = root, arguments = arguments } ->
-                    match capturePartialArguments(root)(arguments)(state.nextLocal)(0)([]) with
+                    match capturePartialArguments(root)(arguments)(state.nextLocal)(0)([])(state) with
                         | (application, captured) ->
                             state
                             |> stateTraitEnvironment

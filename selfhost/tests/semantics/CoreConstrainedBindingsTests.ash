@@ -5,6 +5,8 @@ import AshesCompiler.Semantics.CoreLowering.Emit.bindType
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStatePendingTraitGoals
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTraitMethods
 import AshesCompiler.Semantics.CoreLowering.Operators.dictionaryGoalCandidates
+import AshesCompiler.Semantics.CoreLowering.Owners.addBinding
+import AshesCompiler.Semantics.CoreLowering.Model.CoreBindingLocation
 import AshesCompiler.Semantics.CoreLowering.Owners.pendingOperatorScheme
 import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
@@ -192,6 +194,41 @@ let checkDictionaryGoalCandidates unit =
                                 | _ -> Ashes.IO.panic("dictionary goal could not unify with its enclosing dictionary")
                     | _ -> Ashes.IO.panic("dictionary goal candidates were not one per active Eq dictionary"))
 
+let callbackPlanState unit =
+    (let pickType =
+        SemFunction(SemTuple([]))(SemFunction(SemVariable(5))(SemBool)(None))(None)
+    in
+        let firstType = SemFunction(SemVariable(7))(SemVariable(6))(None)
+        in
+            Unit
+            |> initialState
+            |> addBinding("keep")(TypeScheme(quantified = [(4, "b")], body = SemFunction(SemVariable(4))(SemVariable(4))(None), constraints = []))(CoreLocal(0))
+            |> addBinding("pick")(TypeScheme(quantified = [(5, "a")], body = pickType, constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(5)])]))(CoreLocal(1))
+            |> addBinding("first")(TypeScheme(quantified = [(6, "c"), (7, "d")], body = firstType, constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(6)])]))(CoreLocal(2)))
+
+let callbackPlan source =
+    match source
+    |> parse
+    |> stripExprAt with
+        | ExprLet(name, value, _body, _parameters, annotation, requirements) ->
+            Unit
+            |> callbackPlanState
+            |> constrainedBindingPlan(name)(false)(value)(annotation)(requirements)
+        | _ -> Ashes.IO.panic("callback binding did not parse")
+
+// A call of an unconstrained function that returns a constrained callback it was given keeps the
+// callback's requirement on the binding; a value that is not a function does not.
+let checkForwardedCallbackPlan unit =
+    Unit
+    |> (given (_) ->
+        match callbackPlan("let saved = keep(pick) in saved") with
+            | Some(CoreConstrainedInference { scheme = TypeScheme { body = SemFunction(_unit, SemFunction(SemVariable(operand), SemBool, _inner), _outer), constraints = TraitConstraint { traitName = "Eq", typeArguments = SemVariable(required) :: [] } :: [] } as scheme, error = None }) -> assert(operand == required && !schemeHoldsVariable(operand)(scheme))("a kept callback's requirement was not generalized on the binding")
+            | _ -> Ashes.IO.panic("a kept constrained callback had no dictionary plan"))
+    |> (given (_) ->
+        match callbackPlan("let held = keep(first(Unit)) in held") with
+            | None -> Unit
+            | Some(_plan) -> Ashes.IO.panic("a constrained value that is not a function was given a dictionary plan"))
+
 let runCoreConstrainedBindingsTests unit =
     (let environment = standardTraitEnvironment(Unit)
     in
@@ -200,6 +237,7 @@ let runCoreConstrainedBindingsTests unit =
         |> checkAsyncPlan
         |> checkPendingEvidenceBoundary
         |> checkDictionaryGoalCandidates
+        |> checkForwardedCallbackPlan
         |> checkAwaitQueryIdentity
         |> (given (_) -> checkBoundaryRequirements(environment))
         |> (given (_) -> checkLayouts(environment))
