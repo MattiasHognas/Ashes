@@ -1349,6 +1349,63 @@ let testCompileExplainRcPrintsReportToStderr unit =
                             |> removeExplainScratch
                             |> (given (_) -> test.assertEqual(0)(exitCode))))
 
+let reportScratchRoot = "cli-report-scratch"
+
+let removeReportScratch unit =
+    match Ashes.IO.Directory.removeTree(reportScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up report scratch directory: " + message)
+
+// Compiles the report scratch program with `extraArguments` before `-o`, failing the test unless
+// the CLI exits 0.
+let compileReportScratch (extraArguments: List(Str)) (outputName: Str) =
+    match ["-o", reportScratchRoot + "/" + outputName, reportScratchRoot + "/closures.ash"]
+    |> Ashes.Collection.List.append(extraArguments)
+    |> Ashes.Collection.List.append(["--as-cli", "compile"])
+    |> Ashes.IO.Process.spawn("/proc/self/exe") with
+        | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
+        | Ok(process) ->
+            process
+            |> drainStderr
+            |> drainStdout
+            |> Ashes.IO.Process.waitForExit
+            |> test.assertEqual(0)
+
+let mappedExecutable (outputName: Str) =
+    match Ashes.IO.File.mmap(reportScratchRoot + "/" + outputName) with
+        | Error(message) -> test.fail("could not read " + outputName + ": " + message)
+        | Ok(bytes) -> bytes
+
+// The program code generation receives does not depend on which reports were asked for: the
+// reports read the stitched and unoptimized programs before code generation starts, and the
+// executable compiled with `--explain memory` and `--explain rc` is byte for byte the plain one.
+let testCompileWithReportsMatchesPlainBuild unit =
+    (let _ = removeReportScratch(Unit)
+    in
+        let _ =
+            reportScratchRoot
+            |> Ashes.IO.Directory.createAll
+            |> requireOk("create report scratch directory")
+        in
+            let _ =
+                "let adder (base: Int) = given (n: Int) -> base + n\n\nlet recursive total (fns: List(Int -> Int)) (acc: Int) =\n    match fns with\n        | [] -> acc\n        | f :: rest -> total(rest)(f(acc))\n\nAshes.IO.print(total([adder(1), adder(2), adder(3)])(0))\n"
+                |> Ashes.IO.File.writeText(reportScratchRoot + "/closures.ash")
+                |> requireOk("write report scratch program")
+            in
+                let _ = compileReportScratch([])("plain")
+                in
+                    let _ = compileReportScratch(["--explain", "memory", "--explain", "rc"])("reported")
+                    in
+                        let plain = mappedExecutable("plain")
+                        in
+                            let reported = mappedExecutable("reported")
+                            in
+                                let sameBytes = Ashes.Byte.compare(plain)(reported) == 0
+                                in
+                                    Unit
+                                    |> removeReportScratch
+                                    |> (given (_) -> test.assertEqual(true)(sameBytes)))
+
 let projectScratchRoot = "cli-project-scratch"
 
 let removeProjectScratch unit =
@@ -1601,6 +1658,7 @@ let run unit =
     |> testParseRunArgumentsAcceptsExplain
     |> testParseRunArgumentsRejectsUnknownExplainKind
     |> testCompileExplainRcPrintsReportToStderr
+    |> testCompileWithReportsMatchesPlainBuild
     |> testParseCompileArgumentsProjectOption
     |> testParseCompileArgumentsProjectRequiresValue
     |> testParseCompileArgumentsRejectsProjectWithInput

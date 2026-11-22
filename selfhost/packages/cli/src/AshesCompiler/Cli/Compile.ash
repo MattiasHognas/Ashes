@@ -831,22 +831,29 @@ let runShadowInference stitched =
                     |> Ashes.IO.writeErrorLine
         | _ -> Unit
 
-// Lowers, reports, emits, and links an already stitched program to `outputPath`, returning the
-// written byte count; `inputPath` and `source` are the text source locations are computed from.
-let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
+// Lowers an already stitched program and prints the requested reports and dumps; `inputPath` and
+// `source` are the text source locations are computed from. Only the optimized program leaves
+// this function: the stitched syntax, the inference tables, the unoptimized program and the
+// placement facts are held by its frames alone, so they are released before code generation.
+let optimizedStitchedProgram (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
     (let _ = runShadowInference(stitched)
     in
         match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
             | Error(message) -> Error(message)
             | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
-                optimized
-                |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-                |> (given (_) ->
+                let _ = writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)(optimized)
+                in
                     let _ = reportDiagnosticPhase("ir-optimized")
                     in
                         match writeDiagnosticIrDump(lowered)(optimized) with
                             | Error(message) -> Error(message)
-                            | Ok(_) -> emitAndLink(outputPath)(optimized)))
+                            | Ok(_) -> Ok(optimized))
+
+// Emits and links an optimized program to `outputPath`, returning the written byte count.
+let compileOptimizedToExecutable outputPath (program: Result(Str, IrProgram)) =
+    match program with
+        | Error(message) -> Error(message)
+        | Ok(optimized) -> emitAndLink(outputPath)(optimized)
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
@@ -952,9 +959,9 @@ let projectStitchErrorText (entryPath: Str) (source: Str) (error: ProjectStitchE
         | Some(diagnostics) -> parseDiagnosticsText(entryPath)(source)(diagnostics)
         | None -> Ashes.Trait.Show.show(error)
 
-// Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
-// on the way, and returns the written byte count.
-let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+// The optimized program of the file `inputPath`, printing the `explain` reports to stderr on the
+// way. The source text, the shipped modules and the stitched program stay inside this function.
+let optimizedFileProgram inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match readSourceText(inputPath) with
         | Error(message) -> Error("Could not read " + inputPath + ": " + message)
         | Ok(source) ->
@@ -966,12 +973,19 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                             error
                             |> stitchErrorText(inputPath)(source)
                             |> Error
-                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
+                        | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
-// Compiles the project at `layout` to the executable at `outputPath`: its modules, its
-// dependencies' modules, and the shipped modules they reach are stitched into one program,
-// lowered against the entry module's text, and emitted exactly like the single-file form.
-let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+// Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
+// on the way, and returns the written byte count.
+let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    reuseEnabled
+    |> optimizedFileProgram(inputPath)(explain)
+    |> compileOptimizedToExecutable(outputPath)
+
+// The optimized program of the project at `layout`: its modules, its dependencies' modules, and
+// the shipped modules they reach stitched into one program and lowered against the entry module's
+// text, exactly like the single-file form.
+let optimizedProjectProgram (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
     match readSourceText(layout.entryPath) with
         | Error(message) -> Error("Could not read " + layout.entryPath + ": " + message)
         | Ok(source) ->
@@ -983,7 +997,14 @@ let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: Expl
                             error
                             |> projectStitchErrorText(layout.entryPath)(source)
                             |> Error
-                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
+                        | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
+
+// Compiles the project at `layout` to the executable at `outputPath`, printing the `explain`
+// reports to stderr on the way, and returns the written byte count.
+let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    reuseEnabled
+    |> optimizedProjectProgram(layout)(explain)
+    |> compileOptimizedToExecutable(outputPath)
 
 let compileResolvedInput resolved outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match resolved with
