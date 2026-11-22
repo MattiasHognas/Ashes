@@ -1370,7 +1370,7 @@ let recursive aliasCycleThrough (dependencies: List((Str, List(Str)))) (reversed
         [name]
         |> cyclePathFrom(name)(reversedPath)
         |> joinCycle
-        |> Some
+        |> (given (cycle) -> Some((name, cycle)))
     else
         match aliasDependenciesOf(name)(dependencies) with
             | None -> None
@@ -1391,6 +1391,35 @@ let recursive firstAliasCycle (dependencies: List((Str, List(Str)))) (remaining:
                 | Some(cycle) -> Some(cycle)
                 | None -> firstAliasCycle(dependencies)(rest)
 
+let recursive typeAliasSpan (name: Str) (items: List(TopLevelItem)) (enclosing: Maybe(TextSpan)) =
+    match items with
+        | [] -> None
+        | TopLevelAt(span, inner) :: rest ->
+            match typeAliasSpan(name)([inner])(Some(span)) with
+                | Some(found) -> Some(found)
+                | None -> typeAliasSpan(name)(rest)(None)
+        | TopLevelTypeAlias(TypeAliasDecl { name = declared }) :: rest ->
+            if declared == name
+            then enclosing
+            else typeAliasSpan(name)(rest)(None)
+        | _ :: rest -> typeAliasSpan(name)(rest)(None)
+
+// A cycle is reported at the declaration of the alias whose expansion reached itself again, as
+// stage 0 reports it.
+let typeAliasCycleError (environment: TypeEnvironment) (items: List(TopLevelItem)) (name: Str) (cycle: Str) =
+    ProgramErrorAt(
+        InferenceErrorLocation(
+            packageId = inferencePackageId(environment),
+            unitIndex = -1,
+            moduleName = None,
+            sourcePath = None,
+            declaration = Some("type alias " + name),
+            declarationSpan = typeAliasSpan(name)(items)(None),
+            span = None
+        ),
+        RecursiveTypeAlias(cycle)
+    )
+
 // A unit's aliases checked for a cycle before any is registered, so an alias that names one
 // declared after it in a cycle is reported as the cycle rather than as an unknown type. Applied
 // only under the program inference rules.
@@ -1402,7 +1431,8 @@ let checkTypeAliasCycles (items: List(TopLevelItem)) (state: ProgramInferenceSta
                 let dependencies = aliasDependencies(items)
                 in
                     match firstAliasCycle(dependencies)(dependencies) with
-                        | Some(cycle) -> state with error = Some(RecursiveTypeAlias(cycle))
+                        | Some((name, cycle)) ->
+                            state with error = Some(typeAliasCycleError(environment)(items)(name)(cycle))
                         | None -> state
             else state
         | _ -> state

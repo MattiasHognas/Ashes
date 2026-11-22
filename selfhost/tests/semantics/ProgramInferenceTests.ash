@@ -318,6 +318,15 @@ let expectRequirementSites unit =
         |> siteStart("Not")
         |> test.assertEqual(-1))
 
+// An alias cycle is reported at the declaration of the alias that reached itself again.
+let expectAliasCycleAtDeclaration unit =
+    match parseProgram("type alias Other = Int\ntype alias First = Second\ntype alias Second = First\n0") with
+        | ProgramParseResult { program = ProgramSyntax { items = items, body = body }, diagnostics = [] } ->
+            match inferProgramUnitsFrom(emptyTypeEnvironmentForPackage("app"))([ProgramInferenceUnit(packageId = "app", program = ProgramSyntax(items = items, body = None))])(body)("app") with
+                | ProgramInferenceResult { error = Some(RecursiveTypeAlias(_cycle)), errorLocation = Some(InferenceErrorLocation { declarationSpan = Some(TextSpan { start = 23 }) }) } -> Unit
+                | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("alias cycle should be located at its declaration: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+        | _ -> test.fail("alias cycle fixture should parse")
+
 let runProgramInferenceTests unit =
     unit
     |> expectSequentialBindings
@@ -335,4 +344,5 @@ let runProgramInferenceTests unit =
     |> rejectInconsistentOrPattern
     |> expectPatternAndArityPositions
     |> expectRequirementSites
+    |> expectAliasCycleAtDeclaration
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))
