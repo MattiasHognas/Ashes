@@ -288,6 +288,35 @@ let checkConcreteCopyFacts unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("copy inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("copy fixture did not parse")
 
+// Raw-source lowering, which reads no node table, still gives an operator-generic `let` below top
+// level a copy per concrete call: each case uses the binding at Int and at Float, and failed with
+// an Int vs Float mismatch while only top-level bindings were known by name.
+let checkRawNestedLetCopies (name: Str) (source: Str) =
+    match parseProgram(source) with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            let clock =
+                                given (_unit) -> 0
+                            in
+                                let legacy = measureRawCoreProgramLowering(clock)(table)("nested.ash")("")(program)
+                                in
+                                    let first = legacy.first
+                                    in
+                                        if first.error == None && first.inferredCopyCalls >= 1
+                                        then Unit
+                                        else Ashes.IO.panic(name + ": raw nested let lowering, error=" + Ashes.Trait.Show.show(first.error != None) + ", inferred copies=" + Ashes.Text.fromInt(first.inferredCopyCalls))
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(name + ": inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic(name + ": fixture did not parse")
+
+let checkRawNestedLets unit =
+    (let _ = checkRawNestedLetCopies("trailing value")("let both =\n    (let double x = x + x\n    in (double(5), double(1.25)))\nboth")
+    in
+        let _ = checkRawNestedLetCopies("function body reading its parameter")("let describe n =\n    (let double x = x + x\n    in (double(n), double(1.75)))\ndescribe(6)")
+        in checkRawNestedLetCopies("captured by an inner lambda")("let describe n =\n    (let double x = x + x\n    in\n        let both = given (unit) -> (double(n), double(1.75))\n        in both(Unit))\ndescribe(6)"))
+
 // Inside a specialized wrapper the use can still carry that wrapper's
 // variable id. Read it through the current copy; do not guess it when open.
 let recordedCopyInFrame sourceRow useRow rowArguments enclosing =
@@ -331,6 +360,7 @@ let runRecordedInferenceCoverageTests unit =
     |> checkGuardedOrPattern
     |> checkRecordInstantiations
     |> checkConcreteCopyFacts
+    |> checkRawNestedLets
     |> checkCopyRowAndScope
     |> checkTypeTranslation
     |> checkRigidScope

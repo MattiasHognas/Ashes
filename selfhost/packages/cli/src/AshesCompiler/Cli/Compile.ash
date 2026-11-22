@@ -479,7 +479,7 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                         |> loweredStitchedResult
                     else
                         stitched.program
-                        |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(nodeTypes)
+                        |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))(nodeTypes)
                         |> loweredStitchedResult)
 
 let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =

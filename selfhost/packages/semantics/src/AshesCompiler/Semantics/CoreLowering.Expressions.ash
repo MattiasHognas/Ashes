@@ -2977,7 +2977,7 @@ let registerConcreteSource name value isRecursive state =
 
 // The recorded scheme of a `let` below top level whose lambda value the standalone inference
 // generalized over an operator trait lowering holds monomorphic, read at the `let` node being
-// lowered; outside a concrete copy only.
+// lowered, or, in raw source, at the `let`'s span; outside a concrete copy only.
 let nestedOperatorGenericLetScheme name value (state: CoreLoweringState) =
     if stateConcreteDepth(state) != 0
     then None
@@ -2985,6 +2985,11 @@ let nestedOperatorGenericLetScheme name value (state: CoreLoweringState) =
         match (state.currentNode, lambdaParts(value)) with
             | (Some(node), Some(_parts)) ->
                 recordedNestedOperatorGenericScheme(node)(name)(nodeIdentityOf(value))(state)
+            | (None, Some(_parts)) ->
+                match stateNodeTypes(state) with
+                    | None ->
+                        recordedNestedOperatorGenericScheme(-1)(name)(nodeIdentityOf(value))(state)
+                    | Some(_table) -> None
             | _ -> None
 
 // Such a `let`, once its value is bound, registers as a candidate under its local binding: each

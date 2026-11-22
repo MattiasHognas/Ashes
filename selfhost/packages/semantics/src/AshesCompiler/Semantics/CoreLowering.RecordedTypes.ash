@@ -14,11 +14,19 @@
 //   parameter of a generic implementation is read as the variable lowering pinned it to.
 
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
+import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
+import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Frontend.Syntax.LetBindingSyntax
+import AshesCompiler.Frontend.Syntax.TopLevelItem
+import AshesCompiler.Frontend.Syntax.ProgramSyntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreConstrainedSpecialization.concreteConstrainedArguments
 import AshesCompiler.Semantics.CoreConstrainedSpecialization.preparePureConcreteScheme
 import AshesCompiler.Semantics.CoreLowering.Model
@@ -41,6 +49,7 @@ export (
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
     value recordedNestedOperatorGenericScheme,
+    value rawOperatorSchemesWithNestedLets,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -484,12 +493,108 @@ let recursive recordedSchemeForValue (name: Str) (valueType: SemanticType) (bind
             then Some(scheme)
             else recordedSchemeForValue(name)(valueType)(rest)
 
+// The key a `let` below top level is known by in raw source, which has no node identities: the
+// source region of the top-level item holding it, the span directly around it and the name it
+// binds. A colon never occurs in a compiler name, so the key cannot meet a top-level binding's.
+let nestedLetSchemeKey (region: Int) (span: TextSpan) (name: Str) =
+    match span with
+        | TextSpan { start = start, end = end } -> "let:" + Ashes.Text.fromInt(region) + ":" + Ashes.Text.fromInt(start) + ":" + Ashes.Text.fromInt(end) + ":" + name
+
+let recursive valueIsLambda (value: Expr) =
+    match value with
+        | ExprAt(_span, inner) -> valueIsLambda(inner)
+        | ExprNode(_node, inner) -> valueIsLambda(inner)
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | _ -> false
+
+// A located `let` below top level whose lambda value the standalone inference generalized over an
+// operator trait lowering holds monomorphic, added under its raw-source key, with the same checks
+// the numbered reading makes: the scheme recorded at the `let` node for its name has the value's
+// recorded type as its body.
+let nestedLetSchemeVisit (table: NodeTypeTable) (region: Int) (schemes: MapTree(Str, TypeScheme)) (node: Int) (span: Maybe(TextSpan)) (expression: Expr) =
+    match (span, expression) with
+        | (Some(located), ExprLet(name, value, _body, _parameters, _annotation, _requirements)) ->
+            if valueIsLambda(value)
+            then
+                match nodeTypeAt(nodeIdentityOf(value))(table) with
+                    | Some(valueType) ->
+                        match table
+                        |> nodeBindingsAt(node)
+                        |> recordedSchemeForValue(name)(valueType) with
+                            | Some(TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
+                                if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                                then
+                                    Ashes.Collection.Map.setStr(nestedLetSchemeKey(region)(located)(name))(scheme)(schemes)
+                                else schemes
+                            | None -> schemes
+                    | None -> schemes
+            else schemes
+        | _ -> schemes
+
+let recursive itemBindingName (item: TopLevelItem) =
+    match item with
+        | TopLevelAt(_span, inner) -> itemBindingName(inner)
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) -> Some(name)
+        | TopLevelRecursiveGroup(LetBindingSyntax { name = name } :: _bindings) -> Some(name)
+        | _ -> None
+
+// The source region lowering moves to at an item binding `name`, as `withStateSourceRegionOf`
+// moves: the region recorded for the name, or the current one.
+let regionAt (regionOfName: MapTree(Str, Int)) (name: Maybe(Str)) (current: Int) =
+    match name with
+        | Some(bound) ->
+            match Ashes.Collection.Map.getStr(bound)(regionOfName) with
+                | Some(region) -> region
+                | None -> current
+        | None -> current
+
+let recursive nestedLetSchemesOfItems (table: NodeTypeTable) (regionOfName: MapTree(Str, Int)) (region: Int) (items: List(TopLevelItem)) (schemes: MapTree(Str, TypeScheme)) =
+    match items with
+        | [] -> (region, schemes)
+        | item :: rest ->
+            let itemRegion =
+                regionAt(regionOfName)(itemBindingName(item))(region)
+            in
+                item
+                |> foldItemNodes(nestedLetSchemeVisit(table)(itemRegion))(schemes)
+                |> nestedLetSchemesOfItems(table)(regionOfName)(itemRegion)(rest)
+
+// The raw-source schemes of `rawOperatorDeclarationSchemes`, together with the operator-generic
+// `let` bindings below top level, read from the numbered form of the same program. Each item's
+// nodes are keyed in the region lowering is in while it lowers that item: the region of the
+// trailing expression's empty name to begin with, then the region of each item's binding.
+let rawOperatorSchemesWithNestedLets (regionOfName: MapTree(Str, Int)) (numbered: ProgramSyntax) (table: NodeTypeTable) =
+    match numbered with
+        | ProgramSyntax { items = items, body = body } ->
+            match table
+            |> rawOperatorDeclarationSchemes
+            |> nestedLetSchemesOfItems(table)(regionOfName)(regionAt(regionOfName)(Some(""))(0))(items) with
+                | (region, schemes) ->
+                    match body with
+                        | Some(trailing) ->
+                            foldExpressionNodes(region
+                            |> regionAt(regionOfName)(Some(""))
+                            |> nestedLetSchemeVisit(table))(schemes)(trailing)
+                        | None -> schemes
+
+// The operator-generic scheme raw-source lowering keeps for the `let` being lowered, by its key.
+let rawNestedOperatorGenericScheme (name: Str) (state: CoreLoweringState) =
+    match state.currentSpan with
+        | Some(span) ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(nestedLetSchemeKey(stateCurrentItem(state))(span)(name))(registry.rawDeclarationSchemes) with
+                    | Some(scheme) -> operatorGenericScheme(scheme)(state)
+                    | None -> None
+        | None -> None
+
 // The operator-generic scheme the standalone inference recorded for `name` at the `let` node
 // `node` below top level, when the type recorded for the value node `valueNode` is the scheme's
 // body: the binding the `let` introduces, not a parameter or pattern variable of the same name.
+// Without the node table it is the scheme raw-source lowering keeps for that `let`.
 let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
-        | None -> None
+        | None -> rawNestedOperatorGenericScheme(name)(state)
         | Some(table) ->
             match nodeTypeAt(valueNode)(table) with
                 | Some(valueType) ->

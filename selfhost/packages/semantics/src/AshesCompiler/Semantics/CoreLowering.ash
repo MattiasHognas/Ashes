@@ -34,6 +34,7 @@ import AshesCompiler.Semantics.CoreLowering.Program
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.untranslatableRecordedTypes
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.withRawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorSchemesWithNestedLets
 // Raw executable callers have no identified inference result. Preserve their established
 // lowering diagnostics except for an unresolved requirement needed during binding evaluation.
 let validateRawBindingEvidence environment (program: ProgramSyntax) lower =
@@ -185,8 +186,11 @@ let lowerValidatedCoreProgramWithSchemesAndReuse (reuseEnabled: Bool) (regions: 
 
 let lowerValidatedCoreProgramWithRegionsAndReuse reuseEnabled regions program = lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(Ashes.Collection.Map.empty)(program)
 
-let lowerInferredRawProgramWithRegionsAndReuse reuseEnabled regions table program =
-    lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(rawOperatorDeclarationSchemes(table))(program)
+// The raw stitched program, lowered with the operator-generic schemes the standalone inference
+// recorded against `numbered`, the numbered form of the same program: top-level bindings by name,
+// and `let` bindings below top level by their region, span and name.
+let lowerInferredRawProgramWithRegionsAndReuse reuseEnabled (regions: SourceRegions) numbered table program =
+    lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(rawOperatorSchemesWithNestedLets(regions.regionOfName)(numbered)(table))(program)
 
 let lowerCoreProgramWithRegionsAndReuse reuseEnabled regions program =
     regions
@@ -481,12 +485,12 @@ let measureStitchedLowering useNodeTypes regionOfName replayStarting clock table
     if useNodeTypes
     then measureCoreProgramLoweringObserved(regionOfName)(replayStarting)(Ashes.Collection.Map.empty)(clock)(Some(table))(path)("")(program)
     else
-        measureCoreProgramLoweringObserved(regionOfName)(replayStarting)(rawOperatorDeclarationSchemes(table))(clock)(None)(path)("")(program)
+        measureCoreProgramLoweringObserved(regionOfName)(replayStarting)(rawOperatorSchemesWithNestedLets(Ashes.Collection.Map.empty)(program)(table))(clock)(None)(path)("")(program)
 
 let measureCoreProgramLowering clock nodeTypes path source program = measureCoreProgramLoweringWithSchemes(Ashes.Collection.Map.empty)(clock)(nodeTypes)(path)(source)(program)
 
 let measureRawCoreProgramLowering clock table path source program =
-    measureCoreProgramLoweringWithSchemes(rawOperatorDeclarationSchemes(table))(clock)(None)(path)(source)(program)
+    measureCoreProgramLoweringWithSchemes(rawOperatorSchemesWithNestedLets(Ashes.Collection.Map.empty)(program)(table))(clock)(None)(path)(source)(program)
 
 // Translates every type the standalone inference recorded into lowering's terms against the
 // program's registered types: how many translated, and each node whose type did not, with the
