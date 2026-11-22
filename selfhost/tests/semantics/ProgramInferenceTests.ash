@@ -5,6 +5,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.Unification
@@ -288,6 +289,31 @@ let expectPatternAndArityPositions unit =
             |> rejectionStart
             |> test.assertEqual(23)))
 
+let siteStart traitName source =
+    match parseExpression(source) with
+        | ExpressionParseResult { expression = expression, diagnostics = [] } ->
+            match requirementSiteSpan(traitName)(expression) with
+                | Some(TextSpan { start = start }) -> start
+                | None -> -1
+        | _ -> test.fail("requirement site fixture should parse")
+
+// A requirement is located at the operator or `print` argument that raised it; a `let`'s function
+// value is not searched, its requirements belonging to the function's own scheme.
+let expectRequirementSites unit =
+    Unit
+    |> (given (_) ->
+        "[given (x) -> x + x]"
+        |> siteStart("Add")
+        |> test.assertEqual(14))
+    |> (given (_) ->
+        "Ashes.IO.print(1.5)"
+        |> siteStart("$PrintArgument")
+        |> test.assertEqual(15))
+    |> (given (_) ->
+        "let recursive invert x = !x in invert"
+        |> siteStart("Not")
+        |> test.assertEqual(-1))
+
 let runProgramInferenceTests unit =
     unit
     |> expectSequentialBindings
@@ -304,4 +330,5 @@ let runProgramInferenceTests unit =
     |> rejectUnknownRecordPatternField
     |> rejectInconsistentOrPattern
     |> expectPatternAndArityPositions
+    |> expectRequirementSites
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))

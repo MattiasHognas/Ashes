@@ -19,6 +19,7 @@ import AshesCompiler.Semantics.NodeIdentity
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
+import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.sortBy
@@ -403,14 +404,21 @@ let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substit
             |> defaultBuiltinArguments(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))
             |> defaultRecursiveBuiltinArguments(tail)(outerEnvironment)
 
+// A `print` argument error located at the `print` call in `value` that raised it, as stage 0
+// reports it.
+let printArgumentErrorAt (value: Expr) (error: TypeInferenceError) =
+    match requirementSiteSpan("$PrintArgument")(value) with
+        | Some(site) -> InferenceErrorAt(site)(error)
+        | None -> error
+
 // The `print` argument a member of the group would generalize over, once the group's defaults are
-// settled.
+// settled, with the member's value.
 let recursive recursiveOpenPrintArgument bindings outerEnvironment substitution =
     match bindings with
         | [] -> None
-        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+        | ResolvedRecursiveBinding { value = value, constraints = constraints } :: tail ->
             match openBuiltinPrintArgument(outerEnvironment)(applyInferenceConstraints(substitution)(constraints))(substitution) with
-                | Some(argument) -> Some(argument)
+                | Some(argument) -> Some((argument, value))
                 | None -> recursiveOpenPrintArgument(tail)(outerEnvironment)(substitution)
 
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment supply =
@@ -579,10 +587,11 @@ let inferRecursiveGroup bindings state =
                                     let defaultedSubstitution = defaultRecursiveBuiltinArguments(resolved)(outerEnvironment)(resolvedSubstitution)
                                     in
                                         match recursiveOpenPrintArgument(resolved)(outerEnvironment)(defaultedSubstitution) with
-                                            | Some(argument) ->
+                                            | Some((argument, value)) ->
                                                 ProgramInferenceState(environment = outerEnvironment, substitution = defaultedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                                     [argument]
                                                     |> NoTraitImplementation("$PrintArgument")
+                                                    |> printArgumentErrorAt(value)
                                                     |> ProgramExpressionError
                                                 ))
                                             | None ->

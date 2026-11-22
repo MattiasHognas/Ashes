@@ -10,6 +10,7 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Token.TextSpan
+import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.EvidenceDemand
 import AshesCompiler.Semantics.Unification
@@ -3963,8 +3964,30 @@ let writtenTypeFirst (result: UnificationResult) =
 
 // A value that does not unify with its written signature is located at the value, where stage 0
 // reports it, rather than at the declaration that holds it.
+// A requirement no implementation supplies, or one left undetermined, is located at the operator,
+// trait method reference or `print` argument in `expression` that raised it, as stage 0 reports
+// it; `fallback` locates it when no such site is found.
+let locateAtRequirementSite (traitName: Str) (expression: Expr) (fallback: TypeInferenceResult -> TypeInferenceResult) (result: TypeInferenceResult) =
+    match requirementSiteSpan(traitName)(expression) with
+        | Some(site) -> locateInferenceError(site)(result)
+        | None -> fallback(result)
+
+let leaveUnlocated (result: TypeInferenceResult) = result
+
+// An expression's error located at the expression, except that a requirement no implementation
+// supplies, or one left undetermined, is located at the site within the expression that raised it.
+let locateRequirementOrAt (expression: Expr) (span: TextSpan) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(NoTraitImplementation(traitName, _arguments)) } ->
+            locateAtRequirementSite(traitName)(expression)(locateInferenceError(span))(result)
+        | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(traitName, _arguments)) } ->
+            locateAtRequirementSite(traitName)(expression)(locateInferenceError(span))(result)
+        | _ -> locateInferenceError(span)(result)
+
 let recursive locateAtValue (value: Expr) (result: TypeInferenceResult) =
     match result with
+        | TypeInferenceResult { error = Some(NoTraitImplementation(traitName, _arguments)) } -> locateAtRequirementSite(traitName)(value)(leaveUnlocated)(result)
+        | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(traitName, _arguments)) } -> locateAtRequirementSite(traitName)(value)(leaveUnlocated)(result)
         | TypeInferenceResult { error = Some(InferenceUnificationError(_error)) } ->
             match value with
                 | ExprAt(span, _inner) -> locateInferenceError(span)(result)
@@ -4024,10 +4047,13 @@ let checkTrailingRequirements (bodyLocated: Bool) expression (environment: TypeE
     match expression with
         | ExprAt(span, _inner) ->
             match checkSettledTrailingRequirements(environment)(result) with
-                | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(_traitName, _typeArguments)) } as undetermined ->
+                | TypeInferenceResult { error = Some(UndeterminedTraitRequirement(traitName, _typeArguments)) } as undetermined ->
                     if bodyLocated
-                    then locateInferenceError(span)(undetermined)
-                    else undetermined
+                    then
+                        locateAtRequirementSite(traitName)(expression)(locateInferenceError(span))(undetermined)
+                    else locateAtRequirementSite(traitName)(expression)(leaveUnlocated)(undetermined)
+                | TypeInferenceResult { error = Some(NoTraitImplementation(traitName, _typeArguments)) } as unsupplied ->
+                    locateAtRequirementSite(traitName)(expression)(locateInferenceError(span))(unsupplied)
                 | checked -> locateInferenceError(span)(checked)
         | _ -> checkSettledTrailingRequirements(environment)(result)
 
@@ -5674,10 +5700,9 @@ and inferAnnotatedValue annotation value environment substitution supply ambient
 and inferWith expression environment substitution supply ambientRow =
     match expression with
         | ExprAt(span, inner) ->
-            locateInferenceError(
-                span,
-                inferWith(inner)(environment)(substitution)(supply)(ambientRow)
-            )
+            ambientRow
+            |> inferWith(inner)(environment)(substitution)(supply)
+            |> locateRequirementOrAt(expression)(span)
         | ExprNode(node, inner) ->
             if environment.programInferenceRules
             then
