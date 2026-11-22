@@ -2686,7 +2686,7 @@ let lowerJoinOrCall expression function argument lower (state: CoreLoweringState
     match joinedHandleLocal(expression)(state) with
         | Some((name, slot)) ->
             match resourceStateOf(slot)(state) with
-                | Some(ResourceMoved) -> failure(state)(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))
+                | Some(ResourceMoved) -> failureAt(argument)(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))(state)
                 | _ ->
                     match lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state) with
                         | LoweredCoreValue { state = loweredState, error = None } as lowered -> lowered with state = markResourceReleased(slot)(ResourceMoved)(loweredState)
