@@ -1657,11 +1657,15 @@ let recursive emitExitOwnFieldReleasesOf (entries: List((Int, Int, Int))) (resul
 // follows finds the result finished and leaves it. The copy of an arena result borrows its
 // children ahead of the exit releases, so the retains of loop-parameter reads its cells were built
 // with are withdrawn (stage 0's `EmitGeneralRcOwnedFunctionResult`), after the part duplicates' slots
-// are, so a withdrawn slot's store is no second reader of its duplicate.
+// are, so a withdrawn slot's store is no second reader of its duplicate. A generic tuple result
+// whose contract parts the caller may ask for hands those parts over ahead of the exit too
+// (stage 0's `FinishLoopFunctionResult` precedes `LowerLambdaCoreEmitTcoExitReleases`): each part
+// is retained before the exit releases the loop parameter it may be, which released first left the
+// part freed in the caller's hands.
 let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (ownerSlots: List(Int)) (parameters: List((Int, Int))) (bodyTemp: Int) (loopType: SemanticType) (state: CoreLoweringState) =
     (let semanticType = resolvePhantomResultLayout(label)(loopType)(state)
     in
-        if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
+        if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType)) || !isRuntimeTemp(bodyTemp)(state) && !resultSurvivesReset(semanticType)(state) && tupleResultParts(semanticType)(state) != []
         then
             match state
             |> dropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp)(semanticType)

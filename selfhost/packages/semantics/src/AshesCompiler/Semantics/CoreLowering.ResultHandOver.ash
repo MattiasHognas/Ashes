@@ -61,6 +61,7 @@ export (
     value emitRuntimeShallowAggregateDrop,
     value dropPartDuplicateSlotsWhenTheResultCopiesAnyway,
     value finishGeneralRcFunctionResultWithLayout,
+    value tupleResultParts,
     value tempIsProducedOwned,
     value finishedResultRuntimeManaged,
     value normalizeFunctionResult,
