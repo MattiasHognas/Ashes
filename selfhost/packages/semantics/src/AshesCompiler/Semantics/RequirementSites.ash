@@ -105,95 +105,95 @@ let recursive requirementSite (traitName: Str) (expression: Expr) (enclosing: Ma
         | other ->
             match siteHere(traitName)(other)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> childSite(traitName)(other)
-and firstSite (traitName: Str) (expressions: List(Expr)) =
+                | None -> childSite(traitName)(enclosing)(other)
+and firstSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expressions: List(Expr)) =
     match expressions with
         | [] -> None
         | expression :: rest ->
-            match requirementSite(traitName)(expression)(None) with
+            match requirementSite(traitName)(expression)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> firstSite(traitName)(rest)
-and fieldSites (traitName: Str) (fields: List((Str, Expr))) =
+                | None -> firstSite(traitName)(enclosing)(rest)
+and fieldSites (traitName: Str) (enclosing: Maybe(TextSpan)) (fields: List((Str, Expr))) =
     match fields with
         | [] -> None
         | (_name, value) :: rest ->
-            match requirementSite(traitName)(value)(None) with
+            match requirementSite(traitName)(value)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> fieldSites(traitName)(rest)
-and caseSites (traitName: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
+                | None -> fieldSites(traitName)(enclosing)(rest)
+and caseSites (traitName: Str) (enclosing: Maybe(TextSpan)) (cases: List((Pattern, Expr, Maybe(Expr)))) =
     match cases with
         | [] -> None
         | (_pattern, body, guard) :: rest ->
             let guarded =
                 match guard with
-                    | Some(condition) -> requirementSite(traitName)(condition)(None)
+                    | Some(condition) -> requirementSite(traitName)(condition)(enclosing)
                     | None -> None
             in
                 match guarded with
                     | Some(site) -> Some(site)
                     | None ->
-                        match requirementSite(traitName)(body)(None) with
+                        match requirementSite(traitName)(body)(enclosing) with
                             | Some(site) -> Some(site)
-                            | None -> caseSites(traitName)(rest)
-and armSites (traitName: Str) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
+                            | None -> caseSites(traitName)(enclosing)(rest)
+and armSites (traitName: Str) (enclosing: Maybe(TextSpan)) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
     match arms with
         | [] -> None
         | (_capability, _operation, _patterns, body) :: rest ->
-            match requirementSite(traitName)(body)(None) with
+            match requirementSite(traitName)(body)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> armSites(traitName)(rest)
-and letSite (traitName: Str) (value: Expr) (body: Expr) =
+                | None -> armSites(traitName)(enclosing)(rest)
+and letSite (traitName: Str) (enclosing: Maybe(TextSpan)) (value: Expr) (body: Expr) =
     if isFunctionValue(value)
-    then requirementSite(traitName)(body)(None)
-    else firstSite(traitName)([value, body])
-and childSite (traitName: Str) (expression: Expr) =
+    then requirementSite(traitName)(body)(enclosing)
+    else firstSite(traitName)(enclosing)([value, body])
+and childSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expression: Expr) =
     match expression with
-        | ExprAdd(left, right) -> firstSite(traitName)([left, right])
-        | ExprSubtract(left, right) -> firstSite(traitName)([left, right])
-        | ExprMultiply(left, right) -> firstSite(traitName)([left, right])
-        | ExprDivide(left, right) -> firstSite(traitName)([left, right])
-        | ExprModulo(left, right) -> firstSite(traitName)([left, right])
-        | ExprBitwiseAnd(left, right) -> firstSite(traitName)([left, right])
-        | ExprBitwiseOr(left, right) -> firstSite(traitName)([left, right])
-        | ExprBitwiseXor(left, right) -> firstSite(traitName)([left, right])
-        | ExprShiftLeft(left, right) -> firstSite(traitName)([left, right])
-        | ExprShiftRight(left, right) -> firstSite(traitName)([left, right])
-        | ExprBitwiseNot(operand) -> requirementSite(traitName)(operand)(None)
-        | ExprLogicalNot(operand) -> requirementSite(traitName)(operand)(None)
-        | ExprLogicalAnd(left, right) -> firstSite(traitName)([left, right])
-        | ExprLogicalOr(left, right) -> firstSite(traitName)([left, right])
-        | ExprGreaterThan(left, right) -> firstSite(traitName)([left, right])
-        | ExprLessThan(left, right) -> firstSite(traitName)([left, right])
-        | ExprGreaterOrEqual(left, right) -> firstSite(traitName)([left, right])
-        | ExprLessOrEqual(left, right) -> firstSite(traitName)([left, right])
-        | ExprEqual(left, right) -> firstSite(traitName)([left, right])
-        | ExprNotEqual(left, right) -> firstSite(traitName)([left, right])
-        | ExprResultPipe(left, right) -> firstSite(traitName)([left, right])
-        | ExprResultMapErrorPipe(left, right) -> firstSite(traitName)([left, right])
-        | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(value)(body)
-        | ExprLetResult(_name, value, body) -> firstSite(traitName)([value, body])
-        | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(value)(body)
-        | ExprIf(condition, thenBranch, elseBranch) -> firstSite(traitName)([condition, thenBranch, elseBranch])
-        | ExprLambda(_parameter, body, _annotation) -> requirementSite(traitName)(body)(None)
-        | ExprCall(function, argument, _whitespace, _layout) -> firstSite(traitName)([function, argument])
-        | ExprTuple(elements) -> firstSite(traitName)(elements)
-        | ExprList(elements, _spread) -> firstSite(traitName)(elements)
-        | ExprCons(head, tail) -> firstSite(traitName)([head, tail])
+        | ExprAdd(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprSubtract(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprMultiply(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprDivide(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprModulo(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprBitwiseAnd(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprBitwiseOr(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprBitwiseXor(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprShiftLeft(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprShiftRight(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprBitwiseNot(operand) -> requirementSite(traitName)(operand)(enclosing)
+        | ExprLogicalNot(operand) -> requirementSite(traitName)(operand)(enclosing)
+        | ExprLogicalAnd(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprLogicalOr(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprGreaterThan(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprLessThan(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprGreaterOrEqual(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprLessOrEqual(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprEqual(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprNotEqual(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprResultPipe(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprResultMapErrorPipe(left, right) -> firstSite(traitName)(enclosing)([left, right])
+        | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(enclosing)(value)(body)
+        | ExprLetResult(_name, value, body) -> firstSite(traitName)(enclosing)([value, body])
+        | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(enclosing)(value)(body)
+        | ExprIf(condition, thenBranch, elseBranch) -> firstSite(traitName)(enclosing)([condition, thenBranch, elseBranch])
+        | ExprLambda(_parameter, body, _annotation) -> requirementSite(traitName)(body)(enclosing)
+        | ExprCall(function, argument, _whitespace, _layout) -> firstSite(traitName)(enclosing)([function, argument])
+        | ExprTuple(elements) -> firstSite(traitName)(enclosing)(elements)
+        | ExprList(elements, _spread) -> firstSite(traitName)(enclosing)(elements)
+        | ExprCons(head, tail) -> firstSite(traitName)(enclosing)([head, tail])
         | ExprMatch(scrutinee, cases, _hint) ->
-            match requirementSite(traitName)(scrutinee)(None) with
+            match requirementSite(traitName)(scrutinee)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> caseSites(traitName)(cases)
-        | ExprAwait(operand) -> requirementSite(traitName)(operand)(None)
-        | ExprRecord(_name, fields, _spread) -> fieldSites(traitName)(fields)
+                | None -> caseSites(traitName)(enclosing)(cases)
+        | ExprAwait(operand) -> requirementSite(traitName)(operand)(enclosing)
+        | ExprRecord(_name, fields, _spread) -> fieldSites(traitName)(enclosing)(fields)
         | ExprRecordUpdate(base, fields) ->
-            match requirementSite(traitName)(base)(None) with
+            match requirementSite(traitName)(base)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> fieldSites(traitName)(fields)
-        | ExprPerform(operation) -> requirementSite(traitName)(operation)(None)
+                | None -> fieldSites(traitName)(enclosing)(fields)
+        | ExprPerform(operation) -> requirementSite(traitName)(operation)(enclosing)
         | ExprHandle(body, arms) ->
-            match requirementSite(traitName)(body)(None) with
+            match requirementSite(traitName)(body)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> armSites(traitName)(arms)
+                | None -> armSites(traitName)(enclosing)(arms)
         | _ -> None
 
 // The span stage 0 reports a requirement of `traitName` raised in `expression` at, if any.

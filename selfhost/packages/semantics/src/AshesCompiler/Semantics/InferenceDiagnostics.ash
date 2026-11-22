@@ -809,6 +809,7 @@ let expressionDiagnostic (placements: List(StitchedDefinitionPlacement)) (items:
         | ConstructorPatternsFromDifferentAdts(names) -> uncoded("Constructor patterns from different ADTs (" + quotedNames(names)([]) + ") cannot appear in the same match expression.")
         | TuplePatternArityMismatch(expected, actual) -> uncoded("Tuple pattern arity mismatch: expected " + Ashes.Text.fromInt(expected) + " element(s) but got " + Ashes.Text.fromInt(actual) + ".")
         | BuiltinIntArgumentMismatch(name, argumentType) -> uncoded(name + "() expects Int but got " + typeText(placements)(argumentType) + ".")
+        | BuiltinRuneArgumentMismatch(name, argumentType) -> uncoded(name + "() expects Rune but got " + typeText(placements)(argumentType) + ".")
         | LetResultRequiresResult(valueType) -> uncoded("let? requires a Result(E, A) expression. Got " + typeText(placements)(valueType) + ".")
         | LetResultBodyRequiresResult(bodyType) -> uncoded("let? body must produce a Result(E, A) expression. Got " + typeText(placements)(bodyType) + ".")
         | ExpectedResultType(leftType) -> coded(typeMismatchCode)("Type mismatch: " + typeText(placements)(leftType) + " vs Result<a, b>.")

@@ -213,10 +213,12 @@ let expectDerivingUsesOwningPackage unit =
                     )
                 | _ -> test.fail("the project with a dependency-owned derived implementation should infer"))
 
-// `given value -> !value` as a located trailing expression: its `Not` requirement is ambiguous.
+// `let recursive invert = given value -> !value in invert` as a located trailing expression: the
+// `Not` requirement of the escaping recursive function is ambiguous, and no operator in the
+// expression raised it there.
 let ambiguousNegationBody =
-    None
-    |> ExprLambda("value")(ExprLogicalNot(ExprVar("value")))
+    []
+    |> ExprLetRecursive("invert")(ExprLambda("value")(ExprLogicalNot(ExprVar("value")))(None))(ExprVar("invert"))([])(None)
     |> ExprAt(TextSpan(start = 13, end = 34))
     |> Some
 

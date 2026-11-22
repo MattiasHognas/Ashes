@@ -234,6 +234,7 @@ type TypeInferenceError =
     // An argument of another type than `Int` passed to a builtin that converts from `Int`, named by
     // its qualified name, with the argument's type.
     | BuiltinIntArgumentMismatch(Str, SemanticType)
+    | BuiltinRuneArgumentMismatch(Str, SemanticType)
     | UnknownRecordPatternField(Str, Str)
     // A field named twice in a record pattern: the record type and the field.
     | DuplicateRecordPatternField(Str, Str)
@@ -1652,6 +1653,10 @@ let tuplePatternArityError (scrutineeType: SemanticType) pattern =
 // the argument has another type.
 let intArgumentBuiltins = ["Ashes.Rune.fromInt", "Ashes.Number.BigInt.fromInt", "Ashes.Number.UInt.fromInt", "Ashes.Number.UInt.fromInt64"]
 
+// The builtins that take a `Rune` and that stage 0 checks at the argument, naming the builtin
+// when the argument has another type.
+let runeArgumentBuiltins = ["Ashes.Rune.toText", "Ashes.Rune.toInt", "Ashes.Rune.isAsciiLetter", "Ashes.Rune.isAsciiDigit", "Ashes.Rune.isAsciiWhiteSpace"]
+
 let recursive calledVariableName expression =
     match expression with
         | ExprAt(_span, inner) -> calledVariableName(inner)
@@ -1668,8 +1673,15 @@ let recursive textListContains (items: List(Str)) (wanted: Str) =
             then true
             else textListContains(rest)(wanted)
 
-// A failed call of an `Int`-converting builtin reads as that builtin's argument error.
-let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeInferenceResult) =
+let recursive expressionSpan expression =
+    match expression with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> expressionSpan(inner)
+        | _ -> None
+
+// A failed call of an `Int`-converting builtin reads as that builtin's argument error, and one
+// of a `Rune` builtin as its argument error located at the argument.
+let builtinArgumentFailure function argument (argumentType: SemanticType) (failure: TypeInferenceResult) =
     match calledVariableName(function) with
         | Some(name) ->
             if textListContains(intArgumentBuiltins)(name)
@@ -1677,7 +1689,19 @@ let builtinArgumentFailure function (argumentType: SemanticType) (failure: TypeI
                 failure with error = Some(argumentType
                 |> applySubstitution(failure.substitution)
                 |> BuiltinIntArgumentMismatch(name))
-            else failure
+            else
+                if textListContains(runeArgumentBuiltins)(name)
+                then
+                    let mismatch =
+                        argumentType
+                        |> applySubstitution(failure.substitution)
+                        |> BuiltinRuneArgumentMismatch(name)
+                    in
+                        match expressionSpan(argument) with
+                            | Some(span) ->
+                                failure with error = Some(InferenceErrorAt(span)(mismatch))
+                            | None -> failure with error = Some(mismatch)
+                else failure
         | None -> failure
 
 // Whether a call's argument is the body of an `async` activation: the argument of `async` or of
@@ -1710,12 +1734,6 @@ let forkCalledOutsideAsync function (environment: TypeEnvironment) =
             | Some(name) -> name == "Ashes.Task.fork"
             | None -> false
     else false
-
-let recursive expressionSpan expression =
-    match expression with
-        | ExprAt(span, _inner) -> Some(span)
-        | ExprNode(_id, inner) -> expressionSpan(inner)
-        | _ -> None
 
 let forkOutsideAsyncFailure argument substitution supply =
     (let failure = inferenceFailure(SemNever)(substitution)(supply)(ForkOutsideAsync)
@@ -5528,7 +5546,7 @@ and inferCallApplication function argument (expected: Maybe(SemanticType)) envir
                                                                     )
                                                     | failure ->
                                                         failure
-                                                        |> builtinArgumentFailure(function)(argumentType)
+                                                        |> builtinArgumentFailure(function)(argument)(argumentType)
                                                         |> callSiteFailure(function)(argument)(functionType)(argumentType)(argumentSubstitution)(environment)
                     | failure -> failure
             | failure -> countedChainFailure(function)(failure)
