@@ -11,6 +11,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
+import AshesCompiler.Semantics.RequirementSites.requirementSiteWithContext
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.EvidenceDemand
 import AshesCompiler.Semantics.Unification
@@ -290,6 +291,8 @@ type TypeInferenceError =
     // An error with the span of the innermost located expression it was raised in. Only the
     // `Located` entry points return it; every other entry point reports the bare error.
     | InferenceErrorAt(TextSpan, TypeInferenceError)
+    // The error with the diagnostic context stage 0 reports it in (`in if branches`, `in match arm 2`).
+    | InferenceErrorInContext(Str, TypeInferenceError)
     deriving {Eq, Show}
 
 type TypeInferenceResult =
@@ -3992,9 +3995,21 @@ let writtenTypeFirst (result: UnificationResult) =
 // A requirement no implementation supplies, or one left undetermined, is located at the operator,
 // trait method reference or `print` argument in `expression` that raised it, as stage 0 reports
 // it; `fallback` locates it when no such site is found.
+// An unlocated error put in stage 0's diagnostic context.
+let inDiagnosticContext (context: Str) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceErrorAt(_span, _inner)) } -> result
+        | TypeInferenceResult { error = Some(error) } ->
+            result with error = Some(InferenceErrorInContext(context)(error))
+        | _ -> result
+
 let locateAtRequirementSite (traitName: Str) (expression: Expr) (fallback: TypeInferenceResult -> TypeInferenceResult) (result: TypeInferenceResult) =
-    match requirementSiteSpan(traitName)(expression) with
-        | Some(site) -> locateInferenceError(site)(result)
+    match requirementSiteWithContext(traitName)(expression) with
+        | Some((site, None)) -> locateInferenceError(site)(result)
+        | Some((site, Some(context))) ->
+            result
+            |> inDiagnosticContext(context)
+            |> locateInferenceError(site)
         | None -> fallback(result)
 
 let leaveUnlocated (result: TypeInferenceResult) = result

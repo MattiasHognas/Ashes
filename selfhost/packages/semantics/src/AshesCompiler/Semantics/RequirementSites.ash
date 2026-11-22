@@ -11,6 +11,7 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Token.TextSpan
 export (
     value requirementSiteSpan,
+    value requirementSiteWithContext,
 )
 
 let recursive unspanned (expression: Expr) =
@@ -51,17 +52,16 @@ let operatorTrait (expression: Expr) =
         | ExprLessOrEqual(_left, _right) -> Some("Ord")
         | _ -> None
 
-// Whether `moduleName` names the trait `traitName`, written bare or qualified.
-let namesTrait (traitName: Str) (moduleName: Str) =
-    if moduleName == traitName
-    then true
-    else
-        let suffix = "." + traitName
-        in
-            let length = Ashes.Text.length(moduleName)
-            in
-                let suffixLength = Ashes.Text.length(suffix)
-                in length > suffixLength && Ashes.Text.substring(moduleName)(length - suffixLength)(suffixLength) == suffix
+// Whether `name` ends with `suffix`.
+let endsWithText (suffix: Str) (name: Str) =
+    (let length = Ashes.Text.length(name)
+    in
+        let suffixLength = Ashes.Text.length(suffix)
+        in length > suffixLength && Ashes.Text.substring(name)(length - suffixLength)(suffixLength) == suffix)
+
+// Whether `moduleName` names the trait `traitName`: written bare, qualified, or as the compiler name
+// stitching gives a shipped trait (`Ashes_Trait_Default`).
+let namesTrait (traitName: Str) (moduleName: Str) = moduleName == traitName || endsWithText("." + traitName)(moduleName) || endsWithText("_" + traitName)(moduleName)
 
 let isPrintCallee (function: Expr) =
     match unspanned(function) with
@@ -98,55 +98,70 @@ let siteHere (traitName: Str) (expression: Expr) (enclosing: Maybe(TextSpan)) =
                         else None
                     | None -> None
 
-let recursive requirementSite (traitName: Str) (expression: Expr) (enclosing: Maybe(TextSpan)) =
+// Where the search stands: the innermost enclosing span, and the diagnostic contexts stage 0 has
+// pushed around the expression there (an `if` else branch, a match arm), innermost first.
+type SiteScope =
+    | span: Maybe(TextSpan)
+    | contexts: List(Str)
+
+let withSpan (span: TextSpan) (scope: SiteScope) = SiteScope(span = Some(span), contexts = scope.contexts)
+
+let withContext (context: Str) (scope: SiteScope) = SiteScope(span = scope.span, contexts = context :: scope.contexts)
+
+let recursive requirementSite (traitName: Str) (expression: Expr) (enclosing: SiteScope) =
     match expression with
-        | ExprAt(span, inner) -> requirementSite(traitName)(inner)(Some(span))
+        | ExprAt(span, inner) ->
+            enclosing
+            |> withSpan(span)
+            |> requirementSite(traitName)(inner)
         | ExprNode(_id, inner) -> requirementSite(traitName)(inner)(enclosing)
         | other ->
-            match siteHere(traitName)(other)(enclosing) with
-                | Some(site) -> Some(site)
+            match siteHere(traitName)(other)(enclosing.span) with
+                | Some(site) -> Some((site, enclosing.contexts))
                 | None -> childSite(traitName)(enclosing)(other)
-and firstSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expressions: List(Expr)) =
+and firstSite (traitName: Str) (enclosing: SiteScope) (expressions: List(Expr)) =
     match expressions with
         | [] -> None
         | expression :: rest ->
             match requirementSite(traitName)(expression)(enclosing) with
                 | Some(site) -> Some(site)
                 | None -> firstSite(traitName)(enclosing)(rest)
-and fieldSites (traitName: Str) (enclosing: Maybe(TextSpan)) (fields: List((Str, Expr))) =
+and fieldSites (traitName: Str) (enclosing: SiteScope) (fields: List((Str, Expr))) =
     match fields with
         | [] -> None
         | (_name, value) :: rest ->
             match requirementSite(traitName)(value)(enclosing) with
                 | Some(site) -> Some(site)
                 | None -> fieldSites(traitName)(enclosing)(rest)
-and caseSites (traitName: Str) (enclosing: Maybe(TextSpan)) (cases: List((Pattern, Expr, Maybe(Expr)))) =
+and caseSites (traitName: Str) (enclosing: SiteScope) (index: Int) (cases: List((Pattern, Expr, Maybe(Expr)))) =
     match cases with
         | [] -> None
         | (_pattern, body, guard) :: rest ->
-            let guarded =
-                match guard with
-                    | Some(condition) -> requirementSite(traitName)(condition)(enclosing)
-                    | None -> None
+            let armScope = withContext("in match arm " + Ashes.Text.fromInt(index))(enclosing)
             in
-                match guarded with
-                    | Some(site) -> Some(site)
-                    | None ->
-                        match requirementSite(traitName)(body)(enclosing) with
-                            | Some(site) -> Some(site)
-                            | None -> caseSites(traitName)(enclosing)(rest)
-and armSites (traitName: Str) (enclosing: Maybe(TextSpan)) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
+                let guarded =
+                    match guard with
+                        | Some(condition) -> requirementSite(traitName)(condition)(armScope)
+                        | None -> None
+                in
+                    match guarded with
+                        | Some(site) -> Some(site)
+                        | None ->
+                            match requirementSite(traitName)(body)(armScope) with
+                                | Some(site) -> Some(site)
+                                | None -> caseSites(traitName)(enclosing)(index + 1)(rest)
+and armSites (traitName: Str) (enclosing: SiteScope) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
     match arms with
         | [] -> None
         | (_capability, _operation, _patterns, body) :: rest ->
             match requirementSite(traitName)(body)(enclosing) with
                 | Some(site) -> Some(site)
                 | None -> armSites(traitName)(enclosing)(rest)
-and letSite (traitName: Str) (enclosing: Maybe(TextSpan)) (value: Expr) (body: Expr) =
+and letSite (traitName: Str) (enclosing: SiteScope) (value: Expr) (body: Expr) =
     if isFunctionValue(value)
     then requirementSite(traitName)(body)(enclosing)
     else firstSite(traitName)(enclosing)([value, body])
-and childSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expression: Expr) =
+and childSite (traitName: Str) (enclosing: SiteScope) (expression: Expr) =
     match expression with
         | ExprAdd(left, right) -> firstSite(traitName)(enclosing)([left, right])
         | ExprSubtract(left, right) -> firstSite(traitName)(enclosing)([left, right])
@@ -173,7 +188,13 @@ and childSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expression: Expr) =
         | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(enclosing)(value)(body)
         | ExprLetResult(_name, value, body) -> firstSite(traitName)(enclosing)([value, body])
         | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> letSite(traitName)(enclosing)(value)(body)
-        | ExprIf(condition, thenBranch, elseBranch) -> firstSite(traitName)(enclosing)([condition, thenBranch, elseBranch])
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            match firstSite(traitName)(enclosing)([condition, thenBranch]) with
+                | Some(site) -> Some(site)
+                | None ->
+                    enclosing
+                    |> withContext("in if branches")
+                    |> requirementSite(traitName)(elseBranch)
         | ExprLambda(_parameter, body, _annotation) -> requirementSite(traitName)(body)(enclosing)
         | ExprCall(function, argument, _whitespace, _layout) -> firstSite(traitName)(enclosing)([function, argument])
         | ExprTuple(elements) -> firstSite(traitName)(enclosing)(elements)
@@ -182,7 +203,7 @@ and childSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expression: Expr) =
         | ExprMatch(scrutinee, cases, _hint) ->
             match requirementSite(traitName)(scrutinee)(enclosing) with
                 | Some(site) -> Some(site)
-                | None -> caseSites(traitName)(enclosing)(cases)
+                | None -> caseSites(traitName)(enclosing)(1)(cases)
         | ExprAwait(operand) -> requirementSite(traitName)(operand)(enclosing)
         | ExprRecord(_name, fields, _spread) -> fieldSites(traitName)(enclosing)(fields)
         | ExprRecordUpdate(base, fields) ->
@@ -196,5 +217,22 @@ and childSite (traitName: Str) (enclosing: Maybe(TextSpan)) (expression: Expr) =
                 | None -> armSites(traitName)(enclosing)(arms)
         | _ -> None
 
+let emptyScope = SiteScope(span = None, contexts = [])
+
 // The span stage 0 reports a requirement of `traitName` raised in `expression` at, if any.
-let requirementSiteSpan (traitName: Str) (expression: Expr) = requirementSite(traitName)(expression)(None)
+let requirementSiteSpan (traitName: Str) (expression: Expr) =
+    match requirementSite(traitName)(expression)(emptyScope) with
+        | Some((span, _contexts)) -> Some(span)
+        | None -> None
+
+// The span of that site and stage 0's diagnostic context there, outermost first and joined as stage
+// 0 joins it, or None for a site in no context.
+let requirementSiteWithContext (traitName: Str) (expression: Expr) =
+    match requirementSite(traitName)(expression)(emptyScope) with
+        | Some((span, [])) -> Some((span, None))
+        | Some((span, contexts)) ->
+            Some((span, contexts
+            |> Ashes.Collection.List.reverse
+            |> Ashes.Text.join(" -> ")
+            |> Some))
+        | None -> None
