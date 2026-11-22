@@ -1550,6 +1550,18 @@ and constrainedPlansLackEvidence (plans: List(TraitEvidencePlan)) (state: CoreLo
         | [] -> false
         | plan :: rest -> constrainedPlanLacksEvidence(plan)(state) || constrainedPlansLackEvidence(rest)(state)
 
+// The state with a partly open equality operand bound to the type recorded for the operator node,
+// closed by the variables the program's uses settle, and that closed type; None when no table is
+// present, nothing closed is recorded there, or the operand does not unify with it. It answers the
+// goal the site would otherwise defer to the replay pass, which would pin the same type there.
+let recordedSettledEqualityOperand (operandType: SemanticType) (state: CoreLoweringState) =
+    match recordedSettledOperandType(operandType)(state) with
+        | Some(settled) ->
+            match bindRecordedOperands(settled)([operandType])(state) with
+                | Some(bound) -> Some((observeLoweringEvent(0)(bound), resolveType(bound)(operandType)))
+                | None -> None
+        | None -> None
+
 // A constructed operand can still contain an unknown type, as in xs == []. The list
 // implementation is known, but its element dictionary may depend on a later application.
 // Defer that comparison as a whole unless all its evidence is already in scope.
@@ -1568,7 +1580,10 @@ let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary)
                                 match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
                                     | (pinnedState, pinnedType) ->
                                         match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
-                                            | Some(key) -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
+                                            | Some(key) ->
+                                                match recordedSettledEqualityOperand(pinnedType)(pinnedState) with
+                                                    | Some((recordedState, recordedType)) -> emitResolvedCoreBinary(operator)(lower)((binary with state = recordedState, leftType = recordedType, rightType = recordedType))
+                                                    | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
                                             | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
                             else emitResolvedCoreBinary(operator)(lower)(binary)
                         | _ -> emitResolvedCoreBinary(operator)(lower)(binary)

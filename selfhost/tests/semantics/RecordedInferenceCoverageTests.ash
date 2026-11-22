@@ -432,8 +432,38 @@ let checkDeferredOperatorDetails unit =
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("deferred operator inference failed: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("deferred operator fixture did not parse")
 
+// `xs == []` in a recursive binding the program uses at one element type: lowering meets the
+// element type open, and the table's operand type closes through the settled use, so the typed
+// first pass leaves no trait goal and runs no replay.
+let checkPartlyOpenEqualitySettled unit =
+    match parseProgram("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)") with
+        | ProgramParseResult { program = parsed, diagnostics = [] } ->
+            match identifyProgram(0)(parsed) with
+                | (program, _count) ->
+                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
+                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                            let clock =
+                                given (_unit) -> 0
+                            in
+                                let typed = measureCoreProgramLowering(clock)(Some(table))("equality.ash")("")(program)
+                                in
+                                    let legacy = measureRawCoreProgramLowering(clock)(table)("equality.ash")("")(program)
+                                    in
+                                        let firstTyped = typed.first
+                                        in
+                                            let firstLegacy = legacy.first
+                                            in
+                                                let replayLegacy = legacy.replay
+                                                in
+                                                    if firstTyped.error == None && typed.pendingGoals == 0 && typed.equalityGoals == 0 && typed.replayed == false && firstLegacy.error == None && replayLegacy.error == None
+                                                    then Unit
+                                                    else Ashes.IO.panic("partly open equality: typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals))
+                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("partly open equality inference failed: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("partly open equality fixture did not parse")
+
 let runRecordedInferenceCoverageTests unit =
     unit
+    |> checkPartlyOpenEqualitySettled
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings
