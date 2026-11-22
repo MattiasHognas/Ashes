@@ -7697,8 +7697,11 @@ public sealed partial class Lowering
     // release is emitted once after the whole if (the loop-continuing branch has already re-consed or
     // dropped it), so unlike a match arm, whose scope exit can transfer the owner into the result,
     // the branch must retain; the marker becomes a runtime retain when the root parameter is
-    // runtime-managed. Every other returned binding transfers exactly as a match arm's would.
-    private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp, bool tailPosition)
+    // runtime-managed. Every other returned binding transfers exactly as a match arm's would, except
+    // that only a match arm (`matchArm`) owns bindings of its own: an `if` branch returning an owner
+    // bound before the `if` takes a reference of its own, since the binding's release follows the
+    // whole `if`.
+    private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp, bool tailPosition, bool matchArm)
     {
         Expr result = branch;
         while (result is Expr.Let let)
@@ -7742,7 +7745,7 @@ public sealed partial class Lowering
             return NormalizeBranchResultBorrowingRuntimeOwner(branchTemp);
         }
 
-        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp);
+        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp, matchArm);
     }
 
     // An arena binding that stores children of a reference-counted owner still alive in this frame:
@@ -7824,7 +7827,7 @@ public sealed partial class Lowering
             : LowerIfElseBranch(branch, request, expectedType, normalizeStaticString);
         EndExclusiveBranch(credits);
         temp = NormalizeParameterPassthroughBranch(branch, temp);
-        temp = TransferDirectRuntimeManagedBranchResult(branch, temp, _tcoCtx?.InTailPosition ?? false);
+        temp = TransferDirectRuntimeManagedBranchResult(branch, temp, _tcoCtx?.InTailPosition ?? false, matchArm: false);
         Emit(new IrInst.StoreLocal(slot, temp));
         store = (IrInst.StoreLocal)_inst[^1];
         return (temp, Prune(type));

@@ -933,7 +933,7 @@ public sealed partial class Lowering
             }
         }
         bodyTemp = NormalizeParameterPassthroughBranch(cases[i].Body, bodyTemp);
-        bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp, savedTailPos);
+        bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp, savedTailPos, matchArm: true);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         IrInst.StoreLocal armStore = (IrInst.StoreLocal)_inst[^1];
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
@@ -1907,7 +1907,9 @@ public sealed partial class Lowering
             && Environment.GetEnvironmentVariable("GRC_NO_TUPLEROOTCOPY") is null
             && IsRuntimeManagedResultTemp(valueTemp);
 
-    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp)
+    // `matchArm` is true for a match arm, whose own ownership scope is the innermost one while its
+    // result is transferred, and false for an `if` branch, which opens no scope of its own.
+    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp, bool matchArm)
     {
         Expr result = body;
         while (result is Expr.Let let)
@@ -1918,18 +1920,66 @@ public sealed partial class Lowering
         if (result is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { IsDropped: false } owner)
         {
-            return TransferVariableRuntimeManagedMatchResult(variable, bodyTemp, owner);
+            return TransferVariableRuntimeManagedMatchResult(variable, bodyTemp, owner, matchArm);
         }
 
         return bodyTemp;
     }
 
+    // Whether the owner belongs to the innermost ownership scope: while a match arm's result is
+    // transferred, the scope of the arm's own pattern bindings.
+    private bool OwnedByInnermostScope(OwnershipInfo owner)
+    {
+        if (_ownershipScopes.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (OwnershipInfo scoped in _ownershipScopes.Peek().Values)
+        {
+            if (ReferenceEquals(scoped, owner))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A branch returning the owner binding itself. An arm returning an owner its own pattern bound
+    // transfers the owner's one reference into the match result: the arm's scope ends with the arm,
+    // so nothing reads the binding after it. An owner bound before the match or `if` is released by
+    // its own scope after the join and may still be read there, so the branch takes a reference of
+    // its own and the owner stays live.
+    private int TransferOwnerBindingResult(int bodyTemp, OwnershipInfo owner, bool matchArm)
+    {
+        if (!owner.RuntimeManaged)
+        {
+            return bodyTemp;
+        }
+
+        int duplicatedTemp = DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
+        if (!matchArm || !OwnedByInnermostScope(owner))
+        {
+            return duplicatedTemp;
+        }
+
+        Emit(new IrInst.RcDrop(
+            bodyTemp,
+            owner.TypeName,
+            owner.Slot,
+            RuntimeManaged: true,
+            MayBeEmpty: owner.Type is TypeRef.TList));
+        owner.ReleaseKind = ResourceReleaseKind.AutoDropped;
+        return duplicatedTemp;
+    }
+
     private int TransferVariableRuntimeManagedMatchResult(
         Expr.Var variable,
         int bodyTemp,
-        OwnershipInfo owner)
+        OwnershipInfo owner,
+        bool matchArm)
     {
-        // Returning the owner binding itself transfers its one reference into the match result.
         // EmitRuntimeManagedParentFieldTransfer is only for an extracted child whose protective
         // parent must still be released. Treating the root as its own child drops the unique cell
         // and leaves the match join holding a dangling pointer.
@@ -1942,20 +1992,7 @@ public sealed partial class Lowering
         };
         if (resultSlot == owner.Slot)
         {
-            if (!owner.RuntimeManaged)
-            {
-                return bodyTemp;
-            }
-
-            int duplicatedTemp = DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
-            Emit(new IrInst.RcDrop(
-                bodyTemp,
-                owner.TypeName,
-                owner.Slot,
-                RuntimeManaged: true,
-                MayBeEmpty: owner.Type is TypeRef.TList));
-            owner.ReleaseKind = ResourceReleaseKind.AutoDropped;
-            return duplicatedTemp;
+            return TransferOwnerBindingResult(bodyTemp, owner, matchArm);
         }
 
         // A captured binding is owned by the current closure environment, not by the outer

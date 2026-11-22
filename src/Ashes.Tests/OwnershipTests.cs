@@ -164,6 +164,75 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Branch_returning_an_owner_bound_before_the_join_keeps_the_owner_live()
+    {
+        // `callName` is an owned runtime-managed let (its value is a nested `let`). The `if` and the
+        // `match` each return it from one branch and read it again after the join, so no branch may
+        // release its owner slot: the branch takes a reference of its own and the binding's own
+        // scope releases it after its last read.
+        IrProgram ir = LowerProgram(
+            """
+            let viaIf (flag: Bool) (seed: Int) =
+                (let callName =
+                    let next = seed + 1
+                    in "__in_place_" + Ashes.Text.fromInt(next)
+                in
+                    let groupName =
+                        if flag
+                        then Ashes.Text.fromInt(seed)
+                        else callName
+                    in groupName + "/" + callName)
+
+            let viaMatch (pick: Int) (seed: Int) =
+                (let callName =
+                    let next = seed + 1
+                    in "__in_place_" + Ashes.Text.fromInt(next)
+                in
+                    let groupName =
+                        match pick with
+                            | 0 -> Ashes.Text.fromInt(seed)
+                            | _ -> callName
+                    in groupName + "/" + callName)
+
+            Ashes.IO.print(viaIf(true)(40) + viaMatch(0)(41))
+            """);
+
+        List<IrFunction> owning = ir.Functions
+            .Where(function => function.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", OwnerSlot: >= 0, RuntimeManaged: true }))
+            .ToList();
+        owning.Count.ShouldBeGreaterThanOrEqualTo(2, "both callName bindings must be owned runtime-managed lets");
+        foreach (IrFunction function in owning)
+        {
+            OwnerSlotReadAfterRelease(function.Instructions).ShouldBeFalse(
+                $"{function.Label} reads an owner slot after releasing it");
+        }
+    }
+
+    // Whether an owner slot is loaded after a release of that slot with no store into it between,
+    // in instruction order.
+    private static bool OwnerSlotReadAfterRelease(List<IrInst> instructions)
+    {
+        HashSet<int> released = [];
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.RcDrop { OwnerSlot: >= 0 } drop:
+                    released.Add(drop.OwnerSlot);
+                    break;
+                case IrInst.StoreLocal store:
+                    released.Remove(store.Slot);
+                    break;
+                case IrInst.LoadLocal load when released.Contains(load.Slot):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    [Test]
     public void Tuple_result_of_a_tco_loop_retains_its_runtime_managed_parameters()
     {
         // Both accumulators are runtime-managed loop parameters that the loop's exit drops
