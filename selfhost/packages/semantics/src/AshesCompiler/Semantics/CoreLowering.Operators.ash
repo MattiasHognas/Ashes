@@ -1535,16 +1535,6 @@ and constrainedPlansLackEvidence (plans: List(TraitEvidencePlan)) (state: CoreLo
         | [] -> false
         | plan :: rest -> constrainedPlanLacksEvidence(plan)(state) || constrainedPlansLackEvidence(rest)(state)
 
-// The site an equality whose dictionary cannot be built yet is recorded under. Like a constrained
-// call's dictionary, it is recorded in a pass lowering with proofs pinned too: a body that closes
-// the operand's type later is lowered again from its entry state, where the comparison builds the
-// real dictionary and the record made by the abandoned lowering is gone. A record that outlives
-// its pass is a goal no pass answered and is reported when the pass ends.
-let openEqualityGoalKey (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
-    match freeTypeVariables(operandType) with
-        | [] -> None
-        | _variables -> traitGoalKey("Eq")(methodName)(state)
-
 // A constructed operand can still contain an unknown type, as in xs == []. The list
 // implementation is known, but its element dictionary may depend on a later application.
 // Defer that comparison as a whole unless all its evidence is already in scope.
@@ -1562,7 +1552,7 @@ let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary)
                             then
                                 match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
                                     | (pinnedState, pinnedType) ->
-                                        match openEqualityGoalKey(methodName)(pinnedType)(pinnedState) with
+                                        match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
                                             | Some(key) -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
                                             | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
                             else emitResolvedCoreBinary(operator)(lower)(binary)

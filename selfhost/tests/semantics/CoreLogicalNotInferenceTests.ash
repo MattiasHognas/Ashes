@@ -44,6 +44,11 @@ let checkCombinedReplay unit = expectBool("let invert value = !value\nlet recurs
 // is recorded rather than rejected, and the body's lowering again answers it.
 let checkRecursiveGroupEqualityReplay unit = expectBool(standardTraits(Unit) + "\nlet recursive hide names name = match names with | [] -> [] | other :: rest -> if other != name then other :: hide(rest)(name) else hide(rest)(name)\nlet recursive count names values = if names == [] then 0 else match values with | [] -> 0 | _value :: rest -> step(count(names))(rest) + count(hide(names)(\"x\"))([]) and step recur rest = 1 + recur(rest)\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && count([\"x\", \"y\"])([5, 6, 7]) == 3")
 
+// The same group shape with a negation and with an ordered comparison over the open parameter.
+let checkRecursiveGroupNegationReplay unit = expectBool(standardTraits(Unit) + "\nlet both (left: Bool) (right: Bool) = left && right\nlet recursive count flag values = if !flag then 0 else match values with | [] -> 0 | _value :: rest -> step(count(flag))(rest) + count(both(flag)(false))([]) and step recur rest = 1 + recur(rest)\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && count(true)([5, 6, 7]) == 3")
+
+let checkRecursiveGroupComparisonReplay unit = expectBool(standardTraits(Unit) + "\nlet lower (value: Int) = value - 1\nlet recursive count limit floor values = if limit < floor then 0 else match values with | [] -> 0 | _value :: rest -> step(count(limit)(floor))(rest) + count(lower(limit))(lower(floor))([]) and step recur rest = 1 + recur(rest)\nlet ordered = ((given (left) -> given (right) -> left >= right))(\"b\")(\"a\")\nordered && count(3)(1)([5, 6, 7]) == 3")
+
 let checkActiveGenericEvidence unit = expectBool("type Bit = | Bit(Bool) deriving {Eq}\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\ntype Box(a) = | Box(a)\nimplement Eq(Box(a)) requires {Not(a), Eq(a)} = | equal = given left -> given right -> match (left, right) with | (Box(x), Box(y)) -> !x == y\nlet same (left: Box(Bit)) (right: Box(Bit)) = left == right\nsame(Box(Bit(false)))(Box(Bit(true)))")
 
 let bitNotPrelude = "type Bit = | Bit(Bool)\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\n"
@@ -167,6 +172,8 @@ let runCoreLogicalNotInferenceTests unit =
     |> checkInvalidOperand
     |> checkCombinedReplay
     |> checkRecursiveGroupEqualityReplay
+    |> checkRecursiveGroupNegationReplay
+    |> checkRecursiveGroupComparisonReplay
     |> checkActiveGenericEvidence
     |> (given (_) -> checkGenericNotEvidence(" : a -> a requires {Not(a)}"))
     |> (given (_) -> checkGenericNotEvidence(""))

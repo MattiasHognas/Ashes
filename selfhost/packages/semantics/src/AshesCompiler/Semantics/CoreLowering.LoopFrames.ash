@@ -1115,10 +1115,9 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
             in
                 // Replay can revisit a now-concrete operand without consulting the proof it
                 // consumed on the first traversal. The next body starts after that traversal.
-                if stateTraitGoalsPinned(entered)
-                then
-                    result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
-                else result with state = resumed
+                // A pass without proofs has none to keep, so this holds for a recursive group's
+                // final member pass too, which lowers its bodies with the pinned boundary lifted.
+                result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
 
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
