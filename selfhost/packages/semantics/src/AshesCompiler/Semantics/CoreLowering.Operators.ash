@@ -40,6 +40,8 @@ export (
     value traitGoalKey,
     value pinProvenTraitGoal,
     value deferTraitGoal,
+    value deferTraitGoalWithMethods,
+    value dictionaryGoalCandidates,
     value emitCoreTraitUnaryDispatch,
     value applyDeferredOperators,
     value applySealedDeferredOperators,
@@ -1142,6 +1144,18 @@ let recursive matchingMethodCandidates traitName methodName methods =
                 if candidateTrait == traitName && candidateMethod == methodName
                 then (binding, operand) :: tail
                 else tail
+
+// The dictionaries of the generic body being lowered that can answer a whole-dictionary goal on
+// `traitName`: one entry per active dictionary of that trait, named by its first method in
+// dictionary order. Once the goal's type resolves to one of their operands, the goal no longer holds
+// that type out of the enclosing generalization, and a later pass answers it from that dictionary.
+let dictionaryGoalCandidates (traitName: Str) (state: CoreLoweringState) =
+    match sortedTraitMethodNames(traitName)(state) with
+        | [] -> []
+        | methodName :: _rest ->
+            state
+            |> stateActiveTraitMethods
+            |> matchingMethodCandidates(traitName)(methodName)
 
 let deferMethodGoal traitName methodName key operand result state =
     deferTraitGoalWithMethods(state

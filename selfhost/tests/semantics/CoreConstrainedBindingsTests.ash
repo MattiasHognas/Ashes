@@ -3,6 +3,8 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.CoreLowering.Emit.initialState
 import AshesCompiler.Semantics.CoreLowering.Emit.bindType
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStatePendingTraitGoals
+import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTraitMethods
+import AshesCompiler.Semantics.CoreLowering.Operators.dictionaryGoalCandidates
 import AshesCompiler.Semantics.CoreLowering.Owners.pendingOperatorScheme
 import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
@@ -167,6 +169,29 @@ let checkPendingEvidenceBoundary unit =
                                 in assert(schemeHoldsVariable(9001)(before) && !schemeHoldsVariable(9002)(after) && !schemeHoldsVariable(9001)(after) && schemeHoldsVariable(9003)(after))("only the obligation satisfied by the enclosing dictionary may generalize")
                             | _ -> Ashes.IO.panic("pending result could not unify with its enclosing dictionary"))
 
+// A constrained call whose dictionary still waits on a type records the enclosing body's active
+// dictionaries of that trait, so the waiting type stops holding back the enclosing scheme once it
+// meets one of their operands.
+let checkDictionaryGoalCandidates unit =
+    (let operand = SemVariable(9101)
+    in
+        let supplied = SemVariable(9102)
+        in
+            let active =
+                Unit
+                |> initialState
+                |> withStateActiveTraitMethods([("Eq", supplied, "equal", "eqEqual"), ("Eq", supplied, "notEqual", "eqNotEqual"), ("Show", supplied, "show", "showShow")])
+            in
+                match dictionaryGoalCandidates("Eq")(active) with
+                    | ("eqEqual", candidate) :: [] ->
+                        let state = withStatePendingTraitGoals([("dictionary", operand, [("eqEqual", candidate)])])(active)
+                        in
+                            match bindType(operand)(supplied)(state) with
+                                | (bound, None) ->
+                                    assert(schemeHoldsVariable(9101)(pendingOperatorScheme(state)) && !schemeHoldsVariable(9101)(pendingOperatorScheme(bound)))("a dictionary goal answered by the enclosing dictionary still held its type")
+                                | _ -> Ashes.IO.panic("dictionary goal could not unify with its enclosing dictionary")
+                    | _ -> Ashes.IO.panic("dictionary goal candidates were not one per active Eq dictionary"))
+
 let runCoreConstrainedBindingsTests unit =
     (let environment = standardTraitEnvironment(Unit)
     in
@@ -174,6 +199,7 @@ let runCoreConstrainedBindingsTests unit =
         |> (given (_) -> checkRecursiveInference(environment))
         |> checkAsyncPlan
         |> checkPendingEvidenceBoundary
+        |> checkDictionaryGoalCandidates
         |> checkAwaitQueryIdentity
         |> (given (_) -> checkBoundaryRequirements(environment))
         |> (given (_) -> checkLayouts(environment))

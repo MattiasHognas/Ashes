@@ -1019,7 +1019,10 @@ let openDictionaryGoalKey (traitName: Str) (methodName: Str) (operandType: Seman
 
 // The requirements a call cannot build a dictionary for yet: the type argument is still open (the
 // caller's own parameter, settled by a later use in its body) and no active evidence answers it.
-// Each is a trait goal a later pass answers once this one has resolved the type.
+// Each is a trait goal a later pass answers once this one has resolved the type, recorded with the
+// dictionaries of the enclosing generic body that can answer it: a type the body later relates to
+// one of those dictionaries' operands is then the body's own evidence, not a type the enclosing
+// generalization must hold back.
 let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (state: CoreLoweringState) =
     match goals with
         | [] -> []
@@ -1029,21 +1032,21 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
                 match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
                     | (Some(key), TraitEvidenceResolution { plan = Some(plan), error = None }) ->
                         if constrainedPlanLacksEvidence(plan)(state)
-                        then (key, resolved) :: openConstrainedGoals(index + 1)(rest)(state)
+                        then (key, resolved, dictionaryGoalCandidates(traitName)(state)) :: openConstrainedGoals(index + 1)(rest)(state)
                         else openConstrainedGoals(index + 1)(rest)(state)
                     | _ -> openConstrainedGoals(index + 1)(rest)(state)
         | _goal :: rest -> openConstrainedGoals(index + 1)(rest)(state)
 
 // The value a call lowers to while any of its dictionaries waits on a type: every open requirement
 // joins the pass's record and the call stands as a constant of its own result type.
-let recursive deferConstrainedGoals (goals: List((Str, SemanticType))) (resultType: SemanticType) (state: CoreLoweringState) =
+let recursive deferConstrainedGoals (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
     match goals with
         | [] ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(state)
-        | (key, goalType) :: [] -> deferTraitGoal(key)(goalType)(resultType)(state)
-        | (key, goalType) :: rest ->
+        | (key, goalType, candidates) :: [] -> deferTraitGoalWithMethods(candidates)(key)(goalType)(resultType)(state)
+        | (key, goalType, candidates) :: rest ->
             state
-            |> withStatePendingTraitGoals((key, goalType, []) :: statePendingTraitGoals(state))
+            |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
             |> observePendingGoal(false)(key)(goalType)
             |> deferConstrainedGoals(rest)(resultType)
 
