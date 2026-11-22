@@ -242,6 +242,73 @@ public sealed class OwnershipTests
             "the loop's exit branch must move the let owner it returns into the result");
     }
 
+    [Test]
+    public void Branch_returning_a_tuple_component_keeps_the_tuple_for_a_sibling_that_conses_onto_it()
+    {
+        // `pieces` is a component of the owned tuple a call returned. One branch returns it, the
+        // other conses onto it. The returning branch retains the component and leaves the tuple to
+        // its own scope: releasing the tuple there made it the tuple's only release, and lifetime
+        // placement moved that release to the consing branch's first instruction, ahead of its read
+        // of `pieces`, so the list was freed and reused.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build (n: Int) (acc: List(Bytes)) =
+                if n == 0
+                then (acc, 5)
+                else build(n - 1)(Ashes.Byte.allocate(n) :: acc)
+
+            let recursive total (items: List(Bytes)) =
+                match items with
+                    | [] -> 0
+                    | item :: rest -> Ashes.Byte.length(item) + total(rest)
+
+            let assemble (flag: Bool) =
+                match build(3)([]) with
+                    | (pieces, cursor) ->
+                        let padded =
+                            if cursor > 2
+                            then Ashes.Byte.allocate(1) :: pieces
+                            else pieces
+                        in total(Ashes.Byte.allocate(64) :: padded)
+
+            Ashes.IO.print(assemble(true))
+            """);
+
+        foreach (IrFunction function in ir.Functions)
+        {
+            TupleComponentReadAfterTupleRelease(function.Instructions).ShouldBeFalse(
+                $"{function.Label} reads a tuple component after releasing the tuple's owner");
+        }
+    }
+
+    // Whether a slot holding a component read out of a value (a LoadMemOffset stored into a slot) is
+    // loaded after a release of a tuple owner slot, in instruction order.
+    private static bool TupleComponentReadAfterTupleRelease(List<IrInst> instructions)
+    {
+        HashSet<int> componentTemps = [];
+        HashSet<int> componentSlots = [];
+        bool tupleReleased = false;
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.LoadMemOffset load:
+                    componentTemps.Add(load.Target);
+                    break;
+                case IrInst.StoreLocal store when componentTemps.Contains(store.Source):
+                    componentSlots.Add(store.Slot);
+                    break;
+                case IrInst.RcDrop { TypeName: "Tuple", OwnerSlot: >= 0 }:
+                    tupleReleased = true;
+                    break;
+                case IrInst.LoadLocal load when tupleReleased && componentSlots.Contains(load.Slot):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     // A branch ending `RcDup; RcDrop <List owner>; StoreLocal; Jump endif`: the returned owner's
     // reference moved into the join.
     private static bool ExitBranchMovesListOwner(List<IrInst> instructions)

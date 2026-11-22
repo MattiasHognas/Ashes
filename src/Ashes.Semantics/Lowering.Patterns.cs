@@ -1946,6 +1946,11 @@ public sealed partial class Lowering
         return false;
     }
 
+    // Whether a branch returning an owner (or a child of one) may release that owner where it
+    // returns: see TransferOwnerBindingResult.
+    private bool BranchMovesOwner(OwnershipInfo owner, bool matchArm, bool tailPosition)
+        => tailPosition || (matchArm && OwnedByInnermostScope(owner));
+
     // A branch returning the owner binding itself. The owner's one reference moves into the join
     // when nothing can read the binding after it: an arm returning an owner its own pattern bound,
     // whose scope ends with the arm, and any branch in tail position, whose join is the function's
@@ -1960,7 +1965,7 @@ public sealed partial class Lowering
         }
 
         int duplicatedTemp = DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
-        if (!tailPosition && (!matchArm || !OwnedByInnermostScope(owner)))
+        if (!BranchMovesOwner(owner, matchArm, tailPosition))
         {
             return duplicatedTemp;
         }
@@ -2026,7 +2031,29 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
+        // A child of an owner bound before the `if` or match, in tail position or not: the branch
+        // retains the child and leaves the parent to its own scope. Releasing the parent here made it
+        // the parent's only release, which lifetime placement then moved onto the sibling branches'
+        // first instruction, ahead of a sibling's own borrowed read of the child
+        // (`if c then x :: pieces else pieces`).
+        if (!BranchMovesOwner(owner, matchArm, tailPosition: false))
+        {
+            return RetainReturnedChild(bodyTemp, resultBinding?.Type);
+        }
+
         return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp, resultBinding?.Type);
+    }
+
+    private int RetainReturnedChild(int childTemp, TypeRef? childType)
+    {
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(
+            duplicatedTemp,
+            childTemp,
+            RuntimeManaged: true,
+            MayBeEmpty: childType is not null && MayUseEmptyListRepresentation(childType)));
+        MarkRuntimeManagedTemp(duplicatedTemp);
+        return duplicatedTemp;
     }
 
     private int DuplicateRuntimeManagedMatchResult(int bodyTemp, OwnershipInfo owner)
