@@ -18793,9 +18793,12 @@ public sealed partial class Lowering
         // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) or of a
         // reference-counted literal chain takes a tail built the same way.
         bool tailKeepsRequest = ConsTailKeepsRequest(cons, request);
-        LoweredValueRequest tailRequest = tailKeepsRequest
-            ? request.WithExpectedType(listType)
-            : LoweredValueRequest.None.WithExpectedType(listType);
+        LoweredValueRequest tailRequest = EscapingTailCellRequest(
+            cons,
+            tailKeepsRequest
+                ? request.WithExpectedType(listType)
+                : LoweredValueRequest.None.WithExpectedType(listType),
+            transfersChildren);
         bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
         var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
         if (chainTail)
@@ -18847,6 +18850,16 @@ public sealed partial class Lowering
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
+
+    // A tail that is itself a cell (`first :: second :: more`) escapes with the cell it is the tail
+    // of: an escaping cell's children are transferred out of their owners' scope, so the tail cell's
+    // head takes a reference of its own too. Without it the tail cell only borrowed `second`, and the
+    // scope releasing the matched list freed it while the result still held it. A cell the back edge
+    // copies borrows its parts, and so does its tail cell.
+    private LoweredValueRequest EscapingTailCellRequest(Expr.Cons cons, LoweredValueRequest tailRequest, bool transfersChildren)
+        => transfersChildren && cons.Tail is Expr.Cons && !IsBackEdgeCopiedCell(cons) && !IsBackEdgeCopiedCell(cons.Tail)
+            ? tailRequest with { TransfersRuntimeManagedChildren = true }
+            : tailRequest;
 
     // Every cell of a chain consed onto a loop's list parameter is reference-counted, not only the
     // first. A reference-counted cell over the rest of a literal chain (`1 :: 2 :: []` as a

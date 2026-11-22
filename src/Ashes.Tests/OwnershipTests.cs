@@ -281,6 +281,68 @@ public sealed class OwnershipTests
         }
     }
 
+    [Test]
+    public void Escaping_cell_over_a_tail_cell_gives_both_heads_references_of_their_own()
+    {
+        // `first :: second :: more` rebuilt from the matched list a call returned and returned inside
+        // `Some`: the matched list is released when the arm ends, so the tail cell's head (`second`)
+        // must not be a plain borrow of the pattern binding, as the head cell's is not either.
+        IrProgram ir = LowerProgram(
+            """
+            type Problem =
+                | Mixed(List(Str))
+                | Other(Str)
+
+            let recursive gather (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else gather(n - 1)(("name" + Ashes.Text.fromInt(n)) :: acc)
+
+            let check (count: Int) =
+                match gather(count)([]) with
+                    | first :: second :: more -> Some(Mixed(first :: second :: more))
+                    | _ -> None
+
+            match check(3) with
+                | Some(Mixed(name :: _rest)) -> Ashes.IO.print(name)
+                | _ -> Ashes.IO.print("none")
+            """);
+
+        List<IrFunction> rebuilding = ir.Functions
+            .Where(function => function.Instructions.Any(inst =>
+                inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }))
+            .ToList();
+        rebuilding.ShouldNotBeEmpty("the rebuilt cells' string heads are cloned into the arena");
+        foreach (IrFunction function in rebuilding)
+        {
+            CellHeadIsBorrowedRead(function.Instructions).ShouldBeFalse(
+                $"{function.Label} stores a borrowed read as a list cell's head");
+        }
+    }
+
+    // Whether a 16-byte cell's head word is stored straight from a Borrow.
+    private static bool CellHeadIsBorrowedRead(List<IrInst> instructions)
+    {
+        HashSet<int> borrowed = [];
+        HashSet<int> cells = [];
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.Borrow borrow:
+                    borrowed.Add(borrow.Target);
+                    break;
+                case IrInst.Alloc { SizeBytes: 16 } alloc:
+                    cells.Add(alloc.Target);
+                    break;
+                case IrInst.StoreMemOffset { OffsetBytes: 0 } store when cells.Contains(store.BasePtr) && borrowed.Contains(store.Source):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     // Whether a slot holding a component read out of a value (a LoadMemOffset stored into a slot) is
     // loaded after a release of a tuple owner slot, in instruction order.
     private static bool TupleComponentReadAfterTupleRelease(List<IrInst> instructions)
