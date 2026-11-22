@@ -6,6 +6,7 @@ import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.append
 export (
     value indexEvidenceUse,
+    value stableRecursiveUses,
     value evidenceFlowForValue,
     value projectEvidenceField,
     value evidenceFlowOfPattern,
@@ -211,6 +212,107 @@ let addUse (use: EvidenceParameterUse) (found: EvidenceWalk) =
     match indexEvidenceUse(use)(found.indexedUses) with
         | None -> found
         | Some(indexed) -> found with uses = use :: found.uses, indexedUses = indexed
+
+// Every identity field except the demand stage.
+let compareUseShapes (left: EvidenceParameterUse) (right: EvidenceParameterUse) = compareEvidenceUses(left)((right with stage = left.stage))
+
+// Every identity field except the projection path.
+let compareUseKeys (left: EvidenceParameterUse) (right: EvidenceParameterUse) = compareEvidenceUses(left)((right with path = left.path))
+
+let recursive indexUsesWith compare uses (indexed: MapTree(EvidenceParameterUse, Unit)) =
+    match uses with
+        | [] -> indexed
+        | use :: rest ->
+            indexed
+            |> Ashes.Collection.Map.setWith(compare)(use)(Unit)
+            |> indexUsesWith(compare)(rest)
+
+// A recursive call composes the caller's argument projection in front of the callee's path.
+// A new path ending in a non-empty path the member already records for the same formal,
+// application count and return flag has gone around a cycle that descends the argument.
+let recursive endsInRecordedPath (use: EvidenceParameterUse) path shapes =
+    match path with
+        | [] -> false
+        | _head :: rest ->
+            match rest with
+                | [] -> false
+                | _next :: _tail ->
+                    if Ashes.Collection.Map.containsWith(compareUseShapes)((use with path = rest))(shapes)
+                    then true
+                    else endsInRecordedPath(use)(rest)(shapes)
+
+type RecursiveUseIndex =
+    | exact: MapTree(EvidenceParameterUse, Unit)
+    | keys: MapTree(EvidenceParameterUse, Unit)
+    | shapes: MapTree(EvidenceParameterUse, Unit)
+
+type StableRecursiveUses =
+    | stages: MapTree(EvidenceParameterUse, Int)
+    | order: List(EvidenceParameterUse)
+
+// After the group's simple call chains, a further path beside a recorded one is summarized as
+// any nested member. A descending cycle is summarized the same way as soon as it repeats.
+let stableRecursivePath (use: EvidenceParameterUse) (earlier: RecursiveUseIndex) widen =
+    if Ashes.Collection.Map.containsWith(compareEvidenceUses)(use)(earlier.exact)
+    then use
+    else
+        if widen && use.path != [] && Ashes.Collection.Map.containsWith(compareUseKeys)(use)(earlier.keys)
+        then use with path = ["*"]
+        else
+            if Ashes.Collection.Map.containsWith(compareUseShapes)(use)(earlier.shapes)
+            then use
+            else
+                if endsInRecordedPath(use)(use.path)(earlier.shapes)
+                then use with path = ["*"]
+                else use
+
+// A use at a later stage than an otherwise identical one, or below a recorded any-member path
+// at no earlier stage, cannot demand evidence earlier or add a requirement. Each shape keeps
+// its earliest stage.
+let mergeStableRecursiveUse (use: EvidenceParameterUse) (earlier: RecursiveUseIndex) (found: StableRecursiveUses) =
+    (let covered =
+        if use.path == ["*"] || Ashes.Collection.Map.containsWith(compareEvidenceUses)(use)(earlier.exact)
+        then false
+        else
+            match Ashes.Collection.Map.getWith(compareUseShapes)((use with path = ["*"]))(found.stages) with
+                | Some(stage) -> stage <= use.stage
+                | None -> false
+    in
+        if covered
+        then found
+        else
+            match Ashes.Collection.Map.getWith(compareUseShapes)(use)(found.stages) with
+                | None -> found with stages = Ashes.Collection.Map.setWith(compareUseShapes)(use)(use.stage)(found.stages), order = use :: found.order
+                | Some(stage) ->
+                    if use.stage < stage
+                    then found with stages = Ashes.Collection.Map.setWith(compareUseShapes)(use)(use.stage)(found.stages)
+                    else found)
+
+let recursive mergeStableRecursiveUses uses earlier widen (found: StableRecursiveUses) =
+    match uses with
+        | [] -> found
+        | use :: rest ->
+            found
+            |> mergeStableRecursiveUse(stableRecursivePath(use)(earlier)(widen))(earlier)
+            |> mergeStableRecursiveUses(rest)(earlier)(widen)
+
+let withEarliestStage (use: EvidenceParameterUse) stages =
+    match Ashes.Collection.Map.getWith(compareUseShapes)(use)(stages) with
+        | Some(earliest) -> use with stage = earliest
+        | None -> use
+
+let recursive emitStableRecursiveUses order stages emitted =
+    match order with
+        | [] -> emitted
+        | use :: rest -> emitStableRecursiveUses(rest)(stages)(withEarliestStage(use)(stages) :: emitted)
+
+// The union of a recursive member's previous uses and the uses of its latest pass, in first
+// occurrence order.
+let stableRecursiveUses previous uses widen =
+    (let earlier = RecursiveUseIndex(exact = indexUsesWith(compareEvidenceUses)(previous)(Ashes.Collection.Map.empty), keys = indexUsesWith(compareUseKeys)(previous)(Ashes.Collection.Map.empty), shapes = indexUsesWith(compareUseShapes)(previous)(Ashes.Collection.Map.empty))
+    in
+        match mergeStableRecursiveUses(append(previous)(uses))(earlier)(widen)(StableRecursiveUses(stages = Ashes.Collection.Map.empty, order = [])) with
+            | StableRecursiveUses { stages = stages, order = order } -> emitStableRecursiveUses(order)(stages)([]))
 
 let recursive projectCapturedUses uses applied depth escapes (found: EvidenceWalk) =
     match uses with

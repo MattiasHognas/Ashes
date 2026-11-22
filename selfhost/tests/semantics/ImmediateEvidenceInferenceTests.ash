@@ -3,6 +3,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.EvidenceDemand.indexEvidenceUse
+import AshesCompiler.Semantics.EvidenceDemand.stableRecursiveUses
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.NodeIdentity
@@ -260,6 +261,61 @@ let checkEvidenceUseIdentity unit =
         let uses = [baseUse, (baseUse with parameter = 1), (baseUse with applied = -1), (baseUse with stage = 2), (baseUse with returned = true), (baseUse with path = ["left", "right"]), (baseUse with path = ["left"]), (baseUse with path = ["left.right"]), (baseUse with path = ["left", "result"])]
         in checkDistinctUses(uses)(uses)(Ashes.Collection.Map.empty))
 
+// A recursive call on either child of a binary node puts that field in front of each path
+// the callee records.
+let recursive descendUses uses =
+    match uses with
+        | [] -> []
+        | (EvidenceParameterUse { path = path } as use) :: rest -> (use with path = "0" :: path) :: (use with path = "1" :: path) :: descendUses(rest)
+
+let recursive descendRepeatedly count uses =
+    if count == 0
+    then uses
+    else
+        false
+        |> stableRecursiveUses(uses)(descendUses(uses))
+        |> descendRepeatedly(count - 1)
+
+// A member's summary keeps the earliest stage of otherwise identical uses, and a descent
+// that repeats a recorded path is summarized as any nested member instead of doubling the
+// recorded paths on every pass.
+let checkRecursiveUseMerge unit =
+    (let leaf = EvidenceParameterUse(parameter = 0, path = ["0"], applied = 0, stage = 1, returned = true)
+    in
+        let nested = leaf with path = ["*"]
+        in
+            if stableRecursiveUses([leaf])([(leaf with stage = 3), (leaf with stage = 0)])(false) != [(leaf with stage = 0)]
+            then Ashes.IO.panic("a later stage of a recursive evidence use replaced the earliest")
+            else
+                if stableRecursiveUses([leaf])([(leaf with returned = false), (leaf with path = ["1"])])(false) != [leaf, (leaf with returned = false), (leaf with path = ["1"])]
+                then Ashes.IO.panic("distinct recursive evidence uses were merged")
+                else
+                    if descendRepeatedly(16)([leaf]) != [leaf, nested]
+                    then Ashes.IO.panic("a recursive descent kept growing its evidence uses")
+                    else Unit)
+
+// A twenty-one member group descends a tree of callbacks. Its summary must settle before the
+// group's acyclic rounds run out, and invoking the selected callback still demands evidence.
+let recursive paddingMembers index count =
+    if index == count
+    then "and pad" + Ashes.Text.fromInt(index) + " u = true\n"
+    else "and pad" + Ashes.Text.fromInt(index) + " u = pad" + Ashes.Text.fromInt(index + 1) + "(u)\n" + paddingMembers(index + 1)(count)
+
+let checkRecursiveDescentEvidence unit =
+    (let tree = "type Tree(a) =\n    | Leaf(a)\n    | Node(Tree(a), Tree(a))\n"
+    in
+        let group = "let recursive leafOf t = match t with | Leaf(f) -> f | Node(left, right) -> if pad0(Unit) then leafOf(left) else leafOf(right)\n" + paddingMembers(0)(19)
+        in
+            stagedSource + tree + group + "let check = leafOf(Node(Leaf(pick), Leaf(pick)))(Unit)\ntrue"
+            |> parsed
+            |> infer
+            |> expectImmediate
+            |> (given (_) ->
+                stagedSource + tree + group + "let saved = leafOf(Node(Leaf(pick), Leaf(pick)))\ntrue"
+                |> parsed
+                |> infer
+                |> expectSuccess))
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -292,3 +348,5 @@ let runImmediateEvidenceInferenceTests unit =
     |> checkRecursiveEvidence
     |> checkReturnedPeerStages
     |> checkEvidenceUseIdentity
+    |> checkRecursiveUseMerge
+    |> checkRecursiveDescentEvidence

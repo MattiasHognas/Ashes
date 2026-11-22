@@ -11,7 +11,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
-import AshesCompiler.Semantics.EvidenceDemand.indexEvidenceUse
+import AshesCompiler.Semantics.EvidenceDemand.stableRecursiveUses
 import AshesCompiler.Semantics.EvidenceDemand.zipEvidenceStages
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
@@ -493,39 +493,14 @@ let recursive siblingSites sites summaries requirements demands flows =
         | entry :: rest -> siblingSites(rest)(summaries)(requirements)(demands)(entry :: flows)
 
 // Calls in a cycle can descend an unbounded number of aggregate fields. Once every member has
-// already propagated its direct edges, summarize further path growth as any nested member.
-let recursive knownParameterPath (use: EvidenceParameterUse) earlier =
-    match earlier with
-        | [] -> false
-        | (EvidenceParameterUse { parameter = slot, applied = applied, stage = stage, returned = returned } as previous) :: rest ->
-            if slot == use.parameter && applied == use.applied && stage == use.stage && returned == use.returned && previous.path != use.path
-            then true
-            else knownParameterPath(use)(rest)
-
-let recursive includesRecursiveUse use uses =
-    match uses with
-        | [] -> false
-        | candidate :: rest -> candidate == use || includesRecursiveUse(use)(rest)
-
-let recursive stableUses remaining earlier result indexed widen =
-    match remaining with
-        | [] -> reverse(result)
-        | (EvidenceParameterUse { path = path } as use) :: rest ->
-            let stable =
-                if widen && path != [] && includesRecursiveUse(use)(earlier) == false && knownParameterPath(use)(earlier)
-                then use with path = ["*"]
-                else use
-            in
-                match indexEvidenceUse(stable)(indexed) with
-                    | None -> stableUses(rest)(earlier)(result)(indexed)(widen)
-                    | Some(next) -> stableUses(rest)(earlier)(stable :: result)(next)(widen)
-
+// already propagated its direct edges, or a path descends a cycle again, the merge summarizes
+// further path growth as any nested member.
 let stableRecursiveFlow name summaries flow widen =
     match (flow, siblingSummary(name)(summaries)) with
         | (SourceEvidenceFlow(uses, captures), Some(RecursiveEvidenceSummary { flow = SourceEvidenceFlow(previous, retained) })) ->
             widen
-            |> stableUses(appendProgramConstraints(retained)(captures))(retained)([])(Ashes.Collection.Map.empty)
-            |> SourceEvidenceFlow(stableUses(appendProgramConstraints(previous)(uses))(previous)([])(Ashes.Collection.Map.empty)(widen))
+            |> stableRecursiveUses(retained)(captures)
+            |> SourceEvidenceFlow(stableRecursiveUses(previous)(uses)(widen))
         | _ -> flow
 
 let recursive inferRecursiveEvidencePass members previous (outer: TypeEnvironment) substitution (next: TypeEnvironment) (supply: TypeVariableSupply) summaries widen =
