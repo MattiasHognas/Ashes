@@ -7,6 +7,8 @@ import Ashes.Byte
 import Ashes.Ffi
 import Ashes.Test as test
 import NativeFfiFixtures
+import ElfRelocatableMergeCases
+import ElfRelocatableMergeLink
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -6523,6 +6525,8 @@ let run shipped =
     |> testRunStaticExecutableForTextParseFloatModule(shipped)
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
+    |> runElfRelocatableMergeCases
+    |> testLinkAndRunMergedObjects
     |> testArenaRestoreReusesCursor
     |> testArenaGrowAndReclaim
     |> testCopyOutArenaRcAdt
