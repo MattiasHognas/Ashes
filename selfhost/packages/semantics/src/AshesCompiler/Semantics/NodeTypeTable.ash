@@ -21,6 +21,7 @@ export (
     value nodeOperatorAt,
     value nodeInstantiationAt,
     value nodeEvidenceStagesAt,
+    value nodeEvaluationPure,
     value nodeBindingsAt,
     value nodeDeclarationAt,
     value settledInstantiationArguments,
@@ -60,6 +61,8 @@ type NodeTypeTable =
     | instantiations: MapTree(Int, NodeInstantiation)
     // Per canonical scheme requirement at the source RHS of a binding.
     | evidenceStages: MapTree(Int, List(Int))
+    // The row evaluating a top-level value performs, keyed by the root node of the value.
+    | evaluationRows: MapTree(Int, SemanticType)
     // The names a node brings into scope: at a `let` its binding, at an arm guard or body the arm's pattern
     // variables.
     | bindings: MapTree(Int, List((Str, TypeScheme)))
@@ -69,7 +72,7 @@ type NodeTypeTable =
     | typeCount: Int
     | repeatedCount: Int
 
-let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, evidenceStages = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, declarations = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
+let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, evidenceStages = Ashes.Collection.Map.empty, evaluationRows = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, declarations = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
 
 let nodeTypeAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.types)
 
@@ -78,6 +81,22 @@ let nodeOperatorAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.get
 let nodeInstantiationAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.instantiations)
 
 let nodeEvidenceStagesAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.evidenceStages)
+
+// Whether a row lists no capability, through any row its tail has resolved to.
+let recursive rowPerformsNothing (row: SemanticType) =
+    match row with
+        | SemRow([], None) -> true
+        | SemRow([], Some(tail)) -> rowPerformsNothing(tail)
+        | SemVariable(_id) -> true
+        | _ -> false
+
+// Whether evaluating the top-level value rooted at `node` performs no capability: its recorded row
+// lists none, whatever variable it is still open in. A value with no recorded row is not known to
+// be pure.
+let nodeEvaluationPure (node: Int) (table: NodeTypeTable) =
+    match Ashes.Collection.Map.getInt(node)(table.evaluationRows) with
+        | Some(row) -> rowPerformsNothing(row)
+        | None -> false
 
 let nodeBindingsAt (node: Int) (table: NodeTypeTable) =
     match Ashes.Collection.Map.getInt(node)(table.bindings) with
@@ -200,6 +219,11 @@ let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable)
             match Ashes.Collection.Map.getInt(node)(table.evidenceStages) with
                 | Some(_younger) -> table
                 | None -> table with evidenceStages = Ashes.Collection.Map.setInt(node)(stages)(table.evidenceStages)
+        | NodeEvaluationRowNote(node, row) ->
+            match Ashes.Collection.Map.getInt(node)(table.evaluationRows) with
+                | Some(_younger) -> table
+                | None ->
+                    table with evaluationRows = Ashes.Collection.Map.setInt(node)(applySubstitutionMap(substitution)(row))(table.evaluationRows)
         | NodeDeclarationNote(node, name, scheme) ->
             table with declarations = Ashes.Collection.Map.setInt(node)(
                 (name, applySchemeSubstitutionMap(substitution)(scheme))

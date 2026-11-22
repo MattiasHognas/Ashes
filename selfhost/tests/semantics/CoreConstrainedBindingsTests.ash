@@ -7,6 +7,8 @@ import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTraitMe
 import AshesCompiler.Semantics.CoreLowering.Operators.dictionaryGoalCandidates
 import AshesCompiler.Semantics.CoreLowering.Owners.addBinding
 import AshesCompiler.Semantics.CoreLowering.Model.CoreBindingLocation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.deferredEvaluationKey
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.withRawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.Owners.pendingOperatorScheme
 import AshesCompiler.Semantics.CoreLowering.Expressions.constrainedBindingPlan
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
@@ -194,6 +196,15 @@ let checkDictionaryGoalCandidates unit =
                                 | _ -> Ashes.IO.panic("dictionary goal could not unify with its enclosing dictionary")
                     | _ -> Ashes.IO.panic("dictionary goal candidates were not one per active Eq dictionary"))
 
+// The bindings the standalone inference recorded as evaluating nothing observable: every name the
+// cases below bind except `loud`.
+let deferredEvaluations unit =
+    (let marker = TypeScheme(quantified = [], body = SemBool, constraints = [])
+    in
+        Ashes.Collection.Map.empty
+        |> Ashes.Collection.Map.setStr(deferredEvaluationKey("saved"))(marker)
+        |> Ashes.Collection.Map.setStr(deferredEvaluationKey("held"))(marker))
+
 let callbackPlanState unit =
     (let pickType =
         SemFunction(SemTuple([]))(SemFunction(SemVariable(5))(SemBool)(None))(None)
@@ -202,6 +213,7 @@ let callbackPlanState unit =
         in
             Unit
             |> initialState
+            |> withRawOperatorDeclarationSchemes(deferredEvaluations(Unit))
             |> addBinding("keep")(TypeScheme(quantified = [(4, "b")], body = SemFunction(SemVariable(4))(SemVariable(4))(None), constraints = []))(CoreLocal(0))
             |> addBinding("pick")(TypeScheme(quantified = [(5, "a")], body = pickType, constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(5)])]))(CoreLocal(1))
             |> addBinding("first")(TypeScheme(quantified = [(6, "c"), (7, "d")], body = firstType, constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(6)])]))(CoreLocal(2)))
@@ -216,14 +228,19 @@ let callbackPlan source =
             |> constrainedBindingPlan(name)(false)(value)(annotation)(requirements)
         | _ -> Ashes.IO.panic("callback binding did not parse")
 
-// A call of an unconstrained function that returns a constrained callback it was given keeps the
-// callback's requirement on the binding; a value that is not a function does not.
+// A top-level call of an unconstrained function that returns a constrained callback it was given
+// keeps the callback's requirement on the binding when the binding's evaluation observes nothing;
+// a binding not recorded so, or a value that is not a function, keeps none.
 let checkForwardedCallbackPlan unit =
     Unit
     |> (given (_) ->
         match callbackPlan("let saved = keep(pick) in saved") with
             | Some(CoreConstrainedInference { scheme = TypeScheme { body = SemFunction(_unit, SemFunction(SemVariable(operand), SemBool, _inner), _outer), constraints = TraitConstraint { traitName = "Eq", typeArguments = SemVariable(required) :: [] } :: [] } as scheme, error = None }) -> assert(operand == required && !schemeHoldsVariable(operand)(scheme))("a kept callback's requirement was not generalized on the binding")
             | _ -> Ashes.IO.panic("a kept constrained callback had no dictionary plan"))
+    |> (given (_) ->
+        match callbackPlan("let loud = keep(pick) in loud") with
+            | None -> Unit
+            | Some(_plan) -> Ashes.IO.panic("a binding whose evaluation may be observed was evaluated per use"))
     |> (given (_) ->
         match callbackPlan("let held = keep(first(Unit)) in held") with
             | None -> Unit

@@ -43,6 +43,8 @@ export (
     value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
     value rawOperatorDeclarationSchemes,
+    value recordedDeferredEvaluation,
+    value deferredEvaluationKey,
     value withRawOperatorDeclarationSchemes,
     value recordedSettledType,
     value recordedSettledTypeAt,
@@ -394,17 +396,54 @@ let operatorGenericScheme (recorded: TypeScheme) (state: CoreLoweringState) =
                         else None
                 | _ -> None
 
+// The key under which the raw-source schemes mark a top-level binding whose value lowering may
+// evaluate once per use: no top-level name contains a colon.
+let deferredEvaluationKey (name: Str) = "$deferred-evaluation:" + name
+
+let recursive everyRecordedStageLatent (stages: List(Int)) =
+    match stages with
+        | [] -> true
+        | stage :: rest -> stage != 0 && everyRecordedStageLatent(rest)
+
+// Whether evaluating the top-level value rooted at `node` performs no capability and needs none of
+// its binding's requirements: evaluating it again at each use observes nothing new.
+let recordedEvaluationDeferrable (node: Int) (table: NodeTypeTable) =
+    nodeEvaluationPure(node)(table) && (match nodeEvidenceStagesAt(node)(table) with
+        | Some(stages) -> everyRecordedStageLatent(stages)
+        | None -> true)
+
 // Raw source has no stable expression IDs. Top-level declarations have unique names, so retain
-// their operator-polymorphic schemes from validation without enabling expression-table reads.
+// their operator-polymorphic schemes from validation without enabling expression-table reads, and
+// mark each constrained binding whose evaluation can be deferred to its uses.
 let rawOperatorDeclarationSchemes (table: NodeTypeTable) =
     Ashes.Collection.Map.foldLeft(given (schemes) ->
-        given (_node) ->
+        given (node) ->
             given (entry) ->
                 match entry with
                     | (name, TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
-                        if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
-                        then Ashes.Collection.Map.setStr(name)(scheme)(schemes)
-                        else schemes)(Ashes.Collection.Map.empty)(table.declarations)
+                        let marked =
+                            if constraints != [] && recordedEvaluationDeferrable(node)(table)
+                            then
+                                Ashes.Collection.Map.setStr(deferredEvaluationKey(name))(scheme)(schemes)
+                            else schemes
+                        in
+                            if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                            then Ashes.Collection.Map.setStr(name)(scheme)(marked)
+                            else marked)(Ashes.Collection.Map.empty)(table.declarations)
+
+// Whether the top-level binding `name`, whose value is `value`, may be evaluated once per use: the
+// standalone inference recorded its evaluation as performing no capability and needing none of its
+// requirements. Without a record of the program it is not.
+let recordedDeferredEvaluation (name: Str) (value: Expr) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            recordedEvaluationDeferrable(nodeIdentityOf(value))(table)
+        | None ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(deferredEvaluationKey(name))(registry.rawDeclarationSchemes) with
+                    | Some(_scheme) -> true
+                    | None -> false
 
 let withRawOperatorDeclarationSchemes schemes state =
     (let registry = stateConcreteRegistry(state)

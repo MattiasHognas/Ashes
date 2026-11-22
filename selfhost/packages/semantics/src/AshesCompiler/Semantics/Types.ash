@@ -80,6 +80,8 @@ type NodeTypeNote =
     // quantified variable, in the scheme's order: the dictionaries the reference passes.
     | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint), List(TraitConstraint), List((TraitConstraint, Int)))
     | NodeEvidenceProfileNote(Int, List(Int))
+    // A top-level value's root node and the row its evaluation performs.
+    | NodeEvaluationRowNote(Int, SemanticType)
     // A name a node brings into scope and its scheme. The node is the `let` for a binding and the
     // arm body for a pattern variable.
     | NodeBindingNote(Int, Str, TypeScheme)

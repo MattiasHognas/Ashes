@@ -6298,13 +6298,27 @@ let inferTopLevelExpressionLocated expression environment substitution supply =
             |> inferWith(expression)(environment)(substitution)(nextSupply)
             |> checkResidualRow(ambientRow)(environment)
 
-// As `inferTopLevelExpressionLocated`, for the value of a binding that may write a signature.
+// The row a top-level value's evaluation performs, against the root node of the value: the
+// capabilities evaluating the binding uses, which lowering consults before it evaluates a
+// binding once per use.
+let noteEvaluationRow value ambientRow (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { supply = valueSupply, error = None } ->
+            if identifiedNode(value) >= 0
+            then
+                result with supply = withNodeNote(NodeEvaluationRowNote(identifiedNode(value))(ambientRow))(valueSupply)
+            else result
+        | _ -> result
+
+// As `inferTopLevelExpressionLocated`, for the value of a binding that may write a signature,
+// noting the row its evaluation performs.
 let inferTopLevelValueLocated annotation value environment substitution supply =
     match freshTypeVariable(supply) with
         | (ambientRow, nextSupply) ->
             ambientRow
             |> inferAnnotatedValue(annotation)(value)(environment)(substitution)(nextSupply)
             |> checkResidualRow(ambientRow)(environment)
+            |> noteEvaluationRow(value)(ambientRow)
 
 let inferExpressionFrom expression environment substitution supply =
     unlocatedInferenceResult(

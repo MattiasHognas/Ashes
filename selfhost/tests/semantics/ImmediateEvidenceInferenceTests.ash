@@ -316,6 +316,31 @@ let checkRecursiveDescentEvidence unit =
                 |> infer
                 |> expectSuccess))
 
+let evaluationPureAt name (table: NodeTypeTable) found node _span _expr =
+    match nodeDeclarationAt(node)(table) with
+        | Some((binding, _scheme)) ->
+            if binding == name
+            then
+                table
+                |> nodeEvaluationPure(node)
+                |> Some
+            else found
+        | None -> found
+
+// A top-level value's evaluation row is recorded: keeping a constrained callback performs nothing,
+// writing before returning it performs ConsoleIO.
+let checkEvaluationRows unit =
+    match stagedSource + "let keep f = f\nlet noisy f = let _ = Ashes.IO.write(\"x\") in f\nlet saved = keep(pick)\nlet loud = noisy(pick)\ntrue"
+    |> parsed
+    |> identifyProgram(0) with
+        | (program, _count) ->
+            match infer(program) with
+                | ProgramInferenceResult { error = None, nodeTypes = table } ->
+                    match (foldProgramNodes(evaluationPureAt("saved")(table))(None)(program), foldProgramNodes(evaluationPureAt("loud")(table))(None)(program)) with
+                        | (Some(true), Some(false)) -> Unit
+                        | _ -> Ashes.IO.panic("a top-level value's evaluation row was not recorded as its capabilities")
+                | result -> expectSuccess(result)
+
 let runImmediateEvidenceInferenceTests unit =
     (let path = "lib/Ashes/Trait.ash"
     in
@@ -350,3 +375,4 @@ let runImmediateEvidenceInferenceTests unit =
     |> checkEvidenceUseIdentity
     |> checkRecursiveUseMerge
     |> checkRecursiveDescentEvidence
+    |> checkEvaluationRows

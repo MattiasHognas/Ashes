@@ -55,7 +55,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
-import AshesCompiler.Semantics.NodeTypeTable.nodeEvidenceStagesAt
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDeferredEvaluation
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -3177,7 +3177,10 @@ let constrainedPartialApplication value (state: CoreLoweringState) =
 
 // A call of a function that states no requirement of its own can still return a function needing
 // evidence from a constrained argument it keeps, as `keep(pick)` or `choose((pick, other))` do. Its
-// requirements stay on the binding when the call needs none of them to evaluate.
+// requirements stay on the binding, which is then evaluated at each use, only for a top-level
+// binding whose evaluation the standalone inference recorded as performing no capability and
+// needing none of its requirements: evaluating it again observes nothing a single evaluation would
+// not.
 let recursive appliedResultMayBeFunction (semanticType: SemanticType) (supplied: Int) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemFunction(_argument, result, _row) ->
@@ -3187,36 +3190,24 @@ let recursive appliedResultMayBeFunction (semanticType: SemanticType) (supplied:
         | SemVariable(_id) -> true
         | _ -> false
 
-let forwardedCallbackApplication value (state: CoreLoweringState) =
+let forwardedCallbackApplication name value (state: CoreLoweringState) =
     match callSpineRootOf(value)(0) with
-        | Some((name, supplied)) ->
-            if supplied == 0
+        | Some((root, supplied)) ->
+            if supplied == 0 || !inProgramEntryFrame(state) || !recordedDeferredEvaluation(name)(value)(state)
             then false
             else
-                match visibleCalleeScheme(name)(state) with
+                match visibleCalleeScheme(root)(state) with
                     | Some(TypeScheme { body = body }) -> appliedResultMayBeFunction(body)(supplied)(state) && forwardsRequirementsOf(value)(state)
                     | None -> forwardsRequirementsOf(value)(state)
         | None -> false
 
-let recursive everyStageLatent (stages: List(Int)) =
-    match stages with
-        | [] -> true
-        | stage :: rest -> stage != 0 && everyStageLatent(rest)
-
-// A value that is a function, with no requirement the standalone inference recorded as needed
-// while evaluating it: a dictionary-taking form of it evaluates nothing earlier than the source
-// does.
-let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) value (state: CoreLoweringState) =
+// The plan of such a binding stands only when its value is a function: a dictionary-taking value
+// that is not one would evaluate per use what the source evaluates once.
+let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) =
     (let scheme = plan.scheme
     in
         match scheme.body with
-            | SemFunction(_argument, _result, _row) ->
-                match stateNodeTypes(state) with
-                    | None -> true
-                    | Some(table) ->
-                        match nodeEvidenceStagesAt(nodeIdentityOf(value))(table) with
-                            | Some(stages) -> everyStageLatent(stages)
-                            | None -> true
+            | SemFunction(_argument, _result, _row) -> true
             | _ -> false)
 
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
@@ -3236,7 +3227,7 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
                     if constrainedPartialApplication(value)(state)
                     then (true, true, false)
                     else
-                        let forwarded = forwardedCallbackApplication(value)(state)
+                        let forwarded = forwardedCallbackApplication(name)(value)(state)
                         in (forwarded, forwarded, forwarded)
     in
         if candidate
@@ -3245,7 +3236,7 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                 | CoreConstrainedInference { error = Some(_error) } -> None
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan)(value)(state))
+                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan))
                     then Some(plan)
                     else None
         else None
@@ -3349,14 +3340,40 @@ let constrainedPlanSourceType (plan: CoreConstrainedInference) =
     (let scheme = plan.scheme
     in withoutCapabilityRows(scheme.body))
 
-// Each argument is evaluated once, before the dictionary parameters, except one that reads a
-// constrained binding: it needs the dictionaries itself, so it stays in the application they are
-// supplied to.
+// A value built without evaluating anything that could be observed: names, literals, lambdas and
+// the tuples, lists and records of them.
+let recursive constructsValueOnly (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> constructsValueOnly(inner)
+        | ExprNode(_node, inner) -> constructsValueOnly(inner)
+        | ExprVar(_name) -> true
+        | ExprQualifiedVar(_module, _name) -> true
+        | ExprInt(_value) -> true
+        | ExprString(_value) -> true
+        | ExprBool(_value) -> true
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | ExprTuple(elements) -> constructValuesOnly(elements)
+        | ExprList(elements, _layout) -> constructValuesOnly(elements)
+        | ExprRecord(_name, fields, _layout) ->
+            fields
+            |> map(given (field) ->
+                match field with
+                    | (_field, value) -> value)
+            |> constructValuesOnly
+        | _ -> false
+and constructValuesOnly (expressions: List(Expr)) =
+    match expressions with
+        | [] -> true
+        | head :: rest -> constructsValueOnly(head) && constructValuesOnly(rest)
+
+// Each argument is evaluated once, before the dictionary parameters, except a value built only
+// from names and literals that reads a constrained binding: it needs the dictionaries itself, so it
+// stays in the application they are supplied to, where building it again observes nothing.
 let recursive capturePartialArguments root arguments site index captured (state: CoreLoweringState) =
     match arguments with
         | [] -> (root, captured)
         | argument :: rest ->
-            if forwardsRequirementsOf(argument)(state)
+            if constructsValueOnly(argument) && forwardsRequirementsOf(argument)(state)
             then
                 capturePartialArguments(ExprCall(root)(argument)(false)(callArgumentsInline))(rest)(site)(index + 1)(captured)(state)
             else
