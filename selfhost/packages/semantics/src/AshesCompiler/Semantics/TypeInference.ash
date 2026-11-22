@@ -5958,8 +5958,8 @@ and inferWith expression environment substitution supply ambientRow =
                                                                 |> addConstraints(retainedOuterRequirements(environment)(scheme.quantified)(checkedSubstitution)(selectedConstraints))
                                                             | EvidenceBindingInference { error = Some(error) } -> inferenceFailure(checkedType)(checkedSubstitution)(checkedSupply)(error)
                                                     | failure -> failure
-                                            | failure -> failure
-                                | failure -> failure
+                                            | failure -> locateAtValue(value)(failure)
+                                | failure -> locateAtValue(value)(failure)
         | ExprIf(condition, thenBranch, elseBranch) ->
             match inferWith(condition)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = conditionType, substitution = conditionSubstitution, supply = conditionSupply, constraints = conditionConstraints, error = None } ->
