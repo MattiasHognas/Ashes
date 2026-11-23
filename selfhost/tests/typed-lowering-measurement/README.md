@@ -35,3 +35,7 @@ A successful run exits zero and prints a TSV header and one data row. A project,
 | `pending_keys` | Space-separated pending trait site keys. Empty when there are no keys. |
 
 The typed counter gate requires zero pending traits, zero equality goals and `replayed=no`. Record the body re-lowering count separately. Measurements use the Core lowering API with reuse enabled and a manifest-level source context. The production CLI, backend, stage-2/3 comparison and behaviour suites provide separate acceptance evidence.
+
+## Test-program sweep
+
+The driver also takes a single `.ash` file in place of a manifest; it is stitched with the shipped modules it imports, as `compile <file>` does. `sweep.sh <measure> <typed|legacy> <out>` runs it over every `tests/*.ash` that is not an `expect-compile-error` fixture, one program at a time under a 4 GiB cap, and writes `rows.tsv` (the program name, then the 19 columns above), `failed.txt` (programs whose run did not exit zero with a complete row: stitch, inference or lowering errors) and `summary.txt` (programs, replays, pending trait goals, structural equality goals, first-pass deferred operators). The goal details of every program that replayed or deferred an operator are kept in `<out>/<name>.err`. Run it from the repository root with the same driver binary for both modes.
