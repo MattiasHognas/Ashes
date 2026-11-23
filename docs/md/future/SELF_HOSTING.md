@@ -304,14 +304,19 @@ Order of work. Each step lands separately and is useful if the later ones are de
    - `activeEvidenceCoversOperator` and `traitPlanLacksActiveEvidence`: an open operand dispatches
      through a generic body's own evidence only when that body carries it.
 
-   What the table does not yet give lowering:
-   - Nodes that lowering synthesizes (evidence rewrites, specialized copies) have no identity;
-     they need a rule such as the source node's identity plus an instantiation.
-   - Handler operation arm parameters and `resume` are not recorded.
-   - Top-level schemes are only in the environment, by stitched name.
-   - Record construction and update have no instantiation record.
-   - Operators record a trait and an operand type, not whether the instance is primitive, a user
-     instance or a dictionary.
+   What the table gives lowering, re-checked against the code on **2026-11-23**:
+   - Still missing: nodes that lowering synthesizes (evidence rewrites, `$partial` captures,
+     constrained-value wrappers, specialized copies) have no identity. Lowering keeps the identity of
+     the nearest numbered node around them, so a read at such a site sees the enclosing node's
+     record; readers that could be misled check what they read (a lambda parameter is matched by
+     name). They need a rule such as the source node's identity plus an instantiation.
+   - Recorded, read in part: handler operation arm parameters and `resume` are bound at the arm
+     body; lowering reads the type recorded for a `resume` call, not the arm parameters.
+   - Recorded and read: top-level schemes by the root node of their value (`declarations`), read
+     for operator-generic declarations; bindings at `let`, lambda and arm nodes, read for nested
+     operator-generic lets and lambda parameters.
+   - Recorded, not read: record construction and update instantiations; how each operator's
+     instance is reached (primitive, declared implementation, dictionary).
    - Schemes and unconstrained variables, decided on **2026-11-18** by the user. A binding's
      requirements are reduced through the implementations as stage 0 reduces them: one an
      implementation supplies leaves nothing (`Multiply(Int)`), one an implementation head matches
@@ -323,8 +328,11 @@ Order of work. Each step lands separately and is useful if the later ones are de
      is ambiguous (`ASH010`, reference 21.6), with no numeric default for operators. Stage 0 already
      rejected that shape; the standalone inference now does too, with stage 0's wording for both
      ambiguity forms. Lowering's own `Int` sealing of a deferred operator is unchanged where the
-     inference does not reject first.
-   - `tests/trait_deriving.ash` is rejected before numbering.
+     inference does not reject first. Lowering still asks for unreduced requirements of its own
+     schemes; under typed lowering a call reduces them the same way to match the recorded
+     dictionaries.
+   - `tests/trait_deriving.ash` is numbered and every derived expression has a recorded type
+     (`checkDerivedTree`).
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
 9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
