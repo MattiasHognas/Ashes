@@ -444,6 +444,78 @@ let isSingleRecordLayout (layouts: List(CoreConstructorLayout)) =
         | CoreConstructorLayout { fieldNames = _field :: _fields } :: [] -> true
         | _ -> false
 
+let recursive genericVariantCallSpine (expression: Expr) (count: Int) =
+    match stripExprAt(expression) with
+        | ExprCall(function, _argument, _sugar, _layout) -> genericVariantCallSpine(function)(count + 1)
+        | root -> (root, count)
+
+// Stage 0's `GenericVariantReturnsOwnedRoot`: every path of the loop body ends in the parameter
+// itself, unshadowed, or in a full self-call, so the loop's result is the parameter's own root.
+let recursive genericVariantReturnsOwnedRoot (self: Str) (arity: Int) (parameter: Str) (shadowed: List(Str)) (body: Expr) =
+    match stripExprAt(body) with
+        | ExprVar(name) -> !containsName(parameter)(shadowed) && name == parameter
+        | ExprIf(_condition, thenBranch, elseBranch) -> genericVariantReturnsOwnedRoot(self)(arity)(parameter)(shadowed)(thenBranch) && genericVariantReturnsOwnedRoot(self)(arity)(parameter)(shadowed)(elseBranch)
+        | ExprMatch(_value, cases, _position) ->
+            match cases with
+                | [] -> false
+                | _ -> genericVariantArmsReturnOwnedRoot(self)(arity)(parameter)(shadowed)(cases)
+        | ExprLet(name, _value, inner, _parameters, _annotation, _requirements) -> genericVariantReturnsOwnedRoot(self)(arity)(parameter)(name :: shadowed)(inner)
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            match genericVariantCallSpine(body)(0) with
+                | (ExprVar(callee), count) -> callee == self && !containsName(self)(shadowed) && count == arity
+                | _ -> false
+        | _ -> false
+and genericVariantArmsReturnOwnedRoot (self: Str) (arity: Int) (parameter: Str) (shadowed: List(Str)) cases =
+    match cases with
+        | [] -> true
+        | (pattern, armBody, _guard) :: rest ->
+            genericVariantReturnsOwnedRoot(self)(arity)(parameter)(append(shapePatternNames(pattern)([]))(shadowed))(armBody) && genericVariantArmsReturnOwnedRoot(self)(arity)(parameter)(shadowed)(rest)
+
+let recursive appliedLoopResult (functionType: SemanticType) (count: Int) (state: CoreLoweringState) =
+    if count == 0
+    then
+        functionType
+        |> resolveType(state)
+        |> Some
+    else
+        match resolveType(state)(functionType) with
+            | SemFunction(_argument, result, _row) -> appliedLoopResult(result)(count - 1)(state)
+            | _ -> None
+
+// Stage 0's `GenericVariantHasSafeExit` result-type proof: a scalar result keeps nothing of the
+// parameter, and a result of the contract's types acquires its own graph before the loop's owners
+// are released. A result type not yet resolved proves nothing.
+let genericVariantResultKeepsNoRoot (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match lookupBinding(loop.selfName)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match appliedLoopResult(body)(loop.arity)(state) with
+                | Some(SemVariable(_id)) -> false
+                | Some(result) -> resultSurvivesReset(result)(state) || isGeneralRcValueType(result)(state)
+                | None -> false
+        | None -> false
+
+let recursive namesTraitEvidence (names: List(Str)) =
+    match names with
+        | [] -> false
+        | name :: rest -> Ashes.Text.startsWith(name)("__trait_") || namesTraitEvidence(rest)
+
+// Stage 0's `IsGeneralRcGenericVariantLoopParameter`: a changing loop parameter of a generic
+// variant the contract governs (a map's tree) needs an owned loop root like a monomorphic variant,
+// so an arena update does not borrow an iteration's reference-counted children and keep them past
+// their release. A loop carrying trait evidence, a tail-modulo-cons loop, and a parameter already
+// taken as a reuse root, a specialization accumulator or a routed one stay as they are. The exit
+// contract is the owned-root return or a result that keeps no root; stage 0's third proof (an
+// exhaustive reach summary that never reaches the parameter) is not ported, so a loop proven only
+// by it keeps its parameter in the arena and its specialization. Stage 0's
+// `ReserveGenericVariantLoopRoot` is the same rule without the exit contract, read before the
+// specialization scan admits the parameter; here the scan reads the provisional placement, which
+// holds the exit contract, so a loop whose exit is not proven yet keeps its specialization.
+let genericVariantLoopParameter (ordinal: Int) (named: SemanticType) (layouts: List(CoreConstructorLayout)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (named, loopParameterNameAt(ordinal)(loop.parameterNames)) with
+        | (SemNamed(_symbolId, _typeName, _argument :: _arguments), Some(parameter)) ->
+            generalRcEnabled(state) && stateSpecializingLinearParam(state) != Some(parameter) && !loop.tmcShapePresent && !namesTraitEvidence(loop.parameterNames) && length(layouts) >= 2 && !containsName(parameter)(stateLinearReuseNames(state)) && !containsName(parameter)(stateLinearSpecializationAccumulators(state)) && !containsName(parameter)(stateRoutedSpecializationAccumulators(state)) && !containsUnresolvedLayout(named)(state) && isGeneralRcAdmissible(named)([])(state) && isGeneralRcNamedType(named)(state) && (genericVariantReturnsOwnedRoot(loop.selfName)(loop.arity)(parameter)([])(loop.body) || genericVariantResultKeepsNoRoot(loop)(state))
+        | _ -> false
+
 // Stage 0's `IsGeneralRcTcoParameterType`: a record only the normalization helper expresses (a
 // state threaded through a loop) is placed on the reference-counted heap like any other aggregate,
 // normalized at entry and at the back edge, its predecessor released; so is a monomorphic variant
@@ -461,6 +533,10 @@ let tcoGeneralRcParameterPlacement (ordinal: Int) (named: SemanticType) (layouts
         | (SemNamed(_symbolId, _name, []), false) ->
             if isGeneralRcNamedType(named)(state)
             then Some(!isSpecializationAccumulatorAt(ordinal)(loop) && !loop.tmcShapePresent)
+            else None
+        | (SemNamed(_symbolId, _name, _argument :: _arguments), false) ->
+            if genericVariantLoopParameter(ordinal)(named)(layouts)(loop)(state)
+            then Some(true)
             else None
         | _ -> None
 

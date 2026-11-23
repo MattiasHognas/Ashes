@@ -750,6 +750,20 @@ let expectChoiceShapedVariantParameterIsRuntimeManaged unit =
     |> loopLines("[ClosureHelper from build]")
     |> (given (lines) -> check("the back edge releases the variant's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
 
+let letBoundMatchMapAccumulatorSource = "type Choice =\n    | Even\n    | Odd(Int)\n\nlet recursive build i n m =\n    if i >= n\n    then m\n    else\n        let tag =\n            if i - i / 2 * 2 == 0\n            then Even\n            else Odd(i)\n        in\n            let m2 =\n                match tag with\n                    | Even -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i))(i)(m)\n                    | Odd(k) -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(k))(i + 7)(m)\n            in build(i + 1)(n)(m2)\n\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(build(0)(4)(Ashes.Collection.Map.empty))))"
+
+// A map's tree threaded through a loop that returns it is a changing generic variant of the
+// contract's types: it is placed on the reference-counted heap ahead of the specialization scan,
+// so neither call is routed to the in-place specialization and the back edge releases the old
+// root under its active flag.
+let expectGenericVariantLoopParameterIsRuntimeManaged unit =
+    letBoundMatchMapAccumulatorSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the back edge releases the map's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
+        |> (given (_) -> check("no call is routed to the in-place specialization")(countContaining("__reuse")(lines) == 0)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -779,4 +793,5 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
