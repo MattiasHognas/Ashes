@@ -9,6 +9,7 @@
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
 import AshesCompiler.Semantics.ExprMentions.exprMentionsName
+import AshesCompiler.Semantics.ModuleReferenceRewriting.patternNames
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.OwnershipProvenance
@@ -362,6 +363,10 @@ let recursive collectFreeVars (expr: Expr) (bound: List(Str)) (acc: List(Str)) =
         | ExprResultMapErrorPipe(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
         | ExprAwait(e) -> collectFreeVars(e)(bound)(acc)
         | ExprPerform(e) -> collectFreeVars(e)(bound)(acc)
+        | ExprHandle(body, arms) ->
+            acc
+            |> collectFreeVars(body)(bound)
+            |> collectFreeVarsHandleArms(arms)(bound)
         | _ -> acc
 and collectFreeVarsPair (left: Expr) (right: Expr) (bound: List(Str)) (acc: List(Str)) =
     (let a1 = collectFreeVars(left)(bound)(acc)
@@ -380,6 +385,22 @@ and collectFreeVarsFields (fields: List((Str, Expr))) (bound: List(Str)) (acc: L
                 | (_, expr) ->
                     let a1 = collectFreeVars(expr)(bound)(acc)
                     in collectFreeVarsFields(tail)(bound)(a1)
+// Stage 0's `FreeVarsVisitHandle`: each arm binds `resume` and its parameters' pattern names over
+// its body.
+and collectFreeVarsHandleArms (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (bound: List(Str)) (acc: List(Str)) =
+    match arms with
+        | [] -> acc
+        | (_capability, _operation, parameters, body) :: tail ->
+            acc
+            |> collectFreeVars(body)(handleArmBound(parameters)("resume" :: bound))
+            |> collectFreeVarsHandleArms(tail)(bound)
+and handleArmBound (parameters: List(Pattern)) (bound: List(Str)) =
+    match parameters with
+        | [] -> bound
+        | parameter :: rest ->
+            bound
+            |> append(patternNames(parameter))
+            |> handleArmBound(rest)
 and collectFreeVarsArms (arms: List((Pattern, Expr, Maybe(Expr)))) (bound: List(Str)) (acc: List(Str)) =
     match arms with
         | [] -> acc
