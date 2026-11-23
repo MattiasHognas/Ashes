@@ -6382,6 +6382,13 @@ let testCopyOutTcoListCellInnerList unit = assertProgramPrints(buildCopyOutTcoLi
 
 let testLoadArgumentOwnership unit = assertProgramPrintsLines(buildLoadArgumentOwnershipModule)("selfhostBackendLoadArgumentOwnership")("selfhost_backend_load_argument_ownership_e2e")(["0", "1", "1", "0", "5"])
 
+// A lowered source program with top-level functions, a function passed as a value and a
+// recursive loop, built as three partitions: it prints what its single-module build prints.
+let testPartitionedRealSourceProgram unit =
+    "partitionedSource"
+    |> lowerRealSource("let double x = x * 2\nlet addTen x = double(x + 10)\nlet apply f x = f(x)\nlet recursive sumTo n acc = if n == 0 then acc else sumTo(n - 1)(acc + n)\nAshes.IO.print(apply(addTen)(5) + sumTo(100)(0))")
+    |> (given (program) -> assertPartitionedMatchesWhole("selfhost_backend_partitioned_source_e2e")(program)(3)("5080"))
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -6560,6 +6567,7 @@ let run shipped =
     |> runElfRelocatableMergeCases
     |> testLinkAndRunMergedObjects
     |> runPartitionedObjectsCases
+    |> testPartitionedRealSourceProgram
     |> testArenaRestoreReusesCursor
     |> testArenaGrowAndReclaim
     |> testCopyOutArenaRcAdt
