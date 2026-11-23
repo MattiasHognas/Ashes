@@ -8947,6 +8947,7 @@ public sealed partial class Lowering
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         WithdrawBorrowedScrutineeRetains(tco);
+        WithdrawLetCopiedCellTailDuplicates(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
             tco,

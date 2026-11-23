@@ -457,8 +457,21 @@ let testNestedConstructorRetainsLiveOwnerFieldOnce unit =
             |> countContainingBoth("RcDup")("MayBeEmpty=true")
             |> test.assertEqual(1)))
 
+let letCellExitSource = "type State =\n    | S(List(Int))\n\nlet recursive advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = 0 :: perm\n            in\n                if r == 0\n                then S(perm2)\n                else advance(r - 1)(S(perm2))\n\nmatch advance(0)(S([1, 2])) with\n    | S(xs) -> Ashes.IO.print(\"s\")"
+
+// A loop's exit wraps a `let`-bound arena cell over a matched list in a constructor the return
+// copies onto the reference-counted heap: the copy retains the list itself, so the duplicate the
+// cell took of its tail is withdrawn and only the pattern owner's own duplicate stays a retain.
+let testLetCellCopiedAtExitWithdrawsTailDuplicate unit =
+    letCellExitSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> countContainingBoth("RcDup")("MayBeEmpty=true")
+    |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testLetCellCopiedAtExitWithdrawsTailDuplicate
     |> testNestedConstructorRetainsLiveOwnerFieldOnce
     |> testOwnedListLetWalksSpineInline
     |> testLambdaReturningRecordAllocatesRuntimeManaged
