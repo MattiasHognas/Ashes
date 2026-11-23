@@ -326,7 +326,7 @@ let checkRawNestedLets unit =
     (let _ = checkRawNestedLetCopies("trailing value")("let both =\n    (let double x = x + x\n    in (double(5), double(1.25)))\nboth")
     in
         let _ = checkRawNestedLetCopies("function body reading its parameter")("let describe n =\n    (let double x = x + x\n    in (double(n), double(1.75)))\ndescribe(6)")
-        in checkRawNestedLetCopies("captured by an inner lambda")("let describe n =\n    (let double x = x + x\n    in\n        let both = given (unit) -> (double(n), double(1.75))\n        in both(Unit))\ndescribe(6)"))
+        in checkRawNestedLetCopies("captured by an inner lambda")("let describe n =\n    (let double x = x + x\n    in\n        let both = given (k) -> (double(n), double(1.75), k)\n        in both(0))\ndescribe(6)"))
 
 // Inside a specialized wrapper the use can still carry that wrapper's
 // variable id. Read it through the current copy; do not guess it when open.
