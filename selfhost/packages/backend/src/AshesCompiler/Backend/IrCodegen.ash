@@ -136,6 +136,7 @@ export (
     value codegenEntryFunction,
     value codegenProgram,
     value codegenProgramWith,
+    value codegenProgramPartition,
     value programUsesLibm,
     value programUsesRegex,
     value programUsesTls,
@@ -2453,6 +2454,214 @@ let markLargeEntryUnoptimized context entryValue (entryFunction: IrFunction) =
                 in addFunctionEnumAttribute(context)(entryValue)("noinline")
             else Unit
 
+// Which module of a program `codegenFunctionsIn` builds: the whole program, or one partition of a
+// program split for partitioned code generation (its index and every lifted label mapped to the
+// partition that defines it).
+type CodegenPartition =
+    | WholeProgram
+    | ProgramPartition(Int, MapTree(Str, Int))
+
+// Only partition 0 defines the entry function.
+let partitionEmitsEntry (partition: CodegenPartition) =
+    match partition with
+        | WholeProgram -> true
+        | ProgramPartition(index, _) -> index == 0
+
+let markEntryUnoptimizedIn (partition: CodegenPartition) context entryValue (entryFunction: IrFunction) =
+    if partitionEmitsEntry(partition)
+    then markLargeEntryUnoptimized(context)(entryValue)(entryFunction)
+    else Unit
+
+let recursive declareExportedLiftedFunctions module_ closureFnType functions =
+    match functions with
+        | [] -> []
+        | function_ :: rest ->
+            match function_ with
+                | IrFunction { label = label } ->
+                    let functionValue = addFunction(module_)(label)(closureFnType)
+                    in
+                        let _ = setVisibility(functionValue)(visibilityHidden)
+                        in (label, functionValue) :: declareExportedLiftedFunctions(module_)(closureFnType)(rest)
+
+// Every lifted function, internal in a whole-program module. A partition reaches the functions
+// other partitions define by name, so there each one is external with hidden visibility: hidden
+// makes LLVM address it directly, never through the GOT the linker does not build.
+let declareLiftedFunctionsIn (partition: CodegenPartition) module_ closureFnType functions =
+    match partition with
+        | WholeProgram -> declareLiftedFunctions(module_)(closureFnType)(functions)
+        | ProgramPartition(_, _) -> declareExportedLiftedFunctions(module_)(closureFnType)(functions)
+
+let recursive functionsOwnedBy (index: Int) (assignment: MapTree(Str, Int)) (functions: List(IrFunction)) (acc: List(IrFunction)) =
+    match functions with
+        | [] -> Ashes.Collection.List.reverse(acc)
+        | function_ :: rest ->
+            match function_ with
+                | IrFunction { label = label } ->
+                    match Ashes.Collection.Map.getStr(label)(assignment) with
+                        | Some(owner) ->
+                            if owner == index
+                            then functionsOwnedBy(index)(assignment)(rest)(function_ :: acc)
+                            else functionsOwnedBy(index)(assignment)(rest)(acc)
+                        | None -> functionsOwnedBy(index)(assignment)(rest)(acc)
+
+// The lifted functions whose bodies this module defines.
+let ownedFunctionsIn (partition: CodegenPartition) (functions: List(IrFunction)) =
+    match partition with
+        | WholeProgram -> functions
+        | ProgramPartition(index, assignment) -> functionsOwnedBy(index)(assignment)(functions)([])
+
+let recursive definedGlobalNames (global: Int) (acc: List(Str)) =
+    if global == 0
+    then Ashes.Collection.List.reverse(acc)
+    else
+        if isDeclarationAt(global)
+        then
+            definedGlobalNames(nextGlobalAddress(global))(acc)
+        else
+            match valueNameAt(global) with
+                | Ok(name) ->
+                    definedGlobalNames(nextGlobalAddress(global))(name :: acc)
+                | Error(message) -> Ashes.IO.panic("codegen: a global variable has no readable name: " + message)
+
+// The global variables defined before any function body: everything the module's runtime and
+// prologue define. The prologue reads the whole program, so every partition builds the same ones
+// under the same names. A whole-program module needs none of this.
+let prologueGlobalNamesIn (partition: CodegenPartition) module_ =
+    match partition with
+        | WholeProgram -> []
+        | ProgramPartition(_, _) ->
+            definedGlobalNames(firstGlobalAddress(module_))([])
+
+// A runtime message constant (`.str_msg_<name>`) reuses one name for different contents in
+// different emitters, so each partition keeps its own; `llvm.*` globals are LLVM's.
+let isSharedPrologueGlobal (name: Str) =
+    if Ashes.Text.startsWith(name)(".str_msg_")
+    then false
+    else Ashes.Text.startsWith(name)("llvm.") == false
+
+// Replaces a defined global by an external hidden declaration of the same name, type, constness
+// and alignment, as stage 0's `ReplaceGlobalWithDeclaration`; a thread-local one stays
+// thread-local under the local-exec model.
+let replaceGlobalWithDeclaration module_ (name: Str) =
+    (let global = getNamedGlobal(module_)(name)
+    in
+        let valueType = globalValueType(global)
+        in
+            let constant = isGlobalConstant(global)
+            in
+                let alignment = getAlignment(global)
+                in
+                    let threadLocal = isThreadLocal(global)
+                    in
+                        let _ = setValueName(global)(name + "$stripped")
+                        in
+                            let declaration = addGlobal(module_)(valueType)(name)
+                            in
+                                Unit
+                                |> (given (_) -> setLinkage(declaration)(linkageExternal))
+                                |> (given (_) -> setVisibility(declaration)(visibilityHidden))
+                                |> (given (_) -> setGlobalConstant(declaration)(constant))
+                                |> (given (_) -> setAlignment(declaration)(alignment))
+                                |> (given (_) ->
+                                    if threadLocal
+                                    then setThreadLocalMode(declaration)(threadLocalModeLocalExec)
+                                    else Unit)
+                                |> (given (_) -> replaceAllUsesWith(global)(declaration))
+                                |> (given (_) -> deleteGlobal(global)))
+
+let exportSharedGlobal module_ (index: Int) (name: Str) =
+    if isSharedPrologueGlobal(name) == false
+    then Unit
+    else
+        if index == 0
+        then
+            let global = getNamedGlobal(module_)(name)
+            in
+                let _ = setLinkage(global)(linkageExternal)
+                in setVisibility(global)(visibilityHidden)
+        else replaceGlobalWithDeclaration(module_)(name)
+
+let recursive exportSharedGlobals module_ (index: Int) (names: List(Str)) =
+    match names with
+        | [] -> Unit
+        | name :: rest ->
+            let _ = exportSharedGlobal(module_)(index)(name)
+            in exportSharedGlobals(module_)(index)(rest)
+
+let recursive markNames (names: List(Str)) (acc: MapTree(Str, Bool)) =
+    match names with
+        | [] -> acc
+        | name :: rest ->
+            acc
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> markNames(rest)
+
+// A global a function body created that is not a runtime message constant would be a second,
+// unshared copy of runtime state in every partition that creates it.
+let recursive checkBodyGlobals module_ (prologue: MapTree(Str, Bool)) (names: List(Str)) =
+    match names with
+        | [] -> Unit
+        | name :: rest ->
+            match Ashes.Collection.Map.getStr(name)(prologue) with
+                | Some(_) -> checkBodyGlobals(module_)(prologue)(rest)
+                | None ->
+                    if name
+                    |> getNamedGlobal(module_)
+                    |> isGlobalConstant
+                    then checkBodyGlobals(module_)(prologue)(rest)
+                    else Ashes.IO.panic("codegen: the mutable global " + name + " was created while emitting a function body, so partitions cannot share it")
+
+// An externally visible runtime function a partition other than 0 defines (none today: every
+// runtime helper is internal) becomes weak, so the merged object keeps partition 0's copy, as
+// stage 0 does for the libc-named helpers.
+let recursive weakenRuntimeFunctions module_ (entryName: Str) (liftedFunctions: MapTree(Str, LLVMValueRef)) (function_: Int) =
+    if function_ == 0
+    then Unit
+    else
+        let next = nextFunctionAddress(function_)
+        in
+            if isDeclarationAt(function_) || linkageAt(function_) != linkageExternal
+            then weakenRuntimeFunctions(module_)(entryName)(liftedFunctions)(next)
+            else
+                match valueNameAt(function_) with
+                    | Error(_) -> weakenRuntimeFunctions(module_)(entryName)(liftedFunctions)(next)
+                    | Ok(name) ->
+                        match Ashes.Collection.Map.getStr(name)(liftedFunctions) with
+                            | Some(_) -> weakenRuntimeFunctions(module_)(entryName)(liftedFunctions)(next)
+                            | None ->
+                                let _ =
+                                    if name == entryName
+                                    then Unit
+                                    else
+                                        setLinkage(getNamedFunction(module_)(name))(linkageWeakOdr)
+                                in weakenRuntimeFunctions(module_)(entryName)(liftedFunctions)(next)
+
+// Stage 0's `ExportPartitionSymbols` for one partition once its bodies are emitted: the entry is
+// hidden; partition 0's prologue globals become external hidden definitions and the other
+// partitions' copies become external hidden declarations of them, so every partition shares one
+// set of runtime globals and string literals; the runtime message constants stay each partition's
+// own. Nothing changes in a whole-program module.
+let exportPartitionSymbols (partition: CodegenPartition) module_ (entryName: Str) (liftedFunctions: MapTree(Str, LLVMValueRef)) (prologueGlobals: List(Str)) =
+    match partition with
+        | WholeProgram -> Unit
+        | ProgramPartition(index, _) ->
+            Unit
+            |> (given (_) ->
+                setVisibility(getNamedFunction(module_)(entryName))(visibilityHidden))
+            |> (given (_) ->
+                module_
+                |> firstGlobalAddress
+                |> (given (first) -> definedGlobalNames(first)([]))
+                |> checkBodyGlobals(module_)(markNames(prologueGlobals)(Ashes.Collection.Map.empty)))
+            |> (given (_) -> exportSharedGlobals(module_)(index)(prologueGlobals))
+            |> (given (_) ->
+                if index == 0
+                then Unit
+                else
+                    module_
+                    |> firstFunctionAddress
+                    |> weakenRuntimeFunctions(module_)(entryName)(liftedFunctions))
+
 // Builds `void <name>()` for `entryFunction` plus `i64 <label>(i64, i64, i64)` for every function
 // in `functions`, all in one fresh module, and returns `(module_, builder)`, matching every other
 // module builder's shape in `selfhost/tests/backend` so the same `emitModule` verification
@@ -2466,7 +2675,7 @@ let markLargeEntryUnoptimized context entryValue (entryFunction: IrFunction) =
 // `.text` offset `0`; its body is emitted LAST, after every lifted function, purely so the
 // lifted-function lookups it needs (`MakeClosure`/`CallKnown` naming a label) resolve the same
 // way a lifted body's own do.
-let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) =
+let codegenFunctionsIn (partition: CodegenPartition) name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) =
     (let module_ = createModule(name)(context)
     in
         let types = coreLlvmTypes(context)
@@ -2476,7 +2685,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                 |> functionType(voidType(context))([types.i64])(1u32)
                 |> addFunction(module_)(name)
             in
-                let _ = markLargeEntryUnoptimized(context)(entryValue)(entryFunction)
+                let _ = markEntryUnoptimizedIn(partition)(context)(entryValue)(entryFunction)
                 in
                     let closureFnType = closureFunctionTypeOf(types.i64)
                     in
@@ -2515,7 +2724,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                 |> buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)
                                                                 |> indexStrEntries
                                                             in
-                                                                let declaredFunctions = declareLiftedFunctions(module_)(closureFnType)(functions)
+                                                                let declaredFunctions = declareLiftedFunctionsIn(partition)(module_)(closureFnType)(functions)
                                                                 in
                                                                     let liftedFunctions = indexStrEntries(declaredFunctions)
                                                                     in
@@ -2606,10 +2815,22 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                                                                     moduleBuilder = builder
                                                                                                 )
                                                                                             in
-                                                                                                let _ = codegenLiftedFunctions(mc)(functions)
+                                                                                                let prologueGlobals = prologueGlobalNamesIn(partition)(module_)
                                                                                                 in
-                                                                                                    let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                                                                    in (module_, mc.moduleBuilder))
+                                                                                                    let _ =
+                                                                                                        functions
+                                                                                                        |> ownedFunctionsIn(partition)
+                                                                                                        |> codegenLiftedFunctions(mc)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            if partitionEmitsEntry(partition)
+                                                                                                            then codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                                                                            else Unit
+                                                                                                        in
+                                                                                                            let _ = exportPartitionSymbols(partition)(module_)(name)(liftedFunctions)(prologueGlobals)
+                                                                                                            in (module_, mc.moduleBuilder))
+
+let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) = codegenFunctionsIn(WholeProgram)(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobalCount)(leakCheck)
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)
@@ -2621,3 +2842,12 @@ let codegenProgramWith (leakCheck: Bool) name context program =
         | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)
 
 let codegenProgram name context program = codegenProgramWith(false)(name)(context)(program)
+
+// One partition of a program split for partitioned code generation: the module of partition
+// `index` under `assignment` (every lifted label mapped to the partition defining it). It declares
+// every lifted function, defines its own, and partition 0 alone defines the entry function and the
+// shared globals; see `exportPartitionSymbols`.
+let codegenProgramPartition (leakCheck: Bool) (index: Int) (assignment: MapTree(Str, Int)) name context program =
+    match program with
+        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } ->
+            codegenFunctionsIn(ProgramPartition(index)(assignment))(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)
