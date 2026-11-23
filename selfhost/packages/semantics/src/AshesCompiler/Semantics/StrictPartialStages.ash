@@ -11,6 +11,9 @@ import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
 import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 import AshesCompiler.Semantics.NodeTypeTable.nodeEvidenceStagesAt
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeIdentity.synthesizedNodeIdentity
+import AshesCompiler.Semantics.NodeIdentity.partialPrefixRole
+import AshesCompiler.Semantics.NodeIdentity.partialResumeRole
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
 import Ashes.Collection.List.foldLeft
@@ -122,14 +125,38 @@ let residualNeedsDictionary (stage: StrictStage) expression =
                 | None -> true
         | None -> true
 
+// The identity of the reference a call spine is rooted at: the innermost numbered node around its
+// root, -1 for an unnumbered tree.
+let recursive rootReferenceNode expression enclosing =
+    match expression with
+        | ExprAt(_span, inner) -> rootReferenceNode(inner)(enclosing)
+        | ExprNode(id, inner) -> rootReferenceNode(inner)(id)
+        | ExprCall(function, _argument, _sugar, _layout) -> rootReferenceNode(function)(-1)
+        | _ -> enclosing
+
+// A reference to the prefix or resume function standing for the source call's callee: under typed
+// lowering it carries the synthesized identity of that callee reference in its role, so a reader of
+// the recorded instantiation finds the source reference's record; without a node table it is the
+// plain reference it always was.
+let stageReference (stage: StrictStage) (name: Str) (role: Int) (source: Expr) =
+    match stage.nodeTypes with
+        | Some(_table) ->
+            let identity =
+                synthesizedNodeIdentity(rootReferenceNode(source)(-1))(role)
+            in
+                if identity == -1
+                then ExprVar(name)
+                else ExprNode(identity)(ExprVar(name))
+        | None -> ExprVar(name)
+
 let strictPartial (stage: StrictStage) names expression =
     match spine(expression)([]) with
         | (ExprVar(name), args) ->
             if contains(names)(name) && length(args) == stage.arity && residualNeedsDictionary(stage)(expression)
             then
                 args
-                |> foldLeft(apply)(ExprVar(stage.prefix))
-                |> apply(ExprVar(stage.resume))
+                |> foldLeft(apply)(stageReference(stage)(stage.prefix)(partialPrefixRole)(expression))
+                |> apply(stageReference(stage)(stage.resume)(partialResumeRole)(expression))
             else expression
         | _ -> expression
 
@@ -145,8 +172,8 @@ let forwardedBody (stage: StrictStage) names expression =
                     let argument = "$partial_forwarded_argument"
                     in
                         None
-                        |> ExprLambda(argument)(apply(apply(ExprVar(stage.resume))(ExprVar(packed)))(ExprVar(argument)))
-                        |> nest(packed)(foldLeft(apply)(ExprVar(stage.prefix))(args))
+                        |> ExprLambda(argument)(apply(apply(stageReference(stage)(stage.resume)(partialResumeRole)(expression))(ExprVar(packed)))(ExprVar(argument)))
+                        |> nest(packed)(foldLeft(apply)(stageReference(stage)(stage.prefix)(partialPrefixRole)(expression))(args))
             else expression
         | _ -> expression
 

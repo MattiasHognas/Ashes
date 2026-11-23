@@ -20,6 +20,7 @@ import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeIdentity.synthesizedNodeSource
 import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
 import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
 import AshesCompiler.Frontend.Syntax.Expr
@@ -235,13 +236,22 @@ let recursive closedRecordedRequirements (requirements: List(TraitConstraint)) (
                 | Error(_message) -> closedRecordedRequirements(rest)(state)
         | _requirement :: rest -> closedRecordedRequirements(rest)(state)
 
+// The node whose recorded instantiation a reference reads: its own, or, for a reference lowering
+// synthesized (a prefix or resume call of a staged binding), the source reference it stands for.
+// The readers bind only what matches the call's own requirements by trait and type, so a record
+// that does not fit leaves the call to lowering's own inference.
+let instantiationSourceNode (node: Int) =
+    match synthesizedNodeSource(node) with
+        | Some((source, _role)) -> source
+        | None -> node
+
 // The dictionaries the reference with this identity was recorded to pass, as trait names with closed
 // type arguments in the scheme's order; requirements with an open or unreadable argument are left
 // out.
 let recordedDictionariesAt (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | Some(table) ->
-            match nodeInstantiationAt(node)(table) with
+            match nodeInstantiationAt(instantiationSourceNode(node))(table) with
                 | Some(NodeInstantiation { dictionaries = dictionaries }) -> closedRecordedRequirements(dictionaries)(state)
                 | None -> []
         | None -> []
@@ -494,7 +504,7 @@ let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) 
 let recordedSettledDictionariesAt (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | Some(table) ->
-            match nodeInstantiationAt(node)(table) with
+            match nodeInstantiationAt(instantiationSourceNode(node))(table) with
                 | Some(NodeInstantiation { dictionaries = dictionaries }) -> settledRecordedRequirements(dictionaries)(state)
                 | None -> []
         | None -> []

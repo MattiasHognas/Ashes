@@ -6,6 +6,10 @@
 //   outside the identity, so `ExprAt(span, ExprNode(id, node))`.
 // - Numbering depends only on the shape of the program, so the same program numbers the same way.
 // - Patterns and type expressions carry no identity.
+// - A node lowering synthesizes after numbering may carry a synthesized identity: a negative
+//   number derived from the source node it was made from and its role there, never from a counter,
+//   so the same program gives the same identities. Nothing is recorded under a synthesized
+//   identity; a reader maps it back to its source node and checks what it reads there.
 
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token.TextSpan
@@ -21,6 +25,10 @@ export (
     value expressionKind,
     value nodeIdentityOf,
     value withoutNodeIdentity,
+    value synthesizedNodeIdentity,
+    value synthesizedNodeSource,
+    value partialPrefixRole,
+    value partialResumeRole,
 )
 
 let recursive identifyExpression (next: Int) (expression: Expr) =
@@ -282,6 +290,27 @@ let recursive nodeIdentityOf (expression: Expr) =
         | ExprAt(_span, inner) -> nodeIdentityOf(inner)
         | ExprNode(id, _inner) -> id
         | _ -> -1
+
+// The roles a synthesized node can have at its source node: the reference to the prefix and to the
+// resume function the strict partial-stage scheduling splits a call of a staged binding into.
+let partialPrefixRole = 1
+
+let partialResumeRole = 2
+
+let synthesizedRoleCount = 16
+
+// The identity of the node synthesized in `role` from the source node `source`; -1 when the source
+// has no identity.
+let synthesizedNodeIdentity (source: Int) (role: Int) =
+    if source < 0
+    then -1
+    else -(source * synthesizedRoleCount + role) - 2
+
+// The source node and role of a synthesized identity; None for a numbered node or -1.
+let synthesizedNodeSource (node: Int) =
+    if node > -2
+    then None
+    else Some(((-node - 2) / synthesizedRoleCount, (-node - 2) % synthesizedRoleCount))
 
 // The node without the identity wrappers at its top, under its location if it has one, so a shape
 // written for an unnumbered tree matches it.

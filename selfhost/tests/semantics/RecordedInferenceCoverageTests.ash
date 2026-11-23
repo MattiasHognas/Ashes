@@ -552,6 +552,21 @@ let checkEnclosingEvidence unit =
         let _ = checkTestProgramLeavesNoGoal("returned_callback_keeps_evidence_until_invoked")
         in checkTestProgramLeavesNoGoal("escaping_recursive_function_applied_with_evidence"))
 
+// A synthesized identity is derived from its source node and role alone and maps back to both; it
+// never collides with a numbered node or the no-identity marker.
+let checkSynthesizedIdentity unit =
+    (let prefix = synthesizedNodeIdentity(1037)(partialPrefixRole)
+    in
+        let resume = synthesizedNodeIdentity(1037)(partialResumeRole)
+        in
+            if prefix < -1 && resume < -1 && prefix != resume && synthesizedNodeIdentity(1037)(partialPrefixRole) == prefix && synthesizedNodeSource(prefix) == Some((1037, partialPrefixRole)) && synthesizedNodeSource(resume) == Some((1037, partialResumeRole)) && synthesizedNodeSource(0) == None && synthesizedNodeSource(-1) == None && synthesizedNodeIdentity(-1)(partialPrefixRole) == -1 && synthesizedNodeSource(synthesizedNodeIdentity(0)(partialResumeRole)) == Some((0, partialResumeRole))
+            then Unit
+            else Ashes.IO.panic("synthesized node identities do not round-trip to their source and role"))
+
+// A staged binding's call split into its prefix and resume functions reads the dictionaries recorded
+// at the source call's reference: an annotated partial application of a constrained staged binding.
+let checkPartialStageEvidence unit = checkTestProgramLeavesNoGoal("annotated_partial_resolves_evidence_before_returning_function")
+
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
 // A binding referenced only at another binding's quantified variable is settled through that
@@ -584,6 +599,8 @@ let runRecordedInferenceCoverageTests unit =
     |> checkWrappedEqualitySettled
     |> checkRecordedLambdaParameter
     |> checkEnclosingEvidence
+    |> checkSynthesizedIdentity
+    |> checkPartialStageEvidence
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings

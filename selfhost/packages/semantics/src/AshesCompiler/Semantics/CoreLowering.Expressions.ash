@@ -1277,7 +1277,7 @@ let recursive callRootNode (expression: Expr) (enclosing: Int) =
 let constrainedCallRootNode (expression: Expr) (state: CoreLoweringState) =
     (let root = callRootNode(expression)(-1)
     in
-        if root >= 0
+        if root != -1
         then root
         else
             match (stripExprAt(expression), state.currentNode) with
