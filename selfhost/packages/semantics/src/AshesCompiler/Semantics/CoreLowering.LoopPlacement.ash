@@ -1861,6 +1861,10 @@ let withdrawBorrowedScrutineeRetains (parameters: List((Int, Int))) (state: Core
     |> withdrawScrutineeCells(stateBorrowedScrutineeCells(state))(parameters)
     |> withStateBorrowedScrutineeCells([])
 
+// Stage 0's `WithdrawLetCopiedCellTailDuplicates`, run beside the borrowed scrutinee withdrawal.
+let withdrawLetCellTailDuplicatesOf (ownerSlots: List(Int)) (parameterSlots: List(Int)) (state: CoreLoweringState) =
+    state with reversedInstructions = withdrawLetCopiedCellTailDuplicates(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(parameterSlots)(state.reversedInstructions)
+
 let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
@@ -1876,6 +1880,9 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
+                    |> withdrawLetCellTailDuplicatesOf(state
+                    |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
+                    |> patternOwnerSiteSlots)(frame.parameterSlots)
                     |> finishTcoManagedPlacement(label)(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
                     |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))

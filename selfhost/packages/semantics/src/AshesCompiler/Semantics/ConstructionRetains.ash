@@ -24,6 +24,7 @@ export (
     value storedValuesOf,
     value withdrawLoopParameterRetainsOfCopiedCells,
     value withdrawLoopResultRetainsOfCopiedCells,
+    value withdrawLetCopiedCellTailDuplicates,
 )
 
 // The temp the construction of `cellTemp` stored into field `fieldIndex`.
@@ -274,24 +275,6 @@ let recursive storedValuesOf (cellTemp: Int) (instructions: List(IrInstruction))
             else storedValuesOf(cellTemp)(rest)(values)
         | _instruction :: rest -> storedValuesOf(cellTemp)(rest)(values)
 
-let recursive withdrawCellRetains (cellTemp: Int) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
-    if containsInt(cellTemp)(visited)
-    then (instructions, visited)
-    else
-        withdrawStoredRetains(storedValuesOf(cellTemp)(instructions)([]))(slots)(withdrawable)(cellTemp :: visited)(instructions)
-and withdrawStoredRetains (values: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
-    match values with
-        | [] -> (instructions, visited)
-        | value :: rest ->
-            match withdrawLoopParameterRetain(value)(slots)(withdrawable)(instructions) with
-                | (withdrawn, true) -> withdrawStoredRetains(rest)(slots)(withdrawable)(visited)(withdrawn)
-                | (unchanged, false) ->
-                    if isArenaCell(value)(unchanged)
-                    then
-                        match withdrawCellRetains(value)(slots)(withdrawable)(visited)(unchanged) with
-                            | (nested, nestedVisited) -> withdrawStoredRetains(rest)(slots)(withdrawable)(nestedVisited)(nested)
-                    else withdrawStoredRetains(rest)(slots)(withdrawable)(visited)(unchanged)
-
 let definesCarrier (temp: Int) (instruction: IrInstruction) =
     match instruction with
         | IrInstruction { instruction = Borrow(target, _source) } -> target == temp
@@ -336,6 +319,41 @@ let recursive arenaCellsCarrying (pending: List(Int)) (visited: List(Int)) (slot
                             else
                                 arenaCellsCarrying(append(storeSourcesOf(slot)(instructions)([]))(rest))(temp :: visited)(slots)(instructions)(cells)
                         | _ -> arenaCellsCarrying(rest)(temp :: visited)(slots)(instructions)(cells)
+
+// The arena cells reaching a stored value that is neither a retain nor a cell itself, through a
+// borrow or a `let` binding's slot (stage 0's `LetCarriedCellRetainsEnabled` branch of
+// `WithdrawLoopParameterRetainsOfCell`): the copy walks such a cell as it walks one built in place.
+// Without carrier slots (the walk of a cons head) nothing is followed.
+let carriedArenaCells (value: Int) (carriers: Maybe(List(Int))) (instructions: List(IrInstruction)) =
+    match carriers with
+        | Some(slots) -> arenaCellsCarrying([value])([])(slots)(instructions)([])
+        | None -> []
+
+let recursive withdrawCellRetains (cellTemp: Int) (slots: List(Int)) (withdrawable: List(Int)) (carriers: Maybe(List(Int))) (visited: List(Int)) (instructions: List(IrInstruction)) =
+    if containsInt(cellTemp)(visited)
+    then (instructions, visited)
+    else
+        withdrawStoredRetains(storedValuesOf(cellTemp)(instructions)([]))(slots)(withdrawable)(carriers)(cellTemp :: visited)(instructions)
+and withdrawStoredRetains (values: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (carriers: Maybe(List(Int))) (visited: List(Int)) (instructions: List(IrInstruction)) =
+    match values with
+        | [] -> (instructions, visited)
+        | value :: rest ->
+            match withdrawLoopParameterRetain(value)(slots)(withdrawable)(instructions) with
+                | (withdrawn, true) -> withdrawStoredRetains(rest)(slots)(withdrawable)(carriers)(visited)(withdrawn)
+                | (unchanged, false) ->
+                    if isArenaCell(value)(unchanged)
+                    then
+                        match withdrawCellRetains(value)(slots)(withdrawable)(carriers)(visited)(unchanged) with
+                            | (nested, nestedVisited) -> withdrawStoredRetains(rest)(slots)(withdrawable)(carriers)(nestedVisited)(nested)
+                    else
+                        match withdrawCarriedCells(carriedArenaCells(value)(carriers)(unchanged))(slots)(withdrawable)(carriers)(visited)(unchanged) with
+                            | (nested, nestedVisited) -> withdrawStoredRetains(rest)(slots)(withdrawable)(carriers)(nestedVisited)(nested)
+and withdrawCarriedCells (cells: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (carriers: Maybe(List(Int))) (visited: List(Int)) (instructions: List(IrInstruction)) =
+    match cells with
+        | [] -> (instructions, visited)
+        | cell :: rest ->
+            match withdrawCellRetains(cell)(slots)(withdrawable)(carriers)(visited)(instructions) with
+                | (nested, nestedVisited) -> withdrawCarriedCells(rest)(slots)(withdrawable)(carriers)(nestedVisited)(nested)
 
 // The tag of the arena cell `cellTemp`, allocated as a constructor's.
 let recursive arenaCellTag (cellTemp: Int) (instructions: List(IrInstruction)) =
@@ -408,12 +426,12 @@ let retainsHeldPastTheCopy (valueTemp: Int) (slots: List(Int)) (instructions: Li
     |> reverse)(instructions)(([], [])) with
         | (retains, _visited) -> retains
 
-let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
+let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (carriers: Maybe(List(Int))) (visited: List(Int)) (instructions: List(IrInstruction)) =
     match cells with
         | [] -> instructions
         | cell :: rest ->
-            match withdrawCellRetains(cell)(slots)(withdrawable)(visited)(instructions) with
-                | (withdrawn, nextVisited) -> withdrawCells(rest)(slots)(withdrawable)(nextVisited)(withdrawn)
+            match withdrawCellRetains(cell)(slots)(withdrawable)(carriers)(visited)(instructions) with
+                | (withdrawn, nextVisited) -> withdrawCells(rest)(slots)(withdrawable)(carriers)(nextVisited)(withdrawn)
 
 let recursive zeroConstantTemps (transientClears: List(Int)) (instructions: List(IrInstruction)) (temps: List(Int)) =
     match instructions with
@@ -465,7 +483,9 @@ let withdrawRetainsOfCopiedCells (withdrawable: List(Int)) (transientClears: Lis
     match parameters with
         | [] -> instructions
         | _parameters ->
-            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(transientClears)(parameters)(instructions))(withdrawable)([])(instructions)
+            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(transientClears)(parameters)(instructions))(withdrawable)(parameters
+            |> parameterSlotsOf
+            |> Some)([])(instructions)
 
 let withdrawLoopParameterRetainsOfCopiedCells (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) = withdrawRetainsOfCopiedCells([])(transientClears)(valueTemp)(parameters)(instructions)
 
@@ -502,3 +522,124 @@ let withdrawLoopResultRetainsOfCopiedCells (ownerSlots: List(Int)) (released: Li
         | [] -> instructions
         | _parameters ->
             withdrawRetainsOfCopiedCells(withdrawablePatternOwnerDuplicates(ownerSlots)(released)(instructions)([]))(transientClears)(valueTemp)(parameters)(instructions)
+
+let recursive tempReaders (temp: Int) (instructions: List(IrInstruction)) (readers: List(IrInstructionKind)) =
+    match instructions with
+        | [] -> readers
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getUsedTemps
+            |> containsInt(temp)
+            then tempReaders(temp)(rest)(kind :: readers)
+            else tempReaders(temp)(rest)(readers)
+
+// Stage 0's `ReadIsCopiedOntoHeap`: every reader of `temp` copies it onto the reference-counted
+// heap, a representation test whose reference-counted branch retains and whose other branch
+// copies, or a borrow whose readers do the same. The answer is `(copied, tested)` folded over
+// the readers, or `None` for a reader that does anything else.
+let recursive readersCopyOntoHeap (readers: List(IrInstructionKind)) (depth: Int) (instructions: List(IrInstruction)) (copied: Bool) (tested: Bool) =
+    match readers with
+        | [] -> Some((copied, tested))
+        | IsReferenceCounted(_target, _source) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(copied)(true)
+        | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(copied)(tested)
+        | CopyOutList(_target, _source, _headCopy, true, RcNormalization) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(true)(tested)
+        | Borrow(target, _source) :: rest ->
+            if depth > 0 && readIsCopiedOntoHeap(target)(depth - 1)(instructions)
+            then readersCopyOntoHeap(rest)(depth)(instructions)(true)(true)
+            else None
+        | _reader :: _rest -> None
+and readIsCopiedOntoHeap (temp: Int) (depth: Int) (instructions: List(IrInstruction)) =
+    match tempReaders(temp)(instructions)([]) with
+        | [] -> false
+        | readers ->
+            match readersCopyOntoHeap(readers)(depth)(instructions)(false)(false) with
+                | Some((copied, tested)) -> copied && tested
+                | None -> false
+
+// Stage 0's `IsOwnReleaseRead`: a read only the binding's own lexical release takes, which releases
+// nothing for an arena cell.
+let recursive onlyReleasesOwner (slot: Int) (readers: List(IrInstructionKind)) =
+    match readers with
+        | [] -> true
+        | RcDrop(_source, _typeName, owner, _runtimeManaged, _mayBeEmpty, _dropper) :: rest -> owner == slot && onlyReleasesOwner(slot)(rest)
+        | _reader :: _rest -> false
+
+let recursive slotLoads (slot: Int) (instructions: List(IrInstruction)) (loads: List(Int)) =
+    match instructions with
+        | [] -> loads
+        | IrInstruction { instruction = LoadLocal(target, loaded) } :: rest ->
+            if loaded == slot
+            then slotLoads(slot)(rest)(target :: loads)
+            else slotLoads(slot)(rest)(loads)
+        | _instruction :: rest -> slotLoads(slot)(rest)(loads)
+
+let recursive loadsCopiedOrOwnRelease (slot: Int) (loads: List(Int)) (instructions: List(IrInstruction)) (anyCopied: Bool) =
+    match loads with
+        | [] -> anyCopied
+        | load :: rest ->
+            if readIsCopiedOntoHeap(load)(4)(instructions)
+            then loadsCopiedOrOwnRelease(slot)(rest)(instructions)(true)
+            else
+                if []
+                |> tempReaders(load)(instructions)
+                |> onlyReleasesOwner(slot)
+                then loadsCopiedOrOwnRelease(slot)(rest)(instructions)(anyCopied)
+                else false
+
+// Whether `slot` is a `let` slot of an arena cell every read of which copies it onto the
+// reference-counted heap: stored once, never a loop parameter's.
+let letCellCopiedOntoHeap (slot: Int) (cell: Int) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+    if containsInt(slot)(parameterSlots) || isArenaCell(cell)(instructions) == false
+    then false
+    else
+        match storeSourcesOf(slot)(instructions)([]) with
+            | _source :: [] ->
+                loadsCopiedOrOwnRelease(slot)(slotLoads(slot)(instructions)([]))(instructions)(false)
+            | _ -> false
+
+// The tail word a cons cell's construction stored.
+let recursive cellTailSource (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePointer, 8, source) } :: rest ->
+            if basePointer == cell
+            then Some(source)
+            else cellTailSource(cell)(rest)
+        | _instruction :: rest -> cellTailSource(cell)(rest)
+
+let withdrawLetCellTailDuplicate (cell: Int) (withdrawable: List(Int)) (instructions: List(IrInstruction)) =
+    match cellTailSource(cell)(instructions) with
+        | Some(tail) ->
+            if containsInt(tail)(withdrawable) && countTempUses(tail)(instructions)(0) == 1
+            then withdrawRetainDefining(tail)(instructions)
+            else instructions
+        | None -> instructions
+
+let recursive withdrawLetCellTails (candidates: List(IrInstructionKind)) (withdrawable: List(Int)) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+    match candidates with
+        | [] -> instructions
+        | StoreLocal(slot, cell) :: rest ->
+            withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(if letCellCopiedOntoHeap(slot)(cell)(parameterSlots)(instructions)
+            then withdrawLetCellTailDuplicate(cell)(withdrawable)(instructions)
+            else instructions)
+        | _candidate :: rest -> withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(instructions)
+
+let recursive arenaCellStores (instructions: List(IrInstruction)) (all: List(IrInstruction)) (found: List(IrInstructionKind)) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest ->
+            if isArenaCell(source)(all)
+            then arenaCellStores(rest)(all)(StoreLocal(slot)(source) :: found)
+            else arenaCellStores(rest)(all)(found)
+        | _instruction :: rest -> arenaCellStores(rest)(all)(found)
+
+// Stage 0's `WithdrawLetCopiedCellTailDuplicates`: a loop body's `let` binding of an arena cons
+// cell over a pattern-bound list (`let rest = 0 :: matched in Wrap(rest)`) whose every read is
+// copied onto the reference-counted heap. The copy shares the reference-counted tail with a
+// reference of its own and the arena cell releases nothing, so the pattern-owner duplicate the
+// cell took of its tail is withdrawn, as a copied successor cell's is.
+let withdrawLetCopiedCellTailDuplicates (ownerSlots: List(Int)) (released: List(Int)) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+    match arenaCellStores(instructions)(instructions)([]) with
+        | [] -> instructions
+        | candidates ->
+            withdrawLetCellTails(candidates)(withdrawablePatternOwnerDuplicates(ownerSlots)(released)(instructions)([]))(parameterSlots)(instructions)

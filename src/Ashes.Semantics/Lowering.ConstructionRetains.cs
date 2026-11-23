@@ -185,9 +185,16 @@ public sealed partial class Lowering
         var visited = new HashSet<int>();
         foreach (int cell in ArenaCellsCarrying(valueTemp, parameterSlots))
         {
-            WithdrawLoopParameterRetainsOfCell(cell, heldSlots, visited);
+            WithdrawLoopParameterRetainsOfCell(cell, heldSlots, visited, carrierSlots: parameterSlots);
         }
     }
+
+    // A field of a copied arena cell read from a `let` binding of another arena cell
+    // (`let rest = head :: matched in Wrap(rest)`) is that cell as surely as a field built in
+    // place is: the copy walks it, and its children's retains are withdrawn the same way
+    // (`GRC_NO_LETCARRIEDCELLRETAINS`).
+    private static bool LetCarriedCellRetainsEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_LETCARRIEDCELLRETAINS") is null;
 
     // The cons-cell counterpart of WithdrawLoopParameterRetainsOfCopiedCells: only the head of each
     // arena cell carrying the successor is walked, never its tail. A retain left pending (one the
@@ -314,7 +321,7 @@ public sealed partial class Lowering
         return cells;
     }
 
-    private void WithdrawLoopParameterRetainsOfCell(int cellTemp, HashSet<int> heldSlots, HashSet<int> visited, bool keepPendingRetains = false)
+    private void WithdrawLoopParameterRetainsOfCell(int cellTemp, HashSet<int> heldSlots, HashSet<int> visited, bool keepPendingRetains = false, HashSet<int>? carrierSlots = null)
     {
         if (!visited.Add(cellTemp))
         {
@@ -337,9 +344,21 @@ public sealed partial class Lowering
 
         foreach (int value in stored)
         {
-            if (!WithdrawLoopParameterRetain(value, heldSlots, keepPendingRetains) && IsArenaCell(value))
+            if (WithdrawLoopParameterRetain(value, heldSlots, keepPendingRetains))
             {
-                WithdrawLoopParameterRetainsOfCell(value, heldSlots, visited, keepPendingRetains);
+                continue;
+            }
+
+            if (IsArenaCell(value))
+            {
+                WithdrawLoopParameterRetainsOfCell(value, heldSlots, visited, keepPendingRetains, carrierSlots);
+            }
+            else if (carrierSlots is not null && LetCarriedCellRetainsEnabled)
+            {
+                foreach (int carried in ArenaCellsCarrying(value, carrierSlots))
+                {
+                    WithdrawLoopParameterRetainsOfCell(carried, heldSlots, visited, keepPendingRetains, carrierSlots);
+                }
             }
         }
     }
@@ -521,6 +540,154 @@ public sealed partial class Lowering
             _borrowedScrutinees.RemoveAt(index);
             WithdrawLoopParameterRetainsOfCopiedCells(scrutinee.CellTemp, LoopParametersOf(scrutinee.Tco));
         }
+    }
+
+    /// <summary>
+    /// A loop body's `let` binding of an arena cons cell over a pattern-bound list
+    /// (`let rest = 0 :: matched in Wrap(rest)`) whose every read is copied onto the
+    /// reference-counted heap: the copy shares the reference-counted tail with a reference of its
+    /// own, and the arena cell releases nothing, so the pattern-owner duplicate the cell took of
+    /// its tail is withdrawn, as a copied successor cell's is. A read that does anything else (a
+    /// field of another cell, a call argument, the result) keeps the duplicate.
+    /// </summary>
+    private void WithdrawLetCopiedCellTailDuplicates(TcoContext? tco)
+    {
+        if (tco is null
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LETCOPIEDCELLTAILDUP") is not null)
+        {
+            return;
+        }
+
+        LetCellScan scan = ScanLetCells();
+        foreach ((int slot, List<int> sources) in scan.SlotStores)
+        {
+            if (sources.Count != 1
+                || tco.ParamSlots.Contains(slot)
+                || !scan.ArenaCells.Contains(sources[0])
+                || !scan.SlotLoads.TryGetValue(slot, out List<int>? loads)
+                || !loads.Any(load => ReadIsCopiedOntoHeap(load, scan.Uses, 4))
+                || !loads.All(load => ReadIsCopiedOntoHeap(load, scan.Uses, 4) || IsOwnReleaseRead(load, slot, scan.Uses)))
+            {
+                continue;
+            }
+
+            int cell = sources[0];
+            foreach (IrInst.StoreMemOffset store in scan.TailStores.Where(store => store.BasePtr == cell))
+            {
+                if (scan.Duplicates.TryGetValue(store.Source, out int duplicateIndex)
+                    && IsWithdrawablePatternOwnerDuplicate(store.Source)
+                    && scan.Uses.TryGetValue(store.Source, out List<IrInst>? readers)
+                    && readers.Count == 1)
+                {
+                    var duplicate = (IrInst.RcDup)_inst[duplicateIndex];
+                    _inst[duplicateIndex] = duplicate with { RuntimeManaged = false, MayBeEmpty = false };
+                }
+            }
+        }
+    }
+
+    private sealed record LetCellScan(
+        HashSet<int> ArenaCells,
+        Dictionary<int, int> Duplicates,
+        Dictionary<int, List<int>> SlotStores,
+        Dictionary<int, List<int>> SlotLoads,
+        Dictionary<int, List<IrInst>> Uses,
+        List<IrInst.StoreMemOffset> TailStores);
+
+    // One pass over the body: its arena cons cells, its runtime retains by index, each slot's stored
+    // and loaded temps, each temp's readers, and the stores of a cell's tail word.
+    private LetCellScan ScanLetCells()
+    {
+        int tailOffset = HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex);
+        var scan = new LetCellScan([], [], [], [], [], []);
+        for (int index = 0; index < _inst.Count; index++)
+        {
+            IrInst instruction = _inst[index];
+            switch (instruction)
+            {
+                case IrInst.Alloc { RuntimeManaged: false } cell:
+                    scan.ArenaCells.Add(cell.Target);
+                    break;
+                case IrInst.RcDup { RuntimeManaged: true } duplicate:
+                    scan.Duplicates[duplicate.Target] = index;
+                    break;
+                case IrInst.StoreLocal store:
+                    AddScanned(scan.SlotStores, store.Slot, store.Source);
+                    break;
+                case IrInst.LoadLocal load:
+                    AddScanned(scan.SlotLoads, load.Slot, load.Target);
+                    break;
+                case IrInst.StoreMemOffset cellStore when cellStore.OffsetBytes == tailOffset:
+                    scan.TailStores.Add(cellStore);
+                    break;
+            }
+
+            foreach (int used in StateMachineTransform.GetUsedTemps(instruction))
+            {
+                AddScanned(scan.Uses, used, instruction);
+            }
+        }
+
+        return scan;
+    }
+
+    private static void AddScanned<T>(Dictionary<int, List<T>> map, int key, T value)
+    {
+        if (!map.TryGetValue(key, out List<T>? values))
+        {
+            values = [];
+            map[key] = values;
+        }
+
+        values.Add(value);
+    }
+
+    // A read of the binding only its own lexical release takes, which releases nothing for an
+    // arena cell.
+    private static bool IsOwnReleaseRead(int temp, int slot, Dictionary<int, List<IrInst>> uses)
+        => uses.TryGetValue(temp, out List<IrInst>? readers)
+            && readers.All(reader => reader is IrInst.RcDrop drop && drop.OwnerSlot == slot);
+
+    // Whether every reader of `temp` copies it onto the reference-counted heap: a representation
+    // test whose reference-counted branch retains and whose other branch copies, or a borrow whose
+    // readers do the same.
+    private static bool ReadIsCopiedOntoHeap(int temp, Dictionary<int, List<IrInst>> uses, int depth)
+    {
+        if (!uses.TryGetValue(temp, out List<IrInst>? readers) || readers.Count == 0)
+        {
+            return false;
+        }
+
+        bool copied = false;
+        bool tested = false;
+        foreach (IrInst reader in readers)
+        {
+            switch (reader)
+            {
+                case IrInst.IsReferenceCounted:
+                    tested = true;
+                    break;
+                case IrInst.RcDup:
+                    break;
+                case IrInst.CopyOutList { RuntimeManaged: true, Purpose: IrInst.CopyOutPurpose.RcNormalization }:
+                    copied = true;
+                    break;
+                case IrInst.Borrow borrow when depth > 0:
+                    if (!ReadIsCopiedOntoHeap(borrow.Target, uses, depth - 1))
+                    {
+                        return false;
+                    }
+
+                    copied = true;
+                    tested = true;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return copied && tested;
     }
 
     /// <summary>
