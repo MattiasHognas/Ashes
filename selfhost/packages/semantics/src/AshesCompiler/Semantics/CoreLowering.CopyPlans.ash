@@ -198,7 +198,8 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             location = CoreLocal(1),
             ownedRead = false,
             patternFact = None,
-            closedScheme = false
+            closedScheme = false,
+            letBound = false
         ) :: capturedScope(captures)(0)
     in
         state
