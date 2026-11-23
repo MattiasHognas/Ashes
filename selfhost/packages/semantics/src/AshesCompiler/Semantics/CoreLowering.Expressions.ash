@@ -3402,8 +3402,12 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
                 in
-                    let forwards = written || forwardsRequirementsOf(value)(state)
-                    in (forwards || canOriginateRequirement(value)(state), forwards, false)
+                    // A non-recursive binding the inference generalized over an arithmetic trait is
+                    // planned as if its requirement were written.
+                    let arithmetic = !isRecursive && recordedArithmeticGeneric(name)(value)(state)
+                    in
+                        let forwards = written || arithmetic || forwardsRequirementsOf(value)(state)
+                        in (forwards || canOriginateRequirement(value)(state), forwards, false)
             | None ->
                 if isRecursive
                 then (false, false, false)
@@ -3420,7 +3424,7 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                 | CoreConstrainedInference { error = Some(_error) } -> None
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedPlanSupportedIn(forwardsRequirements || recordedArithmeticGeneric(name)(value)(state))(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan))
+                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan))
                     then Some(plan)
                     else None
         else None
