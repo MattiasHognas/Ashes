@@ -122,14 +122,28 @@ let requiresRuntimeManagedChildCopy (fieldType: SemanticType) (state: CoreLoweri
                 | facts -> runtimeManagedAdtLayout(facts)
         | _ -> false
 
+// Whether the argument reads a binding that still owns its reference-counted value. Stage 0 marks
+// the borrow of such an owner as a reference-counted result; this lowering leaves the borrowed
+// read unmarked and asks the binding instead.
+let readsLiveRuntimeOwner (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> true
+                | None -> false
+        | _ -> false
+
 // A runtime cell's child that is not already reference-counted (a list, tuple, or aggregate read
 // out of a pattern owner, or an arena value) is cloned into an owned graph, stage 0's deep copy
 // normalization in `LowerRuntimeManagedConstructorArgument`; the clone carries its own
-// reference, so no pattern-owner duplicate is taken on top of it.
-let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+// reference, so no pattern-owner duplicate is taken on top of it. The read of a live owner is
+// reference-counted already and is not cloned: the cell takes its reference through the
+// owned-child retain (`retainRuntimeCellChildren`), and a clone or reference taken here as well
+// would be a second reference nothing releases.
+let normalizeConstructorChildArgument (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if runtimeManaged && isRuntimeTemp(temp)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
+            if runtimeManaged && isRuntimeTemp(temp)(state) == false && readsLiveRuntimeOwner(argument)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
             then
                 match argumentCopyPlanOf(fieldType)(state) with
                     | Some(inlinePlan) ->
@@ -731,7 +745,7 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
             |> lower(argument)
             |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
             |> ownPatternBoundStringChild(runtimeManaged)(argument)(fieldType)
-            |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
+            |> normalizeConstructorChildArgument(runtimeManaged)(argument)(fieldType)
             |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
