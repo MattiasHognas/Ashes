@@ -12,14 +12,19 @@ ulimit -s 1048576
 ulimit -c 0
 : > "$out/rows.tsv"
 : > "$out/failed.txt"
+: > "$out/rejected.txt"
+mkdir -p "$out/sources"
 header=
 for file in "$tests"/*.ash; do
     name=$(basename "$file" .ash)
     if grep -q '^// expect-compile-error' "$file"; then
         continue
     fi
+    # The test runner substitutes a loopback port for __TCP_PORT__; any number type-checks the same.
+    source="$out/sources/$name.ash"
+    sed "s/__TCP_PORT__/40000/g" "$file" > "$source"
     systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 timeout 120 \
-        "$measure" "$file" "$mode" --goal-details > "$out/$name.tsv" 2> "$out/$name.err"
+        "$measure" "$source" "$mode" --goal-details > "$out/$name.tsv" 2> "$out/$name.err"
     code=$?
     if [ "$code" = 0 ] && [ "$(wc -l < "$out/$name.tsv")" = 2 ]; then
         if [ -z "$header" ]; then
@@ -32,7 +37,12 @@ for file in "$tests"/*.ash; do
             rm -f "$out/$name.err"
         fi
     else
-        printf '%s\texit=%s\t%s\n' "$name" "$code" "$(tail -n 1 "$out/$name.err")" >> "$out/failed.txt"
+        if cat "$out/$name.tsv" "$out/$name.err" | grep -q "infer-error"; then
+            # A program the inference rejects (the `_fails` diagnostics fixtures) is not lowered.
+            printf '%s\t%s\n' "$name" "$(cat "$out/$name.tsv" "$out/$name.err" | grep "infer-error" | head -c 200)" >> "$out/rejected.txt"
+        else
+            printf '%s\texit=%s\t%s\n' "$name" "$code" "$(tail -n 1 "$out/$name.err")" >> "$out/failed.txt"
+        fi
     fi
 done
 # rows.tsv fields: 7 replayed, 8 pending_traits, 9 equality_goals, 11 first_deferred_operators.
