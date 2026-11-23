@@ -222,7 +222,29 @@ let run details path mode =
                                 | None -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
                         | Ok(stitched) -> measureStitched(details)(path)(mode)(clock(Unit) - started)(stitched))
 
+// A single `.ash` file is stitched with the shipped modules it imports, as `compile <file>` does.
+let runFile details path mode =
+    (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
+    in
+        let started = clock(Unit)
+        in
+            match readSourceText(path) with
+                | Error(message) -> Ashes.IO.panic("cannot read " + path + ": " + message)
+                | Ok(source) ->
+                    let base = Ashes.IO.Path.basename(Ashes.IO.Path.Unix)(path)
+                    in
+                        match Unit
+                        |> loadShipped
+                        |> stitchWithShippedModules(Ashes.Text.substring(base)(0)(Ashes.Text.length(base) - 4))(path)(source) with
+                            | Error(error) -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
+                            | Ok(stitched) -> measureStitched(details)(path)(mode)(clock(Unit) - started)(stitched))
+
+let runPath details path mode =
+    if isAshSourceName(path)
+    then runFile(details)(path)(mode)
+    else run(details)(path)(mode)
+
 match Ashes.IO.args with
-    | path :: mode :: [] when mode == "typed" || mode == "legacy" -> run(false)(path)(mode)
-    | path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> run(true)(path)(mode)
-    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json> <legacy|typed> [--goal-details]")
+    | path :: mode :: [] when mode == "typed" || mode == "legacy" -> runPath(false)(path)(mode)
+    | path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> runPath(true)(path)(mode)
+    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json | file.ash> <legacy|typed> [--goal-details]")
