@@ -153,9 +153,7 @@ let applyRecordedLambdaType (parameter: Str) (parameterType: SemanticType) (stat
 let applyExpectedLambdaType parameter parameterType state =
     match expectedTypeOf(state) with
         | None ->
-            (state
-            |> clearConsumerRequest
-            |> applyRecordedLambdaType(parameter)(parameterType), None)
+            (clearConsumerRequest(state), None)
         | Some(expected) ->
             match state
             |> clearConsumerRequest
