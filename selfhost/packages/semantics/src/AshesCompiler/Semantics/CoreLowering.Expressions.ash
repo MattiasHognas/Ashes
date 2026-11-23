@@ -503,6 +503,19 @@ let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, 
 // arguments to it exactly as it would to any other bound function. The callee is marked in progress
 // for that continuation exactly as generation marks it, since the rebuilt call otherwise qualifies
 // again, hits this same cache entry, and recurses without end.
+// The specialization's closure is bound under the callee's name at a fresh instantiation of the
+// callee's scheme, as stage 0 reads a scheme binding's type (`TryGetKnownBindingType` instantiates
+// it). Binding the scheme's own body instead would unify its quantified variables with this call's
+// argument types in the shared substitution, and every later routed call to the same callee would
+// read the callee's type at those arguments: a map loop over `Int` values followed by one over
+// `Bool` values reported a mismatch that was not there.
+let bindRoutedCallee (callee: Str) (functionType: SemanticType) (slot: Int) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(binding) ->
+            match instantiateBinding(binding)(state) with
+                | InstantiatedBinding { state = instantiated, semanticType = fresh } -> addBinding(callee)(TypeScheme(quantified = [], body = fresh, constraints = []))(CoreLocal(slot))(instantiated)
+        | None -> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot))(state)
+
 let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = envState, temp = environmentTemp } ->
@@ -514,7 +527,7 @@ let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: Se
                         | FreshLocal { state = slotState, local = slot } ->
                             match slotState
                             |> emit(StoreLocal(slot)(closureTemp))
-                            |> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot))
+                            |> bindRoutedCallee(callee)(functionType)(slot)
                             |> (given (bound: CoreLoweringState) -> withStateSpecializingInProgress(callee :: stateSpecializingInProgress(bound))(bound))
                             |> lower(specializedCallExpression(ExprVar(callee))(arguments)) with
                                 | LoweredCoreValue { state = callState, temp = temp, semanticType = semanticType, error = error } ->
