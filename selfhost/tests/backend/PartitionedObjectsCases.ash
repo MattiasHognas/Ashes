@@ -15,6 +15,7 @@ import AshesCompiler.Backend.ProgramPartitions
 import AshesCompiler.Backend.PartitionedObjects
 export (
     value runPartitionedObjectsCases,
+    value assertPartitionedMatchesWhole,
     value partitionTargetMachine,
     value runExecutableLines,
 )
