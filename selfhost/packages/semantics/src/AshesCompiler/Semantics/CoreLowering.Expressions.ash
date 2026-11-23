@@ -1109,6 +1109,99 @@ let recursive pinSettledDictionaries (constraints: List(TraitConstraint)) (recor
                         | (_failed, Some(_error)) -> pinSettledDictionaries(rest)(recordedRest)(state)
         | (_constraint :: rest, _entry :: recordedRest) -> pinSettledDictionaries(rest)(recordedRest)(state)
 
+// The requirements an evidence plan still asks of its context: a parameter's own requirement, and
+// for an implementation the leaves of the plans of its requirements, in their order. Supertraits
+// are left out, as the inference's reduction leaves them.
+let recursive planRequirementLeaves (plan: TraitEvidencePlan) (leaves: List(TraitConstraint)) =
+    match plan with
+        | TraitEvidenceParameter(constraint) -> constraint :: leaves
+        | TraitEvidenceInstance(_goal, _implementation, requirements, _supertraits) -> planListRequirementLeaves(requirements)(leaves)
+and planListRequirementLeaves (plans: List(TraitEvidencePlan)) (leaves: List(TraitConstraint)) =
+    match plans with
+        | [] -> leaves
+        | plan :: rest ->
+            leaves
+            |> planRequirementLeaves(plan)
+            |> planListRequirementLeaves(rest)
+
+// A call's open requirements reduced through the implementations the way the standalone inference
+// reduces a scheme's requirements (`Eq(List(a))` becomes `Eq(a)`), most recent last; a requirement
+// whose evidence does not resolve, or that the body being lowered already carries, is left out.
+let recursive reducedOpenRequirements (constraints: List(TraitConstraint)) (state: CoreLoweringState) (reduced: List(TraitConstraint)) =
+    match constraints with
+        | [] -> reverse(reduced)
+        | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as constraint) :: rest ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state)
+                then reducedOpenRequirements(rest)(state)(reduced)
+                else
+                    match state |> stateTraitEnvironment |> resolveTraitEvidence((constraint with typeArguments = [resolved])) with
+                        | TraitEvidenceResolution { plan = Some(plan), error = None } ->
+                            reduced
+                            |> planRequirementLeaves(plan)
+                            |> reducedOpenRequirements(rest)(state)
+                        | _ -> reducedOpenRequirements(rest)(state)(reduced)
+        | _constraint :: rest -> reducedOpenRequirements(rest)(state)(reduced)
+
+let recursive traitCount (traitName: Str) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> 0
+        | TraitConstraint { traitName = name } :: rest ->
+            if name == traitName
+            then 1 + traitCount(traitName)(rest)
+            else traitCount(traitName)(rest)
+
+let recursive recordedTraitCount (traitName: Str) (recorded: List((Str, Maybe(SemanticType)))) =
+    match recorded with
+        | [] -> 0
+        | (name, _settled) :: rest ->
+            if name == traitName
+            then 1 + recordedTraitCount(traitName)(rest)
+            else recordedTraitCount(traitName)(rest)
+
+let recursive recordedSettledOfTrait (traitName: Str) (recorded: List((Str, Maybe(SemanticType)))) =
+    match recorded with
+        | [] -> None
+        | (name, settled) :: rest ->
+            if name == traitName
+            then settled
+            else recordedSettledOfTrait(traitName)(rest)
+
+let recursive pinReducedLeaves (leaves: List(TraitConstraint)) (all: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match leaves with
+        | [] -> state
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state) || traitCount(traitName)(all) != 1 || recordedTraitCount(traitName)(recorded) != 1
+                then pinReducedLeaves(rest)(all)(recorded)(state)
+                else
+                    match recordedSettledOfTrait(traitName)(recorded) with
+                        | Some(settled) ->
+                            match bindType(argument)(settled)(state) with
+                                | (bound, None) ->
+                                    bound
+                                    |> observeLoweringEvent(0)
+                                    |> pinReducedLeaves(rest)(all)(recorded)
+                                | (_failed, Some(_error)) -> pinReducedLeaves(rest)(all)(recorded)(state)
+                        | None -> pinReducedLeaves(rest)(all)(recorded)(state)
+        | _leaf :: rest -> pinReducedLeaves(rest)(all)(recorded)(state)
+
+// Under typed lowering, a call's requirement still open after the recorded and settled
+// dictionaries are pinned: lowering asks for the unreduced requirement of its own scheme
+// (`Eq(List(a))`) where the standalone inference recorded the reduced one (`Eq(a)`). The open
+// requirements are reduced through the implementations as the inference reduces them, and a reduced
+// requirement whose trait occurs once among them and once among the recorded dictionaries takes
+// that dictionary's type closed by the program's settled uses. Without a node table nothing is
+// recorded and nothing changes.
+let pinReducedSettledDictionaries (constraints: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match recorded with
+        | [] -> state
+        | _entries ->
+            let leaves = reducedOpenRequirements(constraints)(state)([])
+            in pinReducedLeaves(leaves)(leaves)(recorded)(state)
+
 // The identity of the innermost numbered node around a call's root, the callee reference the
 // inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
 // unnumbered tree.
@@ -1147,7 +1240,8 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                     match bound
                                                     |> pinConstrainedGoals(0)(constraints)
                                                     |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(callRootNode(expression)(-1))(bound))
-                                                    |> pinSettledDictionaries(constraints)(recordedSettledDictionariesAt(callRootNode(expression)(-1))(bound)) with
+                                                    |> pinSettledDictionaries(constraints)(recordedSettledDictionariesAt(callRootNode(expression)(-1))(bound))
+                                                    |> pinReducedSettledDictionaries(constraints)(recordedSettledDictionariesAt(callRootNode(expression)(-1))(bound)) with
                                                         | settled ->
                                                             let goals =
                                                                 map((given (constraint: TraitConstraint) ->
@@ -1637,8 +1731,6 @@ let tryConcreteSourceCall expression lower state =
                         | Some(nested) ->
                             tryConcreteCandidateCall(nested)(callRootNode(expression)(-1))(arguments)(lower)(state)
                         | None ->
-                                        // Lowering's own inference stays the authority: a call that
-                                        // fails against the recorded type is lowered as before.
                             match state
                             |> stateConcreteRegistry
                             |> lookupCoreConcreteCandidate(name) with
@@ -1735,6 +1827,8 @@ let lowerUnconstrainedGeneralCall expression function argument lower state =
                                     | None ->
                                         lowerExpecting(expectedTypeOf(state))(state)
                                     | Some(recorded) ->
+                                        // Lowering's own inference stays the authority: a call that
+                                        // fails against the recorded type is lowered as before.
                                         match state
                                         |> observeLoweringEvent(3)
                                         |> lowerExpecting(Some(recorded)) with

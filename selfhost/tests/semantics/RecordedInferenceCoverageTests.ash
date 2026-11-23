@@ -25,6 +25,9 @@ import AshesCompiler.Semantics.CoreLowering.measureStitchedLowering
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
+import AshesCompiler.Semantics.CoreLowering.CallArguments.applyRecordedLambdaType
+import AshesCompiler.Semantics.CoreLowering.Emit.resolveType
+import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreLoweringState
 import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
 import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
 import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
@@ -488,9 +491,11 @@ let checkTypedEqualityLeavesNoGoal (label: Str) (noReplay: Bool) (source: Str) =
 // `xs == []` in a recursive binding used at `List(Str)`.
 let checkPartlyOpenEqualitySettled unit = checkTypedEqualityLeavesNoGoal("partly open equality")(true)("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)")
 
-// `selected != []` in a constrained helper used only from a generic wrapper.
-// Not in the run list: with the node table, this wrapper's dictionary goal is still answered by the replay, which fails for this program; the default path lowers it.
-let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(false)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
+// `selected != []` in a constrained helper used only from a generic wrapper: the first pass compares
+// through the helper's own Eq dictionary, and the wrapper's dictionary for the helper, which lowering
+// asks as `Eq(List(a))` where the table records the reduced `Eq(a)`, takes the settled element
+// type, so no goal is left and no replay runs.
+let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(true)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
 
 let trailingBody (program: ProgramSyntax) =
     match program with
@@ -508,6 +513,30 @@ let checkNumberedResultView unit =
                     then Unit
                     else Ashes.IO.panic("a numbered let body lost the view of its scrutinized call argument")
         | _ -> Ashes.IO.panic("result view fixture did not parse")
+
+// The same wrapper shape with `==`, the shape that used to reach the replay without a proof.
+let checkWrappedEqualitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open equality")(true)("let isEmpty selected = selected == []\nlet describe name selected =\n    if isEmpty(selected)\n    then name\n    else \"x\"\ndescribe(\"a\")([\"x\"])")
+
+// A lambda's parameter takes the closed type recorded for it at its own node before its body is
+// lowered, under typed lowering only, and only when the node binds a parameter of that name.
+let checkRecordedLambdaParameter unit =
+    (let table = emptyNodeTypeTable with bindings = Ashes.Collection.Map.setInt(5)([("x", TypeScheme(quantified = [], body = SemString, constraints = []))])(Ashes.Collection.Map.empty)
+    in
+        let typed =
+            Unit
+            |> initialState
+            |> withNodeTypes(table)
+            |> (given (state: CoreLoweringState) -> state with currentNode = Some(5))
+        in
+            let bound = applyRecordedLambdaType("x")(SemVariable(90001))(typed)
+            in
+                let otherName = applyRecordedLambdaType("y")(SemVariable(90001))(typed)
+                in
+                    let untyped = applyRecordedLambdaType("x")(SemVariable(90001))((initialState(Unit) with currentNode = Some(5)))
+                    in
+                        if resolveType(bound)(SemVariable(90001)) == SemString && resolveType(otherName)(SemVariable(90001)) == SemVariable(90001) && resolveType(untyped)(SemVariable(90001)) == SemVariable(90001)
+                        then Unit
+                        else Ashes.IO.panic("a lambda parameter did not take its recorded type, or took one from another binding or without a table"))
 
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
@@ -537,6 +566,9 @@ let runRecordedInferenceCoverageTests unit =
     |> checkTransitiveSettlement
     |> checkNumberedResultView
     |> checkPartlyOpenEqualitySettled
+    |> checkWrappedInequalitySettled
+    |> checkWrappedEqualitySettled
+    |> checkRecordedLambdaParameter
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings
