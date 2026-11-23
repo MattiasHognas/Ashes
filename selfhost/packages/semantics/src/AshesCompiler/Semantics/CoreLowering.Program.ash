@@ -3090,6 +3090,81 @@ let programParallelWorkerFunctions (table: List((Str, List(Str), Expr))) (body: 
                         |> seedParallelWorkerTable(functions)(escaped)(table)
                         |> liveFunctionsFixpoint(scans)(escaped))
 
+// An `async` call: its argument is the body a coroutine runs.
+let asyncBodyArgument (node: Expr) =
+    match callSpineParts(node)([]) with
+        | (ExprVar("async"), argument :: []) -> Some(argument)
+        | _ -> None
+
+let coroutineSeedVisit (functions: MapTree(Str, Bool)) (escaped: List(Str)) =
+    given (seeds: MapTree(Str, Bool)) ->
+        given (_id: Int) ->
+            given (_span) ->
+                given (node: Expr) ->
+                    match node with
+                        | ExprCall(_function, _argument, _isSugar, _layout) ->
+                            match asyncBodyArgument(node) with
+                                | Some(argument) -> seedParallelWorkerArguments(functions)(escaped)([argument])(seeds)
+                                | None -> seeds
+                        | _ -> seeds
+
+let recursive seedCoroutineTable (functions: MapTree(Str, Bool)) (escaped: List(Str)) (table: List((Str, List(Str), Expr))) (seeds: MapTree(Str, Bool)) =
+    match table with
+        | [] -> seeds
+        | (_name, _parameters, body) :: rest ->
+            body
+            |> foldExpressionNodes(coroutineSeedVisit(functions)(escaped))(seeds)
+            |> seedCoroutineTable(functions)(escaped)(rest)
+
+let asyncCallVisit =
+    given (found: Bool) ->
+        given (_id: Int) ->
+            given (_span) ->
+                given (node: Expr) ->
+                    found || (match node with
+                        | ExprCall(_function, _argument, _isSugar, _layout) ->
+                            match asyncBodyArgument(node) with
+                                | Some(_argument) -> true
+                                | None -> false
+                        | _ -> false)
+
+let recursive tableHasAsyncCall (table: List((Str, List(Str), Expr))) =
+    match table with
+        | [] -> false
+        | (_name, _parameters, body) :: rest -> foldExpressionNodes(asyncCallVisit)(false)(body) || tableHasAsyncCall(rest)
+
+let programHasAsyncCall (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    tableHasAsyncCall(table) || (match body with
+        | Some(expression) -> foldExpressionNodes(asyncCallVisit)(false)(expression)
+        | None -> false)
+
+// Stage 0's `ComputeCoroutineEffects`: the top-level functions that may run inside a coroutine, the
+// least fixpoint from the functions an `async` body calls or names through their callees, and every
+// escaped function where one makes a call the analysis cannot name. The async body itself, and the
+// functions written inside it, are marked where the body is lowered.
+let programCoroutineFunctionsScanned (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    (let functions = programFunctionSet(table)(Ashes.Collection.Map.empty)
+    in
+        match scanProgramHandlerEffects(functions)(table)(entryHandlerEffectScan(functions)(body))([]) with
+            | (entry, scans) ->
+                let escaped = escapedFunctions(scans)(entry.references)
+                in
+                    let entrySeeds =
+                        match body with
+                            | Some(expression) ->
+                                foldExpressionNodes(coroutineSeedVisit(functions)(escaped))(Ashes.Collection.Map.empty)(expression)
+                            | None -> Ashes.Collection.Map.empty
+                    in
+                        entrySeeds
+                        |> seedCoroutineTable(functions)(escaped)(table)
+                        |> liveFunctionsFixpoint(scans)(escaped))
+
+// A program with no `async` call has no coroutine, so the whole-program scan is skipped.
+let programCoroutineFunctions (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    if programHasAsyncCall(table)(body)
+    then programCoroutineFunctionsScanned(table)(body)
+    else Ashes.Collection.Map.empty
+
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
     (let functionTable = topLevelFunctions(program)
     in
@@ -3099,6 +3174,7 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
         |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
         |> withStateParallelWorkerFunctions(programParallelWorkerFunctions(functionTable)(program.body))
+        |> withStateCoroutineFunctions(programCoroutineFunctions(functionTable)(program.body))
         |> (given (seeded: CoreLoweringState) ->
             withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))

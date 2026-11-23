@@ -804,6 +804,16 @@ let expectLetBoundStringKeepsArmRecordInArena unit =
         |> (given (_) -> check("no arm allocates the record on the reference-counted heap")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 0))
         |> (given (_) -> check("no arm copies the let-bound string out")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0)))
 
+let coroutineCalleeSource = "let echo (s: Str) = async(s)\n\nlet recursive fill (n: Int) (acc: Str) =\n    if n == 0\n    then acc\n    else fill(n - 1)(acc + \"abcdefgh\")\n\nlet compute =\n    async(let recursive loop (n: Int) (total: Int) =\n        if n == 0\n        then total\n        else\n            match await echo(n\n            |> Ashes.Text.fromInt\n            |> fill(2)) with\n                | Error(_message) -> -1\n                | Ok(kept) -> loop(n - 1)(total + Ashes.Text.byteLength(kept))\n    in loop(10)(0))\n\nmatch Ashes.Task.run(compute) with\n    | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// A function an `async` body calls may run inside a coroutine, so it places nothing on the
+// reference-counted heap (stage 0's `AllowsAsyncIndependentRcPlacement`): `fill`'s concatenation
+// and its result stay in the arena.
+let expectCoroutineCalleeKeepsValuesInArena unit =
+    coroutineCalleeSource
+    |> loopFunctionLines("[ClosureHelper from fill]")
+    |> (given (lines) -> check("a function called from an async body places nothing on the reference-counted heap")(countContaining("RuntimeManaged=true")(lines) == 0))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -832,6 +842,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
+    |> (given (_) -> expectCoroutineCalleeKeepsValuesInArena(Unit))
     |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
