@@ -533,26 +533,58 @@ let recursive tempReaders (temp: Int) (instructions: List(IrInstruction)) (reade
             then tempReaders(temp)(rest)(kind :: readers)
             else tempReaders(temp)(rest)(readers)
 
+// Whether every reader of an arena constructor cell builds it or stores it as the successor of a
+// loop parameter the back edge places on the reference-counted heap: that back edge copies the cell
+// with references of its own to every child, as stage 0 builds such a successor on the heap with
+// its fields normalized (`LowerRuntimeManagedConstructorArgument`).
+let recursive readersBuildOrStoreSuccessor (cell: Int) (managedSlots: List(Int)) (readers: List(IrInstructionKind)) (stored: Bool) =
+    match readers with
+        | [] -> stored
+        | SetAdtField(pointer, _index, _source, _tagless) :: rest ->
+            if pointer == cell
+            then readersBuildOrStoreSuccessor(cell)(managedSlots)(rest)(stored)
+            else false
+        | StoreLocal(slot, _source) :: rest ->
+            if containsInt(slot)(managedSlots)
+            then readersBuildOrStoreSuccessor(cell)(managedSlots)(rest)(true)
+            else false
+        | TcoResetPending(_resetId, _usedTemps, _readLocals) :: rest -> readersBuildOrStoreSuccessor(cell)(managedSlots)(rest)(stored)
+        | _reader :: _rest -> false
+
+let recursive copiedSuccessorCells (instructions: List(IrInstruction)) (all: List(IrInstruction)) (managedSlots: List(Int)) (cells: List(Int)) =
+    match instructions with
+        | [] -> cells
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest ->
+            if containsInt(slot)(managedSlots) && containsInt(source)(cells) == false && isArenaCell(source)(all) && readersBuildOrStoreSuccessor(source)(managedSlots)(tempReaders(source)(all)([]))(false)
+            then copiedSuccessorCells(rest)(all)(managedSlots)(source :: cells)
+            else copiedSuccessorCells(rest)(all)(managedSlots)(cells)
+        | _instruction :: rest -> copiedSuccessorCells(rest)(all)(managedSlots)(cells)
+
 // Stage 0's `ReadIsCopiedOntoHeap`: every reader of `temp` copies it onto the reference-counted
 // heap, a representation test whose reference-counted branch retains and whose other branch
-// copies, or a borrow whose readers do the same. The answer is `(copied, tested)` folded over
-// the readers, or `None` for a reader that does anything else.
-let recursive readersCopyOntoHeap (readers: List(IrInstructionKind)) (depth: Int) (instructions: List(IrInstruction)) (copied: Bool) (tested: Bool) =
+// copies, or a borrow whose readers do the same; a field of a successor cell the back edge copies
+// (`copiedCells`) is copied there. The answer is `(copied, tested)` folded over the readers, or
+// `None` for a reader that does anything else.
+let recursive readersCopyOntoHeap (readers: List(IrInstructionKind)) (depth: Int) (copiedCells: List(Int)) (instructions: List(IrInstruction)) (copied: Bool) (tested: Bool) =
     match readers with
         | [] -> Some((copied, tested))
-        | IsReferenceCounted(_target, _source) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(copied)(true)
-        | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(copied)(tested)
-        | CopyOutList(_target, _source, _headCopy, true, RcNormalization) :: rest -> readersCopyOntoHeap(rest)(depth)(instructions)(true)(tested)
+        | IsReferenceCounted(_target, _source) :: rest -> readersCopyOntoHeap(rest)(depth)(copiedCells)(instructions)(copied)(true)
+        | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) :: rest -> readersCopyOntoHeap(rest)(depth)(copiedCells)(instructions)(copied)(tested)
+        | CopyOutList(_target, _source, _headCopy, true, RcNormalization) :: rest -> readersCopyOntoHeap(rest)(depth)(copiedCells)(instructions)(true)(tested)
+        | SetAdtField(pointer, _index, _source, _tagless) :: rest ->
+            if containsInt(pointer)(copiedCells)
+            then readersCopyOntoHeap(rest)(depth)(copiedCells)(instructions)(true)(true)
+            else None
         | Borrow(target, _source) :: rest ->
-            if depth > 0 && readIsCopiedOntoHeap(target)(depth - 1)(instructions)
-            then readersCopyOntoHeap(rest)(depth)(instructions)(true)(true)
+            if depth > 0 && readIsCopiedOntoHeap(target)(depth - 1)(copiedCells)(instructions)
+            then readersCopyOntoHeap(rest)(depth)(copiedCells)(instructions)(true)(true)
             else None
         | _reader :: _rest -> None
-and readIsCopiedOntoHeap (temp: Int) (depth: Int) (instructions: List(IrInstruction)) =
+and readIsCopiedOntoHeap (temp: Int) (depth: Int) (copiedCells: List(Int)) (instructions: List(IrInstruction)) =
     match tempReaders(temp)(instructions)([]) with
         | [] -> false
         | readers ->
-            match readersCopyOntoHeap(readers)(depth)(instructions)(false)(false) with
+            match readersCopyOntoHeap(readers)(depth)(copiedCells)(instructions)(false)(false) with
                 | Some((copied, tested)) -> copied && tested
                 | None -> false
 
@@ -573,28 +605,28 @@ let recursive slotLoads (slot: Int) (instructions: List(IrInstruction)) (loads: 
             else slotLoads(slot)(rest)(loads)
         | _instruction :: rest -> slotLoads(slot)(rest)(loads)
 
-let recursive loadsCopiedOrOwnRelease (slot: Int) (loads: List(Int)) (instructions: List(IrInstruction)) (anyCopied: Bool) =
+let recursive loadsCopiedOrOwnRelease (slot: Int) (loads: List(Int)) (copiedCells: List(Int)) (instructions: List(IrInstruction)) (anyCopied: Bool) =
     match loads with
         | [] -> anyCopied
         | load :: rest ->
-            if readIsCopiedOntoHeap(load)(4)(instructions)
-            then loadsCopiedOrOwnRelease(slot)(rest)(instructions)(true)
+            if readIsCopiedOntoHeap(load)(4)(copiedCells)(instructions)
+            then loadsCopiedOrOwnRelease(slot)(rest)(copiedCells)(instructions)(true)
             else
                 if []
                 |> tempReaders(load)(instructions)
                 |> onlyReleasesOwner(slot)
-                then loadsCopiedOrOwnRelease(slot)(rest)(instructions)(anyCopied)
+                then loadsCopiedOrOwnRelease(slot)(rest)(copiedCells)(instructions)(anyCopied)
                 else false
 
 // Whether `slot` is a `let` slot of an arena cell every read of which copies it onto the
 // reference-counted heap: stored once, never a loop parameter's.
-let letCellCopiedOntoHeap (slot: Int) (cell: Int) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+let letCellCopiedOntoHeap (slot: Int) (cell: Int) (parameterSlots: List(Int)) (copiedCells: List(Int)) (instructions: List(IrInstruction)) =
     if containsInt(slot)(parameterSlots) || isArenaCell(cell)(instructions) == false
     then false
     else
         match storeSourcesOf(slot)(instructions)([]) with
             | _source :: [] ->
-                loadsCopiedOrOwnRelease(slot)(slotLoads(slot)(instructions)([]))(instructions)(false)
+                loadsCopiedOrOwnRelease(slot)(slotLoads(slot)(instructions)([]))(copiedCells)(instructions)(false)
             | _ -> false
 
 // The tail word a cons cell's construction stored.
@@ -615,14 +647,14 @@ let withdrawLetCellTailDuplicate (cell: Int) (withdrawable: List(Int)) (instruct
             else instructions
         | None -> instructions
 
-let recursive withdrawLetCellTails (candidates: List(IrInstructionKind)) (withdrawable: List(Int)) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+let recursive withdrawLetCellTails (candidates: List(IrInstructionKind)) (withdrawable: List(Int)) (parameterSlots: List(Int)) (copiedCells: List(Int)) (instructions: List(IrInstruction)) =
     match candidates with
         | [] -> instructions
         | StoreLocal(slot, cell) :: rest ->
-            withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(if letCellCopiedOntoHeap(slot)(cell)(parameterSlots)(instructions)
+            withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(copiedCells)(if letCellCopiedOntoHeap(slot)(cell)(parameterSlots)(copiedCells)(instructions)
             then withdrawLetCellTailDuplicate(cell)(withdrawable)(instructions)
             else instructions)
-        | _candidate :: rest -> withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(instructions)
+        | _candidate :: rest -> withdrawLetCellTails(rest)(withdrawable)(parameterSlots)(copiedCells)(instructions)
 
 let recursive arenaCellStores (instructions: List(IrInstruction)) (all: List(IrInstruction)) (found: List(IrInstructionKind)) =
     match instructions with
@@ -637,9 +669,11 @@ let recursive arenaCellStores (instructions: List(IrInstruction)) (all: List(IrI
 // cell over a pattern-bound list (`let rest = 0 :: matched in Wrap(rest)`) whose every read is
 // copied onto the reference-counted heap. The copy shares the reference-counted tail with a
 // reference of its own and the arena cell releases nothing, so the pattern-owner duplicate the
-// cell took of its tail is withdrawn, as a copied successor cell's is.
-let withdrawLetCopiedCellTailDuplicates (ownerSlots: List(Int)) (released: List(Int)) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) =
+// cell took of its tail is withdrawn, as a copied successor cell's is. A successor the back edge
+// places on the reference-counted heap, built in the arena here and copied there (stage 0 builds
+// it on the heap directly), counts as a copy of the fields it stores (`managedSlots`).
+let withdrawLetCopiedCellTailDuplicates (ownerSlots: List(Int)) (released: List(Int)) (parameterSlots: List(Int)) (managedSlots: List(Int)) (instructions: List(IrInstruction)) =
     match arenaCellStores(instructions)(instructions)([]) with
         | [] -> instructions
         | candidates ->
-            withdrawLetCellTails(candidates)(withdrawablePatternOwnerDuplicates(ownerSlots)(released)(instructions)([]))(parameterSlots)(instructions)
+            withdrawLetCellTails(candidates)(withdrawablePatternOwnerDuplicates(ownerSlots)(released)(instructions)([]))(parameterSlots)(copiedSuccessorCells(instructions)(instructions)(managedSlots)([]))(instructions)

@@ -508,8 +508,22 @@ let testSuccessorJoinArmOfLetOwnerIsDemoted unit =
             |> countContaining("Target=rc_arena_demote_done_")
             |> test.assertEqual(1)
 
+let letCellBackEdgeSource = "type State =\n    | S(List(Int))\n\nlet recursive advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = 0 :: perm\n            in\n                if r == 0\n                then 0\n                else advance(r - 1)(S(perm2))\n\nadvance(2)(S([1, 2]))\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The back edge copies the arena successor `S(perm2)` onto the reference-counted heap with
+// references of its own to its fields, as stage 0 builds the successor there directly, so the
+// duplicate the let-bound cell took of its matched tail is withdrawn and only the pattern owner's
+// own duplicate stays a retain.
+let testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate unit =
+    letCellBackEdgeSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> countContainingBoth("RcDup")("MayBeEmpty=true")
+    |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
     |> testSuccessorJoinArmOfLetOwnerIsDemoted
     |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
     |> testLetCellCopiedAtExitWithdrawsTailDuplicate

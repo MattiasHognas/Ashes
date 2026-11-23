@@ -1862,8 +1862,13 @@ let withdrawBorrowedScrutineeRetains (parameters: List((Int, Int))) (state: Core
     |> withStateBorrowedScrutineeCells([])
 
 // Stage 0's `WithdrawLetCopiedCellTailDuplicates`, run beside the borrowed scrutinee withdrawal.
-let withdrawLetCellTailDuplicatesOf (ownerSlots: List(Int)) (parameterSlots: List(Int)) (state: CoreLoweringState) =
-    state with reversedInstructions = withdrawLetCopiedCellTailDuplicates(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(parameterSlots)(state.reversedInstructions)
+let recursive managedAdtSlotsOf (managedAdts: List((Int, Int, SemanticType, Str))) =
+    match managedAdts with
+        | [] -> []
+        | (slot, _activeSlot, _semanticType, _typeName) :: rest -> slot :: managedAdtSlotsOf(rest)
+
+let withdrawLetCellTailDuplicatesOf (ownerSlots: List(Int)) (parameterSlots: List(Int)) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
+    state with reversedInstructions = withdrawLetCopiedCellTailDuplicates(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(parameterSlots)(managedAdtSlotsOf(managedAdts))(state.reversedInstructions)
 
 let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
@@ -1882,7 +1887,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
                     |> withdrawLetCellTailDuplicatesOf(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
-                    |> patternOwnerSiteSlots)(frame.parameterSlots)
+                    |> patternOwnerSiteSlots)(frame.parameterSlots)(managedAdts)
                     |> finishTcoManagedPlacement(label)(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
                     |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
