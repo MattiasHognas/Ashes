@@ -538,6 +538,20 @@ let checkRecordedLambdaParameter unit =
                         then Unit
                         else Ashes.IO.panic("a lambda parameter did not take its recorded type, or took one from another binding or without a table"))
 
+// A test program whose requirements the enclosing function supplies (a local `Seed.first(Unit)` the
+// body later compares with its parameter, a callback returned by a constrained helper) or whose
+// escaping constrained reference the program uses at one type: the typed first pass leaves no goal.
+let checkTestProgramLeavesNoGoal (name: Str) =
+    match Ashes.IO.File.readText("tests/" + name + ".ash") with
+        | Ok(source) -> checkTypedEqualityLeavesNoGoal(name)(true)(source)
+        | Error(message) -> Ashes.IO.panic(message)
+
+let checkEnclosingEvidence unit =
+    (let _ = checkTestProgramLeavesNoGoal("local_eager_seed_uses_evidence_of_its_enclosing_function")
+    in
+        let _ = checkTestProgramLeavesNoGoal("returned_callback_keeps_evidence_until_invoked")
+        in checkTestProgramLeavesNoGoal("escaping_recursive_function_applied_with_evidence"))
+
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
 // A binding referenced only at another binding's quantified variable is settled through that
@@ -569,6 +583,7 @@ let runRecordedInferenceCoverageTests unit =
     |> checkWrappedInequalitySettled
     |> checkWrappedEqualitySettled
     |> checkRecordedLambdaParameter
+    |> checkEnclosingEvidence
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings
