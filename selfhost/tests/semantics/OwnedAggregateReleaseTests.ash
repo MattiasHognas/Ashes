@@ -469,8 +469,32 @@ let testLetCellCopiedAtExitWithdrawsTailDuplicate unit =
     |> countContainingBoth("RcDup")("MayBeEmpty=true")
     |> test.assertEqual(1)
 
+let agreementCellSourcePath = "tests/loop_exit_agreement_cell_release_when_the_result_holds_the_label.ash"
+
+// The agreement loop's back edges hand the matched label on in a `Some` cell that retains it for
+// itself, so the iteration's owners of the label and of the matched resolution are released at
+// every back edge as at the exit: a retained field names no owner's value unretained.
+let testRetainedSuccessorFieldLeavesIterationOwnersReleased unit =
+    match Ashes.IO.File.readText(agreementCellSourcePath) with
+        | Error(message) -> test.fail("could not read " + agreementCellSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from resolveGroup")
+            |> (given (lines: List(Str)) ->
+                Unit
+                |> (given (_) ->
+                    lines
+                    |> countContaining("TypeName=String OwnerSlot=")
+                    |> test.assertEqual(6))
+                |> (given (_) ->
+                    lines
+                    |> countContaining("TypeName=CaptureResolution RuntimeManaged=true")
+                    |> test.assertEqual(3)))
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
     |> testLetCellCopiedAtExitWithdrawsTailDuplicate
     |> testNestedConstructorRetainsLiveOwnerFieldOnce
     |> testOwnedListLetWalksSpineInline

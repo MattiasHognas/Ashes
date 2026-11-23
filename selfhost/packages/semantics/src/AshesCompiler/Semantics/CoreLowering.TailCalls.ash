@@ -13,6 +13,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.StructuralDroppers.OwnedReleasePlan
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingEachTemp
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingEachTempPastRetains
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.PatternBindingOwnership
@@ -1136,7 +1137,8 @@ let recursive negatedFlags (flags: List(Bool)) =
         | flag :: rest -> !flag :: negatedFlags(rest)
 
 // Per successor of a back edge that is no call's result, the slots its value can have been read
-// from, and none for a call's result.
+// from without a retain of its own between (a cell field retained for the cell holds its own
+// reference to the slot's value), and none for a call's result.
 let plainSuccessorReaches (temps: List(Int)) (state: CoreLoweringState) =
     (let flags =
         state
@@ -1147,7 +1149,7 @@ let plainSuccessorReaches (temps: List(Int)) (state: CoreLoweringState) =
             | [] -> reachesByOrdinal(flags)([])
             | plainTemps ->
                 state.reversedInstructions
-                |> localSlotsReachingEachTemp(plainTemps)
+                |> localSlotsReachingEachTempPastRetains(plainTemps)
                 |> reachesByOrdinal(flags))
 
 let recursive ownedDropPlainSuccessorsWith (drops: List((Int, Str))) (reaches: List(Maybe(List(Int)))) =
