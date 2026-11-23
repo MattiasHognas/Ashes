@@ -48,6 +48,7 @@ export (
     value unknownArmResult,
     value transferBranchOwnerResult,
     value transferIfBranchResult,
+    value transferBranchLetOwnerResult,
     value joinArmStoreIndex,
     value shiftPatternOwnerSites,
     value normalizeMixedJoinArmsAs,

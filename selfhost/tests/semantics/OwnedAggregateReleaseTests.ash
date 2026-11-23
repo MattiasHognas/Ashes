@@ -492,8 +492,25 @@ let testRetainedSuccessorFieldLeavesIterationOwnersReleased unit =
                     |> countContaining("TypeName=CaptureResolution RuntimeManaged=true")
                     |> test.assertEqual(3)))
 
+let tableLookupSourcePath = "tests/loop_table_lookup_arm_outer_table_stays_arena.ash"
+
+// The label arm's `nextInts` join becomes the known-table parameter, which stays in the arena: its
+// lookup arm returns `fallback`, a `let` owner bound before the match, so the arm takes a reference
+// of its own and the join copies it into the arena (an `rc_arena_demote_done` block), the
+// reference released after the copy, rather than handing the parameter the owner's own cells.
+let testSuccessorJoinArmOfLetOwnerIsDemoted unit =
+    match Ashes.IO.File.readText(tableLookupSourcePath) with
+        | Error(message) -> test.fail("could not read " + tableLookupSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from reduceLoop")
+            |> countContaining("Target=rc_arena_demote_done_")
+            |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testSuccessorJoinArmOfLetOwnerIsDemoted
     |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
     |> testLetCellCopiedAtExitWithdrawsTailDuplicate
     |> testNestedConstructorRetainsLiveOwnerFieldOnce

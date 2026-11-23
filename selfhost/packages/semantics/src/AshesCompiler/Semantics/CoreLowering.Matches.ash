@@ -1262,6 +1262,21 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
                 | None -> (state, temp)
         | _ -> (state, temp)
 
+// Stage 0's `TransferOwnerBindingResult` for an arm of a join that becomes a loop parameter left
+// in the arena (inside the value of the `let` the arena successor join ends): an arm returning a
+// `let` binding bound before the match, which still owns its reference-counted value, takes a
+// reference of its own, so the arm is a reference-counted one and the successor join demotes it
+// into the arena (`demoteArenaSuccessorJoinArms`) before the binding's release.
+let retainsSuccessorJoinLetOwner (body: Expr) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match (stateArenaSuccessorJoin(state), tailForwardedVariable(body)) with
+        | (Some(_span), Some(name)) ->
+            match state.bindings
+            |> armBindings(length(state.bindings) - length(outerBindings))
+            |> armBindingSlotOf(name) with
+                | Some(_slot) -> false
+                | None -> true
+        | _ -> false
+
 // Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
 // owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
 // loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
@@ -1279,7 +1294,10 @@ let transferArmResult (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyT
                         then (retained, retainedTemp)
                         else
                             match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
-                                | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
+                                | (transferred, resultTemp) ->
+                                    if resultTemp == temp && retainsSuccessorJoinLetOwner(body)(outerBindings)(transferred)
+                                    then transferBranchLetOwnerResult(body)(temp)(bodyType)(transferred)
+                                    else (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
 
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
