@@ -1,0 +1,46 @@
+type Block =
+    | blockStart: Int
+    | blockSuccessors: List(Int)
+
+let recursive listAt (items: List(Block)) (index: Int) =
+    match items with
+        | [] -> None
+        | head :: rest ->
+            if index == 0
+            then Some(head)
+            else listAt(rest)(index - 1)
+
+let successorsOfIndex (blocks: List(Block)) (index: Int) =
+    match listAt(blocks)(index) with
+        | Some(Block { blockSuccessors = successors }) -> successors
+        | None -> []
+
+let recursive contains (item: Int) (set: List(Int)) =
+    match set with
+        | [] -> false
+        | head :: rest -> head == item || contains(item)(rest)
+
+let recursive postorder (blocks: List(Block)) (open: List(Int)) (pending: List(List(Int))) (visited: List(Int)) (order: List(Int)) =
+    match (open, pending) with
+        | (block :: openRest, [] :: pendingRest) -> postorder(blocks)(openRest)(pendingRest)(visited)(block :: order)
+        | (block :: openRest, (successor :: more) :: pendingRest) ->
+            if contains(successor)(visited)
+            then postorder(blocks)(block :: openRest)(more :: pendingRest)(visited)(order)
+            else postorder(blocks)(successor :: block :: openRest)(successorsOfIndex(blocks)(successor) :: more :: pendingRest)(successor :: visited)(order)
+        | _ -> order
+
+let recursive total (xs: List(Int)) =
+    match xs with
+        | [] -> 0
+        | x :: rest -> x + total(rest)
+
+let probe (n: Int) =
+    (let blocks = [Block(blockStart = n, blockSuccessors = [1]), Block(blockStart = 1, blockSuccessors = [2, 3]), Block(blockStart = 2, blockSuccessors = [3]), Block(blockStart = 3, blockSuccessors = [])]
+    in total(postorder(blocks)([0])([successorsOfIndex(blocks)(0)])([0])([])) + total(successorsOfIndex(blocks)(2)))
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe(n))
+
+Ashes.IO.print(loop(ROUNDS)(0))

@@ -1,5 +1,6 @@
 // expect: false,true
 
+import Ashes.Trait
 type Rank =
     | Rank(Int)
     deriving {Eq}

@@ -1,8 +1,11 @@
 import Ashes.IO
 import Ashes.Test as test
+import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.Unification
@@ -160,6 +163,9 @@ let rejectWrongAliasArity unit =
             | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceTypeResolutionError(TypeNameArityMismatch("Pair", 1, 0)))) } -> Unit
             | _ -> test.fail("type alias arity should be checked"))
 
+// The second call meets the group's monomorphic `bad`, now `Int -> ...`, with a Str: the mismatch
+// is reported as the call's argument mismatch, as stage 0 words it ("in argument #1 of call to
+// 'bad'").
 let rejectPolymorphicRecursion unit =
     (let body =
         ExprLambda(
@@ -178,7 +184,7 @@ let rejectPolymorphicRecursion unit =
         let binding = LetBindingSyntax(name = "bad", value = body, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
         in
             match inferProgram(ProgramSyntax(items = [TopLevelLet(binding)(true)], body = None)) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(CallArgumentMismatch(TypeMismatch(_left, _right), 1, Some("bad")))) } -> Unit
                 | _ -> test.fail("recursive bindings should remain monomorphic inside their group"))
 
 let expectConstructors unit =
@@ -254,6 +260,73 @@ let rejectInconsistentOrPattern unit =
             | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InconsistentOrPatternBindings)) } -> Unit
             | _ -> test.fail("or-pattern alternatives should bind the same names"))
 
+// The start of the span the inference located the rejection of `source` at.
+let rejectionStart source =
+    match parseProgram(source) with
+        | ProgramParseResult { program = program, diagnostics = [] } ->
+            match inferProgram(program) with
+                | ProgramInferenceResult { error = Some(_error), errorLocation = Some(InferenceErrorLocation { span = Some(TextSpan { start = start }) }) } -> start
+                | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("expected a located rejection: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+        | _ -> test.fail("position fixture should parse")
+
+// Stage 0's positions: a constructor call's arity at its first argument, a constructor
+// pattern's at its first argument pattern, an unreachable arm at its pattern (an or-pattern's
+// redundant alternative), an unknown constructor pattern at itself.
+let expectPatternAndArityPositions unit =
+    (let boxType = "type Box =\n    | Box(Int)\n"
+    in
+        Unit
+        |> (given (_) ->
+            boxType + "Box(1)(2)"
+            |> rejectionStart
+            |> test.assertEqual(Ashes.Text.length(boxType) + 4))
+        |> (given (_) ->
+            boxType + "match Box(1) with\n    | Box(a, b) -> a"
+            |> rejectionStart
+            |> test.assertEqual(Ashes.Text.length(boxType) + 28))
+        |> (given (_) ->
+            "match 1 with\n    | 1 | 1 -> 1\n    | _ -> 0"
+            |> rejectionStart
+            |> test.assertEqual(23))
+        |> (given (_) ->
+            "match 1 with\n    | Nope(x) -> 1\n    | _ -> 0"
+            |> rejectionStart
+            |> test.assertEqual(19)))
+
+let siteStart traitName source =
+    match parseExpression(source) with
+        | ExpressionParseResult { expression = expression, diagnostics = [] } ->
+            match requirementSiteSpan(traitName)(expression) with
+                | Some(TextSpan { start = start }) -> start
+                | None -> -1
+        | _ -> test.fail("requirement site fixture should parse")
+
+// A requirement is located at the operator or `print` argument that raised it; a `let`'s function
+// value is not searched, its requirements belonging to the function's own scheme.
+let expectRequirementSites unit =
+    Unit
+    |> (given (_) ->
+        "[given (x) -> x + x]"
+        |> siteStart("Add")
+        |> test.assertEqual(14))
+    |> (given (_) ->
+        "Ashes.IO.print(1.5)"
+        |> siteStart("$PrintArgument")
+        |> test.assertEqual(15))
+    |> (given (_) ->
+        "let recursive invert x = !x in invert"
+        |> siteStart("Not")
+        |> test.assertEqual(-1))
+
+// An alias cycle is reported at the declaration of the alias that reached itself again.
+let expectAliasCycleAtDeclaration unit =
+    match parseProgram("type alias Other = Int\ntype alias First = Second\ntype alias Second = First\n0") with
+        | ProgramParseResult { program = ProgramSyntax { items = items, body = body }, diagnostics = [] } ->
+            match inferProgramUnitsFrom(emptyTypeEnvironmentForPackage("app"))([ProgramInferenceUnit(packageId = "app", program = ProgramSyntax(items = items, body = None))])(body)("app") with
+                | ProgramInferenceResult { error = Some(RecursiveTypeAlias(_cycle)), errorLocation = Some(InferenceErrorLocation { declarationSpan = Some(TextSpan { start = 23 }) }) } -> Unit
+                | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("alias cycle should be located at its declaration: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+        | _ -> test.fail("alias cycle fixture should parse")
+
 let runProgramInferenceTests unit =
     unit
     |> expectSequentialBindings
@@ -269,4 +342,7 @@ let runProgramInferenceTests unit =
     |> rejectWrongConstructorPatternArity
     |> rejectUnknownRecordPatternField
     |> rejectInconsistentOrPattern
+    |> expectPatternAndArityPositions
+    |> expectRequirementSites
+    |> expectAliasCycleAtDeclaration
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))

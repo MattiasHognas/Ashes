@@ -36,6 +36,7 @@ import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
+import AshesCompiler.Semantics.NodeTypeTable.settledInstantiationArguments
 export (
     type ConsumerRequest(..),
     type RuntimeTempState(..),
@@ -51,6 +52,12 @@ export (
     type CoreHeapQueryFacts(..),
     type CoreHeapQueryContext(..),
     type CoreTypeObservation(..),
+    type ObservedPendingGoal(..),
+    value withPendingGoalObservation,
+    value observePendingGoal,
+    value observeDeferredOperatorGoal,
+    type CoreTraitGoalAnswer(..),
+    type CoreTraitGoalProof(..),
     type CoreProgramState(..),
     type CoreFunctionState(..),
     type CoreOwnerState(..),
@@ -73,6 +80,7 @@ export (
     value stateNodeTypes,
     value stateNodeInstantiation,
     value withStateNodeInstantiation,
+    value stateSettledNodeVariables,
     value observeLoweringEvent,
     value carryTypeObservation,
     value stateConstructorLayouts,
@@ -105,6 +113,8 @@ export (
     value withStateCapabilityGlobalCount,
     value stateCapabilityOperationSchemes,
     value withStateCapabilityOperationSchemes,
+    value stateFailureSite,
+    value withStateFailureSite,
     value stateHandledCapabilities,
     value withStateHandledCapabilities,
     value stateSourceContext,
@@ -191,7 +201,12 @@ export (
     value withStatePendingStackClosure,
     value stateCoroutineBody,
     value withStateCoroutineBody,
+    value statePendingCoroutineBody,
+    value stateHelperFactoryType,
+    value withHelperFactoryType,
+    value stateCompletedTaskFrameDropper,
     value withStatePendingCoroutineBody,
+    value withCompletedTaskFrameDropper,
     value enterPendingCoroutineBody,
     value stateRuntimeAdtRequested,
     value withStateRuntimeAdtRequested,
@@ -314,6 +329,7 @@ export (
     value withGeneralRcFinishedResult,
     value withClosedProducerChain,
     value isClosedProducerChain,
+    value tcoExitTransferTemp,
     value isGeneralRcFinishedResult,
     value ownedSlotsOf,
     value ownedSlotsOfActiveFunction,
@@ -717,6 +733,9 @@ type CoreTcoReset =
     // the ordinals of the successors that are a call's result reaching its slot (stage 0's
     // `ArenaSuccessorMayHoldPartOf`).
     | ownedDropFacts: List((Int, List(Int), List(Int)))
+    // Per owned drop, the ordinals of the successors that are no call's result and whose value can
+    // have been read from its slot: a join, an alias or a cell of this iteration naming its value.
+    | ownedDropPlainSuccessors: List((Int, List(Int)))
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
@@ -822,7 +841,20 @@ let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = em
 // What a lowering asked to observe its types records for a comparison with the standalone
 // inference: the bindings in scope where the trailing expression is lowered, and every binary
 // operator site lowered, by its span, with its trait and left operand type, most recent first.
+// A goal site is a pending trait goal, a speculative equality (`structural`), or an operator whose
+// two operands were both still open, emitted in its integer form for the finalization rewrite
+// (`deferredOperator`).
+type ObservedPendingGoal =
+    | key: Str
+    | structural: Bool
+    | deferredOperator: Bool
+    | region: Int
+    | node: Maybe(Int)
+    | operand: SemanticType
+    | activeMethods: List((Str, SemanticType, Str, Str))
+
 type CoreTypeObservation =
+    | goalSites: Maybe(List(ObservedPendingGoal))
     | topLevelScope: List(CoreBinding)
     | operators: List((Maybe(TextSpan), Str, SemanticType))
     // How many operator sites took their operand type from the recorded node types where lowering
@@ -835,6 +867,18 @@ type CoreTypeObservation =
     | tableCallResults: Int
     // How many calls lowered against a recorded expected type failed and were lowered again without it.
     | tableFallbacks: Int
+    // Concrete source-copy calls whose argument tree was skipped or inferred.
+    | recordedCopyCalls: Int
+    | inferredCopyCalls: Int
+
+type CoreTraitGoalAnswer =
+    | ProvenOperandType(SemanticType)
+    | ProvenAmbientMethod(Str)
+    deriving {Eq}
+
+type CoreTraitGoalProof =
+    | SharedTraitGoalProof(CoreTraitGoalAnswer)
+    | OrderedTraitGoalProofs(List(Maybe(CoreTraitGoalAnswer)))
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -860,6 +904,9 @@ type CoreProgramState =
     // The capabilities an enclosing `handle` discharges where lowering stands: an operation of one
     // resolves through handler evidence, never through a static provider.
     | handledCapabilities: List(Str)
+    // The first lowering error that left an expression with a span, with the location of the
+    // innermost such expression, where stage 0 reports it.
+    | failureSite: Maybe((CoreLoweringError, IrSourceLocation))
     | sourceContext: Maybe(SourceContext)
     // For a stitched program, the source region (an item region of `sourceContext`) each top-level
     // binding was declared in, by compiler name, so its spans resolve against its own file.
@@ -968,7 +1015,7 @@ type CoreProgramState =
     | closureDropperLabels: List((Str, Str))
     // Stage 0's `_provenAmbiguousTraitGoalTypes`: the operand types a first pass proved for those
     // sites, read by the pass that lowers with them pinned.
-    | provenTraitGoals: MapTree(Str, SemanticType)
+    | provenTraitGoals: MapTree(Str, CoreTraitGoalProof)
     // Stage 0's `_provenCallResultTypes` for the calls between the members of a recursive group: the
     // result type the group's first lowering settled for a call to a member whose result was still
     // open there, by call site, pinned at the same site when the group is lowered again.
@@ -982,6 +1029,9 @@ type CoreProgramState =
     // variable of the body's recorded scheme, by the inference's id, with its recorded type at that
     // instance. Empty outside such a body.
     | nodeInstantiation: List((Int, SemanticType))
+    // The inference variables every reference to their binding instantiates at one closed type,
+    // read off `nodeTypes` once when it is given.
+    | settledNodeVariables: MapTree(Int, SemanticType)
 
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
@@ -994,6 +1044,8 @@ type CoreFunctionState =
     // whether the next lambda entered is one.
     | coroutineBody: Bool
     | pendingCoroutineBody: Bool
+    | helperFactoryType: Maybe(SemanticType)
+    | completedTaskFrameDropper: Maybe(Str)
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     // The bindings the function being lowered was created among, the environment its scheme is
@@ -1038,7 +1090,7 @@ type CoreFunctionState =
     // variable at the site dispatching on it, keyed by that site. Inference can learn the type
     // AFTER the site — a top-level binding whose parameter only a later use pins — so a pass
     // reaching the site cannot tell a genuinely ambiguous operand from one not determined yet.
-    | pendingTraitGoals: List((Str, SemanticType))
+    | pendingTraitGoals: List((Str, SemanticType, List((Str, SemanticType))))
     // The `==` and `!=` sites lowered as a speculative integer comparison because both operand
     // types were still variables there, keyed as a trait goal is, with the shared operand type.
     | pendingEqualityGoals: List((Str, SemanticType))
@@ -1121,7 +1173,7 @@ type CoreOwnerState =
     | generalRcFinishedResult: Maybe((Maybe(IrFunctionOrigin), Int))
     // The result a function's tail-modulo-cons spine closed into, with that function: a spine its
     // own cells built, taken over at the return rather than retained again.
-    | closedProducerChain: Maybe((Maybe(IrFunctionOrigin), Int))
+    | closedProducerChain: Maybe((Maybe(IrFunctionOrigin), Int, Int))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -1386,7 +1438,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -1394,7 +1446,7 @@ let stateTypeObservation (state: CoreLoweringState) =
 
 let withNodeTypes (table: NodeTypeTable) (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with nodeTypes = Some(table)))
+    in state with programState = (group with nodeTypes = Some(table), settledNodeVariables = settledInstantiationArguments(table)))
 
 let stateNodeTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1407,6 +1459,10 @@ let stateNodeInstantiation (state: CoreLoweringState) =
 let withStateNodeInstantiation (instantiation: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with nodeInstantiation = instantiation))
+
+let stateSettledNodeVariables (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.settledNodeVariables)
 
 // Both observations leave the state as it is unless the lowering was asked to observe.
 let observeTopLevelScope (state: CoreLoweringState) =
@@ -1426,7 +1482,7 @@ let observeOperatorType (traitName: Str) (operandType: SemanticType) (state: Cor
 // Counts one operator site answered from the recorded node types (0), one deferred or pended
 // operator goal (1), one function body lowered again (2), or one call whose expected result type
 // came from the recorded node types (3), or one such call lowered again without it after it failed
-// (4), when the lowering observes.
+// (4). Concrete source-copy calls count a recorded proof (5) or speculative inference (6).
 let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
     (let group = state.programState
     in
@@ -1439,6 +1495,8 @@ let observeLoweringEvent (event: Int) (state: CoreLoweringState) =
                         | 1 -> observation with deferredOperators = observation.deferredOperators + 1
                         | 2 -> observation with relowerings = observation.relowerings + 1
                         | 3 -> observation with tableCallResults = observation.tableCallResults + 1
+                        | 5 -> observation with recordedCopyCalls = observation.recordedCopyCalls + 1
+                        | 6 -> observation with inferredCopyCalls = observation.inferredCopyCalls + 1
                         | _ -> observation with tableFallbacks = observation.tableFallbacks + 1
                 in state with programState = (group with typeObservation = Some(counted)))
 
@@ -1656,6 +1714,14 @@ let stateCapabilityOperationSchemes (state: CoreLoweringState) =
 let withStateCapabilityOperationSchemes value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with capabilityOperationSchemes = value))
+
+let stateFailureSite (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.failureSite)
+
+let withStateFailureSite value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with failureSite = value))
 
 let stateHandledCapabilities (state: CoreLoweringState) =
     (let group = state.programState
@@ -2062,6 +2128,26 @@ let stateCoroutineBody (state: CoreLoweringState) =
 let withStateCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with coroutineBody = value))
+
+let stateHelperFactoryType (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.helperFactoryType)
+
+let withHelperFactoryType value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with helperFactoryType = value))
+
+let statePendingCoroutineBody (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.pendingCoroutineBody)
+
+let stateCompletedTaskFrameDropper (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.completedTaskFrameDropper)
+
+let withCompletedTaskFrameDropper value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with completedTaskFrameDropper = value))
 
 let withStatePendingCoroutineBody value (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2553,17 +2639,28 @@ let withGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFinishedResult = Some((stateActiveFunctionOrigin(state), temp))))
 
-let withClosedProducerChain (temp: Int) (state: CoreLoweringState) =
+let withClosedProducerChain (temp: Int) (transferTemp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
-    in state with ownerState = (group with closedProducerChain = Some((stateActiveFunctionOrigin(state), temp))))
+    in state with ownerState = (group with closedProducerChain = Some((stateActiveFunctionOrigin(state), temp, transferTemp))))
 
 // Whether `temp` is the spine the function being lowered closed its tail-modulo-cons chain into.
 let isClosedProducerChain (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in
         match group.closedProducerChain with
-            | Some((origin, closed)) -> closed == temp && origin == stateActiveFunctionOrigin(state)
+            | Some((origin, closed, _transferTemp)) -> closed == temp && origin == stateActiveFunctionOrigin(state)
             | None -> false)
+
+// The slot that supplied the base case hands its reference to the last cell of a closed chain.
+let tcoExitTransferTemp (result: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        match group.closedProducerChain with
+            | Some((origin, closed, transferTemp)) ->
+                if closed == result && origin == stateActiveFunctionOrigin(state)
+                then transferTemp
+                else result
+            | None -> result)
 
 // Whether `temp` is the result the function being lowered already made its own.
 let isGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
@@ -3175,3 +3272,30 @@ let stateMayRunAsParallelWorker (state: CoreLoweringState) =
 let withStateMayRunAsParallelWorker value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with mayRunAsParallelWorker = value))
+
+let withPendingGoalObservation regionOfName (state: CoreLoweringState) =
+    (let configured =
+        state
+        |> withStateSourceRegions(regionOfName)
+        |> withStateSourceRegionOf("")
+    in
+        let group = configured.programState
+        in
+            match group.typeObservation with
+                | None -> configured
+                | Some(observation) -> configured with programState = (group with typeObservation = Some((observation with goalSites = Some([])))))
+
+let observeGoalSite structural deferredOperator key operand (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(CoreTypeObservation { goalSites = Some(sites) } as observation) ->
+                let site = ObservedPendingGoal(key = key, structural = structural, deferredOperator = deferredOperator, region = stateCurrentItem(state), node = state.currentNode, operand = operand, activeMethods = stateActiveTraitMethods(state))
+                in state with programState = (group with typeObservation = Some((observation with goalSites = Some(Ashes.Internal.deepCopy(site) :: sites))))
+            | _ -> state)
+
+let observePendingGoal structural key operand (state: CoreLoweringState) = observeGoalSite(structural)(false)(key)(operand)(state)
+
+// Records an operator site lowering deferred because both operands were still open, when the
+// lowering observes its goal sites; otherwise the state is unchanged.
+let observeDeferredOperatorGoal key operand (state: CoreLoweringState) = observeGoalSite(false)(true)(key)(operand)(state)

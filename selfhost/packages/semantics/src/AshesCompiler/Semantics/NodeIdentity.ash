@@ -12,6 +12,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import Ashes.Collection.List.reverse
 export (
     value identifyExpression,
+    value identifyBindings,
     value identifyItems,
     value identifyProgram,
     value foldExpressionNodes,

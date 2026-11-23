@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.CoreBuiltinLowering
 export (
     value standardTraitEnvironment,
+    value withAsyncTaskBuilders,
     value withIntrinsicBuiltinSignatures,
     value standardTraitImplementationBindingName,
 )
@@ -481,8 +482,17 @@ let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], b
 
 let polymorphicTask = intrinsicTaskOf(SemVariable(2))(SemVariable(3))
 
-let asyncTaskScheme =
-    TypeScheme(quantified = [(3, "a")], body = SemFunction(SemVariable(3))(intrinsicTaskOf(SemString)(SemVariable(3)))(None), constraints = [])
+// The two spellings share one scheme. Core lowering uses the symbol from its
+// layout namespace; standalone inference uses its canonical Task symbol.
+let withAsyncTaskBuilders taskSymbol environment =
+    (let value = SemVariable(3)
+    in
+        let scheme =
+            TypeScheme(quantified = [(3, "a")], body = SemFunction(value)(SemNamed(taskSymbol)("Task")([SemString, value]))(None), constraints = [])
+        in
+            environment
+            |> addTypeBinding("Ashes.Task.task")(scheme)
+            |> addTypeBinding("async")(scheme))
 
 // The two members of `Ashes.Task.Parallel` the compiler provides take thunks: `both` runs two and
 // pairs their results, `withWorkers` runs one under a worker count.
@@ -493,8 +503,7 @@ let withTaskSignatures environment =
     environment
     |> addInferenceTypeDefinition(9)("JoinHandle")(2)
     |> addTypeBinding("Ashes.Task.run")(taskScheme(polymorphicTask)(intrinsicResultType))
-    |> addTypeBinding("Ashes.Task.task")(asyncTaskScheme)
-    |> addTypeBinding("async")(asyncTaskScheme)
+    |> withAsyncTaskBuilders(taskTypeSymbolId)
     |> addTypeBinding("Ashes.Task.fromResult")(taskScheme(intrinsicResultType)(polymorphicTask))
     |> addTypeBinding("Ashes.Task.sleep")(TypeScheme(quantified = [], body = SemFunction(SemInt)(intrinsicTaskOf(SemString)(SemInt))(None), constraints = []))
     |> addTypeBinding("Ashes.Task.all")(SemList(SemVariable(3))

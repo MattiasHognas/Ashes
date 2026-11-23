@@ -229,6 +229,32 @@ let standardTraitsFirst (regions: List(StitchedModuleRegion)) (units: List(Progr
             in (regionsOf(ordered), unitsOf(ordered))
         else (regions, units))
 
+let recursive isTopLevelBinding (item: TopLevelItem) =
+    match item with
+        | TopLevelAt(_span, inner) -> isTopLevelBinding(inner)
+        | TopLevelLet(_binding, _isRecursive) -> true
+        | TopLevelRecursiveGroup(_bindings) -> true
+        | _ -> false
+
+let recursive declaresTopLevelBinding (items: List(TopLevelItem)) =
+    match items with
+        | [] -> false
+        | item :: rest ->
+            if isTopLevelBinding(item)
+            then true
+            else declaresTopLevelBinding(rest)
+
+// Whether the entry module declares a top-level binding. Stage 0 appends such an entry to the
+// combined source as it is, so its trailing expression keeps its position; any other entry is
+// wrapped in a generated expression whose start lies outside the entry's text.
+let recursive entryDeclaresBinding (pairs: List((StitchedModuleRegion, ProgramInferenceUnit))) =
+    match pairs with
+        | [] -> true
+        | (StitchedModuleRegion { isEntry = isEntry }, ProgramInferenceUnit { program = ProgramSyntax { items = items } }) :: rest ->
+            if isEntry
+            then declaresTopLevelBinding(items)
+            else entryDeclaresBinding(rest)
+
 let inferIdentifiedStitchedProjectFrom baseEnvironment project (identified: IdentifiedStitchedProject) =
     match project with
         | StitchedSyntaxProject { moduleRegions = regions } ->
@@ -237,7 +263,12 @@ let inferIdentifiedStitchedProjectFrom baseEnvironment project (identified: Iden
                 match standardTraitsFirst(regions)(program.units) with
                     | (orderedRegions, orderedUnits) ->
                         (program with units = orderedUnits)
-                        |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(identified.entryPackageId)
+                        |> inferIdentifiedProgramUnitsLocated(baseEnvironment)(
+                            program.units
+                            |> regionUnits(regions)
+                            |> entryDeclaresBinding,
+                            identified.entryPackageId
+                        )
                         |> withErrorModule(orderedRegions)
                         |> withErrorImplementationPaths(orderedRegions)
 

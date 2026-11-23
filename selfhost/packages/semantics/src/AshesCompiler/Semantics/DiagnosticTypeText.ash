@@ -9,6 +9,7 @@ import Ashes.Collection.List.sortBy
 import AshesCompiler.Semantics.Types
 export (
     value diagnosticTypeText,
+    value constructorParameterListText,
     value diagnosticTypePairText,
 )
 
@@ -133,6 +134,10 @@ and rowSuffixText (names: List((Int, Str))) (row: Maybe(SemanticType)) =
                     match rowText(names)(capabilities)(tail) with
                         | (text, nextNames) -> (" needs " + text, nextNames)
         | _ -> ("", names)
+
+let constructorParameterListText (quantified: List((Int, Str))) (parameters: List(SemanticType)) =
+    match typeListText(quantified)(0)(parameters) with
+        | (text, _names) -> text
 
 let diagnosticTypeText (semanticType: SemanticType) =
     match typeText([])(0)(semanticType) with

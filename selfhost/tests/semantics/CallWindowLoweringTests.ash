@@ -61,6 +61,14 @@ let expectInstruction (instruction: Str) (lines: List(Str)) =
     then lines
     else test.fail("expected instruction `" + instruction + "` in:\n" + Ashes.Text.join("\n")(lines))
 
+let recursive expectOperands opcode operands lines =
+    match lines with
+        | [] -> test.fail("expected " + opcode + " with operands " + operands)
+        | line :: rest ->
+            if Ashes.Text.startsWith(Ashes.Text.trim(line))(opcode + " ") && Ashes.Text.contains(line)(operands)
+            then rest
+            else expectOperands(opcode)(operands)(rest)
+
 let expectNoInstructionText (needle: Str) (lines: List(Str)) =
     if hasInstructionText(needle)(lines)
     then test.fail("expected no `" + needle + "` in:\n" + Ashes.Text.join("\n")(lines))
@@ -195,15 +203,15 @@ let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
     |> expectInstruction("LoadConstInt          Target=11 Value=63")
     |> expectNoInstructionText("call_copy_arena_result")
     |> liftedFunctionLines
-    |> expectInstruction("Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true")
-    |> expectInstruction("JumpIfFalse           CondTemp=24 Target=tmc_first_8")
-    |> expectInstruction("Jump                  Target=lambda_1_body")
-    |> expectInstruction("JumpIfFalse           CondTemp=34 Target=tmc_close_empty_10")
-    |> expectInstruction("AndInt                Target=41 Left=40 Right=39")
-    |> expectInstruction("JumpIfFalse           CondTemp=41 Target=rc_result_owned_12")
-    |> expectInstruction("CopyOutList           DestTemp=42 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary")
     |> expectNoInstructionText("Value=63")
     |> expectNoInstructionText("call_copy_arena_result")
+    |> expectOperands("Alloc")(" SizeBytes=16 RuntimeManaged=true")
+    |> expectOperands("JumpIfFalse")(" Target=tmc_first_")
+    |> expectInstruction("Jump                  Target=lambda_1_body")
+    |> expectOperands("JumpIfFalse")(" Target=tmc_close_empty_")
+    |> expectOperands("AndInt")(" Left=")
+    |> expectOperands("JumpIfFalse")(" Target=rc_result_owned_")
+    |> expectOperands("CopyOutList")(" HeadCopy=String Purpose=ArenaResultBoundary")
     |> (given (_) -> Unit)
 
 // The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
@@ -317,6 +325,71 @@ let expectBorrowedCallAfterRenamedReloadMatchesStageZero unit =
     |> withoutLocations
     |> withFunctionLocalLabels)
 
+// The final spine must have its own reference before releasing the list the producer consumed.
+// The result-mode word describes that spine, and is written only once on this return path.
+let recursive resultExitEvents (lines: List(Str)) =
+    match lines with
+        | [] -> []
+        | line :: rest ->
+            let events = resultExitEvents(rest)
+            in
+                if Ashes.Text.startsWith(Ashes.Text.trim(line))("tmc_close_done_")
+                then "closed" :: events
+                else
+                    if Ashes.Text.startsWith(Ashes.Text.trim(line))("independent_result_not_requested_")
+                    then "published" :: events
+                    else
+                        if Ashes.Text.startsWith(Ashes.Text.trim(line))("rc_tco_exit_drop_inactive_")
+                        then "released" :: events
+                        else events
+
+let expectProducerPublishesClosedSpineBeforeExitRelease unit =
+    match "aggregate_borrowing_owner_kept_by_callee"
+    |> loweredFixtureLines
+    |> functionLines("[SourceFunction from bump]")
+    |> resultExitEvents with
+        | "closed" :: "published" :: "released" :: [] -> Unit
+        | events -> test.fail("expected spine closure, result publication and loop release in order, got " + Ashes.Text.join(", ")(events))
+
+// Add(a, b) rebuilds Add(a + 1, b). Both fields are numbers, even when their bits happen
+// to fall inside the reference-counted address range. The Name arm still stores a string.
+let recursive scalarFieldInstructions (inside: Bool) (lines: List(Str)) =
+    match lines with
+        | [] -> test.fail("missing Add arm in bump")
+        | line :: rest ->
+            let instruction = Ashes.Text.trim(line)
+            in
+                if inside
+                then
+                    if Ashes.Text.startsWith(instruction)("AllocAdt")
+                    then []
+                    else instruction :: scalarFieldInstructions(true)(rest)
+                else
+                    scalarFieldInstructions(Ashes.Text.startsWith(instruction)("AddInt"))(rest)
+
+let expectInlinePatternFieldNeverRetained unit =
+    "record_head_list_producer"
+    |> loweredFixtureLines
+    |> functionLines("[SourceFunction from bump]")
+    |> scalarFieldInstructions(false)
+    |> expectNoInstructionText("IsReferenceCounted")
+    |> expectNoInstructionText("RuntimeManaged=true")
+    |> (given (_) -> Unit)
+
+// Each of hop's two nonempty arms transfers its matched list tail. The second argument in the
+// last arm is an unrelated integer whose spelling happens to match the first arm's tail.
+let expectPatternTransfersUseTheirLexicalBinding unit =
+    match Ashes.IO.File.readText("tests/tail_call_scalar_shadowing_another_arms_list_tail.ash") with
+        | Error(message) -> test.fail(message)
+        | Ok(source) ->
+            match source
+            |> dumpSource
+            |> functionLines("[ClosureHelper from hop]")
+            |> Ashes.Collection.List.filter(given (line) ->
+                Ashes.Text.startsWith(Ashes.Text.trim(line))("RcDup") && Ashes.Text.contains(line)("RuntimeManaged=true MayBeEmpty=true")) with
+                | _firstTail :: _secondTail :: [] -> Unit
+                | _ -> test.fail("expected one nullable retain per transferred list tail")
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
@@ -331,6 +404,9 @@ let runCallWindowLoweringTests unit =
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
+    |> expectProducerPublishesClosedSpineBeforeExitRelease
+    |> expectInlinePatternFieldNeverRetained
+    |> expectPatternTransfersUseTheirLexicalBinding
     |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag

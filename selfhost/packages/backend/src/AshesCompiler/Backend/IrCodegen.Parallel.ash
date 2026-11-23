@@ -18,6 +18,7 @@ import Ashes.Number.UInt
 export (
     type ParallelRuntime,
     value defineParallelRuntime,
+    value emitEffectiveWorkerCap,
     value emitParallelFork,
     value emitParallelJoin,
     value emitParallelCleanup,
@@ -1181,7 +1182,7 @@ let defineQueueCleanupFunction module_ context builder i64 i8 ptrType =
 
 // The parallel runtime of a program that uses `Ashes.Task.Parallel`; `threads` when it forks or
 // starts a queue.
-let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (threads: Bool) =
+let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (needsWorkerCap: Bool) (threads: Bool) =
     (let overrideGlobal = parZeroGlobal(module_)(i64)("__ashes_parallel_override")
     in
         if threads
@@ -1208,19 +1209,23 @@ let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRu
                                         queueCleanupType = cleanupType
                                     )
         else
-            ParallelRuntime(
-                overrideGlobal = overrideGlobal,
-                activeCounter = None,
-                capFn = overrideGlobal,
-                capType = i64,
-                workerFn = overrideGlobal,
-                queueStartFn = overrideGlobal,
-                queueStartType = i64,
-                queueAwaitFn = overrideGlobal,
-                queueAwaitType = i64,
-                queueCleanupFn = overrideGlobal,
-                queueCleanupType = i64
-            ))
+            match if needsWorkerCap
+            then defineWorkerCapFunction(module_)(context)(builder)(i64)(i8)(ptrType)
+            else (overrideGlobal, i64) with
+                | (capFn, capType) ->
+                    ParallelRuntime(
+                        overrideGlobal = overrideGlobal,
+                        activeCounter = None,
+                        capFn = capFn,
+                        capType = capType,
+                        workerFn = overrideGlobal,
+                        queueStartFn = overrideGlobal,
+                        queueStartType = i64,
+                        queueAwaitFn = overrideGlobal,
+                        queueAwaitType = i64,
+                        queueCleanupFn = overrideGlobal,
+                        queueCleanupType = i64
+                    ))
 
 let emitParallelQueueStart builder (runtime: ParallelRuntime) mapper combine list name = buildCall(builder)(runtime.queueStartType)(runtime.queueStartFn)([mapper, combine, list])(3u32)(name)
 

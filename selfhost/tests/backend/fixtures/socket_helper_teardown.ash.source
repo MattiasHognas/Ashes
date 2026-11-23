@@ -1,0 +1,63 @@
+import Ashes.IO
+import Ashes.Net.Tcp
+import Ashes.Net.Tcp.Server
+import Ashes.Task
+external duplicate(Int) -> Int = "dup@libc.so.6"
+external release(Int) -> Int = "close@libc.so.6"
+
+let holder count socket =
+    async(
+        let recursive wait left borrowed =
+            if left == 0
+            then
+                match await Ashes.Net.Tcp.close(borrowed) with
+                    | Ok(_) -> duplicate(1)
+                    | Error(_) -> -1
+            else
+                match await Ashes.Task.sleep(1500) with
+                    | Ok(_) -> wait(left - 1)(borrowed)
+                    | Error(_) -> -1
+        in wait(count)(socket)
+    )
+
+let timer =
+    async(match await Ashes.Task.sleep(5) with
+        | Ok(_) -> -2
+        | Error(_) -> -3)
+
+let run cancel =
+    match 0
+    |> Ashes.Net.Tcp.Server.listen
+    |> Ashes.Task.run with
+        | Error(_) -> false
+        | Ok(socket) ->
+            let firstFree = duplicate(1)
+            in
+                let _ = release(firstFree)
+                in
+                    if cancel
+                    then
+                        match [holder(1)(socket), timer]
+                        |> Ashes.Task.race
+                        |> Ashes.Task.run with
+                            | Ok(-2) ->
+                                let next = duplicate(1)
+                                in
+                                    let released = release(next)
+                                    in released == 0 && next < firstFree
+                            | _ -> false
+                    else
+                        match socket
+                        |> holder(0)
+                        |> Ashes.Task.run with
+                            | Ok(replacement) -> replacement >= 0 && replacement < firstFree && release(replacement) == 0
+                            | Error(_) -> false
+
+let _ =
+    false
+    |> run
+    |> Ashes.IO.print
+
+true
+|> run
+|> Ashes.IO.print

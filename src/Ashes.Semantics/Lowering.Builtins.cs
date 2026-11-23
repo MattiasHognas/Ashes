@@ -2247,16 +2247,17 @@ public sealed partial class Lowering
         // constructors and builtins resolve inside the coroutine without capture (registry / by-label).
         var freeNames = FreeVars(valueArg, new HashSet<string>(StringComparer.Ordinal));
         freeNames.UnionWith(CollectActiveTraitMethodCaptures(valueArg));
-        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(valueArg));
-        var captureNames = new List<string>();
+        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(valueArg, includeDictionary: true));
+        List<(string Name, int HelperArity)> captureNames = [];
         var captureTemps = new List<int>();
         var captureTypes = new List<TypeRef>();
         foreach (var name in freeNames)
         {
-            if (Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
+            Binding? binding = Lookup(name);
+            if (binding is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
-                captureNames.Add(name);
+                captureNames.Add((name, binding.CoroutineHelperArity));
                 captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
@@ -2340,7 +2341,7 @@ public sealed partial class Lowering
         TypeRef successType,
         ConstructorSymbol okConstructor,
         Dictionary<string, Binding> globalBindings,
-        List<string> captureNames,
+        List<(string Name, int HelperArity)> captureNames,
         List<TypeRef> captureTypes)
     {
         bool savedInCoroutine = _inCoroutineBody;
@@ -2356,8 +2357,8 @@ public sealed partial class Lowering
         {
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
-            RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-            scope = scope.SetItem(captureNames[i], new Binding.Local(slot, captureTypes[i]));
+            RecordLocalDebugInfo(slot, captureNames[i].Name, captureTypes[i]);
+            scope = scope.SetItem(captureNames[i].Name, new Binding.Local(slot, captureTypes[i]) { CoroutineHelperArity = captureNames[i].HelperArity });
         }
         _scopes.Pop();
         _scopes.Push(scope);
@@ -2478,15 +2479,18 @@ public sealed partial class Lowering
     {
         var body = info.Body;
         var freeNames = FreeVars(body, new HashSet<string>(StringComparer.Ordinal));
-        var captureNames = new List<string>();
+        freeNames.UnionWith(CollectActiveTraitMethodCaptures(body));
+        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(body, includeDictionary: true));
+        List<(string Name, int HelperArity)> captureNames = [];
         var captureTemps = new List<int>();
         var captureTypes = new List<TypeRef>();
         foreach (var name in freeNames)
         {
-            if (Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
+            Binding? binding = Lookup(name);
+            if (binding is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme)
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
-                captureNames.Add(name);
+                captureNames.Add((name, binding.CoroutineHelperArity));
                 captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
@@ -2523,7 +2527,7 @@ public sealed partial class Lowering
         IReadOnlyList<int> coroutineCaptureTemps,
         HelperCoroutineInfo info,
         Dictionary<string, Binding> globalBindings,
-        List<string> captureNames,
+        List<(string Name, int HelperArity)> captureNames,
         List<TypeRef> captureTypes,
         TypeRef successType,
         bool loopResetEligible)
@@ -2561,7 +2565,7 @@ public sealed partial class Lowering
         IReadOnlyList<int> coroutineCaptureTemps,
         HelperCoroutineInfo info,
         Dictionary<string, Binding> globalBindings,
-        List<string> captureNames,
+        List<(string Name, int HelperArity)> captureNames,
         List<TypeRef> captureTypes)
     {
         var scope = _scopes.Peek();
@@ -2575,11 +2579,11 @@ public sealed partial class Lowering
         {
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
-            RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-            scope = scope.SetItem(captureNames[i], new Binding.Local(slot, captureTypes[i]));
-            if (info.ParamNames.Contains(captureNames[i]))
+            RecordLocalDebugInfo(slot, captureNames[i].Name, captureTypes[i]);
+            scope = scope.SetItem(captureNames[i].Name, new Binding.Local(slot, captureTypes[i]) { CoroutineHelperArity = captureNames[i].HelperArity });
+            if (info.ParamNames.Contains(captureNames[i].Name))
             {
-                paramSlotByName[captureNames[i]] = slot;
+                paramSlotByName[captureNames[i].Name] = slot;
             }
         }
         _scopes.Pop();

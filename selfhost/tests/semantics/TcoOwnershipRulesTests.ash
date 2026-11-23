@@ -708,6 +708,37 @@ let expectEachArmReleasesItsMatchedPairOnce unit =
     |> loopLines("[ClosureHelper from rounds]")
     |> (given (lines) -> check("two tail-calling arms release the owned and predecessor slots once each, and the exit releases both")(countContaining("TypeName=Tuple RuntimeManaged=true")(lines) == 6))
 
+let selfCallOnMatchedTailSource = "type Pattern =\n    | PatternWildcard\n    | PatternConstructor(Str, List(Pattern))\n\ntype Expr =\n    | ExprBool(Bool)\n    | ExprMatch(Expr, List((Pattern, Expr, Maybe(Expr))), Maybe(Int))\n\nlet orderingCase name = (PatternConstructor(name)([]), ExprBool(true), None)\n\nlet cases accepted =\n    (let recursive acceptedCases names =\n        match names with\n            | [] -> [(PatternWildcard, ExprBool(false), None)]\n            | name :: tail -> orderingCase(name) :: acceptedCases(tail)\n    in ExprMatch(ExprBool(true), acceptedCases(accepted), None))\n\nAshes.IO.print(1)"
+
+// A lone recursive binding's call to itself on a matched tail its result reaches: the call reads
+// no ownership summary, so the tail goes under the closure's adoption bit and nothing waits in an
+// owned slot for it. A forced retain there was adopted by the callee and released again from the
+// caller's owned slot.
+let expectSelfCallOnMatchedTailIsNotHandedOver unit =
+    selfCallOnMatchedTailSource
+    |> loopFunctionLines("from acceptedCases]")
+    |> (given (lines) -> check("the self call's tail argument is not kept in an owned slot")(countContaining("rc_handed_over_kept")(lines) == 0))
+
+let tupleResultLoopSource = "type Ty =\n    | TyVar(Int)\n    | TyList(Ty)\n\ntype C =\n    | name: Str\n    | args: List(Ty)\n\ntype Summary =\n    | constraints: List(C)\n    | stages: List(Int)\n\ntype Key =\n    | Same\n    | Missing\n\nlet recursive appendC left right =\n    match left with\n        | [] -> right\n        | head :: tail -> head :: appendC(tail)(right)\n\nlet recursive lookup key entries =\n    match (key, entries) with\n        | (_, []) -> None\n        | (Same, (Same, summary) :: _rest) -> Some(summary)\n        | (Missing, (Missing, summary) :: _rest) -> Some(summary)\n        | (_, _entry :: rest) -> lookup(key)(rest)\n\nlet recursive sites flows summaries requirements demands =\n    match flows with\n        | [] -> (requirements, demands)\n        | (node, key) :: rest ->\n            match lookup(key)(summaries) with\n                | Some(Summary { constraints = required }) ->\n                    sites(rest)(summaries)(appendC(required)(requirements))(node :: demands)\n                | None -> sites(rest)(summaries)(requirements)(demands)\n\nlet eq = C(name = \"Eq\", args = [TyVar(7)])\n\nlet summaries = [(Same, Summary(constraints = [eq], stages = [1]))]\n\nmatch sites([(1025, Same), (1026, Missing), (1027, Same)])(summaries)([eq])([1000]) with\n    | (_first :: _second :: _third :: [], _demands) -> Ashes.IO.print(\"three\")\n    | _ -> Ashes.IO.print(\"other\")"
+
+let recursive firstIndexContaining (fragment: Str) (index: Int) (lines: List(Str)) =
+    match lines with
+        | [] -> -1
+        | line :: rest ->
+            if Ashes.Text.contains(line)(fragment)
+            then index
+            else firstIndexContaining(fragment)(index + 1)(rest)
+
+// A loop returning a tuple of its accumulators hands the tuple's parts to a caller asking for them
+// before its exit releases the accumulator parameter a part may be: the parts' retains come first.
+let expectTupleResultPartsPrecedeExitRelease unit =
+    tupleResultLoopSource
+    |> loopFunctionLines("[ClosureHelper from sites]")
+    |> (given (lines) ->
+        (firstIndexContaining("tuple_parts_not_requested")(0)(lines), firstIndexContaining("rc_tco_exit_drop_inactive")(0)(lines)) |> (given (indices) ->
+            match indices with
+                | (partsIndex, exitIndex) -> check("the tuple result's parts are handed over before the exit releases the loop parameters")(partsIndex >= 0 && exitIndex >= 0 && partsIndex < exitIndex)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -734,4 +765,6 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
     |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
+    |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
+    |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))

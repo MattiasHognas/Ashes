@@ -1,0 +1,8 @@
+import Ashes.IO
+import Ashes.Net.Http.Server
+import Ashes.Task
+let route req =
+    async(Ashes.Net.Http.Server.text(200)("ok"))
+in match Ashes.Task.run(Ashes.Net.Http.Server.serveParallel(43129)(3)(route)) with
+    | Ok(_u) -> Ashes.IO.print("stopped")
+    | Error(e) -> Ashes.IO.print(e)

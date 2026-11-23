@@ -1072,12 +1072,12 @@ public static class Runner
             importedStdModules,
             moduleAliases,
             constructorModulesByName,
-            new LoweringConfiguration(CollectHoverTypes: false));
+            new LoweringConfiguration(CollectHoverTypes: false, AllowFlattenedQualifiedValues: false));
         if (sourceLayout is { } layout)
         {
             lowering.SetSourceContext(layout);
         }
-        var loweredIr = lowering.Lower(program);
+        var loweredIr = lowering.LowerExecutable(program);
         diag.ThrowIfAny();
 
         var optimizedIr = pipeline == TestPipeline.Optimized

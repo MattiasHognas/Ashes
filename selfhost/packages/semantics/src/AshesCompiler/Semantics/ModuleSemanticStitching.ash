@@ -27,7 +27,7 @@ export (
     value buildStitchedSemanticProject,
     value resolveStitchedUnqualified,
     value resolveStitchedQualified,
-    value resolveStitchedShippedType,
+    value resolveStitchedUnimported,
     value resolveStitchedModuleAlias,
     value resolveStitchedIntrinsicSelector,
     value stitchedModulePlainImports,
@@ -111,7 +111,9 @@ type ModuleSemanticStitchError =
 // `global` marks a definition whose compiler name is its source name in every module: an
 // external opaque type, which stage 0 never renames (its private-member renaming covers the
 // module's declared types only), so a bare reference to the handle type from a module that
-// imports the declaring module whole names the same declaration.
+// imports the declaring module whole names the same declaration; an external function; and a
+// capability, which stage 0 hoists into one program-wide scope under its declared name, so
+// `provide`, handler arms, performs and `needs` rows in any module of the program name it.
 type PendingDefinition =
     | name: Str
     | kind: StitchedNameKind
@@ -305,7 +307,7 @@ let addUnspannedItem item span collection =
                     | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
                     | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
                     | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) ->
-                        addPending(
+                        addPendingWith(true)(
                             name,
                             StitchedCapability,
                             span,
@@ -492,27 +494,37 @@ let recursive duplicateDefinition (definitions: List(StitchedDefinition)) (bySou
             then Some(name)
             else duplicateDefinition(rest)(bySourceName)
 
-// The completed modules' owner of each compiler name a new module's definitions carry.
+// The completed modules' owner of each compiler name a new module's definitions carry. A
+// capability is left out: capabilities live in their own program-wide namespace, beside types
+// and values of the same name, and the inference reports a capability two modules declare
+// (`DuplicateCapabilityDeclaration`) as stage 0's capability registration does.
 let recursive validateCompilerNames definitions (owners: MapTree(Str, Str)) =
     match definitions with
         | [] -> None
-        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            match Ashes.Collection.Map.getStr(compilerName)(owners) with
-                | Some(owner) ->
-                    qualifiedName
-                    |> CompilerPrivateNameCollision(compilerName)(owner)
-                    |> Some
-                | None -> validateCompilerNames(rest)(owners)
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            if kind == StitchedCapability
+            then validateCompilerNames(rest)(owners)
+            else
+                match Ashes.Collection.Map.getStr(compilerName)(owners) with
+                    | Some(owner) ->
+                        qualifiedName
+                        |> CompilerPrivateNameCollision(compilerName)(owner)
+                        |> Some
+                    | None -> validateCompilerNames(rest)(owners)
 
-// Records a completed module's compiler names over the earlier modules'. Taking the definitions
-// last first leaves each name with the module's first definition carrying it.
+// Records a completed module's compiler names over the earlier modules', capabilities aside.
+// Taking the definitions last first leaves each name with the module's first definition carrying
+// it.
 let recursive recordCompilerNames (reversedDefinitions: List(StitchedDefinition)) (owners: MapTree(Str, Str)) =
     match reversedDefinitions with
         | [] -> owners
-        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName } :: rest ->
-            owners
-            |> Ashes.Collection.Map.setStr(compilerName)(qualifiedName)
-            |> recordCompilerNames(rest)
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, kind = kind } :: rest ->
+            if kind == StitchedCapability
+            then recordCompilerNames(rest)(owners)
+            else
+                owners
+                |> Ashes.Collection.Map.setStr(compilerName)(qualifiedName)
+                |> recordCompilerNames(rest)
 
 let resolvedModule resolved =
     match resolved with
@@ -1039,27 +1051,27 @@ let resolveShippedModuleExport qualifier kind name (project: StitchedSemanticPro
                         |> Some
     else None
 
-// A type a shipped module exports is in scope by its bare name wherever the program reaches that
-// module, imported or not, as stage 0's one type namespace holds every loaded standard-library
-// type: `MapTree(Str, Bool)` names the map type in a program that reaches `Ashes.Collection.Map`
-// through qualified references alone.
-let recursive resolveShippedTypeIn name (scopes: List(StitchedModuleScope)) =
+// An exported type or constructor (`kind`) of a module other than `moduleName` that answers to a
+// name `moduleName` does not import. An exported type or constructor of a user module keeps its
+// source name as its compiler name, so a name left as written would reach it in a module that
+// does not import it; the reference rewriter marks such a name instead.
+let recursive unimportedDefinitionIn moduleName kind name (scopes: List(StitchedModuleScope)) =
     match scopes with
         | [] -> None
         | moduleScope :: rest ->
-            if Ashes.Text.startsWith(moduleScope.name)("Ashes.")
-            then
+            if moduleScope.name == moduleName
+            then unimportedDefinitionIn(moduleName)(kind)(name)(rest)
+            else
                 match moduleScope.definitionsBySourceName
                 |> definitionsNamed(name)
-                |> findExportedDefinition(name)(StitchedType) with
+                |> findExportedDefinition(name)(kind) with
                     | Some(definition) ->
-                        if definition.kind == StitchedType
+                        if definition.kind == kind
                         then Some(definition)
-                        else resolveShippedTypeIn(name)(rest)
-                    | None -> resolveShippedTypeIn(name)(rest)
-            else resolveShippedTypeIn(name)(rest)
+                        else unimportedDefinitionIn(moduleName)(kind)(name)(rest)
+                    | None -> unimportedDefinitionIn(moduleName)(kind)(name)(rest)
 
-let resolveStitchedShippedType name (project: StitchedSemanticProject) = resolveShippedTypeIn(name)(project.scopes)
+let resolveStitchedUnimported moduleName kind name (project: StitchedSemanticProject) = unimportedDefinitionIn(moduleName)(kind)(name)(project.scopes)
 
 // A file reaches its own inline modules by qualified path with no import (`Geometry.area` in the
 // file that declares `module Geometry =`). Their scopes are named `<file>#<module>`.

@@ -901,7 +901,7 @@ public sealed class ReuseDecisionTests
     // bare `new Lowering(diagnostics)` (see LowerProgram below) has neither, so this test compiles
     // through the same standalone-project layout `ashes run`/`ashes test` use instead.
     [Test]
-    public void ToSpaceSpecialization_DeclinesAMapAccumulatorWhoseValueCannotBePersisted()
+    public void ToSpaceSpecialization_DeclinesAMapAccumulatorOfAGenericVariantLoop()
     {
         const string source = """
             import Ashes.Collection.HashMap
@@ -927,21 +927,26 @@ public sealed class ReuseDecisionTests
 
         Lowering lowering = LowerStitchedProgram(source, "reuse-persistence.ash");
 
-        ReuseDecision rejection = lowering.ReuseDecisions.Single(decision =>
-            decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
-            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent);
-        rejection.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
-        rejection.Function.Source.ShouldNotBeNull();
-        rejection.Function.Source.SourceName.ShouldBe("fillRecords", "a record with a List(Int) field (outside the to-space-copyable set) must decline the to-space specialization");
-        rejection.Candidate.ShouldNotBeNull();
-        rejection.Candidate.SourceName.ShouldBe("grouped");
+        // The map is a changing generic variant loop parameter: its slot is runtime managed, and an
+        // insert rebuilds only a path of the map, which an unproven accumulator's entry copy does not
+        // pay for. Neither loop admits `grouped` as a specialization accumulator, so neither call is
+        // specialized and the to-space layout gate is never reached: a record holding a List(Int)
+        // is never copied into the to-space.
+        foreach (string function in new[] { "fillRecords", "fillInts" })
+        {
+            ReuseDecision rejection = lowering.ReuseDecisions.Single(decision =>
+                decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
+                && decision.Function.Source != null
+                && string.Equals(decision.Function.Source.SourceName, function, StringComparison.Ordinal));
+            rejection.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
+            rejection.Reason.ShouldBe(ReuseDecisionReason.AccumulatorNotProvenUnique);
+            rejection.Candidate.ShouldNotBeNull();
+            rejection.Candidate.SourceName.ShouldBe("grouped");
+        }
 
         lowering.ReuseDecisions.ShouldNotContain(decision =>
             decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
-            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent
-            && decision.Function.Source != null
-            && string.Equals(decision.Function.Source.SourceName, "fillInts", StringComparison.Ordinal),
-            "the Int-valued map's own field layout is persistent and must not be declined for this reason");
+            && decision.Outcome == ReuseDecisionOutcome.Accepted);
     }
 
     [Test]

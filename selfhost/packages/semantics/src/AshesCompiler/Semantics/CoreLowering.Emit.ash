@@ -12,6 +12,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreConstrainedSpecialization
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
+import AshesCompiler.Semantics.StandardTraits.withAsyncTaskBuilders
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
@@ -96,6 +97,9 @@ export (
     value emitGuardedRestoreAndReclaimBy,
     value emitGuardedRestoreAndReclaim,
     value currentLocation,
+    value withCurrentSpanOf,
+    value noteFailureSite,
+    value failureAt,
     value spanStart,
     value sourceFunctionOriginFor,
     value canTestRepresentation,
@@ -476,7 +480,9 @@ let coverageEnvironmentOf layouts builtinLayouts =
         | TypeEnvironment { typeResolutionContext = context } ->
             let empty = emptyTypeEnvironment(Unit)
             in
-                extendCoverageEnvironment((empty with bindings = append(standardTraitQueryBindings)(constrainedBuiltinBindings(builtinLayouts)), typeResolutionContext = context))(layouts)
+                (empty with bindings = append(standardTraitQueryBindings)(constrainedBuiltinBindings(builtinLayouts)), typeResolutionContext = addTypeDefinition(0)("Task")(2)(context))
+                |> withAsyncTaskBuilders(0)
+                |> (given (environment) -> extendCoverageEnvironment(environment)(layouts))
 
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     (let coverageEnvironment =
@@ -531,6 +537,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 capabilityGlobalCount = capabilityGlobalCount,
                 capabilityOperationSchemes = [],
                 handledCapabilities = [],
+                failureSite = None,
                 sourceContext = None,
                 sourceRegionOfName = Ashes.Collection.Map.empty,
                 topLevelNames = Ashes.Collection.Map.empty,
@@ -580,7 +587,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 provenSiblingCallResults = Ashes.Collection.Map.empty,
                 typeObservation = None,
                 nodeTypes = None,
-                nodeInstantiation = []
+                nodeInstantiation = [],
+                settledNodeVariables = Ashes.Collection.Map.empty
             ),
             functionState = CoreFunctionState(
                 admissibilityAnswers = [],
@@ -591,6 +599,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 pendingStackClosure = false,
                 coroutineBody = false,
                 pendingCoroutineBody = false,
+                helperFactoryType = None,
+                completedTaskFrameDropper = None,
                 runtimeAdtRequested = false,
                 pendingOperatorDefaults = [],
                 enclosingBindings = [],
@@ -979,6 +989,26 @@ let currentLocation (state: CoreLoweringState) =
             resolveItemSpanLocation(context)(stateCurrentItem(state))(span)
         | _ -> None
 
+let recordFailureSite (span: TextSpan) (failed: CoreLoweringError) (state: CoreLoweringState) =
+    match currentLocation((state with currentSpan = Some(span))) with
+        | Some(location) -> withStateFailureSite(Some((failed, location)))(state)
+        | None -> state
+
+let withCurrentSpanOf (span: Maybe(TextSpan)) (state: CoreLoweringState) = state with currentSpan = span
+
+// Records an error leaving the expression spanned `span` at that expression's location, unless
+// the same error was already recorded, by an inner expression, so the innermost location stays.
+let noteFailureSite (span: TextSpan) (error: Maybe(CoreLoweringError)) (state: CoreLoweringState) =
+    match error with
+        | None -> state
+        | Some(failed) ->
+            match stateFailureSite(state) with
+                | Some((recorded, _location)) ->
+                    if recorded == failed
+                    then state
+                    else recordFailureSite(span)(failed)(state)
+                | None -> recordFailureSite(span)(failed)(state)
+
 let spanStart (span: Maybe(TextSpan)) =
     match span with
         | Some(TextSpan { start = start }) -> start
@@ -1196,6 +1226,20 @@ let failure state error =
         semanticType = SemNever,
         error = Some(error)
     )
+
+let recursive ownSpanOf (expression: Expr) =
+    match expression with
+        | ExprAt(span, _inner) -> Some(span)
+        | ExprNode(_id, inner) -> ownSpanOf(inner)
+        | _ -> None
+
+// A failure stage 0 reports at `expression`, an argument the error is about, rather than at the
+// expression whose lowering found it.
+let failureAt (expression: Expr) (error: CoreLoweringError) (state: CoreLoweringState) =
+    match ownSpanOf(expression) with
+        | Some(span) ->
+            failure(noteFailureSite(span)(Some(error))(state))(error)
+        | None -> failure(state)(error)
 
 let bindingScheme binding =
     match binding with

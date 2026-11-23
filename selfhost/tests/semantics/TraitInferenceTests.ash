@@ -34,14 +34,16 @@ let recursive containsConstraint name constraints =
             then true
             else containsConstraint(name)(tail)
 
+// The declaration registers a polymorphic method. At an executable boundary its bare
+// reference has no dictionary, and the unresolved requirement retains that method type.
 let expectTraitRegistration unit =
     match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration)], body = "equal"
     |> ExprQualifiedVar("Equal")
     |> Some)) with
-        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = environment, error = None } ->
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = environment, error = Some(ProgramExpressionError(UndeterminedTraitRequirement("Equal", SemVariable(requiredId) :: []))) } ->
             let methodTypeChecked =
                 match applySubstitution(substitution)(semanticType) with
-                    | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemBool, None), None) ->
+                    | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemBool, None), None) when leftId == requiredId ->
                         test.assertEqual(
                             leftId,
                             rightId
@@ -61,8 +63,9 @@ let expectTraitRegistration unit =
                     | _ -> test.fail("Equal should be registered")
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } ->
             test.fail(
-                "trait declaration should infer: " + Ashes.Trait.Show.show(error)
+                "bare trait method should report its unresolved evidence: " + Ashes.Trait.Show.show(error)
             )
+        | ProgramInferenceResult { error = None } -> test.fail("bare trait method escaped its dictionary at the executable boundary")
 
 let expectForwardSupertraitRegistration unit =
     match inferProgram(
@@ -771,7 +774,7 @@ let rejectsUnjustifiedWrittenBindingRequirement unit =
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal", _extraTypes))) } -> Unit
                 | _ -> test.fail("written requires clauses should not introduce unjustified evidence"))
 
-let rejectsAmbiguousWrittenBindingRequirement unit =
+let rejectsUnjustifiedWrittenRequirementBeforeAmbiguity unit =
     (let binding =
         LetBindingSyntax(name = "ambiguous", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(
             TypeNamed("Int")
@@ -780,8 +783,8 @@ let rejectsAmbiguousWrittenBindingRequirement unit =
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
         ) with
-            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousTraitRequirement("Equal", _ambiguousTypes))) } -> Unit
-            | _ -> test.fail("written requirement variables should occur in the binding type"))
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal", _extraTypes))) } -> Unit
+            | _ -> test.fail("an unjustified written requirement should be reported before ambiguity"))
 
 let rejectsInvalidWrittenBindingRequirements unit =
     (let unknown =
@@ -865,7 +868,7 @@ let expectWrittenBindingRequirements unit =
     |> expectValidWrittenBindingRequirement
     |> rejectsMissingWrittenBindingRequirement
     |> rejectsUnjustifiedWrittenBindingRequirement
-    |> rejectsAmbiguousWrittenBindingRequirement
+    |> rejectsUnjustifiedWrittenRequirementBeforeAmbiguity
     |> rejectsInvalidWrittenBindingRequirements
     |> rejectsNestedMissingWrittenBindingRequirement
     |> acceptsRecursiveWrittenBindingRequirement

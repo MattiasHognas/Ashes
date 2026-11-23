@@ -87,6 +87,7 @@ type CoreLoweringError =
     | PerformTargetNotCapabilityOperation(Str)
     // A capability, handler or provider diagnostic stage 0 reports: its code and message.
     | CoreCapabilityDiagnostic(Str, Str)
+    | CoreImmediateEvidenceDiagnostic(Str)
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
     | ResourceDoubleClose(Str)
@@ -109,6 +110,8 @@ type CoreLoweringResult =
     | program: Maybe(IrProgram)
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
+    // Where the error was raised when lowering located it, as stage 0 reports it.
+    | errorLocation: Maybe(IrSourceLocation)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
     | joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))
 
@@ -267,5 +270,5 @@ type CoreBinding =
     | scheme: TypeScheme
     | location: CoreBindingLocation
     | ownedRead: Bool
-    | patternOwner: Maybe(PatternBindingFact)
+    | patternFact: Maybe(PatternBindingFact)
     | closedScheme: Bool

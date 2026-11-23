@@ -45,6 +45,10 @@ Function: firstLabels
     dup:                  0
     drop:                 2
     uniqueness checks:    0
+  perceus [lambda_12$env_normalize]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
   perceus [lambda_11]
     dup:                  0
     drop:                 0
@@ -57,29 +61,30 @@ Function: firstLabels
   representation [lambda_11]
     conservative unknown: 1
     region:               3
+    runtime rc:           3
 
 Function: reversed
   ownership
     items: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_14]
+  perceus [lambda_15]
     dup:                  12
     drop:                 11
     uniqueness checks:    5
-  perceus [lambda_13]
+  perceus [lambda_14]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_14__scalarenv0]
+  perceus [lambda_15__scalarenv0]
     dup:                  12
     drop:                 11
     uniqueness checks:    5
-  representation [lambda_14]
+  representation [lambda_15]
     conservative unknown: 5
     region:               2
     runtime rc:           47
-  representation [lambda_13]
+  representation [lambda_14]
     conservative unknown: 1
     region:               3
 

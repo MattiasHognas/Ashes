@@ -14,10 +14,21 @@
 //   parameter of a generic implementation is read as the variable lowering pinned it to.
 
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
+import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
+import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Frontend.Syntax.LetBindingSyntax
+import AshesCompiler.Frontend.Syntax.TopLevelItem
+import AshesCompiler.Frontend.Syntax.ProgramSyntax
+import AshesCompiler.Frontend.Token.TextSpan
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.concreteConstrainedArguments
+import AshesCompiler.Semantics.CoreConstrainedSpecialization.preparePureConcreteScheme
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 export (
@@ -29,7 +40,18 @@ export (
     value recordedClosedTypeAt,
     value recordedDictionariesAt,
     value recordedCopyInstantiation,
+    value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
+    value rawOperatorDeclarationSchemes,
+    value recordedDeferredEvaluation,
+    value deferredEvaluationKey,
+    value withRawOperatorDeclarationSchemes,
+    value recordedSettledType,
+    value recordedSettledTypeAt,
+    value recordedSettledDictionariesAt,
+    value recordedDeclarationAt,
+    value recordedNestedOperatorGenericScheme,
+    value rawOperatorSchemesWithNestedLets,
 )
 
 let recursive anyLayoutNamed (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -251,6 +273,68 @@ let recordedCopyInstantiation (reference: Int) (source: Int) (functionType: Sema
                             | _ -> []
                 | _ -> []
 
+// The argument nodes and the callee come from the same numbered call. An
+// unnumbered replacement argument has no entry and keeps speculative inference.
+let recursive recordedArgumentsMatch expected arguments table state =
+    match (expected, arguments) with
+        | ([], []) -> true
+        | (parameter :: rest, argument :: tail) ->
+            match nodeTypeAt(nodeIdentityOf(argument))(table) with
+                | Some(recorded) -> instantiatedRecordedType(state)(recorded) == parameter && recordedArgumentsMatch(rest)(tail)(table)(state)
+                | None -> false
+        | _ -> false
+
+// An inferred arrow can still have a bare row variable at a pure use. The
+// source may choose the empty row only when that variable was quantified by
+// its declaration; preparePureConcreteScheme checks this on the original type.
+let recursive copyRowsAllowPureInstance arity called =
+    if arity == 0
+    then true
+    else
+        match called with
+            | SemFunction(_parameter, result, None) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemRow([], None))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | SemFunction(_parameter, result, Some(SemVariable(_open))) -> copyRowsAllowPureInstance(arity - 1)(result)
+            | _ -> false
+
+let recordedCopyAtInstance arity arguments substitutions definition called table state =
+    (let applied = applySubstitution(substitutions)(definition)
+    in
+        if definition == applied || applied != called || !copyRowsAllowPureInstance(arity)(called)
+        then None
+        else
+            let quantified =
+                Ashes.Collection.List.map(given (entry) ->
+                    match entry with
+                        | (id, _actual) -> (id, ""))(substitutions)
+            in
+                match preparePureConcreteScheme(TypeScheme(quantified = quantified, body = definition, constraints = []))(arity) with
+                    | Some(pureScheme) ->
+                        let instance = applySubstitution(substitutions)(pureScheme.body)
+                        in
+                            match concreteConstrainedArguments(arity)(instance) with
+                                | Some(parameters) ->
+                                    if recordedArgumentsMatch(parameters)(arguments)(table)(state)
+                                    then
+                                        match translateRecordedTypeAsIs(state)(instance) with
+                                            | Ok(translated) -> Some(translated)
+                                            | Error(_message) -> None
+                                    else None
+                                | None -> None
+                    | None -> None)
+
+// Validate the original effect rows before translation: lowering drops rows
+// from function types. Both the named source body and the numbered use must
+// agree at this reference's own instantiation, including its result layout.
+let recordedConcreteCallType reference source arity arguments (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(table) ->
+            match (nodeInstantiationAt(reference)(table), nodeTypeAt(source)(table), nodeTypeAt(reference)(table)) with
+                | (Some(NodeInstantiation { arguments = substitutions }), Some(definition), Some(useType)) ->
+                    recordedCopyAtInstance(arity)(arguments)(instantiatedArguments(state)(substitutions))(definition)(instantiatedRecordedType(state)(useType))(table)(state)
+                | _ -> None
+
 // The operator traits whose operators lowering holds monomorphic: it emits their integer form over
 // open operands and settles it once the type is known, so it gives a binding using them no
 // requirement and no dictionary.
@@ -297,22 +381,265 @@ let recursive translateRecordedRequirements (state: CoreLoweringState) (requirem
                 | Ok(translated) -> translateRecordedRequirements(state)(rest)(TraitConstraint(traitName = traitName, typeArguments = translated) :: reversed)
                 | Error(message) -> Error(message)
 
-// The scheme the standalone inference recorded for the top-level binding whose value has the
-// identity `node`, as lowering writes it, when it quantifies every variable it holds and requires
-// an operator trait lowering holds monomorphic at a quantified variable: a binding the inference
-// generalizes where lowering's own inference does not.
-let recordedOperatorGenericScheme (node: Int) (state: CoreLoweringState) =
+// A scheme the standalone inference recorded, as lowering writes it, when it quantifies every
+// variable it holds and requires an operator trait lowering holds monomorphic at a quantified
+// variable: a binding the inference generalizes where lowering's own inference does not.
+let operatorGenericScheme (recorded: TypeScheme) (state: CoreLoweringState) =
+    match recorded with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
+            match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
+                | (Ok(translatedBody), Ok(translatedConstraints)) ->
+                    let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
+                    in
+                        if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
+                        then Some(scheme)
+                        else None
+                | _ -> None
+
+// The key under which the raw-source schemes mark a top-level binding whose value lowering may
+// evaluate once per use: no top-level name contains a colon.
+let deferredEvaluationKey (name: Str) = "$deferred-evaluation:" + name
+
+let recursive everyRecordedStageLatent (stages: List(Int)) =
+    match stages with
+        | [] -> true
+        | stage :: rest -> stage != 0 && everyRecordedStageLatent(rest)
+
+// Whether evaluating the top-level value rooted at `node` performs no capability and needs none of
+// its binding's requirements: evaluating it again at each use observes nothing new.
+let recordedEvaluationDeferrable (node: Int) (table: NodeTypeTable) =
+    nodeEvaluationPure(node)(table) && (match nodeEvidenceStagesAt(node)(table) with
+        | Some(stages) -> everyRecordedStageLatent(stages)
+        | None -> true)
+
+// Raw source has no stable expression IDs. Top-level declarations have unique names, so retain
+// their operator-polymorphic schemes from validation without enabling expression-table reads, and
+// mark each constrained binding whose evaluation can be deferred to its uses.
+let rawOperatorDeclarationSchemes (table: NodeTypeTable) =
+    Ashes.Collection.Map.foldLeft(given (schemes) ->
+        given (node) ->
+            given (entry) ->
+                match entry with
+                    | (name, TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
+                        let marked =
+                            if constraints != [] && recordedEvaluationDeferrable(node)(table)
+                            then
+                                Ashes.Collection.Map.setStr(deferredEvaluationKey(name))(scheme)(schemes)
+                            else schemes
+                        in
+                            if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                            then Ashes.Collection.Map.setStr(name)(scheme)(marked)
+                            else marked)(Ashes.Collection.Map.empty)(table.declarations)
+
+// Whether the top-level binding `name`, whose value is `value`, may be evaluated once per use: the
+// standalone inference recorded its evaluation as performing no capability and needing none of its
+// requirements. Without a record of the program it is not.
+let recordedDeferredEvaluation (name: Str) (value: Expr) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
-        | None -> None
+        | Some(table) ->
+            recordedEvaluationDeferrable(nodeIdentityOf(value))(table)
+        | None ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(deferredEvaluationKey(name))(registry.rawDeclarationSchemes) with
+                    | Some(_scheme) -> true
+                    | None -> false
+
+let withRawOperatorDeclarationSchemes schemes state =
+    (let registry = stateConcreteRegistry(state)
+    in withStateConcreteRegistry((registry with rawDeclarationSchemes = schemes))(state))
+
+// The operator-generic scheme the standalone inference recorded for the top-level binding whose
+// value has the identity `node`.
+let recordedOperatorGenericScheme name (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(name)(registry.rawDeclarationSchemes) with
+                    | Some(scheme) -> operatorGenericScheme(scheme)(state)
+                    | None -> None
         | Some(table) ->
             match nodeDeclarationAt(node)(table) with
-                | Some((_name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
+                | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)
+                | None -> None
+
+// A recorded type, read through the instantiation of the body being lowered, with the variables the
+// program's uses settle replaced by their settled types, as lowering writes it, when that leaves no
+// variable. A body lowering holds at one type while the inference generalized it reads its
+// quantified variables this way.
+let recordedSettledType (recorded: SemanticType) (state: CoreLoweringState) =
+    match recorded
+    |> instantiatedRecordedType(state)
+    |> applySubstitutionMap(stateSettledNodeVariables(state))
+    |> translateRecordedTypeAsIs(state) with
+        | Ok(translated) ->
+            if freeTypeVariables(translated) == []
+            then Some(translated)
+            else None
+        | Error(_message) -> None
+
+let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) (state: CoreLoweringState) =
+    match requirements with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            match recordedSettledType(argument)(state) with
+                | Some(settled) -> (traitName, Some(settled)) :: settledRecordedRequirements(rest)(state)
+                | None -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+        | TraitConstraint { traitName = traitName } :: rest -> (traitName, None) :: settledRecordedRequirements(rest)(state)
+
+// The dictionaries the reference with this identity was recorded to pass, in the scheme's order,
+// each with its type argument closed through the instantiation of the body being lowered and the
+// variables the program's uses settle, or None when that leaves it open or it does not map.
+let recordedSettledDictionariesAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeInstantiationAt(node)(table) with
+                | Some(NodeInstantiation { dictionaries = dictionaries }) -> settledRecordedRequirements(dictionaries)(state)
+                | None -> []
+        | None -> []
+
+// The type recorded for the node with this identity, closed by the variables the program's uses
+// settle.
+let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) -> recordedSettledType(recorded)(state)
+                | None -> None
+        | None -> None
+
+// The name and scheme the standalone inference gave the top-level binding whose value is the node
+// with this identity, as lowering writes it. The scheme keeps the inference's quantified variable
+// ids, so a reader instantiates it before unifying it with lowering's own types. None when nothing
+// is recorded there or a type in the scheme does not map.
+let recordedDeclarationAt (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeDeclarationAt(node)(table) with
+                | Some((name, TypeScheme { quantified = quantified, body = body, constraints = constraints })) ->
                     match (translateRecordedTypeAsIs(state)(body), translateRecordedRequirements(state)(constraints)([])) with
-                        | (Ok(translatedBody), Ok(translatedConstraints)) ->
-                            let scheme = TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)
-                            in
-                                if schemeIsClosed(scheme) && hasQuantifiedOperatorRequirement(quantified)(translatedConstraints)
-                                then Some(scheme)
-                                else None
+                        | (Ok(translatedBody), Ok(translatedConstraints)) -> Some((name, TypeScheme(quantified = quantified, body = translatedBody, constraints = translatedConstraints)))
                         | _ -> None
+                | None -> None
+        | None -> None
+
+let recursive recordedSchemeForValue (name: Str) (valueType: SemanticType) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (candidate, scheme) :: rest ->
+            if candidate == name && scheme.body == valueType
+            then Some(scheme)
+            else recordedSchemeForValue(name)(valueType)(rest)
+
+// The key a `let` below top level is known by in raw source, which has no node identities: the
+// source region of the top-level item holding it, the span directly around it and the name it
+// binds. A colon never occurs in a compiler name, so the key cannot meet a top-level binding's.
+let nestedLetSchemeKey (region: Int) (span: TextSpan) (name: Str) =
+    match span with
+        | TextSpan { start = start, end = end } -> "let:" + Ashes.Text.fromInt(region) + ":" + Ashes.Text.fromInt(start) + ":" + Ashes.Text.fromInt(end) + ":" + name
+
+let recursive valueIsLambda (value: Expr) =
+    match value with
+        | ExprAt(_span, inner) -> valueIsLambda(inner)
+        | ExprNode(_node, inner) -> valueIsLambda(inner)
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | _ -> false
+
+// A located `let` below top level whose lambda value the standalone inference generalized over an
+// operator trait lowering holds monomorphic, added under its raw-source key, with the same checks
+// the numbered reading makes: the scheme recorded at the `let` node for its name has the value's
+// recorded type as its body.
+let nestedLetSchemeVisit (table: NodeTypeTable) (region: Int) (schemes: MapTree(Str, TypeScheme)) (node: Int) (span: Maybe(TextSpan)) (expression: Expr) =
+    match (span, expression) with
+        | (Some(located), ExprLet(name, value, _body, _parameters, _annotation, _requirements)) ->
+            if valueIsLambda(value)
+            then
+                match nodeTypeAt(nodeIdentityOf(value))(table) with
+                    | Some(valueType) ->
+                        match table
+                        |> nodeBindingsAt(node)
+                        |> recordedSchemeForValue(name)(valueType) with
+                            | Some(TypeScheme { quantified = quantified, constraints = constraints } as scheme) ->
+                                if hasQuantifiedOperatorRequirement(quantified)(constraints) && schemeIsClosed(scheme)
+                                then
+                                    Ashes.Collection.Map.setStr(nestedLetSchemeKey(region)(located)(name))(scheme)(schemes)
+                                else schemes
+                            | None -> schemes
+                    | None -> schemes
+            else schemes
+        | _ -> schemes
+
+let recursive itemBindingName (item: TopLevelItem) =
+    match item with
+        | TopLevelAt(_span, inner) -> itemBindingName(inner)
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) -> Some(name)
+        | TopLevelRecursiveGroup(LetBindingSyntax { name = name } :: _bindings) -> Some(name)
+        | _ -> None
+
+// The source region lowering moves to at an item binding `name`, as `withStateSourceRegionOf`
+// moves: the region recorded for the name, or the current one.
+let regionAt (regionOfName: MapTree(Str, Int)) (name: Maybe(Str)) (current: Int) =
+    match name with
+        | Some(bound) ->
+            match Ashes.Collection.Map.getStr(bound)(regionOfName) with
+                | Some(region) -> region
+                | None -> current
+        | None -> current
+
+let recursive nestedLetSchemesOfItems (table: NodeTypeTable) (regionOfName: MapTree(Str, Int)) (region: Int) (items: List(TopLevelItem)) (schemes: MapTree(Str, TypeScheme)) =
+    match items with
+        | [] -> (region, schemes)
+        | item :: rest ->
+            let itemRegion =
+                regionAt(regionOfName)(itemBindingName(item))(region)
+            in
+                item
+                |> foldItemNodes(nestedLetSchemeVisit(table)(itemRegion))(schemes)
+                |> nestedLetSchemesOfItems(table)(regionOfName)(itemRegion)(rest)
+
+// The raw-source schemes of `rawOperatorDeclarationSchemes`, together with the operator-generic
+// `let` bindings below top level, read from the numbered form of the same program. Each item's
+// nodes are keyed in the region lowering is in while it lowers that item: the region of the
+// trailing expression's empty name to begin with, then the region of each item's binding.
+let rawOperatorSchemesWithNestedLets (regionOfName: MapTree(Str, Int)) (numbered: ProgramSyntax) (table: NodeTypeTable) =
+    match numbered with
+        | ProgramSyntax { items = items, body = body } ->
+            match table
+            |> rawOperatorDeclarationSchemes
+            |> nestedLetSchemesOfItems(table)(regionOfName)(regionAt(regionOfName)(Some(""))(0))(items) with
+                | (region, schemes) ->
+                    match body with
+                        | Some(trailing) ->
+                            foldExpressionNodes(region
+                            |> regionAt(regionOfName)(Some(""))
+                            |> nestedLetSchemeVisit(table))(schemes)(trailing)
+                        | None -> schemes
+
+// The operator-generic scheme raw-source lowering keeps for the `let` being lowered, by its key.
+let rawNestedOperatorGenericScheme (name: Str) (state: CoreLoweringState) =
+    match state.currentSpan with
+        | Some(span) ->
+            let registry = stateConcreteRegistry(state)
+            in
+                match Ashes.Collection.Map.getStr(nestedLetSchemeKey(stateCurrentItem(state))(span)(name))(registry.rawDeclarationSchemes) with
+                    | Some(scheme) -> operatorGenericScheme(scheme)(state)
+                    | None -> None
+        | None -> None
+
+// The operator-generic scheme the standalone inference recorded for `name` at the `let` node
+// `node` below top level, when the type recorded for the value node `valueNode` is the scheme's
+// body: the binding the `let` introduces, not a parameter or pattern variable of the same name.
+// Without the node table it is the scheme raw-source lowering keeps for that `let`.
+let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> rawNestedOperatorGenericScheme(name)(state)
+        | Some(table) ->
+            match nodeTypeAt(valueNode)(table) with
+                | Some(valueType) ->
+                    match table
+                    |> nodeBindingsAt(node)
+                    |> recordedSchemeForValue(name)(valueType) with
+                        | Some(recorded) -> operatorGenericScheme(recorded)(state)
+                        | None -> None
                 | None -> None

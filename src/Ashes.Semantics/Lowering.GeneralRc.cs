@@ -1462,44 +1462,62 @@ public sealed partial class Lowering
             return null;
         }
 
-        phantoms.ExceptWith(VariablesHeldBesideFunction(label));
+        RemoveVariablesHeldBesideFunction(label, phantoms);
         return phantoms.Count == 0 ? null : SubstitutePhantomVariables(pruned, phantoms);
     }
 
-    private HashSet<int> VariablesHeldBesideFunction(string label)
+    // Remove only variables that occur in this result. Bindings can carry many
+    // unrelated variables, and once the last candidate is held no scope can change the answer.
+    private void RemoveVariablesHeldBesideFunction(string label, HashSet<int> remaining)
     {
-        HashSet<int> held = [];
-        HashSet<string> selfNames = SelfNamesReaching(label);
         if (_ambientRow is not null)
         {
-            FtvType(_ambientRow, held);
+            RemoveVariablesHeldByType(_ambientRow, remaining);
         }
-
-        if (_scopes.Count > 0)
-        {
-            AddScopeFtvBesideSelf(_scopes.Peek(), label, held, selfNames);
-        }
-
-        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
-        {
-            foreach (ImmutableSortedDictionary<string, Binding> scope in enclosing)
-            {
-                AddScopeFtvBesideSelf(scope, label, held, selfNames);
-            }
-        }
-
         foreach (TraitConstraintScope scope in _traitConstraintScopes)
         {
             foreach (TraitConstraint constraint in scope.Constraints)
             {
                 foreach (TypeRef argument in constraint.TypeArgs)
                 {
-                    FtvType(argument, held);
+                    if (remaining.Count == 0)
+                    {
+                        return;
+                    }
+                    RemoveVariablesHeldByType(argument, remaining);
                 }
             }
         }
 
-        return held;
+        HashSet<string>? selfNames = null;
+        if (_scopes.Count > 0)
+        {
+            RemoveScopeVariablesBesideSelf(_scopes.Peek(), label, remaining, ref selfNames);
+        }
+        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
+        {
+            foreach (ImmutableSortedDictionary<string, Binding> scope in enclosing)
+            {
+                if (remaining.Count == 0)
+                {
+                    return;
+                }
+                RemoveScopeVariablesBesideSelf(scope, label, remaining, ref selfNames);
+            }
+        }
+    }
+
+    private void RemoveVariablesHeldByType(TypeRef type, HashSet<int> remaining)
+    {
+        TypeRef resolved = Prune(type);
+        if (resolved is TypeRef.TVar variable)
+        {
+            remaining.Remove(variable.Id);
+        }
+        else
+        {
+            remaining.RemoveWhere(id => Occurs(id, resolved));
+        }
     }
 
     private static bool RecursivePhantomRuleEnabled =>
@@ -1548,43 +1566,49 @@ public sealed partial class Lowering
     // the scope the function was created in), or a closure's capture of it, holds the function itself, so its type names the
     // result's variables without holding a value of them, and is skipped like the function's own
     // self binding.
-    private void AddScopeFtvBesideSelf(
+    private void RemoveScopeVariablesBesideSelf(
         ImmutableSortedDictionary<string, Binding> scope,
         string label,
-        HashSet<int> held,
-        HashSet<string> selfNames)
+        HashSet<int> remaining,
+        ref HashSet<string>? selfNames)
     {
         foreach ((string name, Binding binding) in scope)
         {
+            if (remaining.Count == 0)
+            {
+                return;
+            }
             if ((binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
-                || (selfNames.Contains(name) && _letRecursiveSelfLocals.Contains(binding)))
+                || (_letRecursiveSelfLocals.Contains(binding) && (selfNames ??= SelfNamesReaching(label)).Contains(name)))
             {
                 continue;
             }
 
-            AddBindingFtv(binding, held);
-        }
-    }
-
-    private void AddBindingFtv(Binding binding, HashSet<int> result)
-    {
-        switch (binding)
-        {
-            case Binding.Scheme scheme:
-                AddSchemeFtv(scheme.S, result);
-                break;
-            case Binding.EnvScheme environmentScheme:
-                AddSchemeFtv(environmentScheme.S, result);
-                break;
-            case Binding.Intrinsic intrinsic:
-                AddSchemeFtv(intrinsic.S, result);
-                break;
-            case Binding.PreludeValue preludeValue:
-                AddSchemeFtv(preludeValue.S, result);
-                break;
-            default:
-                AddBindingTypeFtv(binding, result);
-                break;
+            TypeScheme? scheme = binding switch
+            {
+                Binding.Scheme local => local.S,
+                Binding.EnvScheme environment => environment.S,
+                Binding.Intrinsic intrinsic => intrinsic.S,
+                Binding.PreludeValue prelude => prelude.S,
+                _ => null,
+            };
+            if (scheme is not null)
+            {
+                IReadOnlySet<int> held = SchemeFreeVariables(scheme);
+                if (held.Count > 0)
+                {
+                    remaining.RemoveWhere(held.Contains);
+                }
+                continue;
+            }
+            foreach (TypeRef.TVar variable in BindingTypeVariables(binding))
+            {
+                RemoveVariablesHeldByType(variable, remaining);
+                if (remaining.Count == 0)
+                {
+                    return;
+                }
+            }
         }
     }
 
@@ -1618,8 +1642,7 @@ public sealed partial class Lowering
         Binding? binding = rootExpr switch
         {
             Expr.Var variable => Lookup(variable.Name),
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         return binding switch

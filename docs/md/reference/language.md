@@ -1890,6 +1890,28 @@ qualified reference on its own never brings `length` or `List.length` into scope
 This rule covers the standard library only. A user module is reachable only once it is imported,
 because a project's module graph is exactly its declared imports.
 
+Types and constructors follow the same rule, for user and standard-library modules alike: a type
+named in an annotation (or in a type declaration's field, a trait signature, or an `implement`
+head), a constructor in an expression or pattern, and a record literal or record pattern resolve
+unqualified only in the module that declares them and in the modules that import that module
+(whole, under an alias, or through a type selector, which imports the module whole; a value
+selector brings in only its binding). Naming one anywhere else is an error (`ASH048`), even when the
+program reaches the declaring module through another import:
+
+```ash
+// Shapes declares `type Shape = | Circle(Int) | Square(Int)`; Geometry imports Shapes.
+import Geometry
+
+let describe (shape: Shape) = 1 // ASH048: Shape is declared in Shapes, which this file does not import
+```
+
+A standard-library type is no exception: `MapTree(Str, Int)` needs `import Ashes.Collection.Map`
+(or `import Ashes.Collection.Map.MapTree`), and the `Ordering` constructors `Less`, `Equal` and
+`Greater` need `import Ashes.Trait`. Only the built-in types of §13.3, `Unit`, `Maybe` and `Result`,
+with their constructors, are visible everywhere. Trait names are not covered by this rule: a trait
+named in a `deriving` clause, a `requires` clause or an `implement` declaration resolves without an
+import (§21.5).
+
 #### Import and use unqualified names
 
 ```ash
@@ -3601,7 +3623,9 @@ declare `show` without conflict. Constructors remain in the existing constructor
 
 Traits are exported declarations and follow the same sequential module visibility and selector-import
 rules as types. Importing a trait makes the trait name available; it does not import its methods as
-unqualified values. Implementations are different: every legal implementation in the resolved package graph is
+unqualified values. Unlike a type, a trait named in a `deriving` clause, a `requires` clause or an
+`implement` declaration resolves without an import of its declaring module: `deriving {Eq, Show}`,
+`requires {Ord(a)}` and `implement Show(Point)` need no `import Ashes.Trait`. Implementations are different: every legal implementation in the resolved package graph is
 visible to resolution whether or not its defining module was imported explicitly. This global rule is
 what makes implementation selection coherent.
 
@@ -3633,6 +3657,23 @@ together. Instantiating the binding freshens every quantified variable in both i
 its constraints. Constraints propagate through calls, closures, partial application, higher-order
 arguments, matches, async bodies, and capability-performing functions.
 
+A binding evaluates its right-hand side immediately and exactly once. Each trait operation performed
+during that evaluation requires a determined instance or evidence already available from an enclosing
+binding. If selecting its instance would require a type fixed only by a later polymorphic use, the
+binding is ambiguous (ASH010). A type annotation can fix the instance at the binding. Requirements
+used only when invoking the returned function can remain generalized. For example, when a first
+application writes a prefix and returns a function that shows its argument, the write occurs once
+at the first application, and later calls can supply different `Show` instances.
+
+A constraint on type variables that a local `let` does not generalize, because they belong to an
+enclosing binding (a parameter's type, say), is a requirement of that enclosing binding, whether or
+not the `let`'s name is ever used:
+
+```ash
+// describe : a -> Int requires {Named(a)}
+let describe x = (let _ = Named.label(x) in 1)
+```
+
 A written `requires` clause states the complete external trait requirement of that scheme after
 supertrait simplification. Missing inferred constraints and written constraints that the body does not
 justify are errors; annotations do not silently add or discard evidence. Non-recursive bindings,
@@ -3641,6 +3682,13 @@ Recursive members are inferred against one shared monomorphic boundary and gener
 every body has been checked. Their canonical constraint order defines stable module metadata and a
 deterministic hidden evidence ABI. Written annotations remain optional documentation and an explicit
 contract checked against the inferred requirements.
+
+A binding's inferred requirements are reduced through the implementations before they enter its
+scheme. A requirement an implementation supplies outright (`Multiply(Int)`) leaves nothing; one an
+implementation head matches leaves that implementation's own requirements, reduced in turn, so a body
+comparing `[x] == [x]` requires `Eq(a)`, not `Eq(List(a))`. A written `requires` clause states the
+reduced form: a written requirement on known types, or one an implementation head matches, is
+rejected as unjustified (`ASH010`), because an implementation and not the binding's users supplies it.
 
 Constraints use a deterministic canonical order: fully qualified trait name first, then the canonical
 printed form of each argument from left to right. Exact duplicates are removed and supertraits implied
@@ -3663,6 +3711,20 @@ Rejected ambiguous declaration:
 // `a` occurs only in the constraint, so callers cannot choose it.
 let invalid : Bool requires {Default(a)} = true
 ```
+
+The same holds where no binding can generalize a variable. A requirement that still holds a type
+variable once the program's trailing expression is inferred, which no binding quantifies and nothing
+settles, is ambiguous and rejected (`ASH010`); an operator gets no numeric default there either:
+
+```ash
+// `x` is never applied to anything, so `+` has no type to dispatch on.
+Ashes.IO.print(Ashes.Collection.List.length([given (x) -> x + x]))
+```
+
+A later use settles such a variable (`applyToTwo(given (x) -> x + x)` with `applyToTwo` applying its
+argument to `2`), and so does an annotation (`given (x: Int) -> x + x`). A type variable no constraint
+mentions, such as the element type of `length([])`, is not ambiguous: the program means the same at
+every type, and the compiler may represent it uniformly.
 
 ### 21.7 Coherence and package ownership
 

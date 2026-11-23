@@ -60,7 +60,7 @@
 22:27 Area -> `Area` trait Area(a) | *trait*
 22:32 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
 22:37 s -> `s` s : a | *value*
-22:42 total -> `total` total : (a -> Int, b -> Int) -> List<a> -> Int | *function* | **Parameters** | - `shapes` : `(a -> Int, b -> Int)` | **Returns:** `List<a> -> Int`
+22:42 total -> `total` total : List<a> -> Int requires {Area(a)} | *function* | **Parameters** | - `shapes` : `List<a>` | **Returns:** `Int`
 22:48 rest -> `rest` rest : List<a> | *value*
 24:0 let -> -
 24:4 same -> `same` same : Bool | *value*

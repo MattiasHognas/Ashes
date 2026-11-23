@@ -64,6 +64,14 @@ export (
     value buildRetVoid,
     value verifyModule,
     value printModuleToString,
+    value firstFunctionAddress,
+    value nextFunctionAddress,
+    value firstBlockAddress,
+    value nextBlockAddress,
+    value lastInstructionAddress,
+    value previousInstructionAddress,
+    value instructionOpcodeAt,
+    value valueNameAt,
     value verifierAbortProcessAction,
     value verifierPrintMessageAction,
     value verifierReturnStatusAction,
@@ -158,6 +166,7 @@ export (
     value builderModule,
     value builderFunction,
     value buildStore,
+    value buildMemSet,
     value buildLoad,
     value setVolatile,
     value buildCall,
@@ -215,6 +224,16 @@ external LLVMBuildRetVoid(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildRetVoid@li
 external LLVMDisposeMessage(*u8) -> void = "LLVMDisposeMessage@libLLVM.so"
 external LLVMVerifyModule(LLVMModuleRef, u32, out FfiStr(owned LLVMDisposeMessage)) -> Bool = "LLVMVerifyModule@libLLVM.so"
 external LLVMPrintModuleToString(LLVMModuleRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMPrintModuleToString@libLLVM.so"
+// The module walk of the opt-in LLVM statistics dump. Each handle is taken and returned as the
+// native word it is (`Int`), so the end of a list is the word 0 rather than a handle value.
+external LLVMGetFirstFunctionAddress(LLVMModuleRef) -> Int = "LLVMGetFirstFunction@libLLVM.so"
+external LLVMGetNextFunctionAddress(Int) -> Int = "LLVMGetNextFunction@libLLVM.so"
+external LLVMGetFirstBasicBlockAddress(Int) -> Int = "LLVMGetFirstBasicBlock@libLLVM.so"
+external LLVMGetNextBasicBlockAddress(Int) -> Int = "LLVMGetNextBasicBlock@libLLVM.so"
+external LLVMGetLastInstructionAddress(Int) -> Int = "LLVMGetLastInstruction@libLLVM.so"
+external LLVMGetPreviousInstructionAddress(Int) -> Int = "LLVMGetPreviousInstruction@libLLVM.so"
+external LLVMGetInstructionOpcodeAt(Int) -> u32 = "LLVMGetInstructionOpcode@libLLVM.so"
+external LLVMGetValueNameAt(Int) -> FfiStr(borrowed) = "LLVMGetValueName@libLLVM.so"
 external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@libLLVM.so"
 external LLVMInitializeX86Target() -> void = "LLVMInitializeX86Target@libLLVM.so"
 external LLVMInitializeX86TargetMC() -> void = "LLVMInitializeX86TargetMC@libLLVM.so"
@@ -298,6 +317,7 @@ external LLVMGetEntryBasicBlock(LLVMValueRef) -> LLVMBasicBlockRef = "LLVMGetEnt
 external LLVMGetFirstInstruction(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetFirstInstruction@libLLVM.so"
 external LLVMPositionBuilder(LLVMBuilderRef, LLVMBasicBlockRef, LLVMValueRef) -> void = "LLVMPositionBuilder@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
+external LLVMBuildMemSet(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, u32) -> LLVMValueRef = "LLVMBuildMemSet@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 external LLVMSetVolatile(LLVMValueRef, Bool) -> void = "LLVMSetVolatile@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
@@ -370,6 +390,27 @@ let verifyModule module_ action = LLVMVerifyModule(module_)(action)
 // The module's textual IR (`LLVMPrintModuleToString`), for a dump of a module that failed
 // verification.
 let printModuleToString module_ = LLVMPrintModuleToString(module_)
+
+// The module walk of the opt-in LLVM statistics dump: the first function, block or instruction
+// and the one after it (an instruction: the last one and the one before it, since the first
+// instruction is bound with handle types), as native words, 0 past the end.
+let firstFunctionAddress module_ = LLVMGetFirstFunctionAddress(module_)
+
+let nextFunctionAddress (function_: Int) = LLVMGetNextFunctionAddress(function_)
+
+let firstBlockAddress (function_: Int) = LLVMGetFirstBasicBlockAddress(function_)
+
+let nextBlockAddress (block: Int) = LLVMGetNextBasicBlockAddress(block)
+
+let lastInstructionAddress (block: Int) = LLVMGetLastInstructionAddress(block)
+
+let previousInstructionAddress (instruction: Int) = LLVMGetPreviousInstructionAddress(instruction)
+
+// `LLVMOpcode` of the instruction at `instruction`.
+let instructionOpcodeAt (instruction: Int) = LLVMGetInstructionOpcodeAt(instruction)
+
+// The name of the function at `function_` (`LLVMGetValueName`).
+let valueNameAt (function_: Int) = LLVMGetValueNameAt(function_)
 
 let initializeX86TargetInfo _ = LLVMInitializeX86TargetInfo(Unit)
 
@@ -662,6 +703,8 @@ let buildEntryAlloca builder type_ name =
             in slot))
 
 let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
+
+let buildMemSet builder pointer value length alignment = LLVMBuildMemSet(builder)(pointer)(value)(length)(alignment)
 
 let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
 

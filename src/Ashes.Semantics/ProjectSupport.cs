@@ -83,6 +83,11 @@ public sealed record ProjectModule(
     /// <summary>For a lifted inline module, where its dedented source sits in the enclosing file;
     /// <see cref="FilePath"/> is then <c>file#Module</c>.</summary>
     public InlineModuleOrigin? InlineOrigin { get; init; }
+
+    /// <summary>The modules the import header imports whole or under an alias, as opposed to a module
+    /// only a value selector names, which <see cref="Imports"/> also holds; null when not recorded, and
+    /// <see cref="Imports"/> stands for it.</summary>
+    public IReadOnlySet<string>? WholeModuleImports { get; init; }
 }
 
 /// <summary>
@@ -147,6 +152,7 @@ public readonly record struct ParsedImportHeader(
 /// <param name="ModuleProvenanceByPath">Maps stitched source paths to manifest package and module identities.</param>
 /// <param name="SourceLineAnchors">Line anchors for every fragment of reconstructed module text (a
 /// rendered binding value or a hoisted declaration), in combined-source order; see <see cref="SourceLineAnchor"/>.</param>
+/// <param name="VisibleModules">Maps each module name to the modules whose types and constructors it may name unqualified; null when the layout does not stitch modules.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
@@ -156,8 +162,12 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null,
     IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null,
     IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null,
-    IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null
-);
+    IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null,
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? VisibleModules = null
+)
+{
+    internal IReadOnlyDictionary<string, Dictionary<string, IReadOnlySet<string>>>? QualifiedValueScopes { get; init; }
+}
 
 /// <summary>
 /// Maps one fragment of reconstructed module text in the combined source back to where its text
@@ -1338,6 +1348,7 @@ public static class ProjectSupport
         }
 
         var (imports, source, aliases, selectors) = ParseImports(fullPath);
+        IReadOnlySet<string> wholeImports = CollectWholeModuleImports(imports, selectors);
 
         // Lift inline `module Name = ...` blocks. The entry file's inline modules keep bare names
         // (nothing imports the entry across files); every other file prefixes them with its own
@@ -1352,7 +1363,10 @@ public static class ProjectSupport
             imports, selectors, aliasMap,
             name => IsResolvableProjectModule(name, searchRoots, resolvedByModuleName));
         source = ApplySelectorRenames(source, selectors);
-        var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
+        var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors)
+        {
+            WholeModuleImports = wholeImports,
+        };
         resolvedByPath[fullPath] = module;
         inlineChildrenByPath[fullPath] = children;
         if (!resolvedByModuleName.ContainsKey(moduleName))
@@ -1478,7 +1492,9 @@ public static class ProjectSupport
             {
                 var parent = import[..lastDot];
                 var leaf = import[(lastDot + 1)..];
-                if (isResolvableModule(parent))
+                // The reserved root declares no types, so `Ashes.File` is an unknown standard-library
+                // module, reported as one, not a type selector on `Ashes`.
+                if (isResolvableModule(parent) && !string.Equals(parent, "Ashes", StringComparison.Ordinal))
                 {
                     // An uppercase final segment the regex folded into the module path is a type selector
                     // when the full path is not itself a resolvable module but its parent is. For the
@@ -1736,7 +1752,7 @@ public static class ProjectSupport
             importNames.ToList(),
             new Dictionary<string, string>(StringComparer.Ordinal),
             entrySelectors)
-        { PackageId = "standalone" };
+        { PackageId = "standalone", WholeModuleImports = CollectWholeModuleImports(importNames, entrySelectors) };
         orderedModules.Add(entryModule);
 
         if (TryLoadStandardLibraryModule("Ashes.Trait", out ProjectModule traitModule))
@@ -1935,6 +1951,7 @@ public static class ProjectSupport
                 HasPosition: true);
         }
 
+        bool recoveredEntry = TryRecoverWrappedEntry(layout, entries, combinedIndex, entryFilePath, entryStrippedSource, originalIndex, results);
         foreach (var entry in entries)
         {
             var start = combinedIndex.ToUtf16Offset(entry.Span.Start);
@@ -1942,6 +1959,10 @@ public static class ProjectSupport
 
             if (start >= layout.EntryOffset)
             {
+                if (recoveredEntry)
+                {
+                    continue;
+                }
                 var (line, column) = OffsetToLineColumn(combined, layout.EntryOffset, start);
                 results.Add(AtEntryPosition(entry, line, column, length));
                 continue;
@@ -1970,7 +1991,63 @@ public static class ProjectSupport
             results.Add(new MappedDiagnostic(entry, anchorPath ?? FindModuleRegionPath(layout, start, entryFilePath), HasPosition: false, moduleLine, moduleColumn));
         }
 
-        return results;
+        return WithoutStandardLibraryCascades(results);
+    }
+
+    private static bool TryRecoverWrappedEntry(
+        CombinedCompilationLayout layout,
+        IReadOnlyList<DiagnosticEntry> entries,
+        SourceTextIndex combinedIndex,
+        string path,
+        string strippedSource,
+        SourceTextIndex originalIndex,
+        List<MappedDiagnostic> results)
+    {
+        if (layout.ModuleOffsets.Count == 0)
+        {
+            return false;
+        }
+
+        int end = layout.ModuleOffsets[^1].EndOffset;
+        if (end != layout.Source.Length - 1 || layout.Source[end] != ')'
+            || !entries.Any(entry => string.Equals(entry.Code, DiagnosticCodes.ParseError, StringComparison.Ordinal)
+                && combinedIndex.ToUtf16Offset(entry.Start) == end))
+        {
+            return false;
+        }
+
+        // Recovery at a generated ')' can create several diagnostics at that token and the
+        // subsequent EOF. Parse the entry's own text to recover at its actual end of input.
+        (string outerSource, _) = ExpandInlineModules(strippedSource, "", path);
+        Diagnostics diagnostics = new();
+        _ = new Parser(outerSource, diagnostics).ParseProgram();
+        SourceTextIndex outerIndex = new(outerSource);
+        int OriginalOffset(int offset)
+        {
+            (int line, int column) = outerIndex.ToPosition(offset, SourcePositionEncoding.UnicodeScalar);
+            return originalIndex.FromPosition(line, column, SourcePositionEncoding.UnicodeScalar);
+        }
+
+        foreach (DiagnosticEntry error in diagnostics.StructuredErrors)
+        {
+            TextSpan span = TextSpan.FromBounds(OriginalOffset(error.Start), OriginalOffset(error.End));
+            results.Add(new MappedDiagnostic(error with { Span = span }, path, HasPosition: true));
+        }
+
+        return diagnostics.StructuredErrors.Count > 0;
+    }
+
+    // The standard library's own code compiles cleanly, so a diagnostic placed in a shipped module
+    // while the program's own code has an error is a consequence of that error (a type left
+    // unsettled by a mismatch, or the mismatch again without a span of its own) and is not reported.
+    private static IReadOnlyList<MappedDiagnostic> WithoutStandardLibraryCascades(List<MappedDiagnostic> results)
+    {
+        static bool InStandardLibrary(MappedDiagnostic diagnostic) =>
+            diagnostic.FilePath.StartsWith("<std:", StringComparison.Ordinal);
+
+        return results.Exists(diagnostic => !InStandardLibrary(diagnostic))
+            ? results.Where(diagnostic => !InStandardLibrary(diagnostic)).ToList()
+            : results;
     }
 
     private static string FindModuleRegionPath(CombinedCompilationLayout layout, int start, string fallback)
@@ -2175,11 +2252,7 @@ public static class ProjectSupport
         // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
         bool appendFlatEntryBare = ApplyEntryBoundary(prefix, entryShape, legacyBindingEmitted);
 
-        var entryExpression = BuildEntryExpression(
-            entryModule,
-            entryShape,
-            exportedNames,
-            exportAnnotations);
+        var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames, exportAnnotations);
         return ComposeEntryLayout(
             entryModule,
             entryShape,
@@ -2190,9 +2263,99 @@ public static class ProjectSupport
             functionSourceNames,
             moduleProvenanceByPath,
             entryTypeDeclFragments,
-            appendFlatEntryBare);
+            appendFlatEntryBare) with
+        {
+            VisibleModules = BuildVisibleModules(orderedModules),
+            QualifiedValueScopes = BuildQualifiedValueScopes(orderedModules, exportedNames),
+        };
     }
 
+    // Each source module sees its imported qualifiers, inline modules in the same file, and
+    // fully qualified shipped modules. Qualifiers share the declaring module's value-export set.
+    private static Dictionary<string, Dictionary<string, IReadOnlySet<string>>> BuildQualifiedValueScopes(
+        IReadOnlyList<ProjectModule> modules,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exports)
+    {
+        Dictionary<string, IReadOnlySet<string>> byModule = exports.ToDictionary(
+            pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value.ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
+        Dictionary<string, Dictionary<string, IReadOnlySet<string>>> scopes = new(StringComparer.Ordinal);
+        foreach (ProjectModule owner in modules)
+        {
+            Dictionary<string, IReadOnlySet<string>> scope = new(StringComparer.Ordinal);
+            string ownerFile = owner.FilePath.Split('#', 2)[0];
+            foreach (ProjectModule target in modules)
+            {
+                if (target.ModuleName.StartsWith("Ashes.", StringComparison.Ordinal)
+                    || target.InlineOrigin is not null && target.FilePath.StartsWith(ownerFile + "#", StringComparison.Ordinal))
+                {
+                    scope[target.ModuleName] = byModule[target.ModuleName];
+                }
+            }
+            foreach (string import in owner.Imports.Where(import => ImportsWholeModule(owner, import)))
+            {
+                if (byModule.TryGetValue(import, out IReadOnlySet<string>? values))
+                {
+                    scope[GetLeafModuleQualifier(import)] = values;
+                    scope[import] = values;
+                }
+            }
+            scopes.Add(owner.ModuleName, scope);
+        }
+        return scopes;
+    }
+
+    /// <summary>
+    /// The modules an import header imports whole or under an alias. A value selector
+    /// (<c>import M.name</c>) also lists <c>M</c> among the header's imports, once per selector, so a
+    /// module counts as imported whole only when it is listed more often than selectors name it.
+    /// </summary>
+    private static IReadOnlySet<string> CollectWholeModuleImports(
+        IReadOnlyList<string> imports,
+        IReadOnlyList<ImportSelector> selectors)
+    {
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        foreach (string import in imports)
+        {
+            counts[import] = counts.GetValueOrDefault(import) + 1;
+        }
+
+        foreach (ImportSelector selector in selectors)
+        {
+            if (counts.TryGetValue(selector.ModuleName, out int count))
+            {
+                counts[selector.ModuleName] = count - 1;
+            }
+        }
+
+        return counts.Where(entry => entry.Value > 0).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Maps each module to the modules whose types and constructors it may name unqualified: the
+    /// modules it imports whole, under an alias, or through a type selector, which imports the
+    /// module whole. A value selector brings in only its binding.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildVisibleModules(
+        IReadOnlyList<ProjectModule> modules)
+    {
+        Dictionary<string, IReadOnlySet<string>> result = new(StringComparer.Ordinal);
+        foreach (ProjectModule module in modules)
+        {
+            HashSet<string> visible = new(module.WholeModuleImports ?? (IEnumerable<string>)module.Imports, StringComparer.Ordinal);
+            visible.UnionWith(module.Aliases.Values);
+            foreach (ImportSelector selector in module.Selectors)
+            {
+                if (selector.ExportName.Length > 0 && char.IsUpper(selector.ExportName[0]))
+                {
+                    visible.Add(selector.ModuleName);
+                }
+            }
+
+            result[module.ModuleName] = visible;
+        }
+
+        return result;
+    }
     // The combined source's region table and fragment anchors, grown together while the prefix is
     // assembled and handed to the layout as one unit.
     private sealed record LayoutRegions(
@@ -3137,7 +3300,7 @@ public static class ProjectSupport
         // detach the alias scheme from the hidden trait-evidence ABI. The legacy nested form keeps
         // its wrapping path because it is already represented as an expression pyramid.
         var renderedValue = flat
-            ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
+            ? ApplyAliasesByRenaming(binding.ValueSource, aliases, module.Aliases)
             : ApplyAliases(binding.ValueSource, aliases, exportAnnotations);
 
         prefix.Append($"{moduleBindingName}_{binding.Name}");
@@ -3223,6 +3386,12 @@ public static class ProjectSupport
         }
     }
 
+    private static bool ImportsWholeModule(ProjectModule module, string name) =>
+        module.WholeModuleImports?.Contains(name) != false
+        || module.Aliases.Values.Contains(name, StringComparer.Ordinal)
+        || module.Selectors.Any(selector => selector.ExportName.Length > 0 && char.IsUpper(selector.ExportName[0])
+            && string.Equals(selector.ModuleName, name, StringComparison.Ordinal));
+
     private static List<KeyValuePair<string, string>> BuildVisibleAliases(
         ProjectModule module,
         IReadOnlyList<string> availableLocalBindings,
@@ -3232,8 +3401,19 @@ public static class ProjectSupport
     {
         var aliases = new List<KeyValuePair<string, string>>();
         var localNames = new HashSet<string>(StringComparer.Ordinal);
-        var referencedVariables = referencedNames.Variables;
+        HashSet<string> referencedVariables = new(referencedNames.Variables, StringComparer.Ordinal);
         var referencedQualifiedReferences = referencedNames.QualifiedReferences;
+
+        // A lowercase dotted receiver can be a record value or the module's explicit import alias.
+        foreach (QualifiedReference reference in referencedQualifiedReferences)
+        {
+            string receiver = reference.ModuleName;
+            if (receiver.Length > 0 && !char.IsUpper(receiver[0])
+                && !receiver.Contains('.', StringComparison.Ordinal) && !module.Aliases.ContainsKey(receiver))
+            {
+                referencedVariables.Add(receiver);
+            }
+        }
 
         AddLocalBindingAliases(module, availableLocalBindings, currentRecursiveBindings, referencedVariables, localNames, aliases);
         AddSelectorAliases(module, referencedVariables, localNames, aliases);
@@ -3280,11 +3460,8 @@ public static class ProjectSupport
         List<KeyValuePair<string, string>> aliases)
     {
         // Binding selectors (`import M.name [as x]`) introduce the selected value export unqualified.
-        // They are resolved before whole-module imports so an explicitly selected name wins over the
-        // same name being brought in by a whole-module import. The alias target is the qualified
-        // reference `Module.name`, which the lowering resolves uniformly for built-in members and
-        // stitched user-module bindings (`Ashes_Module_name`) alike — so no implicit re-export occurs:
-        // the alias lives only in this module's stitched source. Type selectors (`import M.Type`) need
+        // Resolve the selected alias to its validated export directly: the selector does not import
+        // the module qualifier. Intrinsic selectors have already been rewritten. Type selectors need
         // no value alias: type declarations are hoisted to the top of the combined source and are
         // already globally visible, so an unqualified type reference resolves with nothing to inject.
         foreach (var selector in module.Selectors)
@@ -3299,7 +3476,7 @@ public static class ProjectSupport
 
             aliases.Add(new KeyValuePair<string, string>(
                 selector.LocalName,
-                $"{selector.ModuleName}.{selector.ExportName}"));
+                $"{SanitizeModuleBindingName(selector.ModuleName)}_{selector.ExportName}"));
         }
     }
 
@@ -3316,7 +3493,7 @@ public static class ProjectSupport
         // A selector import (`import M.name`) lists M again beside a whole-module `import M`.
         foreach (var import in module.Imports.Reverse().Distinct(StringComparer.Ordinal))
         {
-            if (!exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
+            if (!ImportsWholeModule(module, import) || !exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
             {
                 continue;
             }
@@ -3424,7 +3601,10 @@ public static class ProjectSupport
     /// expression in <c>let ... in</c> bindings. Used for <c>let recursive</c> values, which must remain
     /// bare function literals so mutual/self references stay deferred to call time.
     /// </summary>
-    private static string ApplyAliasesByRenaming(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
+    private static string ApplyAliasesByRenaming(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> aliases,
+        IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         var trimmed = source.Trim();
         if (aliases.Count == 0)
@@ -3457,7 +3637,7 @@ public static class ProjectSupport
 
         // Alias keys inhabit the value/type namespace. Preserve same-spelled record-field tokens;
         // those labels are not references to the binding being qualified.
-        return RenameIdentifiers(trimmed, effectiveAliases, valueNames);
+        return RenameIdentifiers(trimmed, effectiveAliases, valueNames, moduleAliases);
     }
 
     /// <summary>
@@ -3841,7 +4021,8 @@ public static class ProjectSupport
     private static string RenameIdentifiers(
         string source,
         IReadOnlyList<KeyValuePair<string, string>> replacements,
-        IReadOnlySet<string> privateValueNames)
+        IReadOnlySet<string> privateValueNames,
+        IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         if (replacements.Count == 0)
         {
@@ -3870,6 +4051,8 @@ public static class ProjectSupport
             Token token = tokens[index];
             if (token.Kind == TokenKind.Ident
                 && byName.TryGetValue(token.Text, out string? replacement)
+                && !(moduleAliases?.ContainsKey(token.Text) == true
+                    && index + 1 < tokens.Count && tokens[index + 1].Kind == TokenKind.Dot)
                 && (!privateValueNames.Contains(token.Text) || !IsRecordFieldIdentifier(tokens, index)))
             {
                 builder.Append(source[copied..token.Position]).Append(replacement);
@@ -4824,7 +5007,7 @@ public static class ProjectSupport
             parsed.ImportNames,
             parsed.ImportAliases,
             parsed.ImportSelectors)
-        { PackageId = "ashes-core" };
+        { PackageId = "ashes-core", WholeModuleImports = CollectWholeModuleImports(parsed.ImportNames, parsed.ImportSelectors) };
         return true;
     }
 
@@ -5043,15 +5226,6 @@ public static class ProjectSupport
                 break;
             case Expr.QualifiedVar qualifiedVar:
                 qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
-                // `receiver.field` spells a record field read like a module member. A lowercase
-                // receiver is a value binding, so it is a reference to that binding too.
-                if (qualifiedVar.Module.Length > 0
-                    && !qualifiedVar.Module.Contains('.', StringComparison.Ordinal)
-                    && !char.IsUpper(qualifiedVar.Module[0]))
-                {
-                    names.Add(qualifiedVar.Module);
-                }
-
                 break;
             case Expr.IntLit:
             case Expr.UIntLit:

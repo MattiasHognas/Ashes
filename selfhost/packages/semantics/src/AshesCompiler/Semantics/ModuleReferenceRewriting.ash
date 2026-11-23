@@ -68,6 +68,56 @@ let resolveQualifiedCompilerName project moduleName qualifier kind name =
     |> resolveStitchedQualified(moduleName)(qualifier)(kind)(name)
     |> resolvedCompilerName(qualifier + "." + name)
 
+// A built-in type or constructor, which every module names without an import.
+let isBuiltinTypeOrConstructorName (name: Str) =
+    match name with
+        | "Some" -> true
+        | "None" -> true
+        | "Ok" -> true
+        | "Error" -> true
+        | "Unit" -> true
+        | "Maybe" -> true
+        | "Result" -> true
+        | "Int" -> true
+        | "Str" -> true
+        | "Bool" -> true
+        | "Float" -> true
+        | "List" -> true
+        | _ -> false
+
+// A type or constructor name that resolves to no definition the module sees. When another module
+// exports a type or constructor (`kind`) by that name, the name becomes a marker no definition
+// answers to, `Name$unimported$Declaring/Module` (the module path with `/` for `.`), which the
+// inference reports as a name of a module this one does not import; otherwise it stays as written.
+let unimportedOrWritten project moduleName kind name =
+    (let first = Ashes.Text.substring(name)(0)(1)
+    in
+        if first < "A" || first > "Z" || isBuiltinTypeOrConstructorName(name)
+        then name
+        else
+            match resolveStitchedUnimported(moduleName)(kind)(name)(project) with
+                | Some(StitchedDefinition { moduleName = declaringModule }) ->
+                    name + "$unimported$" + Ashes.Text.join("/")(Ashes.Text.split(declaringModule)("."))
+                | None -> name)
+
+// A type or constructor named at a reference: the definition the module sees, or the name as
+// `unimportedOrWritten` leaves it.
+let resolveReferenceCompilerName project moduleName boundary kind name =
+    match resolveStitchedUnqualified(moduleName)(boundary)(kind)(name)(project) with
+        | Some(definition) -> definitionCompilerName(definition)
+        | None -> unimportedOrWritten(project)(moduleName)(kind)(name)
+
+let rewriteTraitName project moduleName boundary name =
+    match parentAndLeaf(name) with
+        | Some((qualifier, leaf)) -> resolveQualifiedCompilerName(project)(moduleName)(qualifier)(StitchedTrait)(leaf)
+        | None ->
+            match resolveStitchedUnqualified(moduleName)(boundary)(StitchedTrait)(name)(project) with
+                | Some(definition) -> definitionCompilerName(definition)
+                | None ->
+                    match resolveStitchedUnimported(moduleName)(StitchedTrait)(name)(project) with
+                        | Some(definition) -> definitionCompilerName(definition)
+                        | None -> deepCopy(name)
+
 let rewriteTypeName project moduleName boundary typeParameters name =
     if textExists(name)(typeParameters)
     then deepCopy(name)
@@ -84,10 +134,23 @@ let rewriteTypeName project moduleName boundary typeParameters name =
             | None ->
                 match resolveStitchedUnqualified(moduleName)(boundary)(StitchedType)(name)(project) with
                     | Some(definition) -> definitionCompilerName(definition)
-                    | None ->
-                        project
-                        |> resolveStitchedShippedType(name)
-                        |> resolvedCompilerName(name)
+                    | None -> unimportedOrWritten(project)(moduleName)(StitchedType)(name)
+
+// A capability named by a `provide`, a handler arm or a `needs` row. Capabilities keep their
+// declared names program-wide, so an unqualified name stays as written in every module, whether
+// or not the module imports the declaring one and whatever type or trait of the same name it
+// sees; a qualified name resolves like a qualified type.
+let rewriteCapabilityName project moduleName name =
+    match parentAndLeaf(name) with
+        | Some((qualifier, leaf)) ->
+            resolveQualifiedCompilerName(
+                project,
+                moduleName,
+                qualifier,
+                StitchedCapability,
+                leaf
+            )
+        | None -> deepCopy(name)
 
 // A record literal or record pattern names the record's constructor, which the lowering looks
 // up by constructor name; a private record's type and constructor carry different compiler
@@ -102,7 +165,7 @@ let rewriteRecordName project moduleName boundary name =
                 StitchedConstructor,
                 leaf
             )
-        | None -> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
+        | None -> resolveReferenceCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
 
 let recursive rewriteTypes project moduleName boundary typeParameters types =
     match types with
@@ -119,13 +182,7 @@ and rewriteCapabilityTypes project moduleName boundary typeParameters capabiliti
     match capabilities with
         | [] -> []
         | (name, arguments) :: rest ->
-            (rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                typeParameters,
-                name
-            ), rewriteTypes(
+            (rewriteCapabilityName(project)(moduleName)(name), rewriteTypes(
                 project,
                 moduleName,
                 boundary,
@@ -171,11 +228,10 @@ let recursive rewriteTraitConstraints project moduleName boundary typeParameters
     match constraints with
         | [] -> []
         | TraitConstraintSyntax { traitName = traitName, typeArguments = arguments } :: rest ->
-            TraitConstraintSyntax(traitName = rewriteTypeName(
+            TraitConstraintSyntax(traitName = rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                typeParameters,
                 traitName
             ), typeArguments = rewriteTypes(
                 project,
@@ -199,13 +255,7 @@ and rewriteCapabilityRefs project moduleName boundary typeParameters capabilitie
     match capabilities with
         | [] -> []
         | CapabilityRefSyntax { name = name, args = arguments } :: rest ->
-            CapabilityRefSyntax(name = rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                typeParameters,
-                name
-            ), args = rewriteTypes(
+            CapabilityRefSyntax(name = rewriteCapabilityName(project)(moduleName)(name), args = rewriteTypes(
                 project,
                 moduleName,
                 boundary,
@@ -283,7 +333,7 @@ and rewritePattern project moduleName boundary pattern =
             arguments
             |> rewritePatterns(project)(moduleName)(boundary)
             |> PatternConstructor(
-                resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
+                resolveReferenceCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
             )
         | PatternRecord(name, fields) ->
             fields
@@ -310,7 +360,12 @@ and rewriteNullaryConstructorPattern project moduleName boundary name pattern =
                     |> definitionCompilerName
                     |> PatternVar
                 | _ -> pattern
-        | None -> pattern
+        | None ->
+            let marked = unimportedOrWritten(project)(moduleName)(StitchedConstructor)(name)
+            in
+                if marked == name
+                then pattern
+                else PatternConstructor(marked)([])
 
 // A bare name unresolved against real stitched bindings may still be an unqualified reference to
 // an intrinsic builtin module's member: language.md's `import M` (no `as`) exposes `M`'s exported
@@ -354,7 +409,10 @@ let resolveExpressionVariable project moduleName boundary locals name =
                     | None ->
                         match resolveIntrinsicPlainImportMember(project)(moduleName)(name) with
                             | Some(intrinsicModule) -> ExprQualifiedVar(intrinsicModule)(name)
-                            | None -> ExprVar(name)
+                            | None ->
+                                name
+                                |> unimportedOrWritten(project)(moduleName)(StitchedConstructor)
+                                |> ExprVar
 
 let rewriteQualifiedExpression project moduleName boundary qualifier name =
     match resolveStitchedQualified(moduleName)(qualifier)(StitchedValue)(name)(project) with
@@ -503,7 +561,7 @@ and rewriteHandlerArms project moduleName boundary locals arms =
                             | None -> None
                             | Some(name) ->
                                 name
-                                |> rewriteTypeName(project)(moduleName)(boundary)([])
+                                |> rewriteCapabilityName(project)(moduleName)
                                 |> Some
                     in
                         (rewrittenInstance, operation, rewrittenPatterns, rewriteExpression(
@@ -763,11 +821,10 @@ let recursive rewriteDerivingTraits project moduleName boundary traits =
     match traits with
         | [] -> []
         | name :: rest ->
-            rewriteTypeName(
+            rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                [],
                 name
             ) :: rewriteDerivingTraits(project)(moduleName)(boundary)(rest)
 
@@ -949,13 +1006,7 @@ let recursive rewriteProvideBindings project moduleName boundary bindings =
 let rewriteProvideDeclaration project moduleName boundary declaration =
     match declaration with
         | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } ->
-            ProvideDecl(capabilityName = rewriteTypeName(
-                project,
-                moduleName,
-                boundary,
-                [],
-                name
-            ), typeArguments = rewriteTypes(
+            ProvideDecl(capabilityName = rewriteCapabilityName(project)(moduleName)(name), typeArguments = rewriteTypes(
                 project,
                 moduleName,
                 boundary,
@@ -1036,11 +1087,10 @@ let recursive rewriteImplementationBindings project moduleName boundary bindings
 let rewriteImplementationDeclaration project moduleName boundary declaration =
     match declaration with
         | TraitImplementationDecl { traitName = traitName, typeArguments = arguments, requirements = requirements, bindings = bindings } ->
-            TraitImplementationDecl(traitName = rewriteTypeName(
+            TraitImplementationDecl(traitName = rewriteTraitName(
                 project,
                 moduleName,
                 boundary,
-                [],
                 traitName
             ), typeArguments = rewriteTypes(
                 project,

@@ -18,6 +18,8 @@ let callMismatchSource = "let add (x: Int) (y: Int) = x + y\n\nadd(1)(\"two\")\n
 
 let tailSelfCallMismatchSource = "let recursive f (xs: List(Int)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> f(rest)(rest)\n\nAshes.IO.print(f([1])(0))\n"
 
+let annotatedBindingMismatchSource = "let count : Int = \"abc\"\n\ncount\n"
+
 // A failed comparison names the check and shows the value it got.
 let expectEqual label expected actual =
     if expected == actual
@@ -125,6 +127,22 @@ let expectPairTextSharesVariableNames unit =
     |> diagnosticTypePairText(SemFunction(SemVariable(7))(SemList(SemVariable(3)))(None))
     |> expectEqual("expectPairTextSharesVariableNames")(("a -> List<b>", "(b, a)"))
 
+// A value that does not fit its binding's written type is reported at the value, with the written
+// type first.
+let expectAnnotatedBindingMismatchAtTheValueWrittenTypeFirst unit =
+    annotatedBindingMismatchSource
+    |> loweringError
+    |> (given (error: CoreLoweringError) ->
+        Unit
+        |> (given (_) ->
+            error
+            |> loweringErrorLocation
+            |> expectEqual("expectAnnotatedBindingMismatchAtTheValueWrittenTypeFirst location")(Some(IrSourceLocation(filePath = "probe.ash", line = 1, column = 19))))
+        |> (given (_) ->
+            match loweringErrorDiagnostic(error) with
+                | Some(DiagnosticEntry { message = message }) -> expectEqual("expectAnnotatedBindingMismatchAtTheValueWrittenTypeFirst message")("Type mismatch: Int vs Str.")(message)
+                | None -> test.fail("expectAnnotatedBindingMismatchAtTheValueWrittenTypeFirst: no diagnostic")))
+
 let runLoweringDiagnosticsTests unit =
     unit
     |> expectCallArgumentMismatchLocatedAtTheCall
@@ -134,3 +152,4 @@ let runLoweringDiagnosticsTests unit =
     |> expectUnsitedMismatchRendersWithoutContext
     |> expectTypeTextMatchesStageZero
     |> expectPairTextSharesVariableNames
+    |> expectAnnotatedBindingMismatchAtTheValueWrittenTypeFirst

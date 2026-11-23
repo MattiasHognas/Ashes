@@ -3,6 +3,7 @@
 // owned result, which holds the earlier record's parts by references of its own, so the earlier
 // record is released on the edge that hands the map on unchanged.
 // expect: 30
+import Ashes.Collection.Map
 type Reach =
     | fresh: Bool
     | parts: List(Str)

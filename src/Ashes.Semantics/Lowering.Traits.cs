@@ -115,8 +115,11 @@ public sealed partial class Lowering
     /// </summary>
     private bool PinProvenAmbiguousTraitGoal(TraitConstraint constraint, TextSpan span, string method)
     {
-        if (!_provenAmbiguousTraitGoalTypes.TryGetValue(
-                AmbiguousTraitGoalKey(constraint, span, method), out TraitConstraint? proven)
+        string key = AmbiguousTraitGoalKey(constraint, span, method);
+        int occurrence = _pinnedAmbiguousTraitGoalOccurrences.GetValueOrDefault(key);
+        _pinnedAmbiguousTraitGoalOccurrences[key] = occurrence + 1;
+        if (!(_provenAmbiguousTraitGoalTypes.TryGetValue(key, out TraitConstraint? proven)
+                || _provenAmbiguousTraitGoalTypes.TryGetValue(AmbiguousTraitGoalOccurrenceKey(key, occurrence), out proven))
             || proven.TypeArgs.Count != constraint.TypeArgs.Count)
         {
             return false;
@@ -130,11 +133,14 @@ public sealed partial class Lowering
         return true;
     }
 
+    // The goal's type may be settled by a binding that encloses the innermost one: a lambda bound
+    // inside a function body reads the function's parameter, whose type the function's own later
+    // uses decide. Every enclosing binding records its settled type as a hint for the emitting pass.
     private void RequireLateTraitTypeHint()
     {
-        if (_traitConstraintScopes.Count > 0)
+        foreach (TraitConstraintScope scope in _traitConstraintScopes)
         {
-            _traitConstraintScopes.Peek().NeedsLateTypeHint = true;
+            scope.NeedsLateTypeHint = true;
         }
     }
 
@@ -193,6 +199,20 @@ public sealed partial class Lowering
         IReadOnlyList<TraitConstraint> Requirements,
         IReadOnlyList<TraitConstraint> SourceOrderedRequirements);
 
+    // A binding annotation the user wrote is checked against the imports of the module it is
+    // written in; one the compiler wrote is not.
+    private TypeRef? ResolveBindingAnnotation(TypeExpr? annotation, TextSpan span)
+    {
+        if (annotation is null)
+        {
+            return null;
+        }
+
+        return CompilerWrittenAnnotations.TryGetValue(annotation, out _)
+            ? ResolveTypeExpr(annotation)
+            : WithTypeReferenceSpan(span, () => ResolveTypeExpr(annotation));
+    }
+
     private ResolvedBindingSignature ResolveBindingSignature(
         TypeExpr? annotation,
         IReadOnlyList<TraitConstraintSyntax> requirements,
@@ -219,7 +239,7 @@ public sealed partial class Lowering
         _annotationRowVars = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         try
         {
-            TypeRef? resolvedType = annotation is null ? null : ResolveTypeExpr(annotation);
+            TypeRef? resolvedType = ResolveBindingAnnotation(annotation, span);
             List<TraitConstraint> resolvedRequirements = [];
             foreach (TraitConstraintSyntax requirement in requirements)
             {
@@ -272,6 +292,20 @@ public sealed partial class Lowering
             return canonicalInferred;
         }
 
+        if (!suppressDiagnostics && !allowRedundantWritten && _traitImplementationValidationDepth == 0
+            && FirstSuppliedWrittenRequirement(written) is { } supplied)
+        {
+            // A written requirement on known types, or one an implementation head matches, is not
+            // something the binding asks of its users: the implementation supplies it or leaves only
+            // its own requirements. The clause is kept as written so the dictionary ABI, planned
+            // from the same syntax, stays consistent while the error is reported.
+            ReportConstraintBoundaryDiagnostic(
+                span,
+                $"Written requires clause includes unjustified requirement '{FormatTraitConstraint(supplied)}'.",
+                allowRedundantWritten);
+            return TraitConstraint.Canonicalize(written.Select(PruneTraitConstraint));
+        }
+
         IReadOnlyList<TraitConstraint> canonicalWritten = SimplifyAndResolveTraitConstraints(
             written,
             span);
@@ -320,6 +354,24 @@ public sealed partial class Lowering
             _sourceConstraintBoundaryDiagnostics.Add(
                 new DiagnosticEntry(span, message, InvalidTraitDeclarationCode));
         }
+    }
+
+    /// <summary>
+    /// The first written requirement that is on known types or that an implementation head matches,
+    /// in the order written; such a requirement is supplied by an implementation rather than by the
+    /// binding's users.
+    /// </summary>
+    private TraitConstraint? FirstSuppliedWrittenRequirement(IReadOnlyList<TraitConstraint> written)
+    {
+        foreach (TraitConstraint requirement in written)
+        {
+            TraitConstraint pruned = PruneTraitConstraint(requirement);
+            if (IsConcreteTraitConstraint(pruned) || FindTraitInstanceMatches(pruned).Length > 0)
+            {
+                return pruned;
+            }
+        }
+        return null;
     }
 
     private bool SuppressSourceConstraintDiagnostics(string bindingName) =>
@@ -448,7 +500,20 @@ public sealed partial class Lowering
 
     private string FormatTraitConstraint(TraitConstraint constraint)
     {
-        return $"{constraint.Trait.QualifiedName}({string.Join(", ", constraint.TypeArgs.Select(Pretty))})";
+        return $"{DiagnosticTraitName(constraint.Trait)}({string.Join(", ", constraint.TypeArgs.Select(Pretty))})";
+    }
+
+    /// <summary>
+    /// The name a diagnostic gives a trait: its module-qualified name, or its bare name when the
+    /// program's entry module declares it, so an entry-module trait reads the same whether the entry
+    /// file was compiled on its own or as the entry of a project.
+    /// </summary>
+    private string DiagnosticTraitName(TraitSymbol trait)
+    {
+        return _moduleOffsets is { Count: > 0 } offsets
+            && string.Equals(trait.Provenance.SourcePath, offsets[^1].FilePath, StringComparison.Ordinal)
+            ? trait.Name
+            : trait.QualifiedName;
     }
 
     private bool TryGetTraitMethod(
@@ -567,13 +632,8 @@ public sealed partial class Lowering
         };
     }
 
-    // A bare (uncalled) trait-method reference. Direct application is handled by
-    // TryLowerTraitDirectCall/LowerTraitMethodCall; a first-class method value used as an ordinary
-    // value (for example passed to List.map) eta-expands to a lambda that applies the method,
-    // mirroring BuildOperationEtaLambda for capability operations, so evidence resolution happens
-    // through the normal call path at the eventual application site instead of being fabricated
-    // here. A zero-arity method (Default.default is not itself a function) has nothing to
-    // eta-expand over and resolves directly.
+    // Resolve a method value directly when its expected type supplies evidence.
+    // Otherwise eta-expand function-valued methods so application can supply it.
     private (int, TypeRef) LowerBareTraitMethodReference(
         Expr.QualifiedVar reference,
         TraitSymbol trait,
@@ -589,6 +649,19 @@ public sealed partial class Lowering
             isDefinition: false);
 
         int arity = CountArrows(method.Scheme.Body);
+        if (arity > 0 && request.ExpectedType is { } expected)
+        {
+            // The contextual arrow can select a result-directed method before it is
+            // called. An eta wrapper would see just its parameters when lowering the
+            // body and could select an unrelated ambient result dictionary.
+            Unify(signature, expected);
+            TraitConstraint contextual = PruneTraitConstraint(hoverConstraint);
+            if (IsConcreteTraitConstraint(contextual)
+                || FindActiveTraitDictionaryParameter(contextual, exactOnly: true) is not null)
+            {
+                return LowerTraitMethodCall(trait, method, [], span, request);
+            }
+        }
         return arity == 0
             ? LowerTraitMethodCall(trait, method, [], span, request)
             : LowerExpr(BuildTraitMethodEtaLambda(reference, arity), request).AsPair();
@@ -672,7 +745,7 @@ public sealed partial class Lowering
         }
         (TypeRef current, List<int> argumentTemps) = consumed;
         ApplyExpectedTraitMethodType(current, request.ExpectedType);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint, arguments.Count == 0 ? 1 : 0);
         TraitConstraint prunedConstraint = PruneTraitConstraint(constraint);
         ActiveTraitImplementationMethod? activeMethod = FindActiveTraitImplementationMethod(
             method,
@@ -691,11 +764,10 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter)
+        if (plan is TraitEvidencePlan.Parameter || HasMissingTraitParameter(plan))
         {
             (int Temp, TypeRef Type)? active = TryLowerActiveTraitMethod(
-                prunedConstraint,
-                method);
+                prunedConstraint, method, exactOnly: plan is TraitEvidencePlan.Instance);
             if (active is null)
             {
                 RequireLateTraitTypeHint();
@@ -831,7 +903,7 @@ public sealed partial class Lowering
         Unify(leftType, rightType);
         TypeRef operandType = Prune(leftType);
         TraitConstraint constraint = new(trait, [operandType]);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint);
         if (ShouldUsePrimitiveOperatorSpecialization(traitName, operandType))
         {
             return null;
@@ -845,8 +917,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter
-            && FindActiveTraitDictionaryParameter(constraint) is null)
+        if (HasMissingTraitParameter(plan)
+            && FindActiveTraitDictionaryParameter(constraint, exactOnly: plan is TraitEvidencePlan.Instance) is null)
         {
             RequireLateTraitTypeHint();
             if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
@@ -858,7 +930,7 @@ public sealed partial class Lowering
             }
             plan = deferred;
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method, exactOnly: plan is TraitEvidencePlan.Instance)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int first = NewTemp();
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
@@ -913,7 +985,7 @@ public sealed partial class Lowering
 
         TypeRef pruned = Prune(operandType);
         TraitConstraint constraint = new(trait, [pruned]);
-        RequireTraitConstraint(constraint);
+        RequireMethodEvidence(constraint);
         if (ShouldUsePrimitiveOperatorSpecialization(traitName, pruned))
         {
             return null;
@@ -927,8 +999,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
-        if (plan is TraitEvidencePlan.Parameter
-            && FindActiveTraitDictionaryParameter(constraint) is null)
+        if (HasMissingTraitParameter(plan)
+            && FindActiveTraitDictionaryParameter(constraint, exactOnly: plan is TraitEvidencePlan.Instance) is null)
         {
             RequireLateTraitTypeHint();
             if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
@@ -939,7 +1011,7 @@ public sealed partial class Lowering
             }
             plan = deferred;
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method, exactOnly: plan is TraitEvidencePlan.Instance)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, methodTemp, operandTemp));
@@ -1112,6 +1184,7 @@ public sealed partial class Lowering
             Requires = CollectValidationRequirements(method.DefaultImplementation!, trait, arguments),
         };
         AstSpans.Set(binding, GetSpan(method));
+        CompilerWrittenAnnotations.AddOrUpdate(binding.TypeAnnotation, binding.TypeAnnotation);
         return binding;
     }
 
@@ -1135,6 +1208,7 @@ public sealed partial class Lowering
             Requires = implementation.Requirements,
         };
         AstSpans.Set(binding, GetSpan(method));
+        CompilerWrittenAnnotations.AddOrUpdate(binding.TypeAnnotation, binding.TypeAnnotation);
         return binding;
     }
 
@@ -1309,6 +1383,63 @@ public sealed partial class Lowering
         return order;
     }
 
+    /// <summary>
+    /// Whether a trait method signature mentions one of the trait's type parameters, directly or
+    /// inside another type or a capability row. A method that mentions none cannot select an
+    /// implementation from its argument and result types.
+    /// </summary>
+    private static bool MentionsTraitTypeParameter(TypeRef type, IReadOnlyList<TypeParameterSymbol> typeParameters)
+    {
+        return type switch
+        {
+            TypeRef.TTypeParam parameter => typeParameters.Any(candidate =>
+                string.Equals(candidate.Name, parameter.Symbol.Name, StringComparison.Ordinal)),
+            TypeRef.TFun function => MentionsTraitTypeParameter(function.Arg, typeParameters)
+                || MentionsTraitTypeParameter(function.Ret, typeParameters)
+                || (function.Row is not null && MentionsTraitTypeParameter(function.Row, typeParameters)),
+            TypeRef.TList list => MentionsTraitTypeParameter(list.Element, typeParameters),
+            TypeRef.TTuple tuple => tuple.Elements.Any(element => MentionsTraitTypeParameter(element, typeParameters)),
+            TypeRef.TNamedType named => named.TypeArgs.Any(argument => MentionsTraitTypeParameter(argument, typeParameters)),
+            TypeRef.TPtr pointer => MentionsTraitTypeParameter(pointer.Pointee, typeParameters),
+            TypeRef.TCapability capability => capability.Args.Any(argument => MentionsTraitTypeParameter(argument, typeParameters)),
+            TypeRef.TRow row => row.Capabilities.Any(capability => MentionsTraitTypeParameter(capability, typeParameters))
+                || (row.Tail is not null && MentionsTraitTypeParameter(row.Tail, typeParameters)),
+            _ => false,
+        };
+    }
+
+    // The trait's methods by name, the first declaration of a name winning; a method whose
+    // signature mentions none of the trait's type parameters is reported at the declaration.
+    private Dictionary<string, TraitMethodSymbol> RegisterTraitMethods(
+        TraitDecl declaration,
+        TypeParameterSymbol[] typeParameters,
+        string qualifiedName)
+    {
+        Dictionary<string, TraitMethodSymbol> methods = new(StringComparer.Ordinal);
+        foreach (TraitMethodDecl method in declaration.Methods)
+        {
+            if (methods.ContainsKey(method.Name))
+            {
+                continue;
+            }
+            TypeRef signature = WithTypeReferenceSpan(GetSpan(declaration), () => ResolveAnnotationType(method.Signature, typeParameters));
+            if (!MentionsTraitTypeParameter(signature, typeParameters))
+            {
+                ReportDiagnostic(
+                    GetSpan(declaration),
+                    $"Method '{method.Name}' of trait '{qualifiedName}' must mention at least one of the trait's type parameters.",
+                    InvalidTraitDeclarationCode);
+            }
+            methods[method.Name] = new TraitMethodSymbol(
+                method.Name,
+                new TypeScheme([], signature),
+                method.DefaultImplementation,
+                GetSpan(method));
+        }
+
+        return methods;
+    }
+
     private void RegisterTraitDeclaration(TraitDecl declaration)
     {
         TraitDeclarationProvenance provenance = ResolveDeclarationProvenance(GetSpan(declaration));
@@ -1319,20 +1450,7 @@ public sealed partial class Lowering
             ? declaration.Name
             : $"{provenance.ModuleName}.{declaration.Name}";
 
-        Dictionary<string, TraitMethodSymbol> methods = new(StringComparer.Ordinal);
-        foreach (TraitMethodDecl method in declaration.Methods)
-        {
-            if (methods.ContainsKey(method.Name))
-            {
-                continue;
-            }
-            TypeRef signature = ResolveAnnotationType(method.Signature, typeParameters);
-            methods[method.Name] = new TraitMethodSymbol(
-                method.Name,
-                new TypeScheme([], signature),
-                method.DefaultImplementation,
-                GetSpan(method));
-        }
+        Dictionary<string, TraitMethodSymbol> methods = RegisterTraitMethods(declaration, typeParameters, qualifiedName);
 
         List<TraitConstraint> supertraits = [];
         foreach (TraitConstraintSyntax syntax in declaration.Supertraits)
@@ -1395,7 +1513,7 @@ public sealed partial class Lowering
             .Select(name => new TypeParameterSymbol(name))
             .ToArray();
         TypeRef[] headTypes = declaration.TypeArgs
-            .Select(type => ResolveAnnotationType(type, instanceParameters))
+            .Select(type => WithTypeReferenceSpan(GetSpan(declaration), () => ResolveAnnotationType(type, instanceParameters)))
             .ToArray();
         TraitConstraint[] requirements = ResolveInstanceRequirements(declaration, instanceParameters, headTypes);
         Dictionary<string, Expr> methods = ValidateInstanceMethods(declaration, trait);
@@ -1691,11 +1809,12 @@ public sealed partial class Lowering
     private TraitDeclarationProvenance ResolveDeclarationProvenance(TextSpan span)
     {
         string sourcePath = _currentFilePath ?? "<memory>";
-        if (_moduleOffsets is not null)
+        if (_moduleOffsets is not null && _sourceIndex is not null)
         {
+            int sourceOffset = _sourceIndex.ToUtf16Offset(span.Start);
             foreach ((string filePath, int startOffset, int endOffset) in _moduleOffsets)
             {
-                if (span.Start >= startOffset && span.Start < endOffset)
+                if (sourceOffset >= startOffset && sourceOffset < endOffset)
                 {
                     sourcePath = filePath;
                     break;

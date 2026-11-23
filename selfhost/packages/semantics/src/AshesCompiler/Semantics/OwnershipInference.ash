@@ -7,6 +7,7 @@
 // - Move safety proofs verify single-path linearity and seed safety for allocation reuse.
 
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.OwnershipProvenance
@@ -469,6 +470,18 @@ let isWholeParameter (expr: Expr) (param: Str) =
         | ExprVar(name) -> name == param
         | _ -> false
 
+// A task that suspends keeps its free parameters after its factory returns.
+let isSuspendingTaskCapture table call parameter shadowed =
+    match collectCallArgsAndRoot(call)([]) with
+        | (root, body :: []) ->
+            let isTask =
+                match stripSpan(root) with
+                    | ExprQualifiedVar("Ashes.Task", "task") -> true
+                    | ExprVar("async") -> !listContainsStr(shadowed)("async") && Ashes.Collection.Map.getStr("async")(table) == None
+                    | _ -> false
+            in isTask && exprContainsAwait(body) && mentionsVar(body)(parameter)
+        | _ -> false
+
 let recursive borrowReadWalk (table: UniqueParameterOwnership) (shadowed: List(Str)) (expr: Expr) (param: Str) =
     match expr with
         | ExprAt(_span, inner) -> borrowReadWalk(table)(shadowed)(inner)(param)
@@ -557,32 +570,35 @@ and borrowReadPair (table: UniqueParameterOwnership) (shadowed: List(Str)) (left
     then borrowReadWalk(table)(shadowed)(right)(param)
     else false
 and borrowReadCall (table: UniqueParameterOwnership) (shadowed: List(Str)) (call: Expr) (param: Str) =
-    match collectCallArgsAndRoot(call)([]) with
-        | (root, args) ->
-            match stripSpan(root) with
-                | ExprQualifiedVar(mod, name) ->
-                    if isBorrowReadResourceOp(mod)(name)
-                    then
-                        match args with
-                            | firstArg :: otherArgs ->
-                                if isWholeParameter(firstArg)(param)
-                                then borrowReadList(table)(shadowed)(otherArgs)(param)
-                                else borrowReadList(table)(shadowed)(args)(param)
-                            | [] -> true
-                    else borrowReadList(table)(shadowed)(args)(param)
-                | ExprVar(callee) ->
-                    if callee == param
-                    then false
-                    else
-                        match args
-                        |> length
-                        |> handOffOwnership(table)(shadowed)(callee) with
-                            | Some(ownership) -> borrowReadHandOff(table)(shadowed)(args)(ownership)(param)
-                            | None -> borrowReadList(table)(shadowed)(args)(param)
-                | _ ->
-                    if borrowReadWalk(table)(shadowed)(root)(param)
-                    then borrowReadList(table)(shadowed)(args)(param)
-                    else false
+    if isSuspendingTaskCapture(table)(call)(param)(shadowed)
+    then false
+    else
+        match collectCallArgsAndRoot(call)([]) with
+            | (root, args) ->
+                match stripSpan(root) with
+                    | ExprQualifiedVar(mod, name) ->
+                        if isBorrowReadResourceOp(mod)(name)
+                        then
+                            match args with
+                                | firstArg :: otherArgs ->
+                                    if isWholeParameter(firstArg)(param)
+                                    then borrowReadList(table)(shadowed)(otherArgs)(param)
+                                    else borrowReadList(table)(shadowed)(args)(param)
+                                | [] -> true
+                        else borrowReadList(table)(shadowed)(args)(param)
+                    | ExprVar(callee) ->
+                        if callee == param
+                        then false
+                        else
+                            match args
+                            |> length
+                            |> handOffOwnership(table)(shadowed)(callee) with
+                                | Some(ownership) -> borrowReadHandOff(table)(shadowed)(args)(ownership)(param)
+                                | None -> borrowReadList(table)(shadowed)(args)(param)
+                    | _ ->
+                        if borrowReadWalk(table)(shadowed)(root)(param)
+                        then borrowReadList(table)(shadowed)(args)(param)
+                        else false
 and borrowReadHandOff (table: UniqueParameterOwnership) (shadowed: List(Str)) (args: List(Expr)) (ownership: List((Str, ParameterOwnership))) (param: Str) =
     match args with
         | [] -> true

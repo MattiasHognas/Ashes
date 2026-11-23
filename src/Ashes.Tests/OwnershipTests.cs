@@ -164,6 +164,256 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Branch_returning_an_owner_bound_before_the_join_keeps_the_owner_live()
+    {
+        // `callName` is an owned runtime-managed let (its value is a nested `let`). The `if` and the
+        // `match` each return it from one branch and read it again after the join, so no branch may
+        // release its owner slot: the branch takes a reference of its own and the binding's own
+        // scope releases it after its last read.
+        IrProgram ir = LowerProgram(
+            """
+            let viaIf (flag: Bool) (seed: Int) =
+                (let callName =
+                    let next = seed + 1
+                    in "__in_place_" + Ashes.Text.fromInt(next)
+                in
+                    let groupName =
+                        if flag
+                        then Ashes.Text.fromInt(seed)
+                        else callName
+                    in groupName + "/" + callName)
+
+            let viaMatch (pick: Int) (seed: Int) =
+                (let callName =
+                    let next = seed + 1
+                    in "__in_place_" + Ashes.Text.fromInt(next)
+                in
+                    let groupName =
+                        match pick with
+                            | 0 -> Ashes.Text.fromInt(seed)
+                            | _ -> callName
+                    in groupName + "/" + callName)
+
+            Ashes.IO.print(viaIf(true)(40) + viaMatch(0)(41))
+            """);
+
+        List<IrFunction> owning = ir.Functions
+            .Where(function => function.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", OwnerSlot: >= 0, RuntimeManaged: true }))
+            .ToList();
+        owning.Count.ShouldBeGreaterThanOrEqualTo(2, "both callName bindings must be owned runtime-managed lets");
+        foreach (IrFunction function in owning)
+        {
+            OwnerSlotReadAfterRelease(function.Instructions).ShouldBeFalse(
+                $"{function.Label} reads an owner slot after releasing it");
+        }
+    }
+
+    [Test]
+    public void Loop_exit_branch_returning_an_owner_bound_before_the_if_moves_it()
+    {
+        // `next` is an owned runtime-managed let of the loop body and the exit branch returns it in
+        // tail position: nothing reads it after the join, so its one reference moves into the
+        // result (a retain and the owner's release in the branch). A retain alone would leave the
+        // exit's passthrough hand-over one reference short of balancing and leak the list per call.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive bump (order: List(Int)) (xs: List(Int)) =
+                match order with
+                    | [] -> xs
+                    | o :: rest ->
+                        if o < 0
+                        then bump(rest)(o :: xs)
+                        else bump(rest)(xs)
+
+            let recursive settle (k: Int) (xs: List(Int)) =
+                (let next = bump([1, 2])(xs)
+                in
+                    if k == 0
+                    then next
+                    else settle(k - 1)(next))
+
+            match settle(1)([1, 2, 3]) with
+                | [] -> Ashes.IO.print(0)
+                | _ -> Ashes.IO.print(1)
+            """);
+
+        ir.Functions.Any(function => ExitBranchMovesListOwner(function.Instructions)).ShouldBeTrue(
+            "the loop's exit branch must move the let owner it returns into the result");
+    }
+
+    [Test]
+    public void Branch_returning_a_tuple_component_keeps_the_tuple_for_a_sibling_that_conses_onto_it()
+    {
+        // `pieces` is a component of the owned tuple a call returned. One branch returns it, the
+        // other conses onto it. The returning branch retains the component and leaves the tuple to
+        // its own scope: releasing the tuple there made it the tuple's only release, and lifetime
+        // placement moved that release to the consing branch's first instruction, ahead of its read
+        // of `pieces`, so the list was freed and reused.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build (n: Int) (acc: List(Bytes)) =
+                if n == 0
+                then (acc, 5)
+                else build(n - 1)(Ashes.Byte.allocate(n) :: acc)
+
+            let recursive total (items: List(Bytes)) =
+                match items with
+                    | [] -> 0
+                    | item :: rest -> Ashes.Byte.length(item) + total(rest)
+
+            let assemble (flag: Bool) =
+                match build(3)([]) with
+                    | (pieces, cursor) ->
+                        let padded =
+                            if cursor > 2
+                            then Ashes.Byte.allocate(1) :: pieces
+                            else pieces
+                        in total(Ashes.Byte.allocate(64) :: padded)
+
+            Ashes.IO.print(assemble(true))
+            """);
+
+        foreach (IrFunction function in ir.Functions)
+        {
+            TupleComponentReadAfterTupleRelease(function.Instructions).ShouldBeFalse(
+                $"{function.Label} reads a tuple component after releasing the tuple's owner");
+        }
+    }
+
+    [Test]
+    public void Escaping_cell_over_a_tail_cell_gives_both_heads_references_of_their_own()
+    {
+        // `first :: second :: more` rebuilt from the matched list a call returned and returned inside
+        // `Some`: the matched list is released when the arm ends, so the tail cell's head (`second`)
+        // must not be a plain borrow of the pattern binding, as the head cell's is not either.
+        IrProgram ir = LowerProgram(
+            """
+            type Problem =
+                | Mixed(List(Str))
+                | Other(Str)
+
+            let recursive gather (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else gather(n - 1)(("name" + Ashes.Text.fromInt(n)) :: acc)
+
+            let check (count: Int) =
+                match gather(count)([]) with
+                    | first :: second :: more -> Some(Mixed(first :: second :: more))
+                    | _ -> None
+
+            match check(3) with
+                | Some(Mixed(name :: _rest)) -> Ashes.IO.print(name)
+                | _ -> Ashes.IO.print("none")
+            """);
+
+        List<IrFunction> rebuilding = ir.Functions
+            .Where(function => function.Instructions.Any(inst =>
+                inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }))
+            .ToList();
+        rebuilding.ShouldNotBeEmpty("the rebuilt cells' string heads are cloned into the arena");
+        foreach (IrFunction function in rebuilding)
+        {
+            CellHeadIsBorrowedRead(function.Instructions).ShouldBeFalse(
+                $"{function.Label} stores a borrowed read as a list cell's head");
+        }
+    }
+
+    // Whether a 16-byte cell's head word is stored straight from a Borrow.
+    private static bool CellHeadIsBorrowedRead(List<IrInst> instructions)
+    {
+        HashSet<int> borrowed = [];
+        HashSet<int> cells = [];
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.Borrow borrow:
+                    borrowed.Add(borrow.Target);
+                    break;
+                case IrInst.Alloc { SizeBytes: 16 } alloc:
+                    cells.Add(alloc.Target);
+                    break;
+                case IrInst.StoreMemOffset { OffsetBytes: 0 } store when cells.Contains(store.BasePtr) && borrowed.Contains(store.Source):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Whether a slot holding a component read out of a value (a LoadMemOffset stored into a slot) is
+    // loaded after a release of a tuple owner slot, in instruction order.
+    private static bool TupleComponentReadAfterTupleRelease(List<IrInst> instructions)
+    {
+        HashSet<int> componentTemps = [];
+        HashSet<int> componentSlots = [];
+        bool tupleReleased = false;
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.LoadMemOffset load:
+                    componentTemps.Add(load.Target);
+                    break;
+                case IrInst.StoreLocal store when componentTemps.Contains(store.Source):
+                    componentSlots.Add(store.Slot);
+                    break;
+                case IrInst.RcDrop { TypeName: "Tuple", OwnerSlot: >= 0 }:
+                    tupleReleased = true;
+                    break;
+                case IrInst.LoadLocal load when tupleReleased && componentSlots.Contains(load.Slot):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A branch ending `RcDup; RcDrop <List owner>; StoreLocal; Jump endif`: the returned owner's
+    // reference moved into the join.
+    private static bool ExitBranchMovesListOwner(List<IrInst> instructions)
+    {
+        for (int i = 0; i + 3 < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.RcDup
+                && instructions[i + 1] is IrInst.RcDrop { TypeName: "List", OwnerSlot: >= 0 }
+                && instructions[i + 2] is IrInst.StoreLocal
+                && instructions[i + 3] is IrInst.Jump jump
+                && jump.Target.StartsWith("endif", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Whether an owner slot is loaded after a release of that slot with no store into it between,
+    // in instruction order.
+    private static bool OwnerSlotReadAfterRelease(List<IrInst> instructions)
+    {
+        HashSet<int> released = [];
+        foreach (IrInst inst in instructions)
+        {
+            switch (inst)
+            {
+                case IrInst.RcDrop { OwnerSlot: >= 0 } drop:
+                    released.Add(drop.OwnerSlot);
+                    break;
+                case IrInst.StoreLocal store:
+                    released.Remove(store.Slot);
+                    break;
+                case IrInst.LoadLocal load when released.Contains(load.Slot):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    [Test]
     public void Tuple_result_of_a_tco_loop_retains_its_runtime_managed_parameters()
     {
         // Both accumulators are runtime-managed loop parameters that the loop's exit drops

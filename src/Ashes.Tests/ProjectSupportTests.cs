@@ -819,6 +819,97 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    [Arguments("", true)]
+    [Arguments("import Ashes.Collection.Map\n", false)]
+    [Arguments("import Ashes.Collection.Map.MapTree\n", false)]
+    [Arguments("import Ashes.Collection.Map.size\n", true)]
+    public void StandaloneCompilationLayout_should_require_an_import_for_a_shipped_type_named_unqualified(
+        string imports,
+        bool rejected)
+    {
+        string source = imports + """
+            let size (map: MapTree(Str, Int)) = Ashes.Collection.Map.size(map)
+
+            size(Ashes.Collection.Map.empty)
+            """;
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>",
+            parsed.ImportSelectors);
+
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics, new HashSet<string>(["Ashes.Trait", "Ashes.Collection.Map"], StringComparer.Ordinal));
+        lowering.SetSourceContext(layout);
+        _ = lowering.Lower(program);
+
+        bool reported = diagnostics.StructuredErrors.Any(error =>
+            string.Equals(error.Code, DiagnosticCodes.UnimportedModuleName, StringComparison.Ordinal)
+            && error.Message.Contains(
+                "Type 'MapTree' is declared in module 'Ashes.Collection.Map', which this module does not import.",
+                StringComparison.Ordinal));
+        reported.ShouldBe(rejected);
+    }
+
+    [Test]
+    public void Qualified_alias_cannot_expose_a_hidden_value_via_a_flattened_local()
+    {
+        const string source = """
+            import Library as Lib
+            module Library =
+                export (
+                    value visible,
+                )
+                let hidden = 3
+                let visible = hidden + 1
+
+            let Library_hidden = 7
+            let publicResult = Lib.visible
+            Lib.hidden
+            """;
+        ParsedImportHeader header = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            header.SourceWithoutImports, header.ImportNames, "<memory>", header.ImportSelectors);
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics, moduleAliases: header.ImportAliases, constructorModulesByName: layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+
+        _ = lowering.Lower(program);
+
+        diagnostics.StructuredErrors.Select(error => error.Message).ShouldBe(["Module 'Library' does not export 'hidden'."]);
+    }
+
+    [Test]
+    public void A_module_can_use_its_own_constructor_after_multibyte_source_text()
+    {
+        const string library = "type Item = | Known\nlet label = \"日本語の文字列\"\nlet item = Known\n";
+        const string entry = "1";
+        CombinedCompilationLayout layout = new(
+            library + entry, library.Length, library.Length,
+            [("Lib.ash", 0, library.Length), ("Main.ash", library.Length, library.Length + entry.Length)],
+            ModuleProvenanceByPath: new Dictionary<string, ModuleProvenance>(StringComparer.Ordinal)
+            {
+                ["Lib.ash"] = new("app", "Lib"),
+                ["Main.ash"] = new("app", "Main"),
+            },
+            VisibleModules: new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+            {
+                ["Main"] = new HashSet<string>(StringComparer.Ordinal),
+            });
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        lowering.SetSourceContext(layout);
+        _ = lowering.Lower(program);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void StandaloneCompilationLayout_should_keep_mutual_recursive_entry_group_flat_after_standard_traits()
     {
         const string source = """
@@ -945,6 +1036,20 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void MapDiagnosticsToOriginal_recovers_at_the_source_end_of_an_unfinished_binding()
+    {
+        const string original = "let x = 1\nlet y = x +";
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        Diagnostics diagnostics = new();
+        _ = new Parser(layout.Source, diagnostics).ParseProgram();
+        IReadOnlyList<ProjectSupport.MappedDiagnostic> mapped = ProjectSupport.MapDiagnosticsToOriginal(
+            layout, diagnostics.StructuredErrors, "<memory>", original, parsed.SourceWithoutImports);
+        mapped.Select(diagnostic => diagnostic.Entry.Message).ShouldBe(["Expected expression but found EOF."]);
+        mapped[0].Entry.Start.ShouldBe(original.Length);
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
     {
         // The Ashes.Collection.List import stitches a source stdlib module, so the entry body sits behind a
@@ -996,6 +1101,25 @@ public sealed class ProjectSupportTests
         mapped[0].FilePath.ShouldBe(moduleRegion.FilePath);
         mapped[0].Line.ShouldBeNull();
         mapped[0].Column.ShouldBeNull();
+    }
+
+    [Test]
+    public void MapDiagnosticsToOriginal_drops_standard_library_cascades_when_the_program_has_an_error()
+    {
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        var moduleRegion = layout.ModuleOffsets.First(m => m.FilePath.StartsWith("<std:", StringComparison.Ordinal));
+        var cascade = new DiagnosticEntry(TextSpan.FromBounds(moduleRegion.StartOffset, moduleRegion.StartOffset + 1), "cascade");
+        var real = new DiagnosticEntry(TextSpan.FromBounds(layout.EntryOffset, layout.EntryOffset + 1), "real");
+
+        var withProgramError = ProjectSupport.MapDiagnosticsToOriginal(layout, [real, cascade], "<memory>", original, parsed.SourceWithoutImports);
+        var standardLibraryOnly = ProjectSupport.MapDiagnosticsToOriginal(layout, [cascade], "<memory>", original, parsed.SourceWithoutImports);
+
+        withProgramError.Count.ShouldBe(1);
+        withProgramError[0].Entry.Message.ShouldBe("real");
+        standardLibraryOnly.Count.ShouldBe(1);
+        standardLibraryOnly[0].FilePath.ShouldBe(moduleRegion.FilePath);
     }
 
     [Test]

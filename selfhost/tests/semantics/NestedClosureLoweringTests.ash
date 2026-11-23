@@ -3,6 +3,7 @@ import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreLowering.Model
+import LoweredIrFixtures
 import AshesCompiler.Semantics.Types
 export (
     value runNestedClosureLoweringTests,
@@ -43,7 +44,29 @@ let expectNestedClosuresLoweredOnceUnderSecondLowering unit =
                 "a twelve-parameter curried function drew " + Ashes.Text.fromInt(variable) + " type variables: its nested closures are being lowered again at every level"
             ))
 
+// The string at offset zero stays shared. Only the recursive function at offset eight is
+// normalized and released by the synthesized helpers.
+let expectCapturedSelfNormalizer unit =
+    (let name = "self_call_inside_constructor_owns_its_result"
+    in
+        let expected = stageZeroFixtureLines(name)
+        in
+            let actual = loweredFixtureLines(name)
+            in
+                let compare origin =
+                    actual
+                    |> functionLines(origin)
+                    |> withFunctionLocalLabels
+                    |> expectSameLines(origin)(expected
+                    |> functionLines(origin)
+                    |> withFunctionLocalLabels)
+                in
+                    "[ClosureEnvironmentNormalizer from insert]"
+                    |> compare
+                    |> (given (_) -> compare("[RuntimeManagedClosureDropper]")))
+
 let runNestedClosureLoweringTests unit =
     unit
     |> expectNestedClosuresLoweredOnceUnderSecondLowering
+    |> expectCapturedSelfNormalizer
     |> (given (_) -> Ashes.IO.print("nested closure lowering tests passed"))

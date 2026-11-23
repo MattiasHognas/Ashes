@@ -1,11 +1,13 @@
 import Ashes.Test as test
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.ProjectInference
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.StandardTraits
+import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
 export (
     value runProjectInferenceTests,
@@ -211,8 +213,39 @@ let expectDerivingUsesOwningPackage unit =
                     )
                 | _ -> test.fail("the project with a dependency-owned derived implementation should infer"))
 
+// `let recursive invert = given value -> !value in invert` as a located trailing expression: the
+// `Not` requirement of the escaping recursive function is ambiguous, and no operator in the
+// expression raised it there.
+let ambiguousNegationBody =
+    []
+    |> ExprLetRecursive("invert")(ExprLambda("value")(ExprLogicalNot(ExprVar("value")))(None))(ExprVar("invert"))([])(None)
+    |> ExprAt(TextSpan(start = 13, end = 34))
+    |> Some
+
+let entryWithItems items =
+    SemanticStitchUnit(name = "Main", packageId = "app@1.0.0", sourcePath = "/app/Main.ash", imports = [], interface = interface(
+        "Main",
+        []
+    ), program = ProgramSyntax(items = items, body = ambiguousNegationBody), isEntry = true)
+
+// Stage 0 locates an ambiguous requirement of the trailing expression at the program body, which
+// has a position only after a top-level binding of the entry; without one the error names the file
+// alone.
+let expectAmbiguousTrailingLocation unit =
+    match [entryWithItems([])]
+    |> requireStitched
+    |> inferStitchedProjectFrom(standardTraitEnvironment(Unit)) with
+        | ProgramInferenceResult { error = Some(ProgramExpressionError(UndeterminedTraitRequirement(_traitName, _typeArguments))), errorLocation = Some(InferenceErrorLocation { sourcePath = Some("/app/Main.ash"), span = None, declarationSpan = None }) } ->
+            match [entryWithItems([TopLevelLet(binding("seed")(ExprInt(1)))(false)])]
+            |> requireStitched
+            |> inferStitchedProjectFrom(standardTraitEnvironment(Unit)) with
+                | ProgramInferenceResult { error = Some(ProgramExpressionError(UndeterminedTraitRequirement(_boundTraitName, _boundTypeArguments))), errorLocation = Some(InferenceErrorLocation { span = Some(TextSpan { start = 13 }) }) } -> Unit
+                | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("an entry with a binding should locate its ambiguous trailing requirement: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+        | ProgramInferenceResult { error = error, errorLocation = location } -> test.fail("an entry without a binding should report its ambiguous trailing requirement unpositioned: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location))
+
 let runProjectInferenceTests unit =
     unit
+    |> expectAmbiguousTrailingLocation
     |> expectDeclarationOnlyEntry
     |> expectImportedValueInference
     |> expectCrossPackageOrphanRejection

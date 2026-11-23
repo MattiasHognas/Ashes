@@ -198,7 +198,11 @@ public sealed partial class Lowering
     // The loop's exit: the runtime-managed parameter drops, then the arena parameters' own fields.
     private void LowerLambdaCoreEmitTcoExitReleases(Expr.Lambda lam, TcoContext? tco, int bodyTemp, TypeRef bodyType, bool bodyRuntimeManaged)
     {
-        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(lam, tco, bodyTemp);
+        // The last cell takes the base case's reference even when the spine has a different head.
+        int transferTemp = tco?.TmcExitTransfer is { } transfer && transfer.ClosedResult == bodyTemp
+            ? transfer.Base
+            : bodyTemp;
+        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(lam, tco, transferTemp);
         EmitExitParameterOwnFieldReleases(tco, bodyTemp, bodyType, bodyRuntimeManaged);
     }
 

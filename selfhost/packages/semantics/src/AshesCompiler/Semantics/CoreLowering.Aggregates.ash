@@ -1185,6 +1185,8 @@ let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (
 // callee's result may reach) is the only holder of a value produced right there, a fresh tuple
 // consed onto an accumulator passed to a recursive call, and an arena cell releases nothing. The
 // value goes to an owned slot, released once the function's result holds references of its own.
+// A head that is a retain the call's argument frame already collected (an alias's owner retained
+// for the cell) is released after the call, so it does not also go to a slot.
 // Stage 0's `IsCopiedOutFreshHeadType`: a list, tuple or data type the function's result copies out
 // rather than owns is copied before the owned slots are released, so such a head is kept the same
 // way.
@@ -1208,7 +1210,7 @@ let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headT
         | LoweredCoreValue { state = state, error = None } ->
             let resolved = resolveType(state)(headType)
             in
-                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !collectsCallArgumentRetain(headTemp)(stateCallArgumentRecordRetains(state)) && !copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
                 then
                     match freshLocal(state) with
                         | FreshLocal { state = allocated, local = ownedSlot } ->
@@ -1361,10 +1363,16 @@ let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpressi
     then borrowedConsParts(headExpression)(head)(tail)
     else duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head)(tail)
 
-// The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
+let listTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state)
+
 // Stage 0's cons tail request: a cell of a chain consed onto a loop's list parameter
 // (`first :: separator :: acc`) takes a tail built the same way, so every cell of the chain is
-// reference-counted, not only the first; any other tail is lowered with its expected type alone.
+// reference-counted, not only the first. A tail cell of a cell whose children escape
+// (`first :: second :: more` as a result) transfers its children too, stage 0's
+// `EscapingTailCellRequest`, so its head takes a reference of its own instead of borrowing a
+// binding whose scope ends first. Any other tail is lowered with its expected type alone.
 let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType: SemanticType) (state: CoreLoweringState) =
     match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
         | (ExprCons(_head, _tail), Some(_slot)) -> withConsumerRequest((request with expectedType = Some(SemList(headType)), chainTailCell = true))(state)
@@ -1374,7 +1382,10 @@ let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType:
             else
                 if literalChainTailKeepsRequest(request)(tailExpression)
                 then withConsumerRequest((request with expectedType = Some(SemList(headType))))(state)
-                else withOnlyExpectedType(Some(SemList(headType)))(state)
+                else
+                    if listTransfers(request)(state)
+                    then withConsumerRequest((emptyConsumerRequest with expectedType = Some(SemList(headType)), transfersRuntimeManagedChildren = true))(state)
+                    else withOnlyExpectedType(Some(SemList(headType)))(state)
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
 // Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned
@@ -1603,10 +1614,6 @@ let expectedListElementType state =
             match resolveType(state)(expected) with
                 | SemList(elementType) -> Some(elementType)
                 | _ -> None
-
-let listTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
-    match request with
-        | ConsumerRequest { transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state)
 
 // The owned children of a copied cell re-established under the current span: the field loads
 // and stores carry it, the child copy-outs none, as stage 0's deep-copy emitter leaves them.

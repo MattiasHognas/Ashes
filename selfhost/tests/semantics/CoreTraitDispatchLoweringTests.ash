@@ -1,4 +1,6 @@
 import Ashes.Test as test
+import LoweredIrFixtures.withFunctionLocalLabels
+import LoweredIrFixtures.withoutLocations
 import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
@@ -229,10 +231,19 @@ let expectUnaryTraitMethodCallSelectsPerOperandType unit =
 
 let lookupSource (annotation: Str) = "let recursive lookupIn" + annotation + " env =\n    match env with\n        | [] -> Ashes.Trait.Show.show(key)\n        | (boundKey, value) :: rest ->\n            if boundKey == key\n            then value\n            else lookupIn(key)(rest)\n\nAshes.IO.print(lookupIn(1)([(1, \"one\")]))"
 
-// The operand of a `show` inside a top-level binding is whatever type the binding's own use
-// settles on, and that use comes after the body that dispatches on it. One pass reaching the
-// dispatch sees a type variable; the pass that lowers with the first pass's proof sees the `Int`
-// the call site pinned, and dispatches exactly as writing that type at the parameter does.
+// Select the concrete Show(Int) method reached from lookupIn. Normalize label identities
+// so the ordinary annotated function and the inferred specialization can be compared.
+let recursive lookupIntMethod blocks =
+    match blocks with
+        | [] -> test.fail("lookupIn did not materialize the Int Show method")
+        | block :: rest ->
+            match Ashes.Text.split(block)("\n") with
+                | header :: lines when Ashes.Text.contains(header)("[ClosureHelper from lookupIn]") && Ashes.Text.contains(block)("TextFromInt") ->
+                    lines
+                    |> withoutLocations
+                    |> withFunctionLocalLabels
+                | _ -> lookupIntMethod(rest)
+
 let expectUnaryTraitMethodCallResolvedByALaterUseDispatches unit =
     match (" key"
     |> lookupSource
@@ -242,15 +253,25 @@ let expectUnaryTraitMethodCallResolvedByALaterUseDispatches unit =
     |> withStandardTraits
     |> loweredDump) with
         | (deferred, annotated) ->
-            Unit
-            |> (given (_) ->
-                annotated
-                |> occurrences("CallClosure")
-                |> test.assertEqual(occurrences("CallClosure")(deferred)))
-            |> (given (_) ->
-                annotated
-                |> occurrences("\nfunction ")
-                |> test.assertEqual(occurrences("\nfunction ")(deferred)))
+            let concreteMethod =
+                given (ir) ->
+                    "\nfunction "
+                    |> Ashes.Text.split(ir)
+                    |> lookupIntMethod
+            in
+                let _ =
+                    deferred
+                    |> concreteMethod
+                    |> test.assertEqual(concreteMethod(annotated))
+                in
+                    let _ =
+                        deferred
+                        |> occurrences("TextFromInt")
+                        |> test.assertEqual(1)
+                    in
+                        "FuncLabel=recgroup_"
+                        |> Ashes.Text.contains(deferred)
+                        |> test.assertEqual(true)
 
 // A deferred site is never lowered against a guess: the type settled on here has no `Show`, so
 // the pass that lowers with the proofs reports that type rather than emitting the constant the

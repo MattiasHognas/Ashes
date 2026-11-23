@@ -1,6 +1,7 @@
 // expect: 40040 40039
 // A map threaded through a loop by a helper's owned result releases each earlier version once
 // the successor holds the new one, and keeps it while another parameter still names it.
+import Ashes.Collection.Map
 let keepFirst (key: Str) (value: List(Str)) (map: MapTree(Str, List(Str))) =
     Ashes.Collection.Map.upsertStr(key)(value)(given (existing) -> existing)(map)
 

@@ -1352,8 +1352,6 @@ let tlsServerHandshake start socket cert key = target3(start)(socket)(cert)(key)
 
 let bytesScanHash start value needle offset = target3(start)(value)(needle)(offset)(BytesScanHash)
 
-let tcpForkWorkers start workers port = target2(start)(port)(workers)(CreateForkWorkersTask)
-
 let uintFromInt start value =
     emitted(
         [
@@ -1475,7 +1473,7 @@ let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argume
         | (CoreTcpClose, socket :: [], _types) -> target1(start)(socket)(CreateTcpCloseTask)
         | (CoreTcpListen, port :: [], _types) -> target1(start)(port)(CreateTcpListenTask)
         | (CoreTcpAccept, socket :: [], _types) -> target1(start)(socket)(CreateTcpAcceptTask)
-        | (CoreTcpForkWorkers, workers :: port :: [], _types) -> tcpForkWorkers(start)(workers)(port)
+        | (CoreTcpForkWorkers, port :: count :: [], _types) -> target2(start)(port)(count)(CreateForkWorkersTask)
         | (CoreTcpSetDrainTimeout, timeout :: [], _types) ->
             unitWithTarget(start)(given (target) -> SetDrainTimeout(target)(timeout))
         | (CoreTlsConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTlsConnectTask)

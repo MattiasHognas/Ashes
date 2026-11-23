@@ -963,6 +963,10 @@ internal static partial class LlvmCodegen
     /// completion, cancellation, and reaping may each reach this without double-releasing.
     /// </summary>
     private static void EmitTaskFrameTeardown(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
+        => EmitTaskFrameDropperCall(state, taskPtr, LlvmApi.ConstInt(state.I64, 0, 0), prefix);
+
+    private static void EmitTaskFrameDropperCall(
+        LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle closingSocket, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -984,7 +988,7 @@ internal static partial class LlvmCodegen
             builder,
             LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]),
             dropperPtr,
-            [taskPtr, zero, zero],
+            [taskPtr, closingSocket, zero],
             prefix + "_frame_drop_call");
         LlvmApi.BuildBr(builder, afterBlock);
 

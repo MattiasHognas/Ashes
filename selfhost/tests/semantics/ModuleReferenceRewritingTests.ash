@@ -121,7 +121,7 @@ let expectTraitDeclaration item =
 
 let expectCapabilityDeclaration item =
     match item with
-        | TopLevelCapability(CapabilityDecl { name = "Foo_Util_Logging", operations = CapabilityOperation { signature = Some(TypeArrow(_argument, TypeNamed("Foo_Util_Logging"), _capabilities, _tail)) } :: [] }) -> Unit
+        | TopLevelCapability(CapabilityDecl { name = "Logging", operations = CapabilityOperation { signature = Some(TypeArrow(_argument, TypeNamed("Logging"), _capabilities, _tail)) } :: [] }) -> Unit
         | _ -> test.fail("capability declarations and recursive signatures should use stitched names")
 
 let expectUtilRewriting units =
@@ -143,7 +143,7 @@ let expectMatchedBinding item =
 
 let expectHandlerBinding item =
     match item with
-        | TopLevelLet(LetBindingSyntax { name = "handled", value = ExprHandle(ExprQualifiedVar("Foo_Util_Logging", "write"), (Some("Foo_Util_Logging"), "write", PatternVar("message") :: [], ExprVar("message")) :: []) }, false) -> Unit
+        | TopLevelLet(LetBindingSyntax { name = "handled", value = ExprHandle(ExprQualifiedVar("Logging", "write"), (Some("Logging"), "write", PatternVar("message") :: [], ExprVar("message")) :: []) }, false) -> Unit
         | _ -> test.fail("capability operations and handler arms should use stitched names while preserving arm locals")
 
 let expectMainRewriting units =
@@ -159,7 +159,7 @@ let expectMainRewriting units =
 // record literal and a record pattern name the constructor, which the lowering looks up.
 let privateProgram =
     ProgramSyntax(items = [TopLevelType(
-        TypeDecl(name = "Cfg", typeParameters = [], constructors = [TypeConstructor(name = "Cfg", parameters = [TypeNamed("Int")], fieldNames = ["width"])], isRecord = true, derivingTraits = [])
+        TypeDecl(name = "Cfg", typeParameters = [], constructors = [TypeConstructor(name = "Cfg", parameters = [TypeNamed("Int")], fieldNames = ["width"])], isRecord = true, derivingTraits = ["Render"])
     ), TopLevelLet(false
     |> ExprRecord("Cfg")([("width", ExprInt(1))])
     |> binding("make"))(false), TopLevelLet(
@@ -173,8 +173,67 @@ let privateUnit = SemanticStitchUnit(name = "Priv", packageId = "dep", sourcePat
 
 let expectPrivateRecordRewriting units =
     match requireProgram("Priv")(units) with
-        | ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Priv_Cfg", constructors = TypeConstructor { name = "AshesPrivateConstructor_Priv_Cfg" } :: [] }) :: TopLevelLet(LetBindingSyntax { value = ExprRecord("AshesPrivateConstructor_Priv_Cfg", _fields, _multiline) }, false) :: TopLevelLet(LetBindingSyntax { value = ExprMatch(_scrutinee, (PatternRecord("AshesPrivateConstructor_Priv_Cfg", _patternFields), _body, None) :: [], _fallback) }, false) :: [] } -> units
+        | ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Priv_Cfg", derivingTraits = "Foo_Util_Render" :: [], constructors = TypeConstructor { name = "AshesPrivateConstructor_Priv_Cfg" } :: [] }) :: TopLevelLet(LetBindingSyntax { value = ExprRecord("AshesPrivateConstructor_Priv_Cfg", _fields, _multiline) }, false) :: TopLevelLet(LetBindingSyntax { value = ExprMatch(_scrutinee, (PatternRecord("AshesPrivateConstructor_Priv_Cfg", _patternFields), _body, None) :: [], _fallback) }, false) :: [] } -> units
         | _ -> test.fail("a private record literal and pattern should name the private constructor")
+
+// A capability keeps its declared name in every module: the interface exports no capability, so
+// a module naming one it reaches through an import, or does not import at all, names it bare,
+// beside a type of the same name, and a second module declaring it is left to the inference.
+let storeCapability =
+    CapabilityDecl(name = "Store", typeParameters = [], operations = [CapabilityOperation(name = "load", signature = None
+    |> TypeArrow(TypeUnit)(TypeNamed("Str"))([])
+    |> Some)])
+
+let storeUnit =
+    SemanticStitchUnit(name = "Caps", packageId = "app", sourcePath = "/app/Caps.ash", imports = [], interface = ModuleImportInterface(name = "Caps", exports = [ImportValueExport("helper")]), program = ProgramSyntax(items = [TopLevelCapability(
+        storeCapability
+    ), TopLevelLet(binding("helper")(ExprInt(1)))(false)], body = None), isEntry = false)
+
+let storeProvide =
+    TopLevelProvide(
+        ProvideDecl(capabilityName = "Store", typeArguments = [], bindings = [ProvideBinding(operationName = "load", implementation = None |> ExprLambda("u")(ExprString("provided")))])
+    )
+
+let storeHandler =
+    [(Some("Store"), "load", [PatternVar("u")], ExprString("handled"))] |> ExprHandle("load"
+    |> ExprQualifiedVar("Store")
+    |> ExprPerform)
+
+let storeReader =
+    LetBindingSyntax(name = "read", value = storeHandler, sugarParameters = [], typeAnnotation = None
+    |> TypeArrow(TypeUnit)(TypeNamed("Str"))([("Store", [])])
+    |> Some, requirements = [], declarationStart = -1)
+
+let storeShadowUnit =
+    SemanticStitchUnit(name = "Shadow", packageId = "app", sourcePath = "/app/Shadow.ash", imports = [], interface = ModuleImportInterface(name = "Shadow", exports = []), program = ProgramSyntax(items = [TopLevelType(
+        TypeDecl(name = "Store", typeParameters = [], constructors = [TypeConstructor(name = "Box", parameters = [TypeNamed("Int")], fieldNames = [])], isRecord = false, derivingTraits = [])
+    ), storeProvide], body = None), isEntry = false)
+
+let storeMainUnit = SemanticStitchUnit(name = "Main", packageId = "app", sourcePath = "/app/Main.ash", imports = [ResolvedModuleImport("Caps")(None)(1)("import Caps")], interface = ModuleImportInterface(name = "Main", exports = [ImportValueExport("read")]), program = ProgramSyntax(items = [storeProvide, TopLevelLet(storeReader)(false)], body = None), isEntry = true)
+
+let storeAgainUnit = SemanticStitchUnit(name = "Again", packageId = "app", sourcePath = "/app/Again.ash", imports = [], interface = ModuleImportInterface(name = "Again", exports = []), program = ProgramSyntax(items = [TopLevelCapability(storeCapability)], body = None), isEntry = false)
+
+let storeUnits = [storeUnit, storeShadowUnit, storeAgainUnit, storeMainUnit]
+
+let expectStoreProvide item =
+    match item with
+        | TopLevelProvide(ProvideDecl { capabilityName = "Store" }) -> Unit
+        | _ -> test.fail("a provide should name an imported capability by its declared name")
+
+let expectStoreCapabilityRewriting units =
+    match (requireProgram("Caps")(units), requireProgram("Shadow")(units), requireProgram("Main")(units)) with
+        | (ProgramSyntax { items = TopLevelCapability(CapabilityDecl { name = "Store" }) :: _rest }, ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Shadow_Store" }) :: shadowProvide :: [] }, ProgramSyntax { items = mainProvide :: TopLevelLet(LetBindingSyntax { name = "read", value = ExprHandle(ExprPerform(ExprQualifiedVar("Store", "load")), (Some("Store"), "load", PatternVar("u") :: [], ExprString("handled")) :: []), typeAnnotation = Some(TypeArrow(TypeUnit, TypeNamed("Str"), ("Store", []) :: [], None)) }, false) :: [] }) ->
+            shadowProvide
+            |> expectStoreProvide
+            |> (given (_) -> expectStoreProvide(mainProvide))
+        | _ -> test.fail("capability declarations, providers, handler arms, performs and needs rows should keep the declared capability name")
+
+let runCapabilityNameTests unit =
+    storeUnits
+    |> buildStitchedSemanticProject
+    |> requireProject
+    |> (given (project) -> rewriteStitchedProjectReferences(project)(storeUnits))
+    |> expectStoreCapabilityRewriting
 
 let runModuleReferenceRewritingTests unit =
     [utilUnit, intrinsicUnit, mainUnit, privateUnit]
@@ -184,3 +243,4 @@ let runModuleReferenceRewritingTests unit =
     |> expectUtilRewriting
     |> (given (units) -> expectMainRewriting(units))
     |> (given (units) -> expectPrivateRecordRewriting(units))
+    |> (given (_) -> runCapabilityNameTests(Unit))

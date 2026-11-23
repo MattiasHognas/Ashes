@@ -5,6 +5,8 @@
 
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
+import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
+import AshesCompiler.Frontend.ImportHeader.parseImportHeader
 import AshesCompiler.Frontend.InlineModules
 import AshesCompiler.Semantics.ModuleSemanticStitching.StitchedDefinition
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
@@ -16,6 +18,7 @@ export (
     value regionFilePath,
     value regionSourceText,
     value stitchedSourceRegions,
+    value stitchedRegionOfName,
 )
 
 // The file a region's path names.
@@ -54,20 +57,30 @@ let recursive inlineModuleText (modules: List(InlineModuleInfo)) (name: Str) =
             then Some(source)
             else inlineModuleText(rest)(name)
 
-// The text a region's spans are offsets into: the file's, or an inline module's lifted text. The
-// entry file's text is the one given; every other file is read.
+// A module's text as it is parsed: the import header's lines are kept as empty lines, so a
+// span's offset into it falls on the line and column the file has there.
+let withoutImportHeader (text: Str) =
+    match parseImportHeader(text) with
+        | Ok(ParsedImportHeader { sourceWithoutImports = stripped }) -> stripped
+        | Error(_error) -> text
+
+// The text a region's spans are offsets into: the file's with its import header blanked as it
+// is parsed, or an inline module's lifted from that text. The entry file's text is the one
+// given; every other file is read.
 let regionSourceText (entryPath: Str) (entrySource: Str) (sourcePath: Str) =
     match sourcePath
     |> regionFilePath
     |> fileText(entryPath)(entrySource) with
         | None -> None
-        | Some(text) ->
-            match inlineModuleName(sourcePath) with
-                | "" -> Some(text)
-                | name ->
-                    match expandInlineModules("")(text) with
-                        | Ok(InlineModuleExpansion { modules = modules }) -> inlineModuleText(modules)(name)
-                        | Error(_) -> None
+        | Some(fileSource) ->
+            let text = withoutImportHeader(fileSource)
+            in
+                match inlineModuleName(sourcePath) with
+                    | "" -> Some(text)
+                    | name ->
+                        match expandInlineModules("")(text) with
+                            | Ok(InlineModuleExpansion { modules = modules }) -> inlineModuleText(modules)(name)
+                            | Error(_) -> None
 
 // Each module region's path with its text, and one item region per module region, numbered in
 // region order.
@@ -103,13 +116,15 @@ let recursive definitionRegions (placements: List(StitchedDefinitionPlacement)) 
                     |> definitionRegions(rest)(moduleIndexes)
                 | None -> definitionRegions(rest)(moduleIndexes)(regionOfName)
 
+let stitchedRegionOfName (stitched: StitchedSyntaxProject) =
+    match moduleRegionIndexes(stitched.moduleRegions)(0)(Ashes.Collection.Map.empty)(0) with
+        | (moduleIndexes, entryRegion) ->
+            Ashes.Collection.Map.empty
+            |> definitionRegions(stitched.definitionPlacements)(moduleIndexes)
+            |> Ashes.Collection.Map.setStr("")(entryRegion)
+
 // The source regions of a stitched program: every module region's text, and the region each
 // top-level definition's spans resolve in, with the trailing expression in the entry module's.
 let stitchedSourceRegions (stitched: StitchedSyntaxProject) (entryPath: Str) (entrySource: Str) =
     match regionTexts(entryPath)(entrySource)(stitched.moduleRegions)(0)([])([]) with
-        | (texts, itemRegions) ->
-            match moduleRegionIndexes(stitched.moduleRegions)(0)(Ashes.Collection.Map.empty)(0) with
-                | (moduleIndexes, entryRegion) ->
-                    SourceRegions(context = createStitchedSourceContext(texts)(itemRegions)(entryPath), regionOfName = Ashes.Collection.Map.empty
-                    |> definitionRegions(stitched.definitionPlacements)(moduleIndexes)
-                    |> Ashes.Collection.Map.setStr("")(entryRegion))
+        | (texts, itemRegions) -> SourceRegions(context = createStitchedSourceContext(texts)(itemRegions)(entryPath), regionOfName = stitchedRegionOfName(stitched))

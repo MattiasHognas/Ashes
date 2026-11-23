@@ -36,7 +36,7 @@ type ProgramParseResult =
 // string element would be cloned every time the state tuple is rebuilt. The trailing flag marks a
 // match or handle scrutinee, where a `with` ends the scrutinee instead of starting a record update;
 // parentheses clear it again.
-type alias ParserState = (List(Token), List(DiagnosticEntry), Bytes, Bool)
+type alias ParserState = (List(Token), List(DiagnosticEntry), Bytes, Bool, Int)
 
 type ParsedTypeBranches =
     | constructors: List(TypeConstructor)
@@ -51,19 +51,19 @@ let parserSyntheticToken kind position = Token(kind = kind, text = "", intValue 
 
 let parserCurrent (state: ParserState) =
     match state with
-        | (token :: _, _diagnostics, _source, _withSuppressed) -> token
-        | ([], _diagnostics, _source, _withSuppressed) -> parserSyntheticToken(EOF)(0)
+        | (token :: _, _diagnostics, _source, _withSuppressed, _declarationColumn) -> token
+        | ([], _diagnostics, _source, _withSuppressed, _declarationColumn) -> parserSyntheticToken(EOF)(0)
 
 let parserAdvance (state: ParserState) =
     match state with
-        | (token :: tail, diagnostics, source, withSuppressed) -> (token, (tail, diagnostics, source, withSuppressed))
-        | ([], _diagnostics, _source, _withSuppressed) -> (parserSyntheticToken(EOF)(0), state)
+        | (token :: tail, diagnostics, source, withSuppressed, declarationColumn) -> (token, (tail, diagnostics, source, withSuppressed, declarationColumn))
+        | ([], _diagnostics, _source, _withSuppressed, _declarationColumn) -> (parserSyntheticToken(EOF)(0), state)
 
 let parserDiagnosticWithCode (state: ParserState) (token: Token) (message: Str) (code: Str) =
     (let diagnostic = DiagnosticEntry(span = tokenSpan(token), message = message, code = Some(code))
     in
         match state with
-            | (tokens, diagnostics, source, withSuppressed) -> (tokens, diagnostic :: diagnostics, source, withSuppressed))
+            | (tokens, diagnostics, source, withSuppressed, declarationColumn) -> (tokens, diagnostic :: diagnostics, source, withSuppressed, declarationColumn))
 
 let parserDiagnostic state token message = parserDiagnosticWithCode(state)(token)(message)("ASH003")
 
@@ -71,13 +71,13 @@ let parserDiagnosticNoCode (state: ParserState) (token: Token) (message: Str) =
     (let diagnostic = DiagnosticEntry(span = tokenSpan(token), message = message, code = None)
     in
         match state with
-            | (tokens, diagnostics, source, withSuppressed) -> (tokens, diagnostic :: diagnostics, source, withSuppressed))
+            | (tokens, diagnostics, source, withSuppressed, declarationColumn) -> (tokens, diagnostic :: diagnostics, source, withSuppressed, declarationColumn))
 
 let parserDiagnosticAtSpanWithCode (state: ParserState) (span: TextSpan) (message: Str) (code: Str) =
     (let diagnostic = DiagnosticEntry(span = span, message = message, code = Some(code))
     in
         match state with
-            | (tokens, diagnostics, source, withSuppressed) -> (tokens, diagnostic :: diagnostics, source, withSuppressed))
+            | (tokens, diagnostics, source, withSuppressed, declarationColumn) -> (tokens, diagnostic :: diagnostics, source, withSuppressed, declarationColumn))
 
 let parserDiagnosticAtSpan state span message = parserDiagnosticAtSpanWithCode(state)(span)(message)("ASH003")
 
@@ -219,7 +219,7 @@ let parserQualifiedName parts =
 
 let parserCurrentStartsNamedArgument (state: ParserState) =
     match state with
-        | (first :: second :: _, _diagnostics, _source, _withSuppressed) ->
+        | (first :: second :: _, _diagnostics, _source, _withSuppressed, _declarationColumn) ->
             if first.kind == Ident
             then second.kind == Equals
             else false
@@ -227,23 +227,31 @@ let parserCurrentStartsNamedArgument (state: ParserState) =
 
 let parserStateDiagnostics (state: ParserState) =
     match state with
-        | (_tokens, diagnostics, _source, _withSuppressed) -> diagnostics
+        | (_tokens, diagnostics, _source, _withSuppressed, _declarationColumn) -> diagnostics
 
 let parserStateTokens (state: ParserState) =
     match state with
-        | (tokens, _diagnostics, _source, _withSuppressed) -> tokens
+        | (tokens, _diagnostics, _source, _withSuppressed, _declarationColumn) -> tokens
 
 let parserStateWithTokens (state: ParserState) tokens =
     match state with
-        | (_oldTokens, diagnostics, source, withSuppressed) -> (tokens, diagnostics, source, withSuppressed)
+        | (_oldTokens, diagnostics, source, withSuppressed, declarationColumn) -> (tokens, diagnostics, source, withSuppressed, declarationColumn)
 
 let parserWithSuppressed (state: ParserState) =
     match state with
-        | (_tokens, _diagnostics, _source, withSuppressed) -> withSuppressed
+        | (_tokens, _diagnostics, _source, withSuppressed, declarationColumn) -> withSuppressed
 
 let parserSetWithSuppressed (state: ParserState) withSuppressed =
     match state with
-        | (tokens, diagnostics, source, _previous) -> (tokens, diagnostics, source, withSuppressed)
+        | (tokens, diagnostics, source, _previous, declarationColumn) -> (tokens, diagnostics, source, withSuppressed, declarationColumn)
+
+let parserDeclarationColumn (state: ParserState) =
+    match state with
+        | (_tokens, _diagnostics, _source, _withSuppressed, column) -> column
+
+let parserSetDeclarationColumn (state: ParserState) column =
+    match state with
+        | (tokens, diagnostics, source, withSuppressed, _previousColumn) -> (tokens, diagnostics, source, withSuppressed, column)
 
 let parserSourceByteAt bytes position =
     position
@@ -263,7 +271,7 @@ let recursive parserSourceContainsLineBreak bytes position endPosition =
 // copy of the whole file on every layout check, so the scan reads the bytes in place.
 let parserStateContainsLineBreak (state: ParserState) position endPosition =
     match state with
-        | (_tokens, _diagnostics, sourceBytes, _withSuppressed) -> parserSourceContainsLineBreak(sourceBytes)(position)(endPosition)
+        | (_tokens, _diagnostics, sourceBytes, _withSuppressed, _declarationColumn) -> parserSourceContainsLineBreak(sourceBytes)(position)(endPosition)
 
 let parserCallStartsOnNewLine state leftParen firstArgument =
     match parserCurrentKind(state) with
@@ -316,6 +324,10 @@ let parserStartsSourceLine bytes position =
     |> parserOnlyIndentBefore(bytes)(position)
 
 let parserSourceColumn bytes position = position - parserLineStart(bytes)(position)
+
+let parserStartsNextDeclarationItem (state: ParserState) (token: Token) =
+    match state with
+        | (_tokens, _diagnostics, source, _withSuppressed, column) -> column >= 0 && (token.kind == LParen || parserIsWhitespaceArgument(token.kind)) && parserStartsSourceLine(source)(token.position) && parserSourceColumn(source)(token.position) <= column
 
 let parserStartsDeclarationBinding (tokens: List(Token)) =
     match tokens with
@@ -611,7 +623,7 @@ let parserPipeStartsArm (state: ParserState) =
                     | _ -> scan(tail)(parenthesisDepth)(bracketDepth)(startsLine)
     in
         match state with
-            | (pipe :: tail, _diagnostics, source, _withSuppressed) ->
+            | (pipe :: tail, _diagnostics, source, _withSuppressed, _declarationColumn) ->
                 if pipe.kind == Pipe
                 then
                     pipe.position
@@ -622,7 +634,7 @@ let parserPipeStartsArm (state: ParserState) =
 
 let parserLetStartsPattern (state: ParserState) =
     match state with
-        | (letToken :: next :: tail, _diagnostics, _source, _withSuppressed) ->
+        | (letToken :: next :: tail, _diagnostics, _source, _withSuppressed, _declarationColumn) ->
             if letToken.kind != Let
             then false
             else
@@ -926,7 +938,7 @@ let parserBuildCallArguments function arguments start end isWhitespace isMultili
 
 let parserLeadingPipeColumn (state: ParserState) =
     match state with
-        | (tokens, _diagnostics, source, _withSuppressed) ->
+        | (tokens, _diagnostics, source, _withSuppressed, _declarationColumn) ->
             match tokens with
                 | token :: _ ->
                     if token.kind == Pipe
@@ -1174,9 +1186,14 @@ and parserParseNamedLet state =
                                     | (parameters, typeAnnotation, requirements, afterParameters) ->
                                         match parserConsume(Equals)(afterParameters) with
                                             | (_equals, afterEquals) ->
-                                                match parserParseExpression(afterEquals) with
+                                                match -1
+                                                |> parserSetDeclarationColumn(afterEquals)
+                                                |> parserParseExpression with
                                                     | (rawValue, afterValue) ->
-                                                        match parserConsume(In)(afterValue) with
+                                                        match afterEquals
+                                                        |> parserDeclarationColumn
+                                                        |> parserSetDeclarationColumn(afterValue)
+                                                        |> parserConsume(In) with
                                                             | (_inToken, afterIn) ->
                                                                 match parserParseExpression(afterIn) with
                                                                     | (body, afterBody) ->
@@ -1750,49 +1767,52 @@ and parserParseCall state =
 and parserParseCallTail function state =
     (let current = parserCurrent(state)
     in
-        if current.kind == LParen
-        then
-            let start = parserExprStart(function)
-            in
-                match parserAdvance(state) with
-                    | (leftParen, afterLeftParen) ->
-                        if parserCurrentStartsNamedArgument(afterLeftParen)
-                        then parserParseRecordArguments(function)(start)(leftParen)(afterLeftParen)
-                        else
-                            match parserParseCallArgumentList(afterLeftParen) with
-                                | (arguments, rightParen, afterArguments) ->
-                                    let isMultiline =
-                                        match arguments with
-                                            | first :: _ -> parserCallStartsOnNewLine(afterLeftParen)(leftParen)(first)
-                                            | [] -> false
-                                    in
-                                        parserParseCallTail(
-                                            parserBuildCallArguments(
-                                                function,
-                                                arguments,
-                                                start,
-                                                tokenEnd(rightParen),
-                                                false,
-                                                isMultiline
-                                            ),
-                                            afterArguments
-                                        )
+        if parserStartsNextDeclarationItem(state)(current)
+        then (function, state)
         else
-            if parserIsWhitespaceArgument(current.kind)
+            if current.kind == LParen
             then
                 let start = parserExprStart(function)
                 in
-                    match parserParseWhitespaceArgument(state) with
-                        | (argument, afterArgument) ->
-                            parserParseCallTail(
-                                parserAt(
-                                    start,
-                                    parserExprEnd(argument),
-                                    ExprCall(function)(argument)(true)(callArgumentsInline)
-                                ),
-                                afterArgument
-                            )
-            else (function, state))
+                    match parserAdvance(state) with
+                        | (leftParen, afterLeftParen) ->
+                            if parserCurrentStartsNamedArgument(afterLeftParen)
+                            then parserParseRecordArguments(function)(start)(leftParen)(afterLeftParen)
+                            else
+                                match parserParseCallArgumentList(afterLeftParen) with
+                                    | (arguments, rightParen, afterArguments) ->
+                                        let isMultiline =
+                                            match arguments with
+                                                | first :: _ -> parserCallStartsOnNewLine(afterLeftParen)(leftParen)(first)
+                                                | [] -> false
+                                        in
+                                            parserParseCallTail(
+                                                parserBuildCallArguments(
+                                                    function,
+                                                    arguments,
+                                                    start,
+                                                    tokenEnd(rightParen),
+                                                    false,
+                                                    isMultiline
+                                                ),
+                                                afterArguments
+                                            )
+            else
+                if parserIsWhitespaceArgument(current.kind)
+                then
+                    let start = parserExprStart(function)
+                    in
+                        match parserParseWhitespaceArgument(state) with
+                            | (argument, afterArgument) ->
+                                parserParseCallTail(
+                                    parserAt(
+                                        start,
+                                        parserExprEnd(argument),
+                                        ExprCall(function)(argument)(true)(callArgumentsInline)
+                                    ),
+                                    afterArgument
+                                )
+                else (function, state))
 and parserParseCallArgumentList state =
     (let current = parserCurrent(state)
     in
@@ -1989,7 +2009,7 @@ and parserParseParenthesizedBody leftParen afterLeftParen =
             then parserParseExpression(afterLeftParen)
             else
                 match afterLeftParen with
-                    | (_tokens, _diagnostics, sourceBytes, _withSuppressed) -> parserParseParenthesizedFlatBody(sourceBytes)(afterLeftParen)
+                    | (_tokens, _diagnostics, sourceBytes, _withSuppressed, _declarationColumn) -> parserParseParenthesizedFlatBody(sourceBytes)(afterLeftParen)
         else parserParseExpression(afterLeftParen)
     in
         match bodyResult with
@@ -2095,7 +2115,9 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                     |> parserTokensThenEof(tokens)
                     |> parserStateWithTokens(state)
                 in
-                    match parserParseExpression(temporaryState) with
+                    match declarationColumn
+                    |> parserSetDeclarationColumn(temporaryState)
+                    |> parserParseExpression with
                         | (value, afterValue) ->
                             let unconsumed =
                                 afterValue
@@ -2104,7 +2126,9 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                             in
                                 (value, remainingTokens
                                 |> parserAppendTokens(unconsumed)
-                                |> parserStateWithTokens(afterValue)))
+                                |> parserStateWithTokens(state
+                                |> parserDeclarationColumn
+                                |> parserSetDeclarationColumn(afterValue))))
 and parserBuildLetExpression start recursiveBinding name value body parameters annotation requirements =
     (let expression =
         if recursiveBinding
@@ -2292,7 +2316,7 @@ and parserParseIdentifierPattern state =
                                     | (patterns, afterPatterns) ->
                                         let endPosition =
                                             match afterPatterns with
-                                                | (next :: _, _diagnostics, _source, _withSuppressed) -> next.position
+                                                | (next :: _, _diagnostics, _source, _withSuppressed, _declarationColumn) -> next.position
                                                 | _ -> tokenEnd(name)
                                         in
                                             (parserPatternAt(
@@ -2514,7 +2538,8 @@ let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBinding
             in
                 let temporaryTokens = parserTokensThenEof(tokens)(valueLength)
                 in
-                    let temporaryState = parserStateWithTokens(state)(temporaryTokens)
+                    let temporaryState =
+                        parserSetDeclarationColumn(parserStateWithTokens(state)(temporaryTokens))(declarationColumn)
                     in
                         match parserParseExpression(temporaryState) with
                             | (value, afterValue) ->
@@ -2524,7 +2549,10 @@ let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBinding
                                     |> parserTokensBeforeEof
                                 in
                                     let mergedTokens = parserAppendTokens(unconsumed)(remainingTokens)
-                                    in (value, parserStateWithTokens(afterValue)(mergedTokens)))
+                                    in
+                                        (value, state
+                                        |> parserDeclarationColumn
+                                        |> parserSetDeclarationColumn(parserStateWithTokens(afterValue)(mergedTokens))))
 
 let parserParseTopLevelValue sourceBytes declarationColumn state =
     parserParseDelimitedTopLevelValue(
@@ -3679,7 +3707,7 @@ let parserEnsureEndOfInput state =
 let parseProgram source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false, -1)
         in
             let sourceBytes = Ashes.Byte.fromText(source)
             in
@@ -3699,7 +3727,7 @@ let parseProgram source =
 let parseExpression source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false, -1)
         in
             match parserParseExpression(initial) with
                 | (expression, state) ->
@@ -3717,7 +3745,7 @@ let parseExpression source =
 let parseTypeExpression source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source), false, -1)
         in
             match parserParseTypeExpressionState(initial) with
                 | (typeExpression, state) ->

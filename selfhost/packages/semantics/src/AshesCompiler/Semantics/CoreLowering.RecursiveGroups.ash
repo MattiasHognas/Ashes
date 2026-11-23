@@ -107,7 +107,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
             ownedRead = false,
-            patternOwner = None,
+            patternFact = None,
             closedScheme = false
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
@@ -174,9 +174,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
 // A recursive member's result meets the callers the same way a plain lambda's does: a
 // reference-counted result is copied into the arena when the caller asked for one.
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
-    match (prepared, lowered
-    |> closeTmcChainPrepared(prepared)
-    |> unifySelfCallResults) with
+    match (prepared, lowered |> unifySelfCallResults) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with
@@ -248,7 +246,7 @@ let recursive memberDeclarationSpan (name: Str) (starts: List((Str, Int, Int))) 
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
-        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType, resultType = resultType } ->
+        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, semanticType = memberType, parameterType = parameterType, resultType = resultType } ->
             match withStateLetLambdaLabels(state
             |> stateLetLambdaLabels
             |> Ashes.Collection.Map.setStr(name)(label))(state) with
@@ -257,6 +255,10 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                     |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(labeled))
                     |> (given (origin) ->
                         labeled
+                        |> (given (frame) ->
+                            if Ashes.Text.startsWith(name)("$async_helper_")
+                            then withHelperFactoryType(Some(memberType))(frame)
+                            else frame)
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> noteLetBoundFunction(label)(origin)
@@ -285,7 +287,7 @@ let preparedSelfBinding environmentSize prepared =
                 scheme = emptyScheme(semanticType),
                 location = CoreSelf(label)(environmentSize),
                 ownedRead = false,
-                patternOwner = None,
+                patternFact = None,
                 closedScheme = false
             )
 

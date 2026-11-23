@@ -117,6 +117,16 @@ let expectDuplicateOperationIsRejected unit =
             | DuplicateCapabilityOperationName("Tag", "tag") -> Unit
             | other -> test.fail("expected DuplicateCapabilityOperationName, got " + Ashes.Trait.Show.show(other)))
 
+// An operation whose signature states a `needs` row still types its perform sites by the
+// signature, so a handled value is printed as the `Str` the operation returns.
+let expectSignatureWithRowTypesThePerform unit =
+    "capability Store =\n    | load : Unit -> Str needs {ConsoleIO}\n\nAshes.IO.print(handle Store.load(Unit) with\n    | Store.load(_u) -> resume(\"handled\"))"
+    |> loweredProgramSource
+    |> (given (program) ->
+        None
+        |> formatIr(program)(LoweredIr)
+        |> expectContains("PrintStr"))
+
 let runCapabilityProgramLoweringTests unit =
     unit
     |> expectProgramCapabilityLowersHandlerAndPerform
@@ -125,3 +135,4 @@ let runCapabilityProgramLoweringTests unit =
     |> expectReservedCapabilityNameIsRejected
     |> expectDuplicateCapabilityNameIsRejected
     |> expectDuplicateOperationIsRejected
+    |> expectSignatureWithRowTypesThePerform

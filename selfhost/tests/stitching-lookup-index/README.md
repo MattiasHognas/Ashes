@@ -4,7 +4,11 @@
 lookups were indexed. Its scope and project types and its exported functions are renamed so both
 modules can be imported side by side, its pending collection's `reversed` field is renamed because
 two copies of the type make an unannotated field access ambiguous, and the types both modules share
-are imported from the indexed module. Nothing else differs.
+are imported from the indexed module. Rules that postdate the snapshot are ported: an exported type
+or constructor of a project module keeps its source name as its compiler name (`keepsSourceName`,
+from 2ca820f2); external declarations keep their source names (`global`); and a capability keeps its
+declared name in every module and takes no part in the compiler-name collision check, since
+capabilities are program-wide. Nothing else differs.
 
 `Main.ash check <first seed> <last seed>` builds one generated project per seed with both modules
 and compares them:

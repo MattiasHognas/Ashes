@@ -63,6 +63,21 @@ let testBorrowReadResourceParameterThroughSpans unit =
         let isBorrow = isParamUsedOnlyAsBorrowRead(callExpr)("h")
         in test.assertEqual(true)(isBorrow))
 
+let testSuspendingTaskOwnsReadCapture unit =
+    (let receive =
+        ExprCall(ExprQualifiedVar("Ashes.Net.Tcp.Server")("accept"))(ExprVar("s"))(false)(callArgumentsInline)
+    in
+        let task factory body = ExprCall(factory)(body)(false)(callArgumentsInline)
+        in
+            let _ =
+                "s"
+                |> isParamUsedOnlyAsBorrowRead(task(ExprVar("async"))(ExprAwait(receive)))
+                |> test.assertEqual(false)
+            in
+                "s"
+                |> isParamUsedOnlyAsBorrowRead(task(ExprQualifiedVar("Ashes.Task")("task"))(ExprAwait(receive)))
+                |> test.assertEqual(false))
+
 let testUnusedParameterIsBorrow unit =
     (let body = ExprInt(42)
     in
@@ -704,6 +719,7 @@ let runOwnershipInferenceTests unit =
     unit
     |> testBorrowReadResourceParameter
     |> testBorrowReadResourceParameterThroughSpans
+    |> testSuspendingTaskOwnsReadCapture
     |> testUnusedParameterIsBorrow
     |> testConsumedArithmeticParameter
     |> testConsumedReturnedParameter

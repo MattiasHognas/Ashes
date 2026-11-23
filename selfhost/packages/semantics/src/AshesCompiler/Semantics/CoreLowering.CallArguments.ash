@@ -409,6 +409,8 @@ type CoreCallContext =
     | siteSpan: Maybe(TextSpan)
     // Stage 0's `_discardedResultCalls`: an applied lambda discards this call's result.
     | resultDiscarded: Bool
+    // The spine's arguments, first applied first.
+    | arguments: List(Expr)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -613,16 +615,10 @@ let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
                 | _ -> None
 
 // The loop parameter slot a pattern binding was extracted from, by its recorded fact.
-let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    match patternOwnerBinding(name)(state) with
-        | Some(PatternBindingFact { rootParameterOrdinal = ordinal }) -> parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
-        | None ->
-            match patternFactsNamed(name)(loop.patternFacts) with
-                | PatternBindingFact { rootParameterOrdinal = ordinal } :: _rest ->
-                    if ordinal >= 0
-                    then parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
-                    else None
-                | [] -> None
+let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match patternBindingFact(name)(state) with
+        | Some(PatternBindingFact { rootParameterOrdinal = ordinal }) when ordinal >= 0 -> parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
+        | _ -> None
 
 // A read of a loop parameter the frame places on the reference-counted heap by now, or of a
 // pattern binding extracted from such a parameter (stage 0 tracks the binding as a
@@ -633,7 +629,7 @@ let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
                 | None ->
-                    match patternBindingRootSlot(name)(frame)(loop)(state) with
+                    match patternBindingRootSlot(name)(frame)(state) with
                         | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state)
                         | None -> false
         | _ -> false
@@ -650,7 +646,7 @@ let argumentRootSlotOf (argument: Expr) (state: CoreLoweringState) =
         | (Some(frame), Some(loop), ExprVar(name)) ->
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(slot) -> Some(slot)
-                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+                | None -> patternBindingRootSlot(name)(frame)(state)
         | _ -> None
 
 // The root parameter slot of an argument that is a pattern binding extracted from a loop
@@ -661,7 +657,7 @@ let patternBindingArgumentRootSlot (argument: Expr) (state: CoreLoweringState) =
         | (Some(frame), Some(loop), ExprVar(name)) ->
             match parameterSlotOfName(name)(frame)(state) with
                 | Some(_slot) -> None
-                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+                | None -> patternBindingRootSlot(name)(frame)(state)
         | _ -> None
 
 // One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.
@@ -762,6 +758,17 @@ let readsDemotedLoopList (argument: Expr) (state: CoreLoweringState) =
                 | None -> false
         | _ -> false
 
+// Stage 0 registers a lone recursive binding's label with its ownership summary only once its body
+// is lowered, so within that body the binding's call to itself reads no summary and its callee
+// result never forces a retain (`CalleeResultMayReachOrKeepPatternBinding` and
+// `CalleeResultMayReachParameter` both answer false); a member of a recursive group is registered
+// before its body is lowered and keeps its summary. The closure such a self call goes through is
+// built without the `AcceptsRuntimeManagedArgument` bit while the body adopts an argument handed
+// over with the ownership flag set, so a forced retain there is released twice: once by the
+// callee's exit and once by the caller's owned slot.
+let selfCallReadsNoSummary (selfCallee: Bool) (state: CoreLoweringState) =
+    selfCallee && length(stateRecursiveGroupNames(state)) == 1
+
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending. A value of
 // the contract's types is always passed borrowed, whatever the callee's own summary says; the type
@@ -787,7 +794,7 @@ let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argum
                                     borrowsForPlacement = contractBorrow || calleeBorrows || isVariableArgument(argument) && contractValue,
                                     fresh = fresh,
                                     runtimeArgument = runtimeArgument || rootSlot != None,
-                                    mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(queried) || (patternBindingArgumentRootSlot(argument)(queried) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(queried)) && calleeResultReachesArgument(facts)(index),
+                                    mayReach = !selfCallReadsNoSummary(selfCallee)(queried) && (argumentMayReachResult(facts)(index)(argumentTemp)(queried) || (patternBindingArgumentRootSlot(argument)(queried) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(queried)) && calleeResultReachesArgument(facts)(index)),
                                     transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(queried),
                                     keptWholeUnderOwnedResult = keptWhole,
                                     normalizes = calleeNormalizesArgument(facts)(index)(queried),
@@ -1645,7 +1652,7 @@ let curryStageOwnerReach (context: CoreCallContext) (arity: Int) (argument: Expr
         match handOff.pendingRootSlot with
             | Some(_slot) -> handOff
             | None ->
-                if isFunctionType(resolveType(state)(resultType)) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
+                if !selfCallReadsNoSummary(context.selfCallee)(state) && isFunctionType(resolveType(state)(resultType)) && namesRuntimeOwner(argument)(state) && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity))
                 then handOff with mayReach = true
                 else handOff
 

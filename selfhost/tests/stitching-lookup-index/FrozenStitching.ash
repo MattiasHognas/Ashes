@@ -45,7 +45,8 @@ type FrozenSemanticProject =
 // `global` marks a definition whose compiler name is its source name in every module: an
 // external opaque type, which stage 0 never renames (its private-member renaming covers the
 // module's declared types only), so a bare reference to the handle type from a module that
-// imports the declaring module whole names the same declaration.
+// imports the declaring module whole names the same declaration; an external function; and a
+// capability, which stage 0 hoists into one program-wide scope under its declared name.
 type PendingDefinition =
     | name: Str
     | kind: StitchedNameKind
@@ -214,7 +215,7 @@ let addUnspannedItem item span collection =
                     | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
                     | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
                     | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) ->
-                        addPending(
+                        addPendingWith(true)(
                             name,
                             StitchedCapability,
                             span,
@@ -302,6 +303,18 @@ let publicCompilerName : Str -> Str -> Bool -> Str =
                 then deepCopy(sourceName)
                 else sanitizeModuleName(moduleName) + "_" + sourceName
 
+// Ported from 2ca820f2, which postdates the snapshot: an exported type or constructor of a
+// project module keeps its source name, as stage 0 hoists types into one program-wide scope;
+// the shipped modules keep their module-qualified names.
+let keepsSourceName (moduleName: Str) (kind: StitchedNameKind) =
+    if Ashes.Text.startsWith(moduleName)("Ashes.")
+    then false
+    else
+        match kind with
+            | StitchedType -> true
+            | StitchedConstructor -> true
+            | _ -> false
+
 let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
     given (moduleName) ->
         given (sourceName) ->
@@ -309,7 +322,10 @@ let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
                 given (isEntry) ->
                     given (exported) ->
                         if exported
-                        then publicCompilerName(moduleName)(sourceName)(isEntry)
+                        then
+                            if keepsSourceName(moduleName)(kind)
+                            then deepCopy(sourceName)
+                            else publicCompilerName(moduleName)(sourceName)(isEntry)
                         else privateCompilerName(moduleName)(sourceName)(kind)
 
 let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId reversed =
@@ -350,8 +366,8 @@ let recursive duplicateDefinition definitions seen =
 let recursive compilerNameOwner name definitions =
     match definitions with
         | [] -> None
-        | StitchedDefinition { compilerName = candidate, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            if candidate == name
+        | StitchedDefinition { compilerName = candidate, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            if both(candidate == name)(kind != StitchedCapability)
             then Some(qualifiedName)
             else compilerNameOwner(name)(rest)
 
@@ -368,13 +384,16 @@ let recursive compilerNameOwnerInModules name modules =
 let recursive validateCompilerNames definitions existingModules =
     match definitions with
         | [] -> None
-        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            match compilerNameOwnerInModules(compilerName)(existingModules) with
-                | Some(owner) ->
-                    qualifiedName
-                    |> CompilerPrivateNameCollision(compilerName)(owner)
-                    |> Some
-                | None -> validateCompilerNames(rest)(existingModules)
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            if kind == StitchedCapability
+            then validateCompilerNames(rest)(existingModules)
+            else
+                match compilerNameOwnerInModules(compilerName)(existingModules) with
+                    | Some(owner) ->
+                        qualifiedName
+                        |> CompilerPrivateNameCollision(compilerName)(owner)
+                        |> Some
+                    | None -> validateCompilerNames(rest)(existingModules)
 
 let resolvedModule resolved =
     match resolved with

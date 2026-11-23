@@ -1085,7 +1085,10 @@ let builtinResourceArgument (arguments: List(Expr)) =
 
 let checkBuiltinResourceUse (kind: CoreBuiltinKind) (arguments: List(Expr)) (state: CoreLoweringState) =
     match (builtinResourceRole(kind), builtinResourceArgument(arguments)) with
-        | (BuiltinUsesResource, Some(argument)) -> checkResourceArgumentUse(argument)(state)
+        | (BuiltinUsesResource, Some(argument)) ->
+            match checkResourceArgumentUse(argument)(state) with
+                | Some(error) -> Some((error, argument))
+                | None -> None
         | _ -> None
 
 let releaseClosedBuiltinArgument (kind: CoreBuiltinKind) (arguments: List(Expr)) (lowered: LoweredCoreValue) =
@@ -1095,7 +1098,7 @@ let releaseClosedBuiltinArgument (kind: CoreBuiltinKind) (arguments: List(Expr))
 
 let lowerBuiltin (layout: CoreBuiltinLayout) arguments lower state =
     match checkBuiltinResourceUse(layout.kind)(arguments)(state) with
-        | Some(error) -> failure(state)(error)
+        | Some((error, argument)) -> failureAt(argument)(error)(state)
         | None ->
             state
             |> instantiateBuiltin(layout)

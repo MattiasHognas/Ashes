@@ -10,6 +10,7 @@ import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.StructuralDroppers.OwnedReleasePlan
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingEachTemp
 import AshesCompiler.Semantics.IrOrigins
@@ -287,10 +288,15 @@ let recursive iterationOwnedDrops (depth: Int) (state: CoreLoweringState) (owner
                 | _ -> iterationOwnedDrops(depth)(state)(rest)
         | _ :: rest -> iterationOwnedDrops(depth)(state)(rest)
 
-let recursive ownedDropSlots (drops: List((Int, Str))) =
+let recursive ownedDropSlots (state: CoreLoweringState) (drops: List((Int, Str))) =
     match drops with
         | [] -> []
-        | (slot, _typeName) :: rest -> slot :: ownedDropSlots(rest)
+        | (slot, _typeName) :: rest ->
+            match state
+            |> stateOwnerReleasePlans
+            |> lookupOwnerReleasePlan(slot) with
+                | Some((_type, OwnedReleasePlan { matchFieldTransfer = Some((flagSlot, _fields)) })) -> slot :: flagSlot :: ownedDropSlots(state)(rest)
+                | _ -> slot :: ownedDropSlots(state)(rest)
 
 // The reset placeholder (stage 0's `TcoResetPending`), resolved once the whole body is lowered
 // so the argument types are as concrete as the function's own body makes them.
@@ -1124,6 +1130,41 @@ let recursive callResultsReaching (slot: Int) (ordinal: Int) (reaches: List(Mayb
             else callResultsReaching(slot)(ordinal + 1)(rest)
         | None :: rest -> callResultsReaching(slot)(ordinal + 1)(rest)
 
+let recursive negatedFlags (flags: List(Bool)) =
+    match flags with
+        | [] -> []
+        | flag :: rest -> !flag :: negatedFlags(rest)
+
+// Per successor of a back edge that is no call's result, the slots its value can have been read
+// from, and none for a call's result.
+let plainSuccessorReaches (temps: List(Int)) (state: CoreLoweringState) =
+    (let flags =
+        state
+        |> callDefinitionFlags(temps)
+        |> negatedFlags
+    in
+        match flaggedTemps(temps)(flags) with
+            | [] -> reachesByOrdinal(flags)([])
+            | plainTemps ->
+                state.reversedInstructions
+                |> localSlotsReachingEachTemp(plainTemps)
+                |> reachesByOrdinal(flags))
+
+let recursive ownedDropPlainSuccessorsWith (drops: List((Int, Str))) (reaches: List(Maybe(List(Int)))) =
+    match drops with
+        | [] -> []
+        | (slot, _typeName) :: rest -> (slot, callResultsReaching(slot)(0)(reaches)) :: ownedDropPlainSuccessorsWith(rest)(reaches)
+
+// Per owned drop, the ordinals of the successors that are no call's result and whose value can
+// have been read from its slot.
+let ownedDropPlainSuccessorsOf (drops: List((Int, Str))) (temps: List(Int)) (state: CoreLoweringState) =
+    match drops with
+        | [] -> []
+        | _ ->
+            state
+            |> plainSuccessorReaches(temps)
+            |> ownedDropPlainSuccessorsWith(drops)
+
 let recursive ownedDropFactsOf (drops: List((Int, Str))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (known: Maybe(List(Maybe(List(Int))))) (state: CoreLoweringState) =
     match drops with
         | [] -> []
@@ -1214,12 +1255,13 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                                 argumentTransferRetained = transferRetainedFlags(temps)(state),
                                 transferredRootDrops = rootDrops,
                                 lateCopiedCellHeads = stateLateCopiedCellHeads(state),
-                                ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(None)(state)
+                                ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(None)(state),
+                                ownedDropPlainSuccessors = ownedDropPlainSuccessorsOf(drops)(temps)(state)
                             ))
                         |> (given (reset: CoreTcoReset) ->
                             state
                             |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
-                            |> append(ownedDropSlots(reset.ownedDrops))
+                            |> append(ownedDropSlots(state)(reset.ownedDrops))
                             |> append(frame.parameterSlots)
                             |> append(listActiveSlotsOf(frame.listActiveSlots))
                             |> TcoResetPending(reset.resetId)(temps
@@ -1255,30 +1297,13 @@ let transferredRootOfFact (fact: PatternBindingFact) (frame: CoreTcoLoopFrame) =
             else None
         | _ -> None
 
-// Stage 0 keys the facts by slot; a name bound in several arms transfers only when every fact of
-// that name names the same root with the same ownership.
-let recursive patternFactsAgree (fact: PatternBindingFact) (facts: List(PatternBindingFact)) =
-    match facts with
-        | [] -> true
-        | candidate :: rest -> candidate.ownership == fact.ownership && candidate.rootParameterOrdinal == fact.rootParameterOrdinal && patternFactsAgree(fact)(rest)
-
-// The parameter slot a tail self-call argument's pattern binding was extracted from, when the
-// ownership facts proved the binding to be that parameter's unchanged successor.
-let transferredPatternBindingRoot (argument: Expr) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+// The binder of this particular argument must be the transferred pattern child.
+let transferredPatternBindingRoot (argument: Expr) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match unspanArgument(argument) with
         | ExprVar(name) ->
-            match parameterSlotOfName(name)(frame)(state) with
-                | Some(_slot) -> None
-                | None ->
-                    match patternOwnerBinding(name)(state) with
-                        | Some(fact) -> transferredRootOfFact(fact)(frame)
-                        | None ->
-                            match patternFactsNamed(name)(loop.patternFacts) with
-                                | fact :: rest ->
-                                    if patternFactsAgree(fact)(rest)
-                                    then transferredRootOfFact(fact)(frame)
-                                    else None
-                                | [] -> None
+            match patternBindingFact(name)(state) with
+                | Some(fact) -> transferredRootOfFact(fact)(frame)
+                | None -> None
         | _ -> None
 
 let recursive unresolvedParameterTypes (slots: List(Int)) (state: CoreLoweringState) =
@@ -1342,7 +1367,7 @@ let listRootUnderActiveFlag (rootSlot: Int) (rootTemp: Int) (rootType: SemanticT
 let recursive transferPatternBindingArguments (arguments: List(Expr)) (temps: List(Int)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedRoots: List(Int)) =
     match (arguments, temps) with
         | (argument :: restArguments, temp :: restTemps) ->
-            match transferredPatternBindingRoot(argument)(frame)(loop)(state) with
+            match transferredPatternBindingRoot(argument)(frame)(state) with
                 | None -> transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)(state)(temp :: reversedTemps)(reversedRoots)
                 | Some(rootSlot) ->
                     match unresolvedParameterTypes(frame.parameterSlots)(state) with

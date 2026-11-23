@@ -56,6 +56,7 @@ Current codes:
 | `ASH045` | Invalid FFI out-parameter contract                         |
 | `ASH046` | Invalid native FFI string contract                         |
 | `ASH047` | Invalid root package override                              |
+| `ASH048` | Type or constructor of a module the referencing module does not import |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -71,8 +72,23 @@ coherence, and evidence resolution. Requirement failures include a deterministic
 original goal to the failing dependency. Coherence failures identify both conflicting source paths
 and source offsets so editor and command-line users can find both declarations.
 
+Messages name a trait by its module-qualified name (`Ashes.Trait.Eq(Int)`, `Shapes.Area(Circle)`),
+except a trait the program's entry module declares, which reads by its bare name (`Grow(List<a>)`)
+whether the entry file is compiled on its own, as a project's entry, or by the test runner.
+
 - `ASH010` — **Invalid trait declaration.** A trait has invalid parameters, methods, supertraits, a
-  malformed or unjustified `requires` clause, or an invalid `deriving` request.
+  malformed or unjustified `requires` clause, or an invalid `deriving` request. A method whose
+  signature mentions none of the trait's type parameters (see [language.md section 21.2](language.md#212-trait-declarations))
+  is rejected at the trait declaration:
+  `Method 'version' of trait 'Named' must mention at least one of the trait's type parameters.` A written requirement
+  on known types or one an implementation head matches (`Eq(Int)`, `Eq(List(a))`) is unjustified:
+  `Written requires clause includes unjustified requirement 'Ashes.Trait.Eq(Int)'.` The code also
+  reports an ambiguous requirement (see [language.md section 21.6](language.md#216-constrained-type-schemes-and-inference)):
+  one whose variable does not occur in its binding's type
+  (`Trait requirement 'Ashes.Trait.Add(a)' is ambiguous because its type variable does not occur in the binding type.`),
+  and one still open in the program's trailing expression, where no binding quantifies it and nothing
+  settles it; operators get no numeric default
+  (`Trait requirement 'Ashes.Trait.Add(a)' is ambiguous: its type cannot be determined from context, so no evidence can be supplied for it.`).
 - `ASH011` — **Invalid trait implementation.** An implementation names an unknown trait or method,
   has the wrong arity, omits a required method, has invalid requirements, or deriving cannot produce
   a legal ordinary implementation for a field.
@@ -117,6 +133,16 @@ and the binding/type import selectors. See
   imports (`import M.name`) bring the same unqualified name into scope. Disambiguate
   with `as`, for example `import M.name as m` and `import N.name as n`.
   Message: `Conflicting unqualified import selectors for 'name'.`
+
+- `ASH048` — **Type or constructor of a module that is not imported.** A type in an annotation (or
+  in a type declaration's field, a trait signature, or an `implement` head), a constructor in an
+  expression or pattern, or a record literal names, unqualified, a declaration of a module the
+  referencing module does not import, though the program reaches that module through another
+  import or a qualified reference. Standard-library modules follow the same rule; only `Unit`,
+  `Maybe`, `Result` and their constructors are built in. Import the declaring module (whole, under an
+  alias, or through a type selector). See [language.md section 13.1](language.md#131-accessing-standard-library).
+  Messages: `Type 'Shape' is declared in module 'Shapes', which this module does not import.` and
+  `Constructor 'Circle' is declared in module 'Shapes', which this module does not import.`
 
 ## Capability diagnostics
 

@@ -1,45 +1,150 @@
 IR (lowered)
 ============
 
-function __deepcopy_2  [AdtDeepCopier]
-  locals=2 temps=10
+function __rcnorm_2  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=25
     LoadLocal             Target=0 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    LoadEnv               Target=1 Index=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_11   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_representation_done_12   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_copy_11:
+    GetAdtTag             Target=3 Ptr=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_13   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcnorm_ctor_13:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rcnorm_end_15   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcnorm_ctor_14:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=32 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    IsReferenceCounted    Target=7 SourceTemp=6
+    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_16   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDup                 Target=8 SourceTemp=6 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_representation_done_17   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_copy_16:
+    CopyOutArena          DestTemp=9 SrcTemp=6 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=9   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_done_17:
+    LoadLocal             Target=10 Slot=4   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=10   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    GetAdtField           Target=11 Ptr=0 FieldIndex=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_18   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=13   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_representation_done_19   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_copy_18:
+    CopyOutList           DestTemp=14 SrcTemp=11 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=5 Source=14   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_done_19:
+    LoadLocal             Target=15 Slot=5   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=1 Source=15   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    GetAdtField           Target=16 Ptr=0 FieldIndex=2   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    IsReferenceCounted    Target=17 SourceTemp=16
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_20   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDup                 Target=18 SourceTemp=16 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=18   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_representation_done_21   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_copy_20:
+    LoadConstInt          Target=20 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    CallKnown             Target=21 FuncLabel=__rcnorm_2 EnvTemp=20 ArgTemp=16   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=6 Source=21   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_done_21:
+    LoadLocal             Target=22 Slot=6   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=2 Source=22   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=3 Source=5   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rcnorm_end_15   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcnorm_end_15:
+    LoadLocal             Target=23 Slot=3   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=2 Source=23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_done_12:
+    LoadLocal             Target=24 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Return                Source=24   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+
+function __rcdrop_general_3  [RuntimeManagedAdtDropper]
+  locals=3 temps=15
+    LoadLocal             Target=0 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     GetAdtTag             Target=2 Ptr=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_2_default   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-  __deepcopy_2_c0:
-    AllocAdt              Target=3 Tag=0 FieldCount=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    Return                Source=3   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-  __deepcopy_2_c1:
-    AllocAdt              Target=4 Tag=1 FieldCount=3   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
-    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    StoreMemOffset        BasePtr=4 OffsetBytes=16 Source=7   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=24   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    CallClosure           Target=9 ClosureTemp=1 ArgTemp=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    StoreMemOffset        BasePtr=4 OffsetBytes=24 Source=9   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    Return                Source=4   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-  __deepcopy_2_default:
-    Return                Source=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_general_ctor_24:
+    Jump                  Target=rcdrop_general_shared_23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_general_ctor_25:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=4 Ptr=0 FieldIndex=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=2 Source=4   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_list_26:
+    LoadLocal             Target=5 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadConstInt          Target=6 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    CmpIntNe              Target=7 Left=5 Right=6   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_end_28   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcIsUnique            Target=8 SourceTemp=5
+    JumpIfFalse           CondTemp=8 Target=rcdrop_list_shared_27   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadMemOffset         Target=9 BasePtr=5 OffsetBytes=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDrop                SourceTemp=5 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=10   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rcdrop_list_26   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_list_shared_27:
+    RcDrop                SourceTemp=5 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_28   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_list_end_28:
+    GetAdtField           Target=11 Ptr=0 FieldIndex=2   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadConstInt          Target=12 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    CallKnown             Target=13 FuncLabel=__rcdrop_general_3 EnvTemp=12 ArgTemp=11   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rcdrop_general_shared_23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rcdrop_general_shared_23:
+    RcDrop                SourceTemp=0 TypeName=Bag RuntimeManaged=true
+    LoadConstInt          Target=14 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Return                Source=14   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
 
 function lambda_1  [ClosureHelper from fill]
-  locals=24 temps=47
+  locals=28 temps=74
     LoadEnv               Target=0 Index=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     StoreLocal            Slot=2 Source=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadLocal             Target=43 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadArgumentOwnership Target=44   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadConstInt          Target=45 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    AndInt                Target=46 Left=44 Right=45   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    JumpIfFalse           CondTemp=46 Target=rc_arg_normalize_copy_7   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=23 Source=43   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_arg_normalize_done_8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_arg_normalize_copy_7:
+    IsReferenceCounted    Target=47 SourceTemp=43
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_9   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    RcDup                 Target=48 SourceTemp=43 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=48   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    Jump                  Target=rc_representation_done_10   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_copy_9:
+    LoadConstInt          Target=51 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    CallKnown             Target=52 FuncLabel=__rcnorm_2 EnvTemp=51 ArgTemp=43   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=24 Source=52   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_representation_done_10:
+    LoadLocal             Target=53 Slot=24   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=23 Source=53   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_arg_normalize_done_8:
+    LoadLocal             Target=54 Slot=23   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=1 Source=54   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadConstInt          Target=55 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    StoreLocal            Slot=6 Source=55   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     StoreLocal            Slot=5 Source=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
   lambda_1_body:
-    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
-    SaveStackPointer      Slot=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     LoadLocal             Target=2 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:6:8)
     LoadConstInt          Target=3 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:6:13)
     CmpIntEq              Target=4 Left=2 Right=3   (generic_collection_loop_reuses_matched_accumulator.ash:6:8)
     JumpIfFalse           CondTemp=4 Target=else_0   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
     LoadLocal             Target=5 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:8:15)
-    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=6 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
     CmpIntNe              Target=7 Left=5 Right=6   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
     JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_5   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
@@ -47,87 +152,113 @@ function lambda_1  [ClosureHelper from fill]
     LoadConstInt          Target=10 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
     CmpIntEq              Target=9 Left=8 Right=10   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
     JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_5   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    DropReuse             Target=11 SourceTemp=5 FieldCount=0
-    LoadConstInt          Target=12 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:9:24)
-    StoreLocal            Slot=10 Source=12   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
-    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    LoadConstInt          Target=11 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:9:24)
+    StoreLocal            Slot=11 Source=11   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
     Jump                  Target=match_end_2   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
   match_arm_cleanup_5:
-    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
-    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
     Jump                  Target=match_next_4   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
   match_next_4:
-    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
-    LoadConstInt          Target=13 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    CmpIntNe              Target=14 Left=5 Right=13   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_6   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    GetAdtTag             Target=15 Ptr=5   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    LoadConstInt          Target=17 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    CmpIntEq              Target=16 Left=15 Right=17   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_6   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    GetAdtField           Target=18 Ptr=5 FieldIndex=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    StoreLocal            Slot=17 Source=18   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    RcDrop                SourceTemp=18 TypeName=String OwnerSlot=17
-    GetAdtField           Target=19 Ptr=5 FieldIndex=1   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    StoreLocal            Slot=18 Source=19   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    RcDrop                SourceTemp=19 TypeName=List OwnerSlot=18
-    GetAdtField           Target=20 Ptr=5 FieldIndex=2   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    StoreLocal            Slot=19 Source=20   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    RcDrop                SourceTemp=20 TypeName=Bag OwnerSlot=19
-    DropReuse             Target=21 SourceTemp=5 FieldCount=3
-    LoadConstInt          Target=22 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:10:44)
-    StoreLocal            Slot=10 Source=22   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
-    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=12 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    CmpIntNe              Target=13 Left=5 Right=12   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_6   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    GetAdtTag             Target=14 Ptr=5   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    LoadConstInt          Target=16 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    CmpIntEq              Target=15 Left=14 Right=16   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_6   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    GetAdtField           Target=17 Ptr=5 FieldIndex=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    StoreLocal            Slot=18 Source=17   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    RcDrop                SourceTemp=17 TypeName=String OwnerSlot=18
+    GetAdtField           Target=18 Ptr=5 FieldIndex=1   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    StoreLocal            Slot=19 Source=18   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    RcDrop                SourceTemp=18 TypeName=List OwnerSlot=19
+    GetAdtField           Target=19 Ptr=5 FieldIndex=2   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    StoreLocal            Slot=20 Source=19   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    RcDrop                SourceTemp=19 TypeName=Bag OwnerSlot=20
+    LoadConstInt          Target=20 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:10:44)
+    StoreLocal            Slot=11 Source=20   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
     Jump                  Target=match_end_2   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
   match_arm_cleanup_6:
-    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
-    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
     Jump                  Target=match_none_3   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
   match_none_3:
-    LoadConstInt          Target=26 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    StoreLocal            Slot=10 Source=26   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    LoadConstInt          Target=24 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    StoreLocal            Slot=11 Source=24   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
   match_end_2:
-    LoadLocal             Target=27 Slot=10   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
-    StoreLocal            Slot=9 Source=27   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
+    LoadLocal             Target=25 Slot=11   (generic_collection_loop_reuses_matched_accumulator.ash:8:9)
+    StoreLocal            Slot=10 Source=25   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
     Jump                  Target=endif_1   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
   else_0:
-    LoadLocal             Target=28 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:15)
-    LoadConstInt          Target=29 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:19)
-    SubInt                Target=30 Left=28 Right=29   (generic_collection_loop_reuses_matched_accumulator.ash:11:15)
-    LoadConstStr          Target=31 StrLabel=str_0   (generic_collection_loop_reuses_matched_accumulator.ash:11:27)
-    LoadLocal             Target=32 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:52)
-    TextFromInt           Target=33 ValueTemp=32   (generic_collection_loop_reuses_matched_accumulator.ash:11:33)
-    ConcatStr             Target=34 Left=31 Right=33   (generic_collection_loop_reuses_matched_accumulator.ash:11:27)
-    LoadConstInt          Target=35 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
-    LoadConstStr          Target=36 StrLabel=str_1   (generic_collection_loop_reuses_matched_accumulator.ash:11:57)
-    Alloc                 Target=37 SizeBytes=16   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
-    StoreMemOffset        BasePtr=37 OffsetBytes=0 Source=36   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
-    StoreMemOffset        BasePtr=37 OffsetBytes=8 Source=35   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
-    LoadLocal             Target=38 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:63)
-    LoadConstInt          Target=39 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    StoreLocal            Slot=22 Source=38   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    JumpIfFalse           CondTemp=39 Target=rc_constructor_field_not_retained_7   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=22 Source=40   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-  rc_constructor_field_not_retained_7:
-    LoadLocal             Target=41 Slot=22   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    AllocAdt              Target=42 Tag=1 FieldCount=3   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    SetAdtField           Ptr=42 FieldIndex=0 Source=34   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    SetAdtField           Ptr=42 FieldIndex=1 Source=37   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    SetAdtField           Ptr=42 FieldIndex=2 Source=41   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
-    LoadLocal             Target=43 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    LoadLocal             Target=44 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    StoreLocal            Slot=2 Source=30   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    StoreLocal            Slot=1 Source=42   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    RestoreStackPointer   Slot=8   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    LoadLocal             Target=26 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:15)
+    LoadConstInt          Target=27 Value=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:19)
+    SubInt                Target=28 Left=26 Right=27   (generic_collection_loop_reuses_matched_accumulator.ash:11:15)
+    LoadConstStr          Target=29 StrLabel=str_0   (generic_collection_loop_reuses_matched_accumulator.ash:11:27)
+    LoadLocal             Target=30 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:52)
+    TextFromInt           Target=31 ValueTemp=30   (generic_collection_loop_reuses_matched_accumulator.ash:11:33)
+    ConcatStr             Target=32 Left=29 Right=31   (generic_collection_loop_reuses_matched_accumulator.ash:11:27)
+    LoadConstInt          Target=33 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
+    LoadConstStr          Target=34 StrLabel=str_1   (generic_collection_loop_reuses_matched_accumulator.ash:11:57)
+    Alloc                 Target=35 SizeBytes=16   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
+    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=34   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
+    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=33   (generic_collection_loop_reuses_matched_accumulator.ash:11:56)
+    LoadLocal             Target=36 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:63)
+    RcDup                 Target=37 SourceTemp=36
+    AllocAdt              Target=38 Tag=1 FieldCount=3   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
+    SetAdtField           Ptr=38 FieldIndex=0 Source=32   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
+    SetAdtField           Ptr=38 FieldIndex=1 Source=35   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
+    SetAdtField           Ptr=38 FieldIndex=2 Source=37   (generic_collection_loop_reuses_matched_accumulator.ash:11:22)
+    LoadLocal             Target=39 Slot=2   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    LoadLocal             Target=40 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    StoreLocal            Slot=2 Source=28   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    StoreLocal            Slot=1 Source=38   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    IsReferenceCounted    Target=60 SourceTemp=38
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_29
+    RcDup                 Target=61 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=61
+    Jump                  Target=rc_representation_done_30
+  rc_representation_copy_29:
+    IsReferenceCounted    Target=63 SourceTemp=38
+    JumpIfFalse           CondTemp=63 Target=rc_representation_copy_31
+    RcDup                 Target=64 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=64
+    Jump                  Target=rc_representation_done_32
+  rc_representation_copy_31:
+    LoadConstInt          Target=66 Value=0
+    CallKnown             Target=67 FuncLabel=__rcnorm_2 EnvTemp=66 ArgTemp=38
+    StoreLocal            Slot=27 Source=67
+  rc_representation_done_32:
+    LoadLocal             Target=68 Slot=27
+    StoreLocal            Slot=26 Source=68
+  rc_representation_done_30:
+    LoadLocal             Target=69 Slot=26
+    LoadLocal             Target=70 Slot=6
+    JumpIfFalse           CondTemp=70 Target=rc_tco_drop_inactive_33
+    LoadConstInt          Target=71 Value=0
+    CallKnown             Target=72 FuncLabel=__rcdrop_general_3 EnvTemp=71 ArgTemp=40
+  rc_tco_drop_inactive_33:
+    StoreLocal            Slot=1 Source=69
+    LoadConstInt          Target=73 Value=1
+    StoreLocal            Slot=6 Source=73
+    RestoreStackPointer   Slot=9   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
     Jump                  Target=lambda_1_body   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    LoadConstInt          Target=45 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
-    StoreLocal            Slot=9 Source=45   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
+    LoadConstInt          Target=41 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:11:10)
+    StoreLocal            Slot=10 Source=41   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
   endif_1:
-    LoadLocal             Target=46 Slot=9   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
-    Return                Source=46   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadLocal             Target=42 Slot=10   (generic_collection_loop_reuses_matched_accumulator.ash:6:5)
+    LoadLocal             Target=56 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadLocal             Target=57 Slot=6   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    JumpIfFalse           CondTemp=57 Target=rc_tco_exit_drop_inactive_22   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    LoadConstInt          Target=58 Value=0   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    CallKnown             Target=59 FuncLabel=__rcdrop_general_3 EnvTemp=58 ArgTemp=56   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+  rc_tco_exit_drop_inactive_22:
+    Return                Source=42   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from fill]
   locals=2 temps=4
@@ -143,7 +274,7 @@ function lambda_0  [SourceFunction from fill]
     Alloc                 Target=0 SizeBytes=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     LoadLocal             Target=1 Slot=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
-    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 AcceptsRuntimeManagedArgument=true   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
     Return                Source=4   (generic_collection_loop_reuses_matched_accumulator.ash:5:1)
 
 function _start_main  [ProgramEntry]

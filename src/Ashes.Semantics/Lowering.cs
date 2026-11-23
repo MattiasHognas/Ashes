@@ -84,6 +84,7 @@ public sealed partial class Lowering
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
+    private readonly Dictionary<TextSpan, TypeScheme> _recursiveHoverSignatures = [];
     // Generated derived-implementation bodies carry their type declaration's span, so an expression
     // hover with exactly that span is never recorded.
     private readonly HashSet<TextSpan> _derivedSpans = [];
@@ -97,7 +98,15 @@ public sealed partial class Lowering
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
     private SourceTextIndex[]? _moduleSourceIndexes;
     private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
+    private IReadOnlyDictionary<string, Dictionary<string, IReadOnlySet<string>>>? _qualifiedValueScopes;
     private IReadOnlyDictionary<string, ModuleProvenance>? _moduleProvenanceByPath;
+    private IReadOnlyDictionary<string, IReadOnlySet<string>>? _visibleModulesByModule;
+    private TextSpan? _typeReferenceSpan;
+    private readonly HashSet<TextSpan> _reportedUnimportedNameSpans = [];
+    private readonly Dictionary<int, string> _referencingModuleByOffset = [];
+
+    // Spans of the type declarations; code the compiler derives for a declaration carries its span.
+    private readonly HashSet<TextSpan> _typeDeclarationSpans = [];
 
     private readonly bool _hasAshesIO;
     private readonly IReadOnlyDictionary<string, string> _moduleAliases;
@@ -126,7 +135,6 @@ public sealed partial class Lowering
     // type (its body's type) at the call site.
     private sealed record HelperCoroutineInfo(string Name, List<string> ParamNames, Expr Body);
     private HelperCoroutineInfo? _pendingHelperCoroutine;
-    private readonly Dictionary<string, int> _coroutineHelperArity = new(StringComparer.Ordinal);
     private int _nextAsyncLoopId;
 
     private readonly Stack<ImmutableSortedDictionary<string, Binding>> _scopes = new();
@@ -1007,6 +1015,10 @@ public sealed partial class Lowering
         if (_enableInferredTraitElaboration)
         {
             program = ElaborateInferredTraitBindings(program);
+            if (_failedImmediateEvidenceProgram is { } failed)
+            {
+                return failed;
+            }
         }
 
         // External opaque names must be known before constructor fields are resolved, so an ADT field
@@ -1055,6 +1067,27 @@ public sealed partial class Lowering
         var body = DesugarTopLevel(valueItems, program.Body);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis", () => AnalyzeReuseCopyElision(body));
         return Lower(body);
+    }
+
+    /// <summary>
+    /// Lowers a native program whose entry point has no caller to supply trait dictionaries.
+    /// Inference clients use <see cref="Lower(Program)"/> to inspect residual requirements.
+    /// </summary>
+    public IrProgram LowerExecutable(Program program)
+    {
+        IrProgram ir = Lower(program);
+        if (_diag.StructuredErrors.Count == 0 && program.Body is { } body)
+        {
+            foreach (TraitConstraint constraint in LastTraitConstraints)
+            {
+                if (!IsConcreteTraitConstraint(constraint))
+                {
+                    ReportAmbiguousTraitRequirement(constraint, GetSpan(body));
+                    break;
+                }
+            }
+        }
+        return ir;
     }
 
     /// <summary>
@@ -3490,6 +3523,8 @@ public sealed partial class Lowering
             Expr.StrLit str => LowerStr(str),
             Expr.RuneLit rune => LowerRune(rune),
             Expr.BoolLit b => LowerBool(b),
+            Expr.Var v when Lookup(v.Name) is { CoroutineHelperArity: > 0 } helper =>
+                LowerCoroutineHelperReference(v, helper.CoroutineHelperArity, request),
             Expr.Var v => LowerVar(v, request),
             Expr.QualifiedVar qv => LowerQualifiedVar(qv, request),
             Expr.Add add => LowerAdd(add, request),
@@ -3609,35 +3644,29 @@ public sealed partial class Lowering
 
         RecordElementSpecializationRecursion(v.Name);
         var result = LowerVarBound(v, b, request);
+        RecordCallbackReference(v, result.Type);
 
-        RecordHoverType(
-            GetSpan(v),
-            v.Name,
-            result.Type,
-            GetHoverParameterNames(b),
-            GetHoverIsParameter(b));
+        if (b.DefinitionSpan is { } definition && _recursiveHoverSignatures.TryGetValue(definition, out TypeScheme? signature))
+        {
+            RecordHoverScheme(GetSpan(v), v.Name, signature, GetHoverParameterNames(b), isDefinition: false);
+        }
+        else
+        {
+            RecordHoverType(GetSpan(v), v.Name, result.Type, GetHoverParameterNames(b), GetHoverIsParameter(b));
+        }
 
         // Compiler-inferred borrowing.
         // When an owned binding is accessed, emit a Borrow instruction.
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        bool stablePatternTransfer = _loweringTcoBackEdgeArguments
-            && b is Binding.Local patternLocal
-            && _tcoCtx?.TryGetPatternBindingOwnership(
-                patternLocal.Slot,
-                out PatternBindingOwnershipFact? patternOwnership) == true
-            && patternOwnership?.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
-            && patternOwnership.RootParameterOrdinal >= 0
-            && patternOwnership.RootParameterOrdinal < _tcoCtx.ParamSlots.Count
-            && _tcoCtx.IsRuntimeManagedSlot(
-                _tcoCtx.ParamSlots[patternOwnership.RootParameterOrdinal]);
         bool runtimeManagedResult = ownerInfo is { RuntimeManaged: true }
-            || stablePatternTransfer
+            || IsStableRuntimePatternTransfer(b)
             || b is Binding.Local runtimeLocal && IsRuntimeManagedTcoParamSlot(runtimeLocal);
         if (runtimeManagedResult)
         {
-            MarkRuntimeManagedTemp(result.Temp);
+            MarkRuntimeManagedTemp(result.Temp, ownership: b is Binding.Scheme && !_tempOwnershipFacts.ContainsKey(result.Temp)
+                ? LoweredTempOwnershipKind.Borrowed : null);
         }
         if (ownerInfo is not null && !ownerInfo.IsDropped)
         {
@@ -3652,6 +3681,20 @@ public sealed partial class Lowering
         }
 
         return result;
+    }
+
+    private bool IsStableRuntimePatternTransfer(Binding binding)
+    {
+        return _loweringTcoBackEdgeArguments
+            && binding is Binding.Local patternLocal
+            && _tcoCtx?.TryGetPatternBindingOwnership(
+                patternLocal.Slot,
+                out PatternBindingOwnershipFact? patternOwnership) == true
+            && patternOwnership?.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
+            && patternOwnership.RootParameterOrdinal >= 0
+            && patternOwnership.RootParameterOrdinal < _tcoCtx.ParamSlots.Count
+            && _tcoCtx.IsRuntimeManagedSlot(
+                _tcoCtx.ParamSlots[patternOwnership.RootParameterOrdinal]);
     }
 
     private (int, TypeRef) LowerVarUnbound(
@@ -3747,7 +3790,7 @@ public sealed partial class Lowering
         switch (b)
         {
             case Binding.Local loc:
-                LoadLocalWithBytesProvenance(temp, loc, v);
+                LoadLocalWithBytesProvenance(temp, loc.Slot, loc.Type, v);
                 result = (temp, loc.Type);
                 break;
             case Binding.Env env:
@@ -3786,8 +3829,8 @@ public sealed partial class Lowering
                 break;
 
             case Binding.Scheme sch:
-                Emit(new IrInst.LoadLocal(temp, sch.Slot));
                 result = (temp, Instantiate(sch.S));
+                LoadLocalWithBytesProvenance(temp, sch.Slot, result.Type, v, recordPlainBorrow: false);
                 break;
 
             default:
@@ -3842,21 +3885,24 @@ public sealed partial class Lowering
         || function.ReturnType is FfiType.NativeString
         || function.ParameterTypes.Any(type => type is FfiType.Buffer or FfiType.Out);
 
-    private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
+    private void LoadLocalWithBytesProvenance(int temp, int slot, TypeRef type, Expr.Var variable, bool recordPlainBorrow = true)
     {
-        Emit(new IrInst.LoadLocal(temp, local.Slot));
-        if (TryStampAffineAppendLoad(temp, local.Slot))
+        Emit(new IrInst.LoadLocal(temp, slot));
+        if (TryStampAffineAppendLoad(temp, slot))
         {
             return;
         }
 
+        bool hasProvenance = _localBytesProvenance.TryGetValue(slot, out BuiltinRegistry.BytesOwnershipProvenance provenance);
+        if (!recordPlainBorrow && !hasProvenance)
+        {
+            return;
+        }
         RecordUnknownBorrowedTemp(
             temp,
             ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
-            local.Type);
-        if (_localBytesProvenance.TryGetValue(
-                local.Slot,
-                out BuiltinRegistry.BytesOwnershipProvenance provenance))
+            type);
+        if (hasProvenance)
         {
             RefineTempBytesProvenance(temp, provenance);
         }
@@ -4013,8 +4059,8 @@ public sealed partial class Lowering
         SequentialBindingKind Kind,
         string Name,
         bool PopInlinableShadow,
-        bool RemoveCoroutineHelperMarker,
-        bool SuppressArenaReclaim = false)
+        bool SuppressArenaReclaim = false,
+        bool TransfersOwnedResult = false)
     {
         /// <summary>
         /// The binding this frame was pushed for, so the instructions it emits on the way out carry its
@@ -4063,16 +4109,18 @@ public sealed partial class Lowering
             {
                 PopInlinableShadow(frame.Name);
             }
-            if (frame.RemoveCoroutineHelperMarker)
-            {
-                _coroutineHelperArity.Remove(frame.Name);
-            }
             if (frame.Kind == SequentialBindingKind.Ordinary && frame.Binding is Expr.Let settledLet)
             {
                 SettleLetScopedTakenOver(settledLet);
             }
 
             _currentSourceExpr = frame.Binding ?? enclosingSourceExpr;
+            if (frame.TransfersOwnedResult)
+            {
+                // Only the final forwarded read takes the outgoing reference. Earlier
+                // reads from the same moved-at-exit binding still borrow it.
+                MarkRuntimeManagedTemp(result.Temp, type: result.Type, ownership: LoweredTempOwnershipKind.NewlyProduced);
+            }
             result = frame.Kind == SequentialBindingKind.Ordinary
                 ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
                 : PopRecursiveLetScope(result);
@@ -4108,6 +4156,7 @@ public sealed partial class Lowering
         int depth0Before = _depth0LambdaCount;
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
 
+        int firstDemand = _traitDemands.Count;
         PushTraitConstraintScope();
         (int valueTemp, TypeRef valueType) value = LowerSequentialLetValueWithAffineArming(
             let,
@@ -4129,14 +4178,15 @@ public sealed partial class Lowering
             value.valueType,
             inferredRequirements,
             writtenRequirements,
-            needsLateTraitTypeHint);
+            needsLateTraitTypeHint,
+            firstDemand);
 
         LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
         RegisterElementSpecializationCandidate(let.Name, let, let.Value, scheme, abstractElementTmcDeclinesBefore);
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
-        TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
+        bool transfersOwnedResult = TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         bool shadowed = PushSequentialLetInlinableShadow(let);
@@ -4144,8 +4194,8 @@ public sealed partial class Lowering
             SequentialBindingKind.Ordinary,
             let.Name,
             shadowed,
-            RemoveCoroutineHelperMarker: false,
-            SuppressArenaReclaim: affineArm is not null);
+            SuppressArenaReclaim: affineArm is not null,
+            TransfersOwnedResult: transfersOwnedResult);
     }
 
     // Stores the bound value in the binding's slot, noting the name as a binder of the owned slot
@@ -4165,7 +4215,8 @@ public sealed partial class Lowering
         TypeRef valueType,
         IReadOnlyList<TraitConstraint> inferredRequirements,
         IReadOnlyList<TraitConstraint> writtenRequirements,
-        bool needsLateTraitTypeHint)
+        bool needsLateTraitTypeHint,
+        int firstDemand)
     {
         bool hasInferredElaboration = _inferredTraitBindingElaborations.ContainsKey(
             TraitBindingKey(binding));
@@ -4177,6 +4228,7 @@ public sealed partial class Lowering
             binding.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(binding.Name));
         TypeScheme scheme = GeneralizeBindingType(Prune(valueType), schemeRequirements);
+        scheme = FinishBindingDemands(binding, valueType, scheme, firstDemand);
         RegisterTraitDictionarySchemeForLet(binding, scheme);
         RecordInferredTraitBindingElaboration(
             binding,
@@ -4636,14 +4688,48 @@ public sealed partial class Lowering
 
     private Expr TransformTraitDictionaryLetValue(
         Expr.Let let,
-        TraitDictionaryFunctionInfo info) =>
-        TransformTraitDictionaryValue(
-            let.Value,
+        TraitDictionaryFunctionInfo info)
+    {
+        Expr Transform(Expr value) => TransformTraitDictionaryValue(
+            value,
             info,
-            threadDictionaryFunctions: true,
-            rewriteMethodReferences: !let.Name.StartsWith(
-                "__trait_validate_implementation_",
-                StringComparison.Ordinal));
+            threadDictionaryFunctions: true);
+
+        if (let.Value is not Expr.Call)
+        {
+            return Transform(let.Value);
+        }
+
+        List<Expr> arguments = [];
+        Expr root = CollectCallArgs(let.Value, arguments);
+        if (ResolveSpecializableCalleeName(root) is not { } callee
+            || !TryGetTraitDictionaryInfo(callee, Lookup(callee), out _)
+            || TryGetKnownBindingType(Lookup(callee)) is not { } calleeType
+            || NthCurriedArgType(calleeType, arguments.Count) is null)
+        {
+            return Transform(let.Value);
+        }
+
+        // The hidden dictionary is supplied at each use. Evaluate the source arguments
+        // when the partial is bound and capture their values in that dictionary closure.
+        string CaptureName(int index) =>
+            $"$partial{info.SourceOffset}_{index}";
+        Expr application = root;
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            Expr read = new Expr.Var(CaptureName(index));
+            AstSpans.Set(read, AstSpans.GetOrDefault(arguments[index]));
+            application = new Expr.Call(application, read);
+            AstSpans.Set(application, AstSpans.GetOrDefault(let.Value));
+        }
+        Expr closure = Transform(application);
+        for (int index = arguments.Count - 1; index >= 0; index--)
+        {
+            closure = new Expr.Let(CaptureName(index), arguments[index], closure);
+            AstSpans.Set(closure, AstSpans.GetOrDefault(let.Value));
+        }
+        return closure;
+    }
 
     private (int Temp, TypeRef Type) LowerLetValue(
         Expr.Let let,
@@ -6497,12 +6583,12 @@ public sealed partial class Lowering
         SetScopedOwnershipAlias(name, ResolveOwnershipAlias(aliasSourceName));
     }
 
-    private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
+    private bool TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         if (_collectInferredTraitElaboration
             || _borrowedTraitDictionaryBindings.Contains(let.Name))
         {
-            return;
+            return false;
         }
         var prunedValueType = Prune(valueType);
         RefineTempOwnershipType(valueTemp, prunedValueType);
@@ -6546,6 +6632,7 @@ public sealed partial class Lowering
                 if (runtimeManaged && IsTailForwardedBindingResult(let.Body, let.Name))
                 {
                     LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
+                    return true;
                 }
                 else if (!runtimeManaged && LookupOwnedValue(let.Name) is { } arenaOwner)
                 {
@@ -6553,6 +6640,7 @@ public sealed partial class Lowering
                 }
             }
         }
+        return false;
     }
 
 
@@ -6791,8 +6879,7 @@ public sealed partial class Lowering
             runtimeBinding,
             innerLambda,
             recursiveType,
-            request.WithoutExpectedType(),
-            out bool helperMarkerAdded);
+            request.WithoutExpectedType(), usesTraitDictionary ? signature : null);
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
         (inferredRequirements, needsLateTraitTypeHint) = NormalizeRecursiveTraitRequirements(
@@ -6820,8 +6907,7 @@ public sealed partial class Lowering
         return new SequentialBindingFrame(
             SequentialBindingKind.Recursive,
             letRecursive.Name,
-            PopInlinableShadow: false,
-            RemoveCoroutineHelperMarker: helperMarkerAdded);
+            PopInlinableShadow: false);
     }
 
     private ResolvedBindingSignature ResolveRecursiveTraitSignature(
@@ -6851,9 +6937,27 @@ public sealed partial class Lowering
             ?? ResolveInferredTraitBindingTypeHint(binding.Name, binding.Value);
         if (seedType is not null && !usesTraitDictionary)
         {
-            Unify(recursiveType, seedType);
+            int helperArity = Lookup(binding.Name)?.CoroutineHelperArity ?? 0;
+            Unify(recursiveType, helperArity == 0 ? seedType : CoroutineHelperFactoryType(seedType, helperArity));
         }
         return seedType;
+    }
+
+    // The declaration describes the logical function, while its recursive slot contains
+    // the factory. Only its fully applied body is represented by a transparent task.
+    private TypeRef CoroutineHelperFactoryType(TypeRef source, int arity)
+    {
+        if (arity == 0)
+        {
+            return CreateStringTaskType(source);
+        }
+        if (Prune(source) is TypeRef.TFun function)
+        {
+            return function with { Ret = CoroutineHelperFactoryType(function.Ret, arity - 1) };
+        }
+        TypeRef.TFun arrow = new(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() };
+        Unify(source, arrow);
+        return arrow with { Ret = CoroutineHelperFactoryType(arrow.Ret, arity - 1) };
     }
 
     private sealed record RecursiveTraitEvidenceElaboration(
@@ -6887,25 +6991,20 @@ public sealed partial class Lowering
         return new RecursiveTraitEvidenceElaboration(runtimeBinding, signature, info, usesDictionary);
     }
 
-    private (int, TypeRef) LowerLetRecursiveValue(
+    private (int, TypeRef) LowerLetRecursiveValueCore(
         Expr.LetRecursive letRecursive,
         Expr.Lambda? innerLambda,
         TypeRef recursiveType,
-        LoweredValueRequest request,
-        out bool helperMarkerAdded)
+        LoweredValueRequest request)
     {
-        helperMarkerAdded = false;
         if (letRecursive.Value is Expr.Lambda coroutineLambda
-            && _inCoroutineBody
-            && !IsAsyncIntrinsicCall(GetInnermostBody(coroutineLambda))
-            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(coroutineLambda)))
+            && Lookup(letRecursive.Name) is { CoroutineHelperArity: > 0 })
         {
             return LowerLetRecursiveCoroutineHelperValue(
                 letRecursive,
                 coroutineLambda,
                 recursiveType,
-                request,
-                out helperMarkerAdded);
+                request);
         }
         if (letRecursive.Value is Expr.Lambda lambda)
         {
@@ -6959,7 +7058,19 @@ public sealed partial class Lowering
             : NewTypeVar();
         RecordLocalDebugInfo(slot, letRecursive.Name, recursiveType);
 
-        var self = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive));
+        int helperArity = 0;
+        if (_inCoroutineBody && letRecursive.Value is Expr.Lambda lambda)
+        {
+            Expr body = GetInnermostBody(lambda);
+            if (!IsAsyncIntrinsicCall(body) && ContainsAwaitOutsideNestedLambda(body))
+            {
+                helperArity = CollectLambdaParams(lambda).Count;
+            }
+        }
+        var self = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))
+        {
+            CoroutineHelperArity = helperArity,
+        };
         _letRecursiveSelfLocals.Add(self);
         _scopes.Push(_scopes.Peek().SetItem(letRecursive.Name, self));
         return recursiveType;
@@ -7061,19 +7172,12 @@ public sealed partial class Lowering
         Expr.LetRecursive letRecursive,
         Expr.Lambda lam,
         TypeRef recursiveType,
-        LoweredValueRequest request,
-        out bool helperMarkerAdded)
+        LoweredValueRequest request)
     {
-        var loopParamCount = DescribeTcoLambdaChain(lam).Parameters.Count;
         var savedPending = _pendingHelperCoroutine;
         var savedHelperTco = _tcoCtx;
         _tcoCtx = null;
         _pendingHelperCoroutine = new HelperCoroutineInfo(letRecursive.Name, CollectLambdaParams(lam), GetInnermostBody(lam));
-        helperMarkerAdded = !_coroutineHelperArity.ContainsKey(letRecursive.Name);
-        if (helperMarkerAdded)
-        {
-            _coroutineHelperArity[letRecursive.Name] = loopParamCount;
-        }
 
         var valueAndType = LowerLambdaRecursive(
             letRecursive.Name,
@@ -7273,9 +7377,11 @@ public sealed partial class Lowering
             SuppressSourceConstraintDiagnostics(letRecursive.Name));
         ImmutableSortedDictionary<string, Binding> selfScope = _scopes.Pop();
         TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
+        TypeScheme sourceScheme = RecursiveSourceScheme(selfScope[letRecursive.Name], recursiveScheme);
+        RegisterRecursiveDemandScheme(letRecursive.Value, recursiveScheme);
         RecordInferredTraitBindingElaboration(
             letRecursive,
-            recursiveScheme,
+            sourceScheme,
             writtenRequirements,
             inferredRequirements,
             needsLateTraitTypeHint);
@@ -7290,19 +7396,29 @@ public sealed partial class Lowering
             new Binding.Scheme(
                 slot,
                 recursiveScheme,
-                AstSpans.GetLetRecursiveNameOrDefault(letRecursive))));
+                AstSpans.GetLetRecursiveNameOrDefault(letRecursive))
+            {
+                CoroutineHelperArity = selfScope[letRecursive.Name].CoroutineHelperArity,
+            }));
         ValidateBindingConstraintBoundary(
             recursiveScheme,
             GetSpan(letRecursive));
         RecordHoverScheme(
             AstSpans.GetLetRecursiveNameOrDefault(letRecursive),
             letRecursive.Name,
-            recursiveScheme,
+            sourceScheme,
             GetDeclaredHoverParameterNames(letRecursive.Value));
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
         RegisterLoweredRecursiveFunctionIdentity(letRecursive, slot, recursiveScheme);
         RegisterNestedRecursiveFunctionLabel(letRecursive, slot, valueAndType.valTemp);
     }
+
+    // Replay uses an inferred signature exactly like a written source annotation. A
+    // coroutine factory's physical Task result must stay private to its closure slot.
+    private TypeScheme RecursiveSourceScheme(Binding binding, TypeScheme scheme) =>
+        binding.CoroutineHelperArity > 0 && CoroutineHelperSourceType(scheme.Body, binding.CoroutineHelperArity) is { } body
+            ? new TypeScheme(scheme.Quantified, body, scheme.Constraints)
+            : scheme;
 
     // A `let recursive` helper declared inside a function body is called through its local slot,
     // whose closure has a statically known code label just as a top-level one does. Registering it
@@ -7581,8 +7697,11 @@ public sealed partial class Lowering
     // release is emitted once after the whole if (the loop-continuing branch has already re-consed or
     // dropped it), so unlike a match arm, whose scope exit can transfer the owner into the result,
     // the branch must retain; the marker becomes a runtime retain when the root parameter is
-    // runtime-managed. Every other returned binding transfers exactly as a match arm's would.
-    private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp, bool tailPosition)
+    // runtime-managed. Every other returned binding transfers exactly as a match arm's would, except
+    // that only a match arm (`matchArm`) owns bindings of its own: an `if` branch outside tail
+    // position returning an owner bound before the `if` takes a reference of its own, since the
+    // binding's release follows the whole `if` and code after it may read the binding.
+    private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp, bool tailPosition, bool matchArm)
     {
         Expr result = branch;
         while (result is Expr.Let let)
@@ -7626,7 +7745,7 @@ public sealed partial class Lowering
             return NormalizeBranchResultBorrowingRuntimeOwner(branchTemp);
         }
 
-        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp);
+        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp, matchArm, tailPosition);
     }
 
     // An arena binding that stores children of a reference-counted owner still alive in this frame:
@@ -7708,7 +7827,7 @@ public sealed partial class Lowering
             : LowerIfElseBranch(branch, request, expectedType, normalizeStaticString);
         EndExclusiveBranch(credits);
         temp = NormalizeParameterPassthroughBranch(branch, temp);
-        temp = TransferDirectRuntimeManagedBranchResult(branch, temp, _tcoCtx?.InTailPosition ?? false);
+        temp = TransferDirectRuntimeManagedBranchResult(branch, temp, _tcoCtx?.InTailPosition ?? false, matchArm: false);
         Emit(new IrInst.StoreLocal(slot, temp));
         store = (IrInst.StoreLocal)_inst[^1];
         return (temp, Prune(type));
@@ -9464,7 +9583,7 @@ public sealed partial class Lowering
         {
             // An unknown type name in the annotation is reported at the parameter it annotates.
             using IDisposable parameterSpan = PushDiagnosticSpan(AstSpans.GetLambdaParameterOrDefault(lam));
-            Unify(paramTy, ResolveInlineParameterAnnotation(inlineAnnotation));
+            Unify(paramTy, WithTypeReferenceSpan(AstSpans.GetLambdaParameterOrDefault(lam), () => ResolveInlineParameterAnnotation(inlineAnnotation)));
         }
 
         LowerLambdaCoreSeedParamTypeFromConstructorFields(lam, paramTy);
@@ -10023,12 +10142,16 @@ public sealed partial class Lowering
         }
         else if (selfName is not null && selfType is not null)
         {
-            scope[selfName] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
+            Binding? selfBinding = Lookup(selfName);
+            scope[selfName] = new Binding.Self(label, selfType, captures.Count * 8, selfBinding?.DefinitionSpan)
+            {
+                CoroutineHelperArity = selfBinding?.CoroutineHelperArity ?? 0,
+            };
             if (selfAliases is not null)
             {
                 foreach (var alias in selfAliases)
                 {
-                    scope[alias] = new Binding.Self(label, selfType, captures.Count * 8, Lookup(selfName)?.DefinitionSpan);
+                    scope[alias] = scope[selfName];
                 }
             }
         }
@@ -10056,6 +10179,10 @@ public sealed partial class Lowering
                 scheme.DefinitionSpan),
             _ => new Binding.Env(environmentIndex, binding.Type, binding.DefinitionSpan),
         };
+        if (binding.CoroutineHelperArity > 0)
+        {
+            captured = captured with { CoroutineHelperArity = binding.CoroutineHelperArity };
+        }
 
         // A capture of a function's own name (its `let recursive` local or its self binding) is that
         // function too.
@@ -11586,6 +11713,11 @@ public sealed partial class Lowering
             return tailCallResult;
         }
 
+        if (TryLowerCoroutineHelperCall(call, rootExpr, collectedArgs, request) is { } helperResult)
+        {
+            return helperResult;
+        }
+
         if (LowerCallTryParallelAndReuseForms(call, rootExpr, collectedArgs) is { } routedResult)
         {
             return routedResult;
@@ -11599,11 +11731,6 @@ public sealed partial class Lowering
         if (LowerCallTryReuseInlineForm(rootExpr, collectedArgs, request) is { } reuseInlineResult)
         {
             return reuseInlineResult;
-        }
-
-        if (LowerCallTryCoroutineHelperForm(call, rootExpr, collectedArgs) is { } helperResult)
-        {
-            return helperResult;
         }
 
         if (LowerCallDirectNamedBinding(rootExpr, collectedArgs, request) is { } namedBindingResult)
@@ -11938,7 +12065,7 @@ public sealed partial class Lowering
         {
             return reuse;
         }
-        return TryLowerTraitDictionaryFunctionCall(rootExpression, arguments, GetSpan(call));
+        return TryLowerTraitDictionaryFunctionCall(rootExpression, arguments, GetSpan(call), request.ExpectedType);
     }
 
     private (int, TypeRef)? LowerCallTryParallelAndReuseForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
@@ -13517,31 +13644,44 @@ public sealed partial class Lowering
     // a saturated call awaits it implicitly and yields the helper body's own type — source-level
     // transparency for `let recursive` loops with awaits. (Self tail calls were already taken by
     // the TCO branch above and restart the coroutine in place.)
-    private (int, TypeRef)? LowerCallTryCoroutineHelperForm(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    // A helper passed as a value exposes its source-level curried function. Its last
+    // application obtains the raw result through the same saturated call as a direct use.
+    private (int, TypeRef) LowerCoroutineHelperReference(Expr.Var helper, int arity, LoweredValueRequest request)
     {
-        if (rootExpr is Expr.Var helperVar
-            && _coroutineHelperArity.TryGetValue(helperVar.Name, out int helperArity)
-            && collectedArgs.Count == helperArity
-            && Lookup(helperVar.Name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme or Binding.Self)
+        Expr expression = helper;
+        for (int index = 0; index < arity; index++)
         {
-            _coroutineHelperArity.Remove(helperVar.Name);
-            var (helperTaskTemp, helperTaskType) = LowerCall(
-                call,
-                LoweredValueRequest.None);
-            _coroutineHelperArity[helperVar.Name] = helperArity;
-
-            _usesAsync = true;
-            int helperResultTemp = NewTemp();
-            Emit(_inCoroutineBody
-                ? new IrInst.AwaitTask(helperResultTemp, helperTaskTemp)
-                : new IrInst.RunTask(helperResultTemp, helperTaskTemp));
-            var helperSuccessType = Prune(helperTaskType) is TypeRef.TNamedType { TypeArgs.Count: 2 } taskNamed
-                ? taskNamed.TypeArgs[1]
-                : NewTypeVar();
-            return (helperResultTemp, helperSuccessType);
+            expression = new Expr.Call(expression, new Expr.Var($"$coroutineArg{index}"));
         }
+        for (int index = arity - 1; index >= 0; index--)
+        {
+            expression = new Expr.Lambda($"$coroutineArg{index}", expression);
+        }
+        AstSpans.Set(expression, GetSpan(helper));
+        return LowerLambda((Expr.Lambda)expression, request: request);
+    }
 
-        return null;
+    private (int, TypeRef)? TryLowerCoroutineHelperCall(Expr.Call call, Expr root, List<Expr> arguments, LoweredValueRequest request)
+    {
+        if (root is not Expr.Var helper || Lookup(helper.Name) is not { CoroutineHelperArity: > 0 } binding)
+        {
+            return null;
+        }
+        if (arguments.Count != binding.CoroutineHelperArity)
+        {
+            return LowerCallGeneral(call, helper, arguments, request);
+        }
+        (int taskTemp, TypeRef taskType) = LowerCallGeneral(
+            call, helper, arguments, LoweredValueRequest.None, physicalHelper: helper);
+        _usesAsync = true;
+        int resultTemp = NewTemp();
+        Emit(_inCoroutineBody
+            ? new IrInst.AwaitTask(resultTemp, taskTemp)
+            : new IrInst.RunTask(resultTemp, taskTemp));
+        TypeRef successType = Prune(taskType) is TypeRef.TNamedType { TypeArgs.Count: 2 } task
+            ? task.TypeArgs[1]
+            : NewTypeVar();
+        return (resultTemp, successType);
     }
 
     private (int, TypeRef) LowerCallIntrinsic(
@@ -14034,7 +14174,8 @@ public sealed partial class Lowering
         Expr.Call call,
         Expr rootExpr,
         List<Expr> collectedArgs,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        Expr.Var? physicalHelper = null)
     {
         NoteDiscardedResultArgument(rootExpr, collectedArgs);
         // Keep call-chain intermediates in an independent reclaimable arena window.
@@ -14044,7 +14185,7 @@ public sealed partial class Lowering
 
         // For non-TCO calls, sub-expressions are NOT in tail position
         using TcoTailPositionScope tailPosition = new(_tcoCtx);
-        (int currentTemp, TypeRef currentType) = LowerCallRoot(rootExpr, collectedArgs);
+        (int currentTemp, TypeRef currentType) = physicalHelper is null ? LowerCallRoot(rootExpr, collectedArgs) : LowerVar(physicalHelper);
         currentType = Prune(currentType);
         if (currentType is TypeRef.TNever)
         {
@@ -14948,7 +15089,9 @@ public sealed partial class Lowering
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
 
+            int firstArgumentDemand = _traitDemands.Count;
             (int argTemp, TypeRef argType) = LowerCallArgumentValue(rootExpr, collectedArgs, i, funType);
+            NoteCallbackArgument(rootExpr, collectedArgs, i, argType, firstArgumentDemand);
             if (i == 0 && elementCandidate is not null)
             {
                 elementSpecializationScopeDepth = TryRouteToElementSpecialization(
@@ -15340,8 +15483,7 @@ public sealed partial class Lowering
             // A stdlib/module-qualified callee (e.g. `Ashes.Collection.HashMap.set`) resolves the
             // same way LowerQualifiedVar's exported-binding path does: through the sanitized,
             // module-prefixed export name, not a plain Lookup of the unqualified name.
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         TypeScheme? scheme = binding switch
@@ -15393,8 +15535,7 @@ public sealed partial class Lowering
         Binding? binding = rootExpr switch
         {
             Expr.Var variable => Lookup(variable.Name),
-            Expr.QualifiedVar qualified => Lookup(
-                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            Expr.QualifiedVar qualified => LookupQualifiedValue(qualified),
             _ => null,
         };
         TypeScheme? scheme = binding switch
@@ -18652,9 +18793,12 @@ public sealed partial class Lowering
         // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) or of a
         // reference-counted literal chain takes a tail built the same way.
         bool tailKeepsRequest = ConsTailKeepsRequest(cons, request);
-        LoweredValueRequest tailRequest = tailKeepsRequest
-            ? request.WithExpectedType(listType)
-            : LoweredValueRequest.None.WithExpectedType(listType);
+        LoweredValueRequest tailRequest = EscapingTailCellRequest(
+            cons,
+            tailKeepsRequest
+                ? request.WithExpectedType(listType)
+                : LoweredValueRequest.None.WithExpectedType(listType),
+            transfersChildren);
         bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
         var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
         if (chainTail)
@@ -18706,6 +18850,16 @@ public sealed partial class Lowering
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
+
+    // A tail that is itself a cell (`first :: second :: more`) escapes with the cell it is the tail
+    // of: an escaping cell's children are transferred out of their owners' scope, so the tail cell's
+    // head takes a reference of its own too. Without it the tail cell only borrowed `second`, and the
+    // scope releasing the matched list freed it while the result still held it. A cell the back edge
+    // copies borrows its parts, and so does its tail cell.
+    private LoweredValueRequest EscapingTailCellRequest(Expr.Cons cons, LoweredValueRequest tailRequest, bool transfersChildren)
+        => transfersChildren && cons.Tail is Expr.Cons && !IsBackEdgeCopiedCell(cons) && !IsBackEdgeCopiedCell(cons.Tail)
+            ? tailRequest with { TransfersRuntimeManagedChildren = true }
+            : tailRequest;
 
     // Every cell of a chain consed onto a loop's list parameter is reference-counted, not only the
     // first. A reference-counted cell over the rest of a literal chain (`1 :: 2 :: []` as a
@@ -18809,11 +18963,14 @@ public sealed partial class Lowering
             && (type is TypeRef.TList or TypeRef.TTuple
                 || (type is TypeRef.TNamedType named && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)));
 
+    // A head that is a retain the call's argument frame already collected (an alias's owner
+    // retained for the cell) is released after the call, so it does not also go to a slot.
     private void KeepEscapingArenaCellFreshHeadOwned(LoweredValue head)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
+            || CollectsCallArgumentRetain(head.Temp)
             || CopiesFreshScalarListHeadIntoLoopCell(head)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
             || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
@@ -19290,6 +19447,10 @@ public sealed partial class Lowering
         if (tco.ResultType is { } resultType)
         {
             RecordControlFlowJoinTemp(resultTemp, Prune(resultType), bodyRuntimeManaged, bodyNewlyProduced);
+            if (bodyRuntimeManaged)
+            {
+                tco.TmcExitTransfer = (resultTemp, bodyTemp);
+            }
         }
         return resultTemp;
     }
@@ -19584,8 +19745,8 @@ public sealed partial class Lowering
             return;
         }
 
-        var synthesized = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
-        if (!bnd.Contains(synthesized)
+        string? synthesized = QualifiedValueBindingName(qv);
+        if (synthesized is not null && !bnd.Contains(synthesized)
             && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
         {
             res.Add(synthesized);

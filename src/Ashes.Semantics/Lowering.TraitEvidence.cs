@@ -48,6 +48,8 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TraitDictionaryParameterMetadata> _traitDictionaryParameterMetadata =
         new(StringComparer.Ordinal);
 
+    private readonly HashSet<string> _selectedTraitMethodBindings = new(StringComparer.Ordinal);
+
     private readonly HashSet<string> _borrowedTraitDictionaryBindings = new(StringComparer.Ordinal);
 
     private readonly HashSet<IrInst> _traitEvidenceConstructionInstructions =
@@ -103,6 +105,12 @@ public sealed partial class Lowering
     private readonly Dictionary<(string Name, int Position), TypeExpr>
         _inferredTraitBindingTypeHints = [];
 
+    // The annotations the compiler writes for bindings: the ones the discovery pass infers for
+    // unannotated bindings and the trait signatures it checks implementations against. They name
+    // types the user did not write, so they are not checked against the binding module's imports.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TypeExpr, TypeExpr>
+        CompilerWrittenAnnotations = new();
+
     // A trait goal whose type was still a variable when its use site was lowered, recorded by the
     // discovery pass so the emitting pass can pin it. Inference can learn such a type AFTER the use
     // site — a comparison inside an expression whose later part is what fixes the operand's type — and
@@ -114,24 +122,64 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TraitConstraint> _provenAmbiguousTraitGoalTypes =
         new(StringComparer.Ordinal);
 
+    // How often the emitting pass has asked for each site's proven type: the ordinal of the lowering
+    // a site proven per lowering is pinned for.
+    private readonly Dictionary<string, int> _pinnedAmbiguousTraitGoalOccurrences =
+        new(StringComparer.Ordinal);
+
     /// <summary>
     /// The goals recorded during this pass whose type the pass's own substitution has since resolved to a
-    /// concrete one. Read off the discovery pass once it has lowered everything.
+    /// concrete one. Read off the discovery pass once it has lowered everything. A site lowered more
+    /// than once that resolved to different types (a shipped implementation's body, lowered once per
+    /// dictionary it is built for) is proven per lowering instead, under the site's key and the
+    /// lowering's ordinal (<see cref="AmbiguousTraitGoalOccurrenceKey"/>): the emitting pass lowers
+    /// the site in the same order, and one type pinned for every lowering would force it on the
+    /// others.
     /// </summary>
     private Dictionary<string, TraitConstraint> ResolveProvenAmbiguousTraitGoals()
     {
         var proven = new Dictionary<string, TraitConstraint>(StringComparer.Ordinal);
+        var byOccurrence = new Dictionary<string, TraitConstraint>(StringComparer.Ordinal);
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        var conflicting = new HashSet<string>(StringComparer.Ordinal);
         foreach ((string key, TraitConstraint constraint) in _pendingAmbiguousTraitGoals)
         {
+            int occurrence = occurrences.GetValueOrDefault(key);
+            occurrences[key] = occurrence + 1;
             TraitConstraint resolved = PruneTraitConstraint(constraint);
-            if (resolved.TypeArgs.All(argument => !ContainsFreeTypeVariable(argument)))
+            if (!resolved.TypeArgs.All(argument => !ContainsFreeTypeVariable(argument)))
             {
-                proven[key] = resolved;
+                continue;
+            }
+
+            byOccurrence[AmbiguousTraitGoalOccurrenceKey(key, occurrence)] = resolved;
+            if (proven.TryGetValue(key, out TraitConstraint? earlier)
+                && !earlier.TypeArgs.Zip(resolved.TypeArgs).All(pair => TypesStructurallyEqual(pair.First, pair.Second)))
+            {
+                conflicting.Add(key);
+            }
+
+            proven[key] = resolved;
+        }
+
+        foreach (string key in conflicting)
+        {
+            proven.Remove(key);
+        }
+
+        foreach ((string occurrenceKey, TraitConstraint resolved) in byOccurrence)
+        {
+            string key = occurrenceKey[..occurrenceKey.LastIndexOf('#')];
+            if (conflicting.Contains(key))
+            {
+                proven[occurrenceKey] = resolved;
             }
         }
 
         return proven;
     }
+
+    private static string AmbiguousTraitGoalOccurrenceKey(string key, int occurrence) => $"{key}#{occurrence}";
 
     private static bool ContainsFreeTypeVariable(TypeRef type) => type switch
     {
@@ -326,7 +374,7 @@ public sealed partial class Lowering
         }
     }
 
-    private Program ElaborateInferredTraitBindings(Program program)
+    private Program ElaborateInferredTraitBindings(Program program, bool scheduleStrictStages = true)
     {
         var discoveryDiagnostics = new Diagnostics();
         var discovery = new Lowering(
@@ -342,9 +390,15 @@ public sealed partial class Lowering
             emitTraitDictionaries: false,
             isTraitValidationSubpass: false);
         CopySourceContextTo(discovery);
-        _ = discovery.Lower(program);
+        IrProgram discoveredProgram = discovery.Lower(program);
+        Program staged = scheduleStrictStages ? discovery.ScheduleStrictPartialStages(program) : program;
+        if (!ReferenceEquals(staged, program)) return ElaborateInferredTraitBindings(staged, scheduleStrictStages: false);
         if (discoveryDiagnostics.StructuredErrors.Count > 0)
         {
+            if (discovery._immediateEvidenceError)
+            {
+                _failedImmediateEvidenceProgram = discoveredProgram;
+            }
             // The discovery pass is the only one that still sees which operations justify each written
             // requires clause, so take its boundary findings rather than letting this pass re-derive
             // them. Re-deriving them reads bodies whose evidence dictionary emission has already
@@ -585,6 +639,7 @@ public sealed partial class Lowering
         IReadOnlyList<TraitConstraint> encounteredRequirements,
         bool needsLateTypeHint = false)
     {
+        NoteStrictPartialBinding(binding, scheme);
         if (_collectInferredTraitElaboration
             && !_topLevelBindingNames.Contains(binding.Name)
             && binding.Value is Expr.Var)
@@ -648,6 +703,7 @@ public sealed partial class Lowering
             .Select((variable, index) => (variable.Id, Name: $"inferredTraitT{index}"))
             .ToDictionary(item => item.Id, item => item.Name);
         TypeExpr annotation = ConvertInferredTypeToSyntax(scheme.Body, variableNames);
+        CompilerWrittenAnnotations.AddOrUpdate(annotation, annotation);
         if (scheme.Constraints.Count == 0)
         {
             _inferredTraitBindingTypeHints[key] = annotation;
@@ -1022,26 +1078,11 @@ public sealed partial class Lowering
         Expr value,
         TraitDictionaryFunctionInfo info,
         bool threadRecursiveSelf = false,
-        bool threadDictionaryFunctions = false,
-        bool rewriteMethodReferences = true)
+        bool threadDictionaryFunctions = false)
     {
-        Dictionary<(string Trait, string Method), string> methodParameters = [];
-        HashSet<(string Trait, string Method)> ambiguousMethodParameters = [];
-        foreach (TraitDictionaryShape dictionary in info.Dictionaries)
-        {
-            CollectTraitMethodParameterNames(
-                dictionary,
-                methodParameters,
-                ambiguousMethodParameters);
-        }
-
-        // Operators are resolved while lowering, when their inferred operand type is available.
-        // Rewriting every operator of a supplied trait here would incorrectly route concrete
-        // operations through a generic dictionary (for example Int exponent arithmetic inside a
-        // Multiply(a)-constrained power function).
-        Expr body = rewriteMethodReferences
-            ? RewriteTraitMethodReferences(value, methodParameters)
-            : value;
+        // Select evidence for operators and qualified methods once argument types are known.
+        // A constrained body can also call the same method at unrelated concrete types.
+        Expr body = value;
         if (threadRecursiveSelf)
         {
             body = RewriteRecursiveTraitSelfReferences(body, info);
@@ -1208,27 +1249,6 @@ public sealed partial class Lowering
         _ => null,
     };
 
-    private static void CollectTraitMethodParameterNames(
-        TraitDictionaryShape shape,
-        IDictionary<(string Trait, string Method), string> names,
-        ISet<(string Trait, string Method)> ambiguous)
-    {
-        foreach (TraitMethodSymbol method in shape.Methods)
-        {
-            (string QualifiedName, string Name) key = (shape.Trait.QualifiedName, method.Name);
-            if (!ambiguous.Contains(key)
-                && !names.TryAdd(key, TraitMethodParameterName(shape, method.Name)))
-            {
-                names.Remove(key);
-                ambiguous.Add(key);
-            }
-        }
-        foreach (TraitDictionaryShape supertrait in shape.Supertraits)
-        {
-            CollectTraitMethodParameterNames(supertrait, names, ambiguous);
-        }
-    }
-
     private static string TraitMethodParameterName(TraitDictionaryShape shape, string method) =>
         $"__trait_{shape.ConstraintOrdinal}_{shape.Path}_{shape.Trait.Name}_{method}";
 
@@ -1237,25 +1257,6 @@ public sealed partial class Lowering
 
     private static string TraitSuperDictionaryParameterName(TraitDictionaryShape shape, int ordinal) =>
         $"__trait_{shape.ConstraintOrdinal}_{shape.Path}_super_{ordinal}";
-
-    private Expr RewriteTraitMethodReferences(
-        Expr expression,
-        IReadOnlyDictionary<(string Trait, string Method), string> methodParameters)
-    {
-        Expr Rewrite(Expr current)
-        {
-            if (current is Expr.QualifiedVar reference
-                && TryGetTraitMethod(reference, out TraitSymbol trait, out TraitMethodSymbol method)
-                && methodParameters.TryGetValue((trait.QualifiedName, method.Name), out string? parameterName))
-            {
-                Expr replacement = new Expr.Var(parameterName);
-                AstSpans.Set(replacement, AstSpans.GetOrDefault(reference));
-                return replacement;
-            }
-            return MapChildExpressions(current, Rewrite);
-        }
-        return Rewrite(expression);
-    }
 
     private Expr RewriteTraitDictionaryFunctionReferences(
         Expr expression,
@@ -1410,15 +1411,34 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type)? TryLowerActiveTraitMethod(
         TraitConstraint constraint,
-        TraitMethodSymbol method)
+        TraitMethodSymbol method,
+        bool exactOnly = false)
     {
-        ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint);
+        ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint, exactOnly);
         if (active is null)
         {
             return null;
         }
-        return LowerExpr(new Expr.Var(
-            TraitMethodParameterName(active.Metadata.Shape, method.Name))).AsPair();
+        // The method result can be the only occurrence of the trait parameter.
+        // Choosing a supplied dictionary also fixes that result to its supplied type.
+        if (active.Metadata.Constraint is { } supplied)
+        {
+            for (int i = 0; i < constraint.TypeArgs.Count; i++)
+            {
+                Unify(constraint.TypeArgs[i], supplied.TypeArgs[i]);
+            }
+        }
+        string methodName = TraitMethodParameterName(active.Metadata.Shape, method.Name);
+        if (Lookup(methodName) is null && Lookup(active.ParameterName) is not null)
+        {
+            // A nested instance can use a different method than the operator in the
+            // enclosing source (list inequality uses element equality). The packed
+            // dictionary has the complete interface even if the closure did not capture
+            // the local alias for this particular method.
+            return SelectTraitDictionaryMethod(
+                LowerExpr(new Expr.Var(active.ParameterName)).AsPair(), constraint.Trait, method);
+        }
+        return LowerExpr(new Expr.Var(methodName)).AsPair();
     }
 
     /// <summary>
@@ -1454,7 +1474,8 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type)? TryLowerTraitDictionaryFunctionCall(
         Expr rootExpression,
         IReadOnlyList<Expr> arguments,
-        TextSpan span)
+        TextSpan span,
+        TypeRef? expectedType)
     {
         (int Temp, TypeRef Type)? explicitCall = TryLowerExplicitTraitDictionaryFunctionCall(rootExpression, arguments, span);
         if (explicitCall is not null) return explicitCall;
@@ -1466,6 +1487,7 @@ public sealed partial class Lowering
         }
         ((int functionTemp, TypeRef functionType) function, IReadOnlyList<TraitConstraint> instantiatedConstraints) =
             LowerTraitDictionaryCallRoot(rootExpression);
+        PreconstrainCallResultType(function.functionType, arguments.Count, expectedType);
         RecordConstrainedCallTypes(rootExpression, arguments.Count, function.functionType);
         bool evidenceNeedsLaterArgumentTypes = TraitEvidenceNeedsLaterArgumentTypes(instantiatedConstraints);
         (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? loweredArguments = LowerTraitDictionaryRealArguments(
@@ -2179,6 +2201,18 @@ public sealed partial class Lowering
                 ConstrainKnownExpressionType(item, element);
             }
         }
+        else if (TryDescribeConstructorExpression(expression, out ConstructorSymbol? constructor,
+            out List<Expr>? arguments, out TypeRef.TNamedType? constructed)
+            && constructor is not null && arguments is not null && constructed is not null)
+        {
+            Unify(pruned, constructed);
+            for (int index = 0; index < arguments.Count; index++)
+            {
+                ConstrainKnownExpressionType(
+                    arguments[index],
+                    InstantiateConstructorParameterType(constructor, index, constructed));
+            }
+        }
     }
 
     private TypeRef? TryGetKnownExpressionType(Expr expression)
@@ -2192,11 +2226,31 @@ public sealed partial class Lowering
             Expr.StrLit => new TypeRef.TStr(),
             Expr.RuneLit => new TypeRef.TRune(),
             Expr.BoolLit => new TypeRef.TBool(),
-            Expr.Var variable => TryGetKnownBindingType(Lookup(variable.Name)),
+            Expr.Var variable => TryGetSourceBindingType(Lookup(variable.Name)),
             Expr.QualifiedVar qualified when ResolveSpecializableCalleeName(qualified) is { } resolved =>
                 TryGetKnownBindingType(Lookup(resolved)),
             _ => null,
         };
+    }
+
+    private TypeRef? TryGetSourceBindingType(Binding? binding)
+    {
+        TypeRef? type = TryGetKnownBindingType(binding);
+        return binding is { CoroutineHelperArity: > 0 } && type is not null
+            ? CoroutineHelperSourceType(type, binding.CoroutineHelperArity)
+            : type;
+    }
+
+    private TypeRef? CoroutineHelperSourceType(TypeRef type, int arity)
+    {
+        TypeRef pruned = Prune(type);
+        if (arity == 0)
+        {
+            return pruned is TypeRef.TNamedType { Symbol.Name: "Task", TypeArgs.Count: 2 } task ? task.TypeArgs[1] : null;
+        }
+        return pruned is TypeRef.TFun function && CoroutineHelperSourceType(function.Ret, arity - 1) is { } result
+            ? function with { Ret = result }
+            : null;
     }
 
     private TypeRef? TryGetKnownBindingType(Binding? binding) => binding switch
@@ -2557,6 +2611,7 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, methodValue.Temp));
             string bindingName = TraitImplementationMethodBindingName(implementation.Goal.Trait, method.Name);
+            _selectedTraitMethodBindings.Add(bindingName);
             SetCurrentScopeBinding(
                 bindingName,
                 new Binding.Local(slot, methodValue.Type, method.Span));
@@ -3043,17 +3098,17 @@ public sealed partial class Lowering
         return captures;
     }
 
-    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCaptures(Expr expression)
+    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCaptures(Expr expression, bool includeDictionary = false)
     {
         if (_activeTraitDictionaryParameters.Count == 0)
         {
             return [];
         }
 
-        return CollectActiveTraitDictionaryOperatorCapturesCore(expression);
+        return CollectActiveTraitDictionaryOperatorCapturesCore(expression, includeDictionary);
     }
 
-    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCapturesCore(Expr expression)
+    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCapturesCore(Expr expression, bool includeDictionary)
     {
         HashSet<string> captures = new(StringComparer.Ordinal);
         void Visit(Expr current)
@@ -3086,21 +3141,7 @@ public sealed partial class Lowering
                     };
             if (mapped is { } operation)
             {
-                foreach ((string qualifiedName, List<ActiveTraitDictionaryParameter> parameters) in
-                         _activeTraitDictionaryParameters)
-                {
-                    if (!string.Equals(qualifiedName, operation.Trait, StringComparison.Ordinal)
-                        && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-                    foreach (ActiveTraitDictionaryParameter parameter in parameters)
-                    {
-                        captures.Add(TraitMethodParameterName(
-                            parameter.Metadata.Shape,
-                            operation.Method));
-                    }
-                }
+                AddTraitOperatorCaptures(operation, includeDictionary, captures);
             }
             _ = MapChildExpressions(current, child =>
             {
@@ -3110,6 +3151,26 @@ public sealed partial class Lowering
         }
         Visit(expression);
         return captures;
+    }
+
+    private void AddTraitOperatorCaptures((string Trait, string Method) operation, bool includeDictionary, HashSet<string> captures)
+    {
+        foreach ((string qualifiedName, List<ActiveTraitDictionaryParameter> parameters) in _activeTraitDictionaryParameters)
+        {
+            if (!string.Equals(qualifiedName, operation.Trait, StringComparison.Ordinal)
+                && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            foreach (ActiveTraitDictionaryParameter parameter in parameters)
+            {
+                captures.Add(TraitMethodParameterName(parameter.Metadata.Shape, operation.Method));
+                if (includeDictionary)
+                {
+                    captures.Add(parameter.ParameterName);
+                }
+            }
+        }
     }
 
     private (int Temp, TypeRef Type) PackTraitDictionaryFields(

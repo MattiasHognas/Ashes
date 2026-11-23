@@ -1474,6 +1474,9 @@ into slot descriptors and, when the frame owns references, generates a frame
 dropper that releases each owned word and clears it. Scheduler completion,
 `ashes_cancel_task` and spawned-task reaping each run it, so a cancelled or
 abandoned task releases what it held without any path releasing it twice.
+When an awaited operation closes a socket, it first walks its waiter chain. Each
+frame relinquishes the matching direct socket cleanup before the operating
+system can reuse the handle. Other frame words retain their teardown obligations.
 Ordinary RC placement is scoped by a per-function "may execute inside a
 coroutine" effect, so creating a task does not force unrelated functions onto
 region placement.
@@ -1727,7 +1730,7 @@ program has to be recompiled with the variable set:
 
 | Variable | Effect on the compiled program |
 |---|---|
-| `ASHES_RC_POISON=1` | Every freed RC payload is overwritten with `0xDD`, so a read after free fails visibly instead of reading stale data. |
+| `ASHES_RC_POISON=1` | On final release, a cached RC cell’s payload is overwritten with `0xDD` before the allocator links the cell into its free list. The self-hosted backend applies this to its own small-block cache. Shared references and cells taken for immediate reuse keep their payloads. |
 | `ASHES_RC_VERIFY=1` | Every lowered store into an RC cell checks that the stored value does not point at arena or stack memory, raising `SIGABRT` at the first violating store (linux-x64). |
 | `ASHES_RC_LEAKCHECK=1` | The program counts the RC cells it allocates and releases and, when it ends normally, writes `ashes-rc-live N` (the cells still live) to standard error (Linux). A value kept to the end counts as live, so a leak shows as the difference between one round of the same work and two. The count is not synchronized: only single-threaded programs report an exact figure. The self-hosted compiler honours the same variable, counting in its region allocator (`__ashes_rc_alloc` up, `__ashes_rc_free` down), so a C string it builds for a system call counts as live where stage 0's arena copy does not. |
 

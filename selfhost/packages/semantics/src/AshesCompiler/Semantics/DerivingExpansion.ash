@@ -7,6 +7,7 @@
 //   aliases to them are rejected independently of declaration order before coherence.
 
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.TypeInference.canonicalTraitName
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse
 import Ashes.Text
@@ -95,6 +96,7 @@ let derivedTraitLeafName name =
     "."
     |> Ashes.Text.split(name)
     |> lastDerivedNamePart
+    |> canonicalTraitName
 
 let sameText left right =
     Ashes.Byte.compare(Ashes.Byte.fromText(left))(Ashes.Byte.fromText(right)) == 0

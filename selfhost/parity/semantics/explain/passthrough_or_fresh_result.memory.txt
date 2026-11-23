@@ -6,13 +6,13 @@ Function: bump
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  2
-    drop:                 4
-    uniqueness checks:    1
+    dup:                  7
+    drop:                 14
+    uniqueness checks:    6
   representation [lambda_0]
-    conservative unknown: 10
+    conservative unknown: 6
     region:               8
-    runtime rc:           15
+    runtime rc:           35
     copy value:           9
 
 Function: bumpIf
@@ -48,21 +48,26 @@ Function: bumpTimes
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_8]
-    dup:                  4
-    drop:                 4
-    uniqueness checks:    2
+    dup:                  3
+    drop:                 2
+    uniqueness checks:    1
+  perceus [lambda_8$env_normalize]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
   perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   reuse: specialization candidate qualification rejected
   representation [lambda_8]
-    conservative unknown: 8
+    conservative unknown: 7
     region:               2
-    runtime rc:           17
+    runtime rc:           15
     copy value:           6
   representation [lambda_7]
     region:               3
+    runtime rc:           3
     copy value:           1
 
 Function: count
@@ -70,23 +75,23 @@ Function: count
     insts: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_10]
+  perceus [lambda_11]
     dup:                  4
     drop:                 6
     uniqueness checks:    3
-  perceus [lambda_9]
+  perceus [lambda_10]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_10__scalarenv1]
+  perceus [lambda_11__scalarenv1]
     dup:                  4
     drop:                 6
     uniqueness checks:    3
-  representation [lambda_10]
+  representation [lambda_11]
     conservative unknown: 1
     runtime rc:           16
     copy value:           6
-  representation [lambda_9]
+  representation [lambda_10]
     conservative unknown: 1
     region:               3
 

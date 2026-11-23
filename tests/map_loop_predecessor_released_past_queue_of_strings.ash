@@ -2,6 +2,7 @@
 // map of queued keys is rebuilt. A queue of strings holds nothing of an earlier map but strings,
 // and every string it holds it retains, so the back edge releases the earlier map.
 // expect: 54
+import Ashes.Collection.Map
 let recursive enqueue (pending: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) =
     match pending with
         | [] -> (back, queued)

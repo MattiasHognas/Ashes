@@ -18,6 +18,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -34,10 +35,14 @@ export (
     value sortedTraitMethodNames,
     value activeTraitMethod,
     value hasActiveTraitEvidence,
+    value constrainedPlanLacksEvidence,
     value buildTraitMethodClosure,
     value traitGoalKey,
     value pinProvenTraitGoal,
     value deferTraitGoal,
+    value deferTraitGoalWithMethods,
+    value dictionaryGoalCandidates,
+    value observeDeferredOperator,
     value emitCoreTraitUnaryDispatch,
     value applyDeferredOperators,
     value applySealedDeferredOperators,
@@ -759,10 +764,12 @@ let recursive activeTraitMethod (traitName: Str) (typeArgument: SemanticType) (m
             else activeTraitMethod(traitName)(typeArgument)(methodName)(state)(rest)
 
 let hasActiveTraitEvidence (traitName: Str) (typeArgument: SemanticType) (state: CoreLoweringState) =
-    match sortedTraitMethodNames(traitName)(state) with
+    match stateActiveTraitMethods(state) with
         | [] -> false
-        | methodName :: _rest ->
-            activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) != None
+        | entries ->
+            match sortedTraitMethodNames(traitName)(state) with
+                | [] -> false
+                | methodName :: _rest -> activeTraitMethod(traitName)(typeArgument)(methodName)(state)(entries) != None
 
 let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
     match implementation with
@@ -1052,19 +1059,48 @@ let traitGoalKey (traitName: Str) (methodName: Str) (state: CoreLoweringState) =
 // The operand type a goal dispatches on, with an earlier pass's proof pinned when the type is
 // still open. Unifying rather than substituting for the evidence alone keeps the rest of inference
 // consistent with the choice.
+let bindTraitGoalProof operandType proof (state: CoreLoweringState) =
+    match proof with
+        | None -> (state, operandType)
+        | Some(proven) ->
+            match bindType(operandType)(proven)(state) with
+                | (pinned, None) -> (pinned, resolveType(pinned)(operandType))
+                | (_failed, Some(_error)) -> (state, operandType)
+
+// A discovery proof can name the lexical dictionary whose type matched after
+// the rest of the function was inferred. Resolve that binding in the replay frame:
+// type-variable ids from a different lowering pass are not interchangeable.
+let recursive activeOperandForBinding binding entries =
+    match entries with
+        | [] -> None
+        | (_trait, operand, _method, name) :: rest ->
+            if name == binding
+            then Some(operand)
+            else activeOperandForBinding(binding)(rest)
+
+let bindGoalAnswer operand answer state =
+    match answer with
+        | Some(ProvenOperandType(proven)) -> bindTraitGoalProof(operand)(Some(proven))(state)
+        | Some(ProvenAmbientMethod(binding)) ->
+            bindTraitGoalProof(operand)(state
+            |> stateActiveTraitMethods
+            |> activeOperandForBinding(binding))(state)
+        | None -> (state, operand)
+
 let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
     match (freeTypeVariables(operandType), traitGoalKey(traitName)(methodName)(state)) with
         | ([], _key) -> (state, operandType)
         | (_variables, None) -> (state, operandType)
         | (_variables, Some(key)) ->
-            match state
-            |> stateProvenTraitGoals
-            |> Ashes.Collection.Map.getStr(key) with
-                | None -> (state, operandType)
-                | Some(proven) ->
-                    match bindType(operandType)(proven)(state) with
-                        | (pinnedState, None) -> (pinnedState, resolveType(pinnedState)(operandType))
-                        | (_failedState, Some(_error)) -> (state, operandType)
+            let proofs = stateProvenTraitGoals(state)
+            in
+                match Ashes.Collection.Map.getStr(key)(proofs) with
+                    | Some(SharedTraitGoalProof(proven)) -> bindGoalAnswer(operandType)(Some(proven))(state)
+                    | Some(OrderedTraitGoalProofs(proof :: remaining)) ->
+                        state
+                        |> withStateProvenTraitGoals(Ashes.Collection.Map.setStr(key)(OrderedTraitGoalProofs(remaining))(proofs))
+                        |> bindGoalAnswer(operandType)(proof)
+                    | _ -> (state, operandType)
 
 // Whether a plan's evidence is a hidden parameter of a generic body this body does not carry.
 // `resolveTraitEvidence` answers with that shape for an operand type inference has not settled
@@ -1087,13 +1123,62 @@ let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: Semant
 // The value lowered at a deferred site: the goal joins the pass's record, and the site gets a
 // constant of the method's own result type. A deferring pass exists to resolve types, and its
 // instructions are discarded, so the constant is never run.
-let deferTraitGoal (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
-    (let recorded = withStatePendingTraitGoals((key, operandType) :: statePendingTraitGoals(state))(state)
+let deferTraitGoalWithMethods candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let recorded =
+        state
+        |> withStatePendingTraitGoals((key, operandType, candidates) :: statePendingTraitGoals(state))
+        |> observePendingGoal(false)(key)(operandType)
     in
         match resultType with
             | SemString -> lowerString("")(recorded)
             | _ ->
                 lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(recorded))
+
+let deferTraitGoal key operand result state = deferTraitGoalWithMethods([])(key)(operand)(result)(state)
+
+let recursive matchingMethodCandidates traitName methodName methods =
+    match methods with
+        | [] -> []
+        | (candidateTrait, operand, candidateMethod, binding) :: rest ->
+            let tail = matchingMethodCandidates(traitName)(methodName)(rest)
+            in
+                if candidateTrait == traitName && candidateMethod == methodName
+                then (binding, operand) :: tail
+                else tail
+
+// The dictionaries of the generic body being lowered that can answer a whole-dictionary goal on
+// `traitName`: one entry per active dictionary of that trait, named by its first method in
+// dictionary order. Once the goal's type resolves to one of their operands, the goal no longer holds
+// that type out of the enclosing generalization, and a later pass answers it from that dictionary.
+let dictionaryGoalCandidates (traitName: Str) (state: CoreLoweringState) =
+    match sortedTraitMethodNames(traitName)(state) with
+        | [] -> []
+        | methodName :: _rest ->
+            state
+            |> stateActiveTraitMethods
+            |> matchingMethodCandidates(traitName)(methodName)
+
+let deferMethodGoal traitName methodName key operand result state =
+    deferTraitGoalWithMethods(state
+    |> stateActiveTraitMethods
+    |> matchingMethodCandidates(traitName)(methodName))(key)(operand)(result)(state)
+
+// The caller's dictionary carries the actual method arrow. Its codomain can be
+// the only occurrence of the trait parameter, as in first : Unit -> a.
+let emitSelectedUnaryMethod plan closureTemp closureType operandTemp resultType state =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName }) ->
+            match resolveType(state)(closureType) with
+                | SemFunction(_argument, suppliedResult, _row) ->
+                    match bindType(resultType)(suppliedResult)(state) with
+                        | (bound, None) ->
+                            emitTraitMethodCall(closureTemp)(operandTemp)(resolveType(bound)(resultType))(bound)
+                        | (failed, Some(error)) -> failure(failed)(error)
+                | _ ->
+                    closureType
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+        | _ -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(state)
 
 // `Ashes.Trait.Show.show(x)` and its unary siblings, the counterpart of the mapped binary operators:
 // resolve the trait's evidence for the operand's own type, build the method's closure for that plan,
@@ -1109,14 +1194,14 @@ let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: S
             |> resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [pinnedType])) with
                 | TraitEvidenceResolution { plan = Some(plan) } ->
                     match (traitPlanLacksActiveEvidence(plan)(methodName)(pinnedState), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState)) with
-                        | (true, Some(key)) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
                         | _resolvable ->
                             match buildTraitMethodClosure(plan)(methodName)(lower)(pinnedState) with
-                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
+                                | LoweredCoreValue { state = closureState, temp = closureTemp, semanticType = closureType, error = None } -> emitSelectedUnaryMethod(plan)(closureTemp)(closureType)(operandTemp)(resultType)(closureState)
                                 | failed -> failed
                 | TraitEvidenceResolution { plan = None } ->
                     match unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState) with
-                        | Some(key) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | Some(key) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
                         | None ->
                             pinnedType
                             |> MissingCoreTraitEvidence(traitName)
@@ -1225,8 +1310,11 @@ let emitDeferredCoreAdd binary = emitDeferredCoreArithmetic(AddInt)(binary)
 // settle on a type the integer comparison does not compare, which the program's passes answer
 // by lowering again with that type pinned at the site.
 let recordEqualityGoal (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
-    match traitGoalKey("Eq")(methodName)(state) with
-        | Some(key) -> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))(state)
+    match traitGoalKey("Eq")(methodName + ":structural")(state) with
+        | Some(key) ->
+            state
+            |> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))
+            |> observePendingGoal(true)(key)(operandType)
         | None -> state
 
 let emitDeferredCoreEquality (methodName: Str) kind binary =
@@ -1335,20 +1423,42 @@ let recordedOperandType (state: CoreLoweringState) =
                 | None -> None
         | _ -> None
 
+// The operand type recorded for the operator node being lowered, closed by the variables the
+// program's uses settle, unless the body being lowered carries the operator trait's evidence for
+// `operandType`, which then dispatches through it.
+let recordedSettledOperandType (operandType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { traitName = traitName, operandType = recorded }) ->
+                    if hasActiveTraitEvidence(traitName)(resolveType(state)(operandType))(state)
+                    then None
+                    else recordedSettledType(recorded)(state)
+                | None -> None
+        | _ -> None
+
+let recursive bindRecordedOperands (recorded: SemanticType) (remaining: List(SemanticType)) (bound: CoreLoweringState) =
+    match remaining with
+        | [] -> Some(bound)
+        | operandType :: rest ->
+            match bindType(operandType)(recorded)(bound) with
+                | (next, None) -> bindRecordedOperands(recorded)(rest)(next)
+                | (_failed, Some(_error)) -> None
+
 // The state with an operator's still-open operand types bound to the recorded operand type, the
-// way a later pass pins a proven goal; None when nothing is recorded or the types do not unify.
+// way a later pass pins a proven goal; None when nothing is recorded or the types do not unify. A
+// recorded type that holds a variable of a binding the program uses at one type is closed by that
+// use.
 let pinRecordedOperands (operandTypes: List(SemanticType)) (state: CoreLoweringState) =
     match recordedOperandType(state) with
-        | None -> None
-        | Some(recorded) ->
-            let recursive bindAll (remaining: List(SemanticType)) (bound: CoreLoweringState) =
-                match remaining with
-                    | [] -> Some(bound)
-                    | operandType :: rest ->
-                        match bindType(operandType)(recorded)(bound) with
-                            | (next, None) -> bindAll(rest)(next)
-                            | (_failed, Some(_error)) -> None
-            in bindAll(operandTypes)(state)
+        | Some(recorded) -> bindRecordedOperands(recorded)(operandTypes)(state)
+        | None ->
+            match operandTypes with
+                | [] -> None
+                | first :: _rest ->
+                    match recordedSettledOperandType(first)(state) with
+                        | Some(settled) -> bindRecordedOperands(settled)(operandTypes)(state)
+                        | None -> None
 
 // An ordered comparison's operand type still open after an earlier pass's proof is pinned to the
 // recorded operand type when there is one.
@@ -1394,7 +1504,7 @@ let emitPreparedCoreOrdered name operator lower binary =
 let pinProvenEqualityGoal operator (operandType: SemanticType) (state: CoreLoweringState) =
     match equalityGoalMethod(operator) with
         | Some(methodName) ->
-            match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
+            match pinProvenTraitGoal("Eq")(methodName + ":structural")(operandType)(state) with
                 | (_unpinnedState, SemVariable(_id)) -> None
                 | (pinnedState, _pinnedType) ->
                     pinnedState
@@ -1403,6 +1513,151 @@ let pinProvenEqualityGoal operator (operandType: SemanticType) (state: CoreLower
         | None -> None
 
 let withCoreBinaryState (state: CoreLoweringState) (binary: LoweredCoreBinary) = binary with state = state
+
+// The operators lowering emits a speculative integer form for when both operands are still open.
+let operatorChoosesFormByOperandType operator =
+    match operator with
+        | CoreAddOperator -> true
+        | CoreSubtractOperator -> true
+        | CoreMultiplyOperator -> true
+        | CoreEqualOperator -> true
+        | CoreNotEqualOperator -> true
+        | _ -> false
+
+// Such an operator whose operands are not both bare variables but still hold one (`xs == []`
+// before anything settles the element type) takes its form from the closed operand type the
+// standalone inference recorded for the operator node, read through the instantiation of the body
+// being lowered: the final type rather than the operands lowering has met so far. None when no
+// closed type is recorded there or the operands do not unify with it; lowering then unifies the
+// operands with each other and decides as before.
+let recordedPartlyOpenOperands operator (leftType: SemanticType) (rightType: SemanticType) (state: CoreLoweringState) =
+    if operatorChoosesFormByOperandType(operator) && (freeTypeVariables(leftType) != [] || freeTypeVariables(rightType) != [])
+    then
+        match recordedOperandType(state) with
+            | Some(recorded) -> bindRecordedOperands(recorded)([leftType, rightType])(state)
+            | None -> None
+    else None
+
+// Whether a plan's evidence, or any evidence it is built from, is a hidden parameter the body
+// being lowered does not carry: the dictionary cannot be built here whatever the plan says.
+let recursive constrainedPlanLacksEvidence (plan: TraitEvidencePlan) (state: CoreLoweringState) =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = argument :: [] }) -> !hasActiveTraitEvidence(traitName)(argument)(state)
+        | TraitEvidenceParameter(_constraint) -> false
+        | TraitEvidenceInstance(_constraint, _implementation, requirements, supertraits) -> constrainedPlansLackEvidence(requirements)(state) || constrainedPlansLackEvidence(supertraits)(state)
+and constrainedPlansLackEvidence (plans: List(TraitEvidencePlan)) (state: CoreLoweringState) =
+    match plans with
+        | [] -> false
+        | plan :: rest -> constrainedPlanLacksEvidence(plan)(state) || constrainedPlansLackEvidence(rest)(state)
+
+// The state with a partly open equality operand bound to the type recorded for the operator node,
+// closed by the variables the program's uses settle, and that closed type; None when no table is
+// present, nothing closed is recorded there, or the operand does not unify with it. It answers the
+// goal the site would otherwise defer to the replay pass, which would pin the same type there.
+let recordedSettledEqualityOperand (operandType: SemanticType) (state: CoreLoweringState) =
+    match recordedSettledOperandType(operandType)(state) with
+        | Some(settled) ->
+            match bindRecordedOperands(settled)([operandType])(state) with
+                | Some(bound) -> Some((observeLoweringEvent(0)(bound), resolveType(bound)(operandType)))
+                | None -> None
+        | None -> None
+
+// Under typed lowering, the comparison a partly open equality whose plan lacks evidence is lowered
+// to instead of deferring its goal; None without a node table, and when neither answer applies.
+// A body lowered as a constrained binding that carries an Eq dictionary for the whole operand type
+// (`Eq(List(a))` for `selected != []`) compares through that dictionary, as when the operand
+// matches an active requirement directly. Otherwise the operand takes the recorded type closed by
+// the program's settled uses.
+let answerPartlyOpenEqualityFromTable operator (methodName: Str) lower (binary: LoweredCoreBinary) (operandType: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(_table) ->
+            let resolved = resolveType(state)(operandType)
+            in
+                if hasActiveTraitEvidence("Eq")(resolved)(state)
+                then
+                    (binary with state = observeLoweringEvent(0)(state), leftType = resolved, rightType = resolved)
+                    |> emitCoreTraitPlanCalls(TraitEvidenceParameter(TraitConstraint(traitName = "Eq", typeArguments = [resolved])))(methodName)(lower)
+                    |> Some
+                else
+                    match recordedSettledEqualityOperand(operandType)(state) with
+                        | Some((recordedState, recordedType)) ->
+                            (binary with state = recordedState, leftType = recordedType, rightType = recordedType)
+                            |> emitResolvedCoreBinary(operator)(lower)
+                            |> Some
+                        | None -> None
+
+// A partly open equality in a pass lowering with proofs pinned, where the site's goal is no
+// longer deferred: an operand no proof closed (the first pass answered the site from the table,
+// so it recorded no goal to prove) takes the same table answer again; a closed one, or one the
+// table does not answer, compares at its type as before.
+let emitPinnedPartlyOpenEquality operator (methodName: Str) lower (binary: LoweredCoreBinary) (pinnedType: SemanticType) (pinnedState: CoreLoweringState) =
+    match (pinnedType
+    |> resolveType(pinnedState)
+    |> freeTypeVariables, stateNodeTypes(pinnedState)) with
+        | (_ :: _, Some(_table)) ->
+            match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
+                | Some(answered) -> answered
+                | None -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+        | _ -> emitResolvedCoreBinary(operator)(lower)((binary with state = pinnedState, leftType = pinnedType, rightType = pinnedType))
+
+// A constructed operand can still contain an unknown type, as in xs == []. The list
+// implementation is known, but its element dictionary may depend on a later application.
+// Defer that comparison as a whole unless all its evidence is already in scope.
+let emitPartlyOpenEquality operator methodName lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = operandType, error = None } ->
+            match freeTypeVariables(operandType) with
+                | [] -> emitResolvedCoreBinary(operator)(lower)(binary)
+                | _variables ->
+                    match state
+                    |> stateTraitEnvironment
+                    |> resolveTraitEvidence(TraitConstraint(traitName = "Eq", typeArguments = [operandType])) with
+                        | TraitEvidenceResolution { plan = Some(plan) } ->
+                            if constrainedPlanLacksEvidence(plan)(state)
+                            then
+                                match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
+                                    | (pinnedState, pinnedType) ->
+                                        match unprovenTraitGoalKey("Eq")(methodName)(pinnedType)(pinnedState) with
+                                            | Some(key) ->
+                                                match answerPartlyOpenEqualityFromTable(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState) with
+                                                    | Some(answered) -> answered
+                                                    | None -> deferTraitGoal(key)(pinnedType)(SemBool)(pinnedState)
+                                            | None -> emitPinnedPartlyOpenEquality(operator)(methodName)(lower)(binary)(pinnedType)(pinnedState)
+                            else emitResolvedCoreBinary(operator)(lower)(binary)
+                        | _ -> emitResolvedCoreBinary(operator)(lower)(binary)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitUnifiedCoreBinary operator lower binary =
+    match equalityGoalMethod(operator) with
+        | Some(methodName) -> emitPartlyOpenEquality(operator)(methodName)(lower)(binary)
+        | None -> emitResolvedCoreBinary(operator)(lower)(binary)
+
+// The trait and method of an operator lowering emits speculatively over two open operands.
+let deferredOperatorTraitMethod operator =
+    match operator with
+        | CoreAddOperator -> Some(("Add", "add"))
+        | CoreSubtractOperator -> Some(("Subtract", "subtract"))
+        | CoreMultiplyOperator -> Some(("Multiply", "multiply"))
+        | CoreEqualOperator -> Some(("Eq", "equal"))
+        | CoreNotEqualOperator -> Some(("Eq", "notEqual"))
+        | _ -> None
+
+// Records a deferred operator site when the lowering observes its goal sites, under the site's
+// goal key, or under its trait and method alone when the site has no span (a node lowering
+// synthesized). Without an observation the state is returned as it is.
+let observeDeferredOperator operator (operandType: SemanticType) (state: CoreLoweringState) =
+    match stateTypeObservation(state) with
+        | None -> state
+        | Some(_observation) ->
+            match deferredOperatorTraitMethod(operator) with
+                | None -> state
+                | Some((traitName, methodName)) ->
+                    let key =
+                        match traitGoalKey(traitName)(methodName)(state) with
+                            | Some(siteKey) -> siteKey
+                            | None -> "unspanned:" + traitName + ":" + methodName
+                    in observeDeferredOperatorGoal(key)(operandType)(state)
 
 let emitPreparedCoreBinary operator lower binary =
     match (coreOrderedOperatorName(operator), binary) with
@@ -1436,13 +1691,23 @@ let emitPreparedCoreBinary operator lower binary =
                                         |> emitResolvedCoreBinary(operator)(lower)
                                     | None ->
                                         binary
-                                        |> withCoreBinaryState(observeLoweringEvent(1)(state))
+                                        |> withCoreBinaryState(state
+                                        |> observeLoweringEvent(1)
+                                        |> observeDeferredOperator(operator)(SemVariable(leftId)))
                                         |> emitDeferred
-                | _ ->
-                    binary
-                    |> unifyEqualityOperands(operator)
-                    |> resolvedCoreBinary
-                    |> emitResolvedCoreBinary(operator)(lower)
+                | (_emitter, resolvedLeft, resolvedRight) ->
+                    match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with
+                        | Some(recordedState) ->
+                            binary
+                            |> withCoreBinaryState(observeLoweringEvent(0)(recordedState))
+                            |> unifyEqualityOperands(operator)
+                            |> resolvedCoreBinary
+                            |> emitUnifiedCoreBinary(operator)(lower)
+                        | None ->
+                            binary
+                            |> unifyEqualityOperands(operator)
+                            |> resolvedCoreBinary
+                            |> emitUnifiedCoreBinary(operator)(lower)
         | (None, LoweredCoreBinary { state = failedState, error = Some(error) }) -> failure(failedState)(error)
 
 // The instructions a speculative operator becomes once its operand type is final, with the
@@ -1644,11 +1909,14 @@ let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
             in
                 let resolvedRight = resolveType(state)(rightType)
                 in
-                    if isSubtractOperator(operator) && isCoreZeroExpression(left) && isUserTypeOperand(resolvedRight)
+                    if isSubtractOperator(operator) && isCoreZeroExpression(left) && (isUserTypeOperand(resolvedRight) || hasActiveTraitEvidence("Negate")(resolvedRight)(state))
                     then emitCoreTraitUnaryDispatch("Negate")("negate")(resolvedRight)(lower)(rightTemp)(resolvedRight)(state)
                     else
-                        match (arithmeticTraitMethod(operator), isUserTypeOperand(resolvedLeft) && resolvedLeft == resolvedRight) with
-                            | (Some((traitName, methodName)), true) -> emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
+                        match arithmeticTraitMethod(operator) with
+                            | Some((traitName, methodName)) ->
+                                if resolvedLeft == resolvedRight && (isUserTypeOperand(resolvedLeft) || hasActiveTraitEvidence(traitName)(resolvedLeft)(state))
+                                then emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
+                                else emitPreparedCoreBinary(operator)(lower)(binary)
                             | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
         | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
 
@@ -1741,19 +2009,28 @@ let finishCoreBitwiseNot lowered =
 // A later mutual-recursion member's result can still be open at !. Keep the Not goal
 // and its a -> a result until its consumer or a later body settles it, rather than
 // forcing a generic Not requirement to Bool. Pending goals cannot be generalized or
-// emitted: the final pass pins the proved type, or rejects a still-unresolved operand.
+// emitted: the final pass pins the proved type, or rejects a still-unresolved operand. Outside a
+// body carrying `Not` evidence, an operand still open takes the closed operand type the standalone
+// inference recorded for the `!` node, as the final pass pins a proved one.
+let recordedNotOperand (operandType: SemanticType) (state: CoreLoweringState) =
+    if hasActiveTraitEvidence("Not")(operandType)(state)
+    then (state, operandType)
+    else recordedOrderedOperand(operandType)(state)
+
 let finishOrDeferCoreLogicalNot lower lowered =
     match lowered with
         | LoweredCoreValue { state = operandState, temp = operandTemp, semanticType = operandType, error = None } as lowered ->
             match pinProvenTraitGoal("Not")("not")(resolveType(operandState)(operandType))(operandState) with
-                | (pinnedState, pinnedType) ->
-                    if hasActiveTraitEvidence("Not")(pinnedType)(pinnedState)
-                    then emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
-                    else
-                        match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
-                            | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
-                            | (SemNamed(_symbolId, _name, _arguments), _key) -> emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
-                            | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
+                | (provenState, provenType) ->
+                    match recordedNotOperand(provenType)(provenState) with
+                        | (pinnedState, pinnedType) ->
+                            if hasActiveTraitEvidence("Not")(pinnedType)(pinnedState)
+                            then emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
+                            else
+                                match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
+                                    | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
+                                    | (SemNamed(_symbolId, _name, _arguments), _key) -> emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
+                                    | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
         | failed -> failed
 
 let lowerCoreLogicalNot operand lower state =
@@ -1767,7 +2044,10 @@ let finishCoreBitwiseNotOrTrait lower lowered =
         | LoweredCoreValue { state = state, temp = operand, semanticType = semanticType, error = None } ->
             match resolveType(state)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named -> emitCoreTraitUnaryDispatch("BitwiseNot")("bitwiseNot")(named)(lower)(operand)(named)(state)
-                | _ -> finishCoreBitwiseNot(lowered)
+                | resolved ->
+                    if hasActiveTraitEvidence("BitwiseNot")(resolved)(state)
+                    then emitCoreTraitUnaryDispatch("BitwiseNot")("bitwiseNot")(resolved)(lower)(operand)(resolved)(state)
+                    else finishCoreBitwiseNot(lowered)
         | failed -> failed
 
 let lowerCoreBitwiseNot operand lower state =
