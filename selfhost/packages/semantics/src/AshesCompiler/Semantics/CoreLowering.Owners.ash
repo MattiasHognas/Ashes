@@ -179,6 +179,7 @@ export (
     value isMaterializableStringChildRead,
     value allFreshOwnedChildren,
     value isFreshRuntimeManageableRecordTree,
+    value isRuntimeRcOwningClosureExpression,
     value canRuntimeManageOwnedChildAdtApplication,
     value isFreshRuntimeManageableAdtExpression,
     value callSpineRootAndArity,
@@ -195,6 +196,7 @@ export (
     value capturedBindings,
     value captureCount,
     value allocateEnvironment,
+    value allocateEnvironmentIn,
     value storeCaptureAsRead,
     value pruneDeadCaptures,
     value capturedScope,
@@ -337,6 +339,16 @@ let argumentCellRequestForwards (expression: Expr) =
         | ExprCons(_head, _tail) -> true
         | _ -> false
 
+// The closure representation reaches the closure literal it was asked of, through its spans and
+// the arms of a choice between two literals.
+let closureRequestForwards (expression: Expr) =
+    match expression with
+        | ExprAt(_span, _inner) -> true
+        | ExprNode(_node, _inner) -> true
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | ExprIf(_condition, _thenBranch, _elseBranch) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -350,6 +362,7 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         runtimeRecord = aggregateRequestForwards(expression) && request.runtimeRecord,
         runtimeList = aggregateRequestForwards(expression) && request.runtimeList,
         runtimeTuple = aggregateRequestForwards(expression) && request.runtimeTuple,
+        runtimeClosure = closureRequestForwards(expression) && request.runtimeClosure,
         transferSlot = if transferForwards(expression)
         then request.transferSlot
         else None,
@@ -2619,6 +2632,28 @@ let isLocalRecordFieldRead (expression: Expr) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// Stage 0's `IsRuntimeRcOwningClosureExpression`, its normalized-parameter half: a closure literal
+// a runtime-managed aggregate owns as a fresh child, whose environment holds the entry-normalized
+// parameter the capture moves into it beside values that survive the reset only, so the environment
+// lives on the reference-counted heap with a dropper releasing that parameter; a choice between two
+// such literals is one too.
+let recursive isRuntimeRcOwningClosureExpression (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprIf(_condition, thenBranch, elseBranch) -> isRuntimeRcOwningClosureExpression(thenBranch)(state) && isRuntimeRcOwningClosureExpression(elseBranch)(state)
+        | ExprLambda(parameter, body, _annotation) ->
+            closureFreeNamesOwnNormalizedParameter([] |> freeNames(body)([parameter]))(false)(state)
+        | _ -> false
+and closureFreeNamesOwnNormalizedParameter (names: List(Str)) (owns: Bool) (state: CoreLoweringState) =
+    match names with
+        | [] -> owns
+        | name :: rest ->
+            if isNormalizedAlwaysReturnedStringParameterRead(ExprVar(name))(state)
+            then closureFreeNamesOwnNormalizedParameter(rest)(true)(state)
+            else
+                match lookupBinding(name)(state.bindings) with
+                    | Some(CoreBinding { scheme = TypeScheme { body = bindingType } }) -> resultSurvivesReset(bindingType)(state) && closureFreeNamesOwnNormalizedParameter(rest)(owns)(state)
+                    | None -> false
+
 // Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
 // recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
 // or pattern-owner read, a list the runtime may own built fresh or read from a binding or call,
@@ -2634,6 +2669,7 @@ let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: Sem
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemTuple(_elementTypes), _expression) -> isPatternOwnerRead(expression)(state)
             | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state) || isFreshRuntimeManageableAdtExpression(expression)(state) || isPatternOwnerRead(expression)(state)
+            | (SemFunction(_parameter, _result, _row), _expression) -> isRuntimeRcOwningClosureExpression(expression)(state)
             | _ -> false
 and allFreshOwnedChildren (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (arguments, fieldTypes) with
@@ -3057,7 +3093,7 @@ let recursive captureCount captures =
 // The environment holds the surviving captures; every capture of the free-variable analysis
 // still lowers its fill, the pruned ones only to reserve their temps. `copyCapture` answers the
 // temp a surviving capture is stored from: the capture itself, or a copy the environment keeps.
-let allocateEnvironment copyCapture captures survivors stackAllocate state =
+let allocateEnvironmentIn (runtimeManaged: Bool) copyCapture captures survivors stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = environmentTemp } ->
             match captures with
@@ -3073,8 +3109,11 @@ let allocateEnvironment copyCapture captures survivors stackAllocate state =
                             then
                                 emit(AllocStack(environmentTemp)(byteCount))(tempState)
                             else
-                                emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
+                                emit(Alloc(environmentTemp)(byteCount)(runtimeManaged))(tempState)
                         in fillEnvironment(copyCapture)(environmentTemp)(captures)(survivors)(0)(allocatedState)
+
+// An environment in the arena or on the stack, as every closure but a runtime-managed one has.
+let allocateEnvironment copyCapture captures survivors stackAllocate state = allocateEnvironmentIn(false)(copyCapture)(captures)(survivors)(stackAllocate)(state)
 
 // Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
 // lowered, so a capture the lowered body never reads through LoadEnv still gets an environment

@@ -959,6 +959,12 @@ let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (fi
                     in value with state = withCompletedTaskFrameDropper(Some(dropper.label))((state with functions = dropper :: state.functions))
     else value
 
+// Stage 0's `Closure` runtime representation as the closure's creation site asked for it: a heap
+// closure, never a stack one, placed on the reference-counted heap with its environment.
+let runtimeClosureRequested (stackAllocate: Bool) (outer: CoreLoweringState) =
+    match consumerRequestOf(outer) with
+        | ConsumerRequest { runtimeClosure = runtimeClosure } -> runtimeClosure && !stackAllocate
+
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
@@ -992,8 +998,8 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
                                         |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                         |> markCapturedResourcesMoved(survivors)
-                                        |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
-                                        |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                        |> allocateEnvironmentIn(runtimeClosureRequested(stackAllocate)(typedOuter))(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
+                                        |> emitPrunedClosureIn(runtimeClosureRequested(stackAllocate)(typedOuter))(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
                                         |> registerTaskFrameDropper(label)(survivors)(body)(typedOuter)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an

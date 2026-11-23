@@ -481,6 +481,9 @@ type ConsumerRequest =
     | runtimeRecord: Bool
     | runtimeList: Bool
     | runtimeTuple: Bool
+    // Stage 0's `LoweredValueRuntimeRepresentation.Closure`: a closure literal placed on the
+    // reference-counted heap with an environment that owns its captures.
+    | runtimeClosure: Bool
     | transferSlot: Maybe(Int)
     | tailPosition: Bool
     | transfersRuntimeManagedChildren: Bool
@@ -545,6 +548,7 @@ let emptyConsumerRequest =
         runtimeRecord = false,
         runtimeList = false,
         runtimeTuple = false,
+        runtimeClosure = false,
         transferSlot = None,
         tailPosition = false,
         transfersRuntimeManagedChildren = false,

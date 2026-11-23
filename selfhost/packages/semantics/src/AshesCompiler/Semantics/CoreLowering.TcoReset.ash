@@ -63,6 +63,7 @@ export (
     value emitChildReferenceOrCopy,
     value insertClosureNormalizers,
     value emitPrunedClosure,
+    value emitPrunedClosureIn,
     value isFreshAggregateLiteral,
     value registerGeneralRcOwnedSlot,
     value saveGeneralRcOwnedPredecessor,
@@ -1147,12 +1148,56 @@ let finishClosureResult parameterType bodyType finishedBody closure =
             in
                 success(closureTemp)(SemFunction(parameterType)(resultType)(None))(closureState)
 
-let emitPrunedClosure label origin captures stackAllocate parameterType bodyType finishedBody allocated =
+// Stage 0's `ClassifyLambdaClosureCaptures` for a runtime-managed closure, its normalized-parameter
+// half: the entry-normalized string parameter a capture moves into the environment has no scope
+// owner of its own, so the closure's dropper releases it from its environment word.
+let recursive runtimeClosureOwnedCaptures (captures: List(CoreBinding)) (index: Int) (state: CoreLoweringState) =
+    match captures with
+        | [] -> []
+        | CoreBinding { name = name } :: rest ->
+            if isNormalizedAlwaysReturnedStringParameterRead(ExprVar(name))(state)
+            then (index * 8, Ashes.Trait.Show.show(SemString), SemString) :: runtimeClosureOwnedCaptures(rest)(index + 1)(state)
+            else runtimeClosureOwnedCaptures(rest)(index + 1)(state)
+
+// Stage 0's `LowerLambdaCoreMakeClosure`: a runtime-managed closure that owns captures stores the
+// address of their dropper in its fourth word, which its release calls on the environment.
+let attachRuntimeClosureDropper (runtimeManaged: Bool) (captures: List(CoreBinding)) (closure: (CoreLoweringState, Int)) =
+    match closure with
+        | (closureState, closureTemp) ->
+            if runtimeManaged
+            then
+                match runtimeClosureOwnedCaptures(captures)(0)(closureState) with
+                    | [] -> closure
+                    | owned ->
+                        match synthesizeClosureDropper(owned)(closureState) with
+                            | (synthesized, dropperLabel) ->
+                                match freshTemp(synthesized) with
+                                    | FreshTemp { state = allocated, temp = dropperTemp } ->
+                                        (allocated
+                                        |> emit(LoadFuncAddr(dropperTemp)(dropperLabel))
+                                        |> emit(StoreMemOffset(closureTemp)(24)(dropperTemp)), closureTemp)
+            else closure
+
+// A runtime-managed closure is a reference the creation site holds: newly produced, so the
+// aggregate storing it takes it over rather than copying it.
+let markRuntimeClosure (runtimeManaged: Bool) (closureTemp: Int) (state: CoreLoweringState) =
+    if runtimeManaged
+    then markRuntimeTemp(closureTemp)(RuntimeNewlyProduced)(state)
+    else state
+
+let emitPrunedClosureIn (runtimeManaged: Bool) label origin captures stackAllocate parameterType bodyType finishedBody allocated =
     match allocated with
         | LoweredCoreValue { state = environmentState, error = Some(error) } -> failure(environmentState)(error)
         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
-            match emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)(environmentState) with
-                | (closureState, closureTemp) -> finishClosureResult(parameterType)(bodyType)(finishedBody)((recordClosureNormalizer(label)(captures)(origin)(closureState), closureTemp))
+            match environmentState
+            |> emitClosureIn(runtimeManaged)(label)(environmentTemp)(captureCount(captures))(stackAllocate)
+            |> attachRuntimeClosureDropper(runtimeManaged)(captures) with
+                | (closureState, closureTemp) ->
+                    finishClosureResult(parameterType)(bodyType)(finishedBody)((closureState
+                    |> markRuntimeClosure(runtimeManaged)(closureTemp)
+                    |> recordClosureNormalizer(label)(captures)(origin), closureTemp))
+
+let emitPrunedClosure label origin captures stackAllocate parameterType bodyType finishedBody allocated = emitPrunedClosureIn(false)(label)(origin)(captures)(stackAllocate)(parameterType)(bodyType)(finishedBody)(allocated)
 
 // Every owned child of the dying successor is read, deep-copied and stored into the copy; the
 // read temps come back with their types and field indices for the release that follows the
