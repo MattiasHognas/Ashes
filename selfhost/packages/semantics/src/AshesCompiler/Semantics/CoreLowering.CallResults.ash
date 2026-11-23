@@ -350,6 +350,18 @@ let specializationSelfReuseCall (context: CoreCallContext) (state: CoreLoweringS
         | Some(_label) -> true
         | None -> false)
 
+// Stage 0's `LowerReuseSpecializedCall`: a call routed to a reuse specialization from outside it
+// applies the specialization's closure with no window of its own, and a result of the contract's
+// types records no ownership (`RecordReuseSpecializationResultOwnership` returns early for one):
+// the result is the accumulator rewritten in place or cells built in the persistent to-space.
+let routedSpecializationCall (context: CoreCallContext) (state: CoreLoweringState) =
+    !context.selfCallee && (match context.calleeName with
+        | Some(name) ->
+            state
+            |> stateRoutedSpecializationCallees
+            |> containsName(name)
+        | None -> false)
+
 // Stage 0's `ResolveHandedOverReleaseGuard`. A result a reset reclaims holds no reference to any
 // argument, so copying it out severs everything. A callee whose compiled body is verified to return a
 // reference-counted result owns every part of it — its construction paths copied or retained whatever
@@ -1402,7 +1414,7 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
     |> cancelArenaResultRequest(temp)
     |> lowerGeneralRcCallResultOwned(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
 
-let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
+let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp, resultNormalizedOwned = normalizedOwned } ->
@@ -1469,6 +1481,21 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                     allocated
                                     |> success(temp)(semanticType)
                                     |> closedCallStage(stage)(false)(false)
+
+// A call routed to a reuse specialization whose result is of the contract's types leaves its window
+// open, as stage 0 opens none, and hands its result on as a reuse result the enclosing resets
+// keep; every other call closes its window by its result's contract.
+let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } } ->
+            if routedSpecializationCall(context)(state) && isGeneralRcValueType(semanticType)(state)
+            then
+                state
+                |> markReuseResultTemp(temp)
+                |> success(temp)(semanticType)
+                |> closedCallStage(stage)(false)(false)
+            else closeContractCallWindow(context)(cursorSlot)(endSlot)(stage)
+        | _ -> closeContractCallWindow(context)(cursorSlot)(endSlot)(stage)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a

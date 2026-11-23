@@ -497,6 +497,16 @@ let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, 
             then Some(label)
             else lookupReuseSpecialization(key)(rest)
 
+// Stage 0's `LowerReuseSpecializedCall` applies the specialization's closure with no call window of
+// its own and keeps its result out of the contract's call-result handling: the routed call is
+// lowered with its callee named routed, which the call's window reads when it closes.
+let lowerRoutedSpecializationCall (callee: Str) lower (call: Expr) (state: CoreLoweringState) =
+    match state
+    |> withStateRoutedSpecializationCallees(callee :: stateRoutedSpecializationCallees(state))
+    |> lower(call) with
+        | LoweredCoreValue { state = callState } as lowered ->
+            lowered with state = withStateRoutedSpecializationCallees(stateRoutedSpecializationCallees(state))(callState)
+
 // A call routed to an already-generated specialization: its label takes a closure over the empty
 // environment (the generated body captures nothing — `inlinedReferencesResolveHere` is what proves
 // that at qualification), the closure goes in a local, and the ordinary call path applies the
@@ -516,7 +526,7 @@ let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: Se
                             |> emit(StoreLocal(slot)(closureTemp))
                             |> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot))
                             |> (given (bound: CoreLoweringState) -> withStateSpecializingInProgress(callee :: stateSpecializingInProgress(bound))(bound))
-                            |> lower(specializedCallExpression(ExprVar(callee))(arguments)) with
+                            |> lowerRoutedSpecializationCall(callee)(lower)(specializedCallExpression(ExprVar(callee))(arguments)) with
                                 | LoweredCoreValue { state = callState, temp = temp, semanticType = semanticType, error = error } ->
                                     LoweredCoreValue(
                                         state = callState
@@ -650,7 +660,7 @@ let lowerCountedSpecializationCandidateCall (callee: Str) (arguments: List(Expr)
 // result over counted, the call is lowered outside the group's binding of the callee, with the
 // specialization scope and the routed accumulators taken back; the callee is still in progress
 // there, so the call takes the ordinary path.
-let continueReuseSpecializedCall (label: Str) (argumentCount: Int) (concrete: Bool) outerBindings (unrouted: CoreLoweringState) lower (call: Expr) (state: CoreLoweringState) =
+let continueReuseSpecializedCall (callee: Str) (label: Str) (argumentCount: Int) (concrete: Bool) outerBindings (unrouted: CoreLoweringState) lower (call: Expr) (state: CoreLoweringState) =
     if concrete && specializationHandsResultOverCounted(label)(argumentCount)(state)
     then
         state
@@ -660,7 +670,7 @@ let continueReuseSpecializedCall (label: Str) (argumentCount: Int) (concrete: Bo
         |> withStateSpecializingReuseLabel(stateSpecializingReuseLabel(unrouted))
         |> withStateRoutedSpecializationAccumulators(stateRoutedSpecializationAccumulators(unrouted))
         |> lower(call)
-    else lower(call)(state)
+    else lowerRoutedSpecializationCall(callee)(lower)(call)(state)
 
 let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) (concrete: Bool) (unrouted: CoreLoweringState) lower (state: CoreLoweringState) =
     (let label =
@@ -681,7 +691,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
                 |> withStateReuseSpecializations((cacheKey, label) :: stateReuseSpecializations(state)))
                 |> relabelReuseSpecialization(label)
                 |> pinSpecializationType(callee)(accumulatorType)(coreListLength(arguments))
-                |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
+                |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(callee)(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
 
