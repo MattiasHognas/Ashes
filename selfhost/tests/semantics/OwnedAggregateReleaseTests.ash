@@ -436,8 +436,30 @@ let testEntryReleasesTrailingPipeFreshArgument unit =
     |> countContaining("general_rc_owned_absent_")
     |> test.assertEqual(3)
 
+let nestedConstructorFieldSource = "type State =\n    | S(List(Int))\n\ntype Step =\n    | Done\n    | Continue(State, Int)\n\nlet recursive setAt i value values =\n    match values with\n        | [] -> []\n        | head :: tail ->\n            if i == 0\n            then value :: tail\n            else head :: setAt(i - 1)(value)(tail)\n\nlet advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = setAt(r)(r)(perm)\n            in Continue(S(perm2))(r)\n\nmatch advance(1)(S([1, 2, 3])) with\n    | Done -> Ashes.IO.print(\"done\")\n    | Continue(_next, r) -> Ashes.IO.print(Ashes.Text.fromInt(r))"
+
+// A reference-counted constructor nested in another stores a `let`-bound list that owns its
+// reference-counted value: the cell takes one retain of the binding's read and no reference or
+// copy under a representation test besides, so the only list copy-out left in the function is
+// the call's own conditional one.
+let testNestedConstructorRetainsLiveOwnerFieldOnce unit =
+    nestedConstructorFieldSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> (given (lines: List(Str)) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> countContainingBoth("CopyOutList")("HeadCopy=Inline")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countContainingBoth("RcDup")("MayBeEmpty=true")
+            |> test.assertEqual(1)))
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testNestedConstructorRetainsLiveOwnerFieldOnce
     |> testOwnedListLetWalksSpineInline
     |> testLambdaReturningRecordAllocatesRuntimeManaged
     |> testOwnedRecordLetReleasedByItsOwner
