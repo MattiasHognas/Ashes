@@ -448,6 +448,8 @@ export (
     value withStateLinearSpecializationAccumulators,
     value stateRoutedSpecializationAccumulators,
     value withStateRoutedSpecializationAccumulators,
+    value stateRoutedSpecializationCallees,
+    value withStateRoutedSpecializationCallees,
     value stateSpecializingReuseLabel,
     value withStateSpecializingReuseLabel,
     value stateFullyReusingCallees,
@@ -1372,6 +1374,10 @@ type CoreReuseState =
     // Stage 0's `_routedSpecializationAccumulators`: the accumulators of the function being
     // lowered, and of the lambdas nested in it, whose call was routed to a reuse specialization.
     | routedSpecializationAccumulators: List(Str)
+    // Stage 0's `LowerReuseSpecializedCall` context: the callees whose call the ordinary call path is
+    // lowering as a routed call to their reuse specialization, the specialization's closure bound
+    // under the callee's name.
+    | routedSpecializationCallees: List(Str)
     // Stage 0's `_specializingReuseLabel`: the label of the function that bound the linear
     // parameter while a specialization was being generated, so the reset-safety scan runs over the
     // body that actually rebuilds the accumulator; and its `_fullyReusingLabels`/
@@ -3224,6 +3230,14 @@ let stateRoutedSpecializationAccumulators (state: CoreLoweringState) =
 let withStateRoutedSpecializationAccumulators value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with routedSpecializationAccumulators = value))
+
+let stateRoutedSpecializationCallees (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.routedSpecializationCallees)
+
+let withStateRoutedSpecializationCallees value (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with routedSpecializationCallees = value))
 
 let stateSpecializingReuseLabel (state: CoreLoweringState) =
     (let group = state.reuseState

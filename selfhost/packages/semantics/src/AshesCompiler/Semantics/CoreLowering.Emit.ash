@@ -718,6 +718,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 scrutineeTuple = false,
                 linearSpecializationAccumulators = [],
                 routedSpecializationAccumulators = [],
+                routedSpecializationCallees = [],
                 specializingReuseLabel = None,
                 fullyReusingCallees = [],
                 concreteRegistry = emptyCoreConcreteRegistry(Unit),

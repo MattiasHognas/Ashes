@@ -764,6 +764,16 @@ let expectGenericVariantLoopParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the back edge releases the map's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
         |> (given (_) -> check("no call is routed to the in-place specialization")(countContaining("__reuse")(lines) == 0)))
 
+let tupleResultMapArmsSource = "let recursive build i n m =\n    if i >= n\n    then (m, i)\n    else\n        let m2 =\n            if i - i / 2 * 2 == 0\n            then Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i - i / 10 * 10))(i)(m)\n            else Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i - i / 10 * 10))(i + 7)(m)\n        in build(i + 1)(n)(m2)\n\nmatch build(0)(4)(Ashes.Collection.Map.empty) with\n    | (built, count) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(built) * 1000 + count))"
+
+// A call routed to the map's in-place specialization from an arm of the loop body hands its result
+// on as the rewritten accumulator: when either arm's call is routed there, no call result in the
+// loop is normalized into an owned call-result slot.
+let expectRoutedSpecializationResultIsNotNormalized unit =
+    tupleResultMapArmsSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) -> check("a routed call's result is not normalized into an owned slot")(countContaining("__reuse")(lines) == 0 || countContaining("general_rc_result_normalize")(lines) == 0))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -794,4 +804,5 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectRoutedSpecializationResultIsNotNormalized(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
