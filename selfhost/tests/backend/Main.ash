@@ -5530,8 +5530,6 @@ let testServerStopSignals unit =
     in assertProgramPrints(build)("serverStopSignals")("selfhost_backend_server_stop_signals")("0"))
 
 // Seed the detected CPU count before linking so even a broken override can fork at most one child.
-external lookupWorkerCapGlobal(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedGlobal@libLLVM.so"
-
 let testAutomaticServerWorkerOverride unit =
     (let build name context =
         let entry =
@@ -5576,7 +5574,7 @@ let testAutomaticServerWorkerOverride unit =
                                 |> Ashes.Text.contains(text)
                                 |> test.assertEqual(true)
                             in
-                                let cap = lookupWorkerCapGlobal(module_)("__ashes_parallel_cap")
+                                let cap = getNamedGlobal(module_)("__ashes_parallel_cap")
                                 in
                                     let _ =
                                         false
