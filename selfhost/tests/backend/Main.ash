@@ -9,6 +9,7 @@ import Ashes.Test as test
 import NativeFfiFixtures
 import ElfRelocatableMergeCases
 import ElfRelocatableMergeLink
+import PartitionedObjectsCases
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -6558,6 +6559,7 @@ let run shipped =
     |> testLinkAndRunDynamicMallocFreeModule
     |> runElfRelocatableMergeCases
     |> testLinkAndRunMergedObjects
+    |> runPartitionedObjectsCases
     |> testArenaRestoreReusesCursor
     |> testArenaGrowAndReclaim
     |> testCopyOutArenaRcAdt
