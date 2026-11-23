@@ -909,12 +909,35 @@ let recursive firstInactiveTraitMethod (traitName: Str) (operand: SemanticType) 
                 | Some(_binding) -> firstInactiveTraitMethod(traitName)(operand)(rest)(state)
                 | None -> Some(name)
 
+// Under typed lowering, the evidence of a requirement the body being lowered carries for its whole
+// type argument: a constrained body lowered with a dictionary for `Eq(List(a))` answers a call's
+// `Eq(List(a))` with that dictionary, where evidence resolution would pick the list implementation
+// and ask for an `Eq(a)` nothing supplies. None without a node table, for a closed argument, or when
+// the body carries no such evidence.
+let activeWholeEvidencePlan (constraint: TraitConstraint) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), constraint) with
+        | (Some(_table), TraitConstraint { traitName = traitName, typeArguments = argument :: [] }) ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) != [] && hasActiveTraitEvidence(traitName)(resolved)(state)
+                then Some(TraitEvidenceParameter((constraint with typeArguments = [resolved])))
+                else None
+        | _ -> None
+
+// The plan a dictionary is built from: the body's own evidence for the whole type under typed
+// lowering, otherwise what evidence resolution answers.
+let constrainedDictionaryPlan (constraint: TraitConstraint) (state: CoreLoweringState) =
+    match activeWholeEvidencePlan(constraint)(state) with
+        | Some(plan) -> TraitEvidenceResolution(plan = Some(plan), error = None)
+        | None ->
+            state
+            |> stateTraitEnvironment
+            |> resolveTraitEvidence(constraint)
+
 // The requirement a dictionary cannot be built for, decided before any supertrait dictionary is
 // lowered so the report names the requirement the source asked for and not a trait it implies.
 let unansweredDictionaryRequirement (constraint: TraitConstraint) (methods: List(Str)) (state: CoreLoweringState) =
-    match state
-    |> stateTraitEnvironment
-    |> resolveTraitEvidence(constraint) with
+    match constrainedDictionaryPlan(constraint)(state) with
         | TraitEvidenceResolution { plan = Some(TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = operand :: [] })), error = None } ->
             match firstInactiveTraitMethod(traitName)(operand)(methods)(state) with
                 | Some(_name) ->
@@ -940,9 +963,7 @@ let recursive lowerConstrainedDictionary shape lower state closes =
                 | None ->
                     match lowerConstrainedDictionaries(supertraits)(lower)(state)([])(closes) with
                         | (superState, superExpressions, superCloses, None) ->
-                            match superState
-                            |> stateTraitEnvironment
-                            |> resolveTraitEvidence(constraint) with
+                            match constrainedDictionaryPlan(constraint)(superState) with
                                 | TraitEvidenceResolution { plan = Some(plan), error = None } ->
                                     match lowerConstrainedDictionaryMethods(constraint)(plan)(methods)(lower)(superState)([])(superCloses) with
                                         | (methodState, methodExpressions, methodCloses, None) ->
@@ -1043,7 +1064,7 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
         | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as goal) :: rest ->
             let resolved = resolveType(state)(argument)
             in
-                match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
+                match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), constrainedDictionaryPlan((goal with typeArguments = [resolved]))(state)) with
                     | (Some(key), TraitEvidenceResolution { plan = Some(plan), error = None }) ->
                         if constrainedPlanLacksEvidence(plan)(state)
                         then (key, resolved, dictionaryGoalCandidates(traitName)(state)) :: openConstrainedGoals(index + 1)(rest)(state)
