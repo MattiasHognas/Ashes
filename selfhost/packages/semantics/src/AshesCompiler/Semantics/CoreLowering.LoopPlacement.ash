@@ -472,38 +472,46 @@ let tcoPassThroughSlotCopy (slot: Int) (state: CoreLoweringState) =
         | Some(SemBytes) -> Some((SemBytes, "Bytes"))
         | _ -> None
 
+// A list-only self-call shape (a choice between handing the parameter on and a call consuming it,
+// say) says nothing about a named type's cells: stage 0's `IsRcEligibleScalarTupleOrAdtType` places
+// a named loop parameter whatever its self-calls pass, short of handing it on unchanged. Every
+// other type keeps the list-shape gate.
+let tcoUnnamedSlotCopy (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (resolved: Maybe(SemanticType)) (state: CoreLoweringState) =
+    if isTcoListShape(shape) && shape != TcoRefilledFreshListShape
+    then None
+    else
+        match resolved with
+            | Some(SemTuple(elements) as tuple) ->
+                if length(elements) > 0 && allRuntimeOwnedCopyElements(elements)(state)
+                then Some((tuple, "Tuple"))
+                else None
+            | Some(SemString) -> Some((SemString, "String"))
+            | Some(SemBytes) -> Some((SemBytes, "Bytes"))
+            | Some(SemList(element) as list) ->
+                if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
+                then
+                    match argumentCopyPlanOf(list)(state) with
+                        | Some(_plan) -> Some((list, "List"))
+                        | None -> None
+                else None
+            | _ -> None
+
 let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if shape == TcoPassThroughShape
     then tcoPassThroughSlotCopy(slot)(state)
     else
-        if isTcoListShape(shape) && shape != TcoRefilledFreshListShape
-        then None
-        else
-            match slotResolvedType(slot)(state.bindings)(state) with
-                | Some(SemNamed(_symbolId, name, _arguments) as named) ->
-                    if isResourceHandle(named)(state)
-                    then None
-                    else
-                        let layouts = state |> stateConstructorsOfType(name)
-                        in
-                            match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
-                                | Some(true) -> Some((named, name))
-                                | Some(false) -> None
-                                | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
-                | Some(SemTuple(elements) as tuple) ->
-                    if length(elements) > 0 && allRuntimeOwnedCopyElements(elements)(state)
-                    then Some((tuple, "Tuple"))
-                    else None
-                | Some(SemString) -> Some((SemString, "String"))
-                | Some(SemBytes) -> Some((SemBytes, "Bytes"))
-                | Some(SemList(element) as list) ->
-                    if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
-                    then
-                        match argumentCopyPlanOf(list)(state) with
-                            | Some(_plan) -> Some((list, "List"))
-                            | None -> None
-                    else None
-                | _ -> None
+        match slotResolvedType(slot)(state.bindings)(state) with
+            | Some(SemNamed(_symbolId, name, _arguments) as named) ->
+                if isResourceHandle(named)(state)
+                then None
+                else
+                    let layouts = state |> stateConstructorsOfType(name)
+                    in
+                        match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
+                            | Some(true) -> Some((named, name))
+                            | Some(false) -> None
+                            | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
+            | resolved -> tcoUnnamedSlotCopy(slot)(shape)(loop)(resolved)(state)
 
 let tcoAdtSlotAdmitted (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match tcoAdtSlotCopy(ordinal)(slot)(shape)(loop)(state) with

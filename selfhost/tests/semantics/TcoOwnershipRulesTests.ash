@@ -739,6 +739,17 @@ let expectTupleResultPartsPrecedeExitRelease unit =
             match indices with
                 | (partsIndex, exitIndex) -> check("the tuple result's parts are handed over before the exit releases the loop parameters")(partsIndex >= 0 && exitIndex >= 0 && partsIndex < exitIndex)))
 
+let choiceVariantAccumulatorSource = "type Tree =\n    | Leaf\n    | Node(Tree, Str, Tree)\n\nlet recursive insert (k: Str) t =\n    match t with\n        | Leaf -> Node(Leaf, k, Leaf)\n        | Node(l, x, r) ->\n            if k < x\n            then Node(insert(k)(l), x, r)\n            else Node(l, x, insert(k)(r))\n\nlet put (k: Str) t = insert(k)(t)\n\nlet recursive build i n m =\n    if i >= n\n    then m\n    else\n        let m2 =\n            if i - i / 2 * 2 == 0\n            then put(\"a\")(m)\n            else put(\"b\")(m)\n        in build(i + 1)(n)(m2)\n\nlet recursive size t =\n    match t with\n        | Leaf -> 0\n        | Node(l, _x, r) -> size(l) + 1 + size(r)\n\nAshes.IO.print(Ashes.Text.fromInt(size(build(0)(4)(Leaf))))"
+
+// A variant of the contract's types whose successor is a choice between two calls consuming it is
+// placed on the reference-counted heap whatever its self-call shape: the list-only choice shape
+// does not keep a named parameter in the arena, so the back edge releases the old root under its
+// active flag.
+let expectChoiceShapedVariantParameterIsRuntimeManaged unit =
+    choiceVariantAccumulatorSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) -> check("the back edge releases the variant's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -767,4 +778,5 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
+    |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
