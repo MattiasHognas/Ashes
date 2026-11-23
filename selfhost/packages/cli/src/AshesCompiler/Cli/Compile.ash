@@ -52,6 +52,8 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Backend.LinkNames
+import AshesCompiler.Backend.ProgramPartitions.requestedObjectPartitions
+import AshesCompiler.Backend.PartitionedObjects
 import AshesCompiler.Frontend.ImportHeader.parseImportHeader
 import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
 import AshesCompiler.Frontend.Parser.parseProgram
@@ -754,6 +756,75 @@ let emitPreparedObject module_ builder context payloads =
         | Error(message) -> Error(message)
         | Ok(machine) -> emitObjectWithMachine(payloads)(machine)(builder)(module_)(context)
 
+// Each vendored payload the program needs, resolved to its file.
+let recursive resolveRuntimePayloadPaths (fileNames: List(Str)) (acc: List(Str)) =
+    match fileNames with
+        | [] ->
+            acc
+            |> Ashes.Collection.List.reverse
+            |> Ok
+        | fileName :: rest ->
+            match runtimePayloadPath(fileName) with
+                | Error(message) -> Error(message)
+                | Ok(path) -> resolveRuntimePayloadPaths(rest)(path :: acc)
+
+// A fresh host target machine for each partition of a partitioned build.
+let partitionTargetMachine unit = resolveHostTargetMachine(linuxX64Triple)
+
+// The partition count setting, stage 0's `ASHES_LLVM_JOBS` (`requestedObjectPartitions`); unset,
+// the program is built as one module.
+let objectPartitionsSetting unit =
+    match Ashes.IO.Environment.get("ASHES_LLVM_JOBS") with
+        | Ok(Some(value)) when value != "" -> Some(value)
+        | _ -> None
+
+// A program prepared for emission: one module (`preparedEmission`'s tuple), or the partition
+// modules of a partitioned build with the payload files partition 0 links, the external libraries
+// and the link-map names.
+type PreparedBuild(W, P) =
+    | WholeModuleBuild(W)
+    | PartitionedBuild(P)
+
+// The program built into `partitions` partition modules, every one built while the program is
+// read, with the payload files resolved and what linking still needs read up front. Like
+// `preparedEmission`, the program is not part of the result, so it is released before the first
+// partition is optimized; the unoptimized partition modules are then all alive together.
+let preparedPartitionedEmission (partitions: Int) optimized =
+    (let _ = initializeX86Target(Unit)
+    in
+        match resolveRuntimePayloadPaths(runtimePayloadsFor(optimized))([]) with
+            | Error(message) -> Error(message)
+            | Ok(payloadPaths) ->
+                let _ = reportDiagnosticPhase("codegen-start")
+                in
+                    let modules =
+                        buildPartitionModules(leakCheckRequested(Unit))(entrySymbolName)(partitions)(optimized)
+                    in
+                        let _ = reportDiagnosticPhase("codegen-done")
+                        in
+                            let linkNames =
+                                match requestedLinkMapPath(Unit) with
+                                    | Some(_path) ->
+                                        optimized
+                                        |> linkNamesText
+                                        |> Some
+                                    | None -> None
+                            in Ok(PartitionedBuild((modules, payloadPaths, externalLibraries(optimized), linkNames))))
+
+// The program prepared as one module, or with `ASHES_LLVM_JOBS` asking for more than one
+// partition, as partition modules.
+let preparedBuild optimized =
+    (let partitions =
+        requestedObjectPartitions(objectPartitionsSetting(Unit))(optimized)
+    in
+        if partitions > 1
+        then preparedPartitionedEmission(partitions)(optimized)
+        else
+            optimized
+            |> preparedEmission
+            |> WholeModuleBuild
+            |> Ok)
+
 // The output's directory is created first, as stage 0 does, so a fresh project's
 // `<outDir>/<name>` needs no prior `mkdir`.
 let ensureOutputDirectory outputPath =
@@ -815,6 +886,23 @@ let emitAndLinkPrepared outputPath prepared =
                                 | Error(message) -> Error(message)
                                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
+// Optimizes and emits the partition modules one after another, merges their objects, writes the
+// requested link map of the merged object, and links and writes the executable to `outputPath`.
+let emitAndLinkPartitioned outputPath prepared =
+    match prepared with
+        | (modules, payloadPaths, libraries, linkNames) ->
+            match mergePartitionModules(linuxX64Triple)(partitionTargetMachine)(payloadPaths)(modules) with
+                | Error(message) -> Error(message)
+                | Ok(objectBytes) ->
+                    let _ = reportDiagnosticPhase("emitted")
+                    in
+                        match writeRequestedLinkMap(linkNames)(objectBytes) with
+                            | Error(message) -> Error(message)
+                            | Ok(_) ->
+                                match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                                    | Error(message) -> Error(message)
+                                    | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
 // and how long it took. Its result is discarded, so the emitted image is the same either way; with
@@ -870,7 +958,8 @@ let optimizedStitchedProgram (explain: ExplainRequest) (reuseEnabled: Bool) inpu
 let compilePreparedToExecutable outputPath prepared =
     match prepared with
         | Error(message) -> Error(message)
-        | Ok(emission) -> emitAndLinkPrepared(outputPath)(emission)
+        | Ok(WholeModuleBuild(emission)) -> emitAndLinkPrepared(outputPath)(emission)
+        | Ok(PartitionedBuild(partitioned)) -> emitAndLinkPartitioned(outputPath)(partitioned)
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
@@ -997,10 +1086,7 @@ let optimizedFileProgram inputPath (explain: ExplainRequest) (reuseEnabled: Bool
 let preparedFileEmission inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match optimizedFileProgram(inputPath)(explain)(reuseEnabled) with
         | Error(message) -> Error(message)
-        | Ok(optimized) ->
-            optimized
-            |> preparedEmission
-            |> Ok
+        | Ok(optimized) -> preparedBuild(optimized)
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
@@ -1031,10 +1117,7 @@ let optimizedProjectProgram (layout: ProjectLayout) (explain: ExplainRequest) (r
 let preparedProjectEmission (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
     match optimizedProjectProgram(layout)(explain)(reuseEnabled) with
         | Error(message) -> Error(message)
-        | Ok(optimized) ->
-            optimized
-            |> preparedEmission
-            |> Ok
+        | Ok(optimized) -> preparedBuild(optimized)
 
 // Compiles the project at `layout` to the executable at `outputPath`, printing the `explain`
 // reports to stderr on the way, and returns the written byte count.
