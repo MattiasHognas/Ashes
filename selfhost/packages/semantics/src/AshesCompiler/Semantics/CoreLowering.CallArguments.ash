@@ -34,11 +34,14 @@ import AshesCompiler.Semantics.CoreLowering.ResultHandOver
 import AshesCompiler.Semantics.CoreLowering.Bindings
 import AshesCompiler.Semantics.CoreLowering.LoopPlacement
 import AshesCompiler.Semantics.CoreLowering.LoopFrames
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
+import AshesCompiler.Semantics.NodeTypeTable.nodeBindingsAt
 export (
     type CoreCallContext(..),
     type CoreConsumedArgument(..),
     type CoreCallStage(..),
     value ensureFunctionType,
+    value applyRecordedLambdaType,
     value withActiveTraitMethodNames,
     value lowerLambda,
     value ensureResultRcEligibility,
@@ -116,11 +119,43 @@ let ensureFunctionType semanticType state =
             |> finishFreshFunctionType(semanticType)
         | other -> failedFunctionType(state)(CoreCallRequiresFunction(other))
 
+let recursive recordedParameterScheme (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (bound, scheme) :: rest ->
+            if bound == name
+            then Some(scheme)
+            else recordedParameterScheme(name)(rest)
+
+// Without an expected type, under typed lowering, the parameter takes the type the standalone
+// inference recorded for it at the lambda node being lowered (the node binds the parameter by name,
+// which identifies the lambda against a node lowering synthesized around it), when that type, read
+// through the enclosing instantiation and the program's settled uses, is closed; a generic lambda
+// keeps its open parameter. Without a node table nothing is recorded.
+let applyRecordedLambdaType (parameter: Str) (parameterType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match table
+            |> nodeBindingsAt(node)
+            |> recordedParameterScheme(parameter) with
+                | Some(TypeScheme { quantified = [], body = recorded }) ->
+                    match recordedSettledType(recorded)(state) with
+                        | Some(closed) ->
+                            match bindType(parameterType)(closed)(state) with
+                                | (bound, None) -> observeLoweringEvent(0)(bound)
+                                | (_failed, Some(_error)) -> state
+                        | None -> state
+                | _ -> state
+        | _ -> state
+
 // An expected function type pins the parameter type before the body is lowered; its result type
 // meets the body's type through the context's own unification afterwards.
-let applyExpectedLambdaType parameterType state =
+let applyExpectedLambdaType parameter parameterType state =
     match expectedTypeOf(state) with
-        | None -> (clearConsumerRequest(state), None)
+        | None ->
+            (state
+            |> clearConsumerRequest
+            |> applyRecordedLambdaType(parameter)(parameterType), None)
         | Some(expected) ->
             match state
             |> clearConsumerRequest
@@ -160,7 +195,7 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                         |> withStatePendingStackClosure(false))
                     |> freshType with
                         | FreshType { state = freshState, semanticType = parameterType } ->
-                            match applyExpectedLambdaType(parameterType)(freshState) with
+                            match applyExpectedLambdaType(parameter)(parameterType)(freshState) with
                                 | (expectedFailed, Some(error)) -> failure(expectedFailed)(error)
                                 | (expectedState, None) ->
                                     match expectedState
