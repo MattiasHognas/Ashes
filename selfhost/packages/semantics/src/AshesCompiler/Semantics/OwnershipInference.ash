@@ -8,6 +8,7 @@
 
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.ExprMentions.exprContainsAwait
+import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.OwnershipProvenance
@@ -237,6 +238,9 @@ let recursive mentionsVar (expr: Expr) (param: Str) =
             else mentionsVar(right)(param)
         | ExprAwait(e) -> mentionsVar(e)(param)
         | ExprPerform(e) -> mentionsVar(e)(param)
+        // A handle mentions the parameter wherever its body or an arm reads it; the arms' own
+        // bindings are not subtracted, which only answers "mentions" more often.
+        | ExprHandle(_body, _arms) -> exprMentionsName(param)(expr)
         | _ -> false
 and mentionsVarList (list: List(Expr)) (param: Str) =
     match list with
