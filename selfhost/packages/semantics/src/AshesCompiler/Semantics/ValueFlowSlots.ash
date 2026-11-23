@@ -13,6 +13,7 @@ export (
     value localSlotsReachingTempsStopping,
     value localSlotsReachingTempsWithAliases,
     value localSlotsReachingEachTemp,
+    value localSlotsReachingEachTempPastRetains,
 )
 
 type ValueFlowIndex =
@@ -258,3 +259,28 @@ let localSlotsReachingEachTemp (temps: List(Int)) (reversedInstructions: List(Ir
             index.slotStores
             |> Ashes.Collection.Map.toList
             |> slotsReachingEach(temps)(index))
+
+let recursive runtimeRetainTargets (instructions: List(IrInstruction)) (targets: List(Int)) =
+    match instructions with
+        | [] -> targets
+        | IrInstruction { instruction = RcDup(target, _source, true, _mayBeEmpty) } :: rest -> runtimeRetainTargets(rest)(target :: targets)
+        | _instruction :: rest -> runtimeRetainTargets(rest)(targets)
+
+let recursive slotsReachingEachFrom (temps: List(Int)) (stops: MapTree(Int, Bool)) (index: ValueFlowIndex) (stores: List((Int, List(Int)))) =
+    match temps with
+        | [] -> []
+        | temp :: rest ->
+            (match walkValueFlow([temp])(stops)(index)([])([]) with
+                | (slots, visited) -> slotsStoringVisited(stores)(visited)(slots)) :: slotsReachingEachFrom(rest)(stops)(index)(stores)
+
+// `localSlotsReachingEachTemp` that does not follow a value through a retain: a reference-counted
+// duplicate is a reference of its own, so what holds it names no slot's value unretained.
+let localSlotsReachingEachTempPastRetains (temps: List(Int)) (reversedInstructions: List(IrInstruction)) =
+    (let indexed = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
+    in
+        let index =
+            indexed with slotStores = forgetSlotStores(arenaDemotedSlots(reversedInstructions)([]))(indexed.slotStores)
+        in
+            index.slotStores
+            |> Ashes.Collection.Map.toList
+            |> slotsReachingEachFrom(temps)(markVisited(runtimeRetainTargets(reversedInstructions)([]))(Ashes.Collection.Map.empty))(index))
