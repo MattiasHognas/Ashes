@@ -233,6 +233,11 @@ export (
     value stateHandlerArmOwnResult,
     value withStateHandlerArmOwnResult,
     value ordinaryRcPlacementAllowed,
+    value asyncIndependentRcPlacementAllowed,
+    value stateCoroutineFunctions,
+    value withStateCoroutineFunctions,
+    value stateMayRunInsideCoroutine,
+    value withStateMayRunInsideCoroutine,
     value escapingRcPlacementAllowed,
     value generalRcEnabled,
     value statePendingClosureNormalizers,
@@ -933,6 +938,9 @@ type CoreProgramState =
     // Stage 0's `_maFunctionsMayExecuteAsParallelWorker`: the top-level functions that may run on a
     // structured-parallelism worker thread.
     | parallelWorkerFunctions: MapTree(Str, Bool)
+    // Stage 0's `_maFunctionsMayExecuteInsideCoroutine`: the top-level functions that may run inside
+    // a coroutine, written in or reachable from an `async` body.
+    | coroutineFunctions: MapTree(Str, Bool)
     | entryRunsUnderLiveHandlerPost: Bool
     | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
@@ -1075,6 +1083,9 @@ type CoreFunctionState =
     // a worker frees its own heap when it exits, so a value of its is copied out, never shared. A
     // nested function takes its enclosing function's answer.
     | mayRunAsParallelWorker: Bool
+    // Stage 0's `MayExecuteInsideCoroutine` for the function being lowered; a nested function takes
+    // its enclosing function's answer.
+    | mayRunInsideCoroutine: Bool
     // Stage 0's `_loweringHandlerArmOwnResult`: an operation arm closure is being lowered, whose own
     // escaping result may reach the reference-counted heap under a live handler post, since the
     // perform site always asks for its arena form and releases the original.
@@ -2250,17 +2261,41 @@ let withStateHandlerArmOwnResult value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with handlerArmOwnResult = value))
 
-// Stage 0's `AllowsOrdinaryRcPlacement`: the function being lowered cannot run while a one-shot
-// post is pending, so its values may be placed on the reference-counted heap.
-let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false
+let stateCoroutineFunctions (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.coroutineFunctions)
 
-// Stage 0's `AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult`, the gate of an escaping
-// result's placement.
-let escapingRcPlacementAllowed (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) || stateHandlerArmOwnResult(state)
+let withStateCoroutineFunctions value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with coroutineFunctions = value))
 
-// Stage 0's `GeneralRcEnabled` as far as the live-handler context decides it: the function may place
-// ordinary values on the reference-counted heap and no function of the program may run while a
-// one-shot post is pending.
+let stateMayRunInsideCoroutine (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.mayRunInsideCoroutine)
+
+let withStateMayRunInsideCoroutine value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with mayRunInsideCoroutine = value))
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement` (`!MayExecuteInsideCoroutine`) and its
+// `_inCoroutineBody`: a coroutine body keeps every value in the arena, its call results copied out
+// at their call boundary and its loop's arena reset at the loop head after a resume, so nothing it
+// holds across a suspension is reference-counted; so does every function that may run inside one.
+let asyncIndependentRcPlacementAllowed (state: CoreLoweringState) = stateCoroutineBody(state) == false && stateMayRunInsideCoroutine(state) == false
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement`, the pair every stage-0
+// placement reads together: the function being lowered is no coroutine body and cannot run while a
+// one-shot post is pending, so its values may be placed on the reference-counted heap.
+let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false && asyncIndependentRcPlacementAllowed(state)
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement && (AllowsOrdinaryRcPlacement ||
+// _loweringHandlerArmOwnResult)`, the gate of an escaping result's placement.
+let escapingRcPlacementAllowed (state: CoreLoweringState) = asyncIndependentRcPlacementAllowed(state) && (stateUnderLiveHandlerPost(state) == false || stateHandlerArmOwnResult(state))
+
+// Stage 0's `GeneralRcEnabled` as far as the live-handler and coroutine contexts decide it: the
+// function is no coroutine body (its `!_inCoroutineBody` and `AllowsAsyncIndependentRcPlacement`
+// terms, through `ordinaryRcPlacementAllowed`), may place ordinary values on the reference-counted
+// heap, and no function of the program may run while a one-shot post is pending.
 let generalRcEnabled (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && programMayRunUnderLiveHandlerPost(state) == false
 
 let statePendingClosureNormalizers (state: CoreLoweringState) =

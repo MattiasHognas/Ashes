@@ -2470,6 +2470,7 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
         match state
         |> clearConsumerRequest
         |> withStatePendingCoroutineBody(true)
+        |> withStateMayRunInsideCoroutine(true)
         |> lowerLambda("__async_unit")(if transparent
         then body
         else ExprCall(ExprVar("Ok"))(body)(false)(callArgumentsInline))(None)(false)(lower) with
@@ -2479,6 +2480,7 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
                     | SemFunction(_parameter, resultType, _row) ->
                         match loweredState
                         |> withStatePendingCoroutineBody(false)
+                        |> withStateMayRunInsideCoroutine(stateMayRunInsideCoroutine(state))
                         |> (given (typed) ->
                             if transparent
                             then (typed, SemNamed(0)("Task")([SemString, resultType]), None)
