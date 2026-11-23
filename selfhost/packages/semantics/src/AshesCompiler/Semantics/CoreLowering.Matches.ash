@@ -2038,23 +2038,6 @@ let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType)
                     | None -> (state, resultTemp, true)
             else (state, resultTemp, true)
 
-// Whether `temp` reloads a deferred call copy-out that, with the call's type now settled, copies
-// the result onto the reference-counted heap and that no owned slot of the function takes over (a
-// self call's result of the contract's types is one).
-let recursive reloadsDeferredHeapCopy (temp: Int) (copyOuts: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
-    match copyOuts with
-        | [] -> false
-        | copyOut :: rest ->
-            if copyOut.deferredReloadTemp == temp
-            then
-                if copyOut.deferredOwned || containsUnresolvedLayout(copyOut.deferredType)(state) || isGeneralRcValueType(copyOut.deferredType)(state)
-                then false
-                else
-                    match callCopyOutOf(copyOut.deferredType)(state) with
-                        | Some(_copyOut) -> ordinaryRcPlacementAllowed(state)
-                        | None -> false
-            else reloadsDeferredHeapCopy(temp)(rest)(state)
-
 // The instructions a `let` body emitted, oldest first, and the instructions before the store of
 // the binding's slot, newest first.
 let recursive splitAtSlotStore (slot: Int) (instructions: List(IrInstruction)) (body: List(IrInstructionKind)) =
@@ -2127,33 +2110,43 @@ and slotReadsTakeOwnReference (slot: Int) (resultTemp: Int) (depth: Int) (body: 
 
 // Stage 0 pins a call's result type at the call, so a `let` of a call whose result is copied onto
 // the reference-counted heap binds a newly produced value and adopts it (`TrackLetOwnership`).
-// This lowering learns such a call's type only once the body settles it (a self call's result,
-// read before the cons that types it): the copy-out is resolved after the body, before the reload
-// the binding stores, and the binding was not adopted. Every reader then saw an unowned value; when
-// each of them took a reference or a copy of its own and none carried the value out unretained,
-// the binding adopts the copy at the scope's end and releases its own reference there, as stage
-// 0's binding does (`IsUnplacedLetBoundTail`: the binding keeps its own reference either way).
+// This lowering may learn such a call's type only once the whole body is lowered (a self call's
+// result, which the `let` generalizes and the cons types through an instance): the copy-out is
+// resolved after the body, before the reload the binding stores, and the binding was not adopted.
+// Every reader then saw an unowned value; when each of them took a reference or a copy of its own
+// and none carried the value out unretained, the scope's exit holds a placeholder the splice
+// turns into the release of the binding's copy once the copy-out resolves to a copy onto the
+// reference-counted heap, as stage 0's binding releases it (`IsUnplacedLetBoundTail`: the binding
+// keeps its own reference either way).
 let bodyReadsTakeOwnReference (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
     match splitAtSlotStore(ownerSlot)(state.reversedInstructions)([]) with
         | (body, outside) -> slotReadsTakeOwnReference(ownerSlot)(bodyTemp)(4)(body)(outside)(body)(false)
 
-let adoptsDeferredHeapCopy (valueTemp: Int) (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
-    runtimeOwnerStateOf(ownerSlot)(state) == None && reloadsDeferredHeapCopy(valueTemp)(statePendingCallCopyOuts(state))(state) && bodyReadsTakeOwnReference(ownerSlot)(bodyTemp)(state)
+let recursive pendingReloadUnowned (temp: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> false
+        | copyOut :: rest -> copyOut.deferredReloadTemp == temp && copyOut.deferredOwned == false || pendingReloadUnowned(temp)(rest)
 
-let adoptDeferredHeapCopy (adopts: Bool) (ownerSlot: Int) (valueType: SemanticType) (state: CoreLoweringState) =
-    if adopts
+let recursive withLetReleaseSlot (temp: Int) (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> []
+        | copyOut :: rest ->
+            if copyOut.deferredReloadTemp == temp
+            then (copyOut with deferredLetReleaseSlots = slot :: copyOut.deferredLetReleaseSlots) :: rest
+            else copyOut :: withLetReleaseSlot(temp)(slot)(rest)
+
+let releasesDeferredLetCopy (valueTemp: Int) (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
+    runtimeOwnerStateOf(ownerSlot)(state) == None && pendingReloadUnowned(valueTemp)(statePendingCallCopyOuts(state)) && bodyReadsTakeOwnReference(ownerSlot)(bodyTemp)(state)
+
+let emitDeferredLetReleasePlaceholder (valueTemp: Int) (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
+    if releasesDeferredLetCopy(valueTemp)(ownerSlot)(bodyTemp)(state)
     then
         state
-        |> withStateRuntimeOwners((ownerSlot, true) :: stateRuntimeOwners(state))
-        |> withStateOwnerReleasePlans((ownerSlot, resolveType(state)(valueType), OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None)) :: stateOwnerReleasePlans(state))
+        |> withStatePendingCallCopyOuts(state
+        |> statePendingCallCopyOuts
+        |> withLetReleaseSlot(valueTemp)(ownerSlot))
+        |> emit(TcoResetPending(letCopyReleaseBase + ownerSlot)([])([ownerSlot]))
     else state
-
-// The type name a `let`'s scope exit releases the binding under: an adopted deferred copy's
-// type is read as the body settled it.
-let closingLetOwnedTypeName (adopts: Bool) (value: Expr) (loweredValue: LoweredCoreValue) (bodyState: CoreLoweringState) (state: CoreLoweringState) =
-    if adopts
-    then loweredValueOwnedTypeName((loweredValue with state = bodyState))
-    else letOwnedTypeName(value)(loweredValue)(state)
 
 // The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
 // every analysis of the body still reads `body`.
@@ -2179,20 +2172,18 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                             |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBodyNamingEscapingCapture(name)(body)(lowerBody))(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    let adopts = adoptsDeferredHeapCopy(loweredValue.temp)(ownerSlot)(bodyTemp)(bodyState)
-                                    in
-                                        match bodyState
-                                        |> adoptDeferredHeapCopy(adopts)(ownerSlot)(loweredValue.semanticType)
-                                        |> materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType) with
-                                            | (viewState, resultTemp, keepsOwner) ->
-                                                match (if keepsOwner
-                                                then retireRuntimeOwner(ownerSlot)(viewState)
-                                                else viewState)
-                                                |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
-                                                |> closeOwnedLetBracket(if keepsOwner
-                                                then None
-                                                else closingLetOwnedTypeName(adopts)(value)(loweredValue)(bodyState)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
-                                                    | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+                                    match bodyState
+                                    |> emitDeferredLetReleasePlaceholder(loweredValue.temp)(ownerSlot)(bodyTemp)
+                                    |> materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType) with
+                                        | (viewState, resultTemp, keepsOwner) ->
+                                            match (if keepsOwner
+                                            then retireRuntimeOwner(ownerSlot)(viewState)
+                                            else viewState)
+                                            |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
+                                            |> closeOwnedLetBracket(if keepsOwner
+                                            then None
+                                            else letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
+                                                | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 let lowerArenaBracketedNestedLet name value body lower outerBindings state = lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lower)(outerBindings)(state)
 

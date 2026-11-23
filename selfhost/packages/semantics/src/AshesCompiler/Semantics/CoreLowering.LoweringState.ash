@@ -760,6 +760,10 @@ type CorePendingCallCopyOut =
     // slot of the function and the call's arena-result request is withdrawn.
     | deferredSelfCall: Bool
     | deferredOwned: Bool
+    // The slots of the `let` bindings of the reload that release a heap copy at their scope exit:
+    // each scope exit holds a placeholder (`letCopyReleaseBase` plus the slot) resolved with this
+    // copy-out once its type is known.
+    | deferredLetReleaseSlots: List(Int)
 
 // What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
 // result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
