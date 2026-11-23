@@ -1227,20 +1227,27 @@ and lowerUnconstrainedBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = false)
+            in state with bindings = binding :: bindings
+
+// An ordinary `let`'s binding: owned like any other, and let-bound (stage 0's `Binding.Scheme`).
+let addLetBinding name scheme location state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = true)
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = false)
             in state with bindings = binding :: bindings
 
 // Remember the exact binder's classification even when it needs no protective reference.
 let addPatternBinding name scheme location (fact: PatternBindingFact) state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme), letBound = false)
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -1463,7 +1470,7 @@ let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp
                     |> registerTopLevelFunctionRef(name)(valueTemp)(scheme)
                     |> withConsumerRequest(letBodyRequest(tailForwarded)(bodyRequest)(valueTemp)(local)(storedState))
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
-                    |> addOwnedBinding(name)(scheme)(CoreLocal(local))
+                    |> addLetBinding(name)(scheme)(CoreLocal(local))
 
 let recursive stripExprAt (expr: Expr) =
     match expr with
@@ -2603,17 +2610,19 @@ let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (stat
 // Stage 0's `IsMaterializableStringChildRead`: a borrowed string a runtime-managed parent copies
 // into an owned child of its own: a field read out of a local record binding, or a read of a
 // name the arm around the literal binds later or of a local binding that owns no
-// reference-counted string of its own; a literal keeps the parent in the arena.
+// reference-counted string of its own; a literal keeps the parent in the arena. A local binding
+// is a parameter, a pattern binder or a capture (stage 0's `Binding.Local`): a `let`-bound name
+// (stage 0's `Binding.Scheme`) is never one, so a record built from one stays in the arena.
 let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState) =
     match unspanArgument(expression) with
         | ExprQualifiedVar(owner, _field) ->
             match lookupBinding(owner)(state.bindings) with
-                | Some(CoreBinding { location = CoreLocal(_slot) }) -> true
+                | Some(CoreBinding { location = CoreLocal(_slot), letBound = false }) -> true
                 | _ -> false
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | None -> true
-                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact, letBound = false }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
                 | _ -> false
         | _ -> false
 
@@ -3188,7 +3197,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead, closedScheme = closedScheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme)
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme, letBound = false)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =

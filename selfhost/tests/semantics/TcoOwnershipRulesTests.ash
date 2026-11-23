@@ -790,6 +790,20 @@ let expectOwningClosureRecordIsRuntimeManaged unit =
         |> (given (_) -> check("its fourth word holds the capture dropper")(countContainingBoth("LoadFuncAddr")("__rc_cdrop_")(lines) == 1 && countContainingBoth("StoreMemOffset")("OffsetBytes=24")(lines) == 1))
         |> (given (_) -> check("the record cell is reference-counted")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 1)))
 
+let letBoundStringArmTupleSource = "type Tok =\n    | kind: Int\n    | text: Str\n\nlet readNext (position: Int) =\n    (let text = Ashes.Text.fromInt(position)\n    in\n        if position < 1000\n        then (Tok(kind = 1, text = text), None)\n        else (Tok(kind = 2, text = text), Some(position)))\n\nlet recursive scan (count: Int) (position: Int) (kinds: Int) (bytes: Int) =\n    if position >= count\n    then Ashes.Text.fromInt(kinds) + \"|\" + Ashes.Text.fromInt(bytes)\n    else\n        match readNext(position) with\n            | (Tok { kind = kind, text = text }, _note) -> scan(count)(position + 1)(kinds + kind)(bytes + Ashes.Text.byteLength(text))\n\n0\n|> scan(100)(0)(0)\n|> Ashes.IO.print"
+
+// A record built in an `if` arm from a `let`-bound string, inside a tuple the function returns,
+// stays in the arena: a let-bound name is no borrowed string a reference-counted parent copies
+// (stage 0's `Binding.Scheme`), so neither arm copies the string out or allocates the record on
+// the reference-counted heap.
+let expectLetBoundStringKeepsArmRecordInArena unit =
+    letBoundStringArmTupleSource
+    |> loopFunctionLines("[SourceFunction from readNext]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("no arm allocates the record on the reference-counted heap")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 0))
+        |> (given (_) -> check("no arm copies the let-bound string out")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -818,6 +832,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
+    |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectRoutedSpecializationResultIsNotNormalized(Unit))

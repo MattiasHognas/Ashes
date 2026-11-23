@@ -1325,7 +1325,7 @@ let tryConstrainedGlobalCall name expression lower state =
                         | LoweredCoreValue { state = closureState, temp = temp, error = None } ->
                             match freshLocal(closureState) with
                                 | FreshLocal { state = allocated, local = slot } ->
-                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternFact = None, closedScheme = false)
+                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternFact = None, closedScheme = false, letBound = false)
                                     in
                                         allocated
                                         |> emit(StoreLocal(slot)(temp))
