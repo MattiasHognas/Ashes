@@ -21,6 +21,7 @@ import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTypeParameters
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithGoalDetails
+import AshesCompiler.Semantics.CoreLowering.measureStitchedLowering
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
@@ -427,7 +428,7 @@ let checkDeferredOperatorDetails unit =
                                                 in
                                                     let legacySites = countDeferredOperatorSites(legacy.goalDetails)(0)
                                                     in
-                                                        if firstTyped.error == None && typedSites == firstTyped.deferredOperators && legacySites == firstLegacy.deferredOperators
+                                                        if firstTyped.error == None && firstLegacy.error == None && typedSites == firstTyped.deferredOperators && legacySites == firstLegacy.deferredOperators
                                                         then Unit
                                                         else Ashes.IO.panic("deferred operator details: typed sites=" + Ashes.Text.fromInt(typedSites) + " of " + Ashes.Text.fromInt(firstTyped.deferredOperators) + ", legacy sites=" + Ashes.Text.fromInt(legacySites) + " of " + Ashes.Text.fromInt(firstLegacy.deferredOperators))
                         | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic("deferred operator inference failed: " + Ashes.Trait.Show.show(error))
@@ -437,40 +438,52 @@ let checkDeferredOperatorDetails unit =
 // the binding at one element type: the typed first pass answers it from the table, leaves no trait
 // goal and runs no replay, while the legacy lowering of the same program still leaves a goal for its
 // replay, whichever counter carries it (`noReplay`); where another goal of the program still replays,
-// the typed replay must lower the site too. The typed passes must lower without an error; the
-// legacy lowering is the baseline the table improves on, so only its goals are asserted.
+// the typed replay must lower the site too. The program is stitched with the shipped modules, as
+// `compile` does, so the list and string instances of `Ashes.Trait` it compares through exist.
+// Both modes must lower without an error.
 let checkTypedEqualityLeavesNoGoal (label: Str) (noReplay: Bool) (source: Str) =
-    match parseProgram(source) with
-        | ProgramParseResult { program = parsed, diagnostics = [] } ->
-            match identifyProgram(0)(parsed) with
-                | (program, _count) ->
-                    match inferProgramFromPackage("standalone")(standardTraitEnvironment(Unit))(program) with
-                        | ProgramInferenceResult { nodeTypes = table, error = None } ->
-                            let clock =
-                                given (_unit) -> 0
-                            in
-                                let typed = measureCoreProgramLowering(clock)(Some(table))("equality.ash")("")(program)
+    match Ashes.IO.Directory.entries("lib/Ashes") with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(names) ->
+            match names
+            |> readShippedSources
+            |> stitchWithShippedModules("equality")("equality.ash")(source) with
+                | Error(error) -> Ashes.IO.panic(label + " fixture did not stitch: " + Ashes.Trait.Show.show(error))
+                | Ok(stitched) ->
+                    let identified = identifyStitchedProject(stitched)
+                    in
+                        match inferIdentifiedStitchedProjectFrom("standalone"
+                        |> emptyTypeEnvironmentForPackage
+                        |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                            | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(label + " inference failed: " + Ashes.Trait.Show.show(error))
+                            | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                let clock =
+                                    given (_unit) -> 0
                                 in
-                                    let legacy = measureRawCoreProgramLowering(clock)(table)("equality.ash")("")(program)
+                                    let typed =
+                                        identified.program
+                                        |> identifiedProgramSyntax
+                                        |> measureStitchedLowering(true)(None)(given (_) -> Unit)(clock)(table)("equality.ash")
                                     in
-                                        let firstTyped = typed.first
+                                        let legacy =
+                                            measureStitchedLowering(false)(None)(given (_) -> Unit)(clock)(table)("equality.ash")(stitched.program)
                                         in
-                                            let firstLegacy = legacy.first
+                                            let firstTyped = typed.first
                                             in
-                                                let replayLegacy = legacy.replay
+                                                let firstLegacy = legacy.first
                                                 in
-                                                    let replayTyped = typed.replay
+                                                    let replayLegacy = legacy.replay
                                                     in
-                                                        if firstTyped.error == None && replayTyped.error == None && typed.equalityGoals == 0 && (if noReplay
-                                                        then typed.pendingGoals == 0 && typed.replayed == false && legacy.pendingGoals + legacy.equalityGoals > 0
-                                                        else true)
-                                                        then Unit
-                                                        else
-                                                            Ashes.IO.panic(label + ": typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + " replayed=" + (if typed.replayed
-                                                            then "yes"
-                                                            else "no") + " first error=" + Ashes.Trait.Show.show(firstTyped.error) + " replay error=" + Ashes.Trait.Show.show(replayTyped.error) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals) + " equality=" + Ashes.Text.fromInt(legacy.equalityGoals) + " first error=" + Ashes.Trait.Show.show(firstLegacy.error) + " replay error=" + Ashes.Trait.Show.show(replayLegacy.error))
-                        | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(label + " inference failed: " + Ashes.Trait.Show.show(error))
-        | _ -> Ashes.IO.panic(label + " fixture did not parse")
+                                                        let replayTyped = typed.replay
+                                                        in
+                                                            if firstTyped.error == None && replayTyped.error == None && firstLegacy.error == None && replayLegacy.error == None && typed.equalityGoals == 0 && (if noReplay
+                                                            then typed.pendingGoals == 0 && typed.replayed == false && legacy.pendingGoals + legacy.equalityGoals > 0
+                                                            else true)
+                                                            then Unit
+                                                            else
+                                                                Ashes.IO.panic(label + ": typed pending=" + Ashes.Text.fromInt(typed.pendingGoals) + " equality=" + Ashes.Text.fromInt(typed.equalityGoals) + " replayed=" + (if typed.replayed
+                                                                then "yes"
+                                                                else "no") + " first error=" + Ashes.Trait.Show.show(firstTyped.error) + " replay error=" + Ashes.Trait.Show.show(replayTyped.error) + ", legacy pending=" + Ashes.Text.fromInt(legacy.pendingGoals) + " equality=" + Ashes.Text.fromInt(legacy.equalityGoals) + " first error=" + Ashes.Trait.Show.show(firstLegacy.error) + " replay error=" + Ashes.Trait.Show.show(replayLegacy.error))
 
 // `xs == []` in a recursive binding used at `List(Str)`.
 let checkPartlyOpenEqualitySettled unit = checkTypedEqualityLeavesNoGoal("partly open equality")(true)("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)")
