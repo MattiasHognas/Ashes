@@ -3394,6 +3394,19 @@ let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) =
             | SemFunction(_argument, _result, _row) -> true
             | _ -> false)
 
+// Under typed lowering, a top-level binding the standalone inference generalized over an operator
+// trait lowering otherwise holds monomorphic (`twice x = [x + x, x]` at `Add(a)`): its arithmetic
+// requirements are supported as a written one is, so the binding is lowered once as a body taking
+// the operator's dictionary, as stage 0 does, instead of a body whose operator is emitted in the
+// integer form while each concrete call takes its own copy. Without a node table nothing changes.
+let recordedArithmeticGeneric name value (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(_table) ->
+            match recordedOperatorGenericScheme(name)(nodeIdentityOf(value))(state) with
+                | Some(_scheme) -> true
+                | None -> false
+        | None -> false
+
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
@@ -3420,7 +3433,7 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
                 | CoreConstrainedInference { error = Some(_error) } -> None
                 | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedPlanSupportedIn(forwardsRequirements)(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan))
+                    if constrainedPlanSupportedIn(forwardsRequirements || recordedArithmeticGeneric(name)(value)(state))(constraints)(state) && (!callback || forwardedCallbackPlanApplies(plan))
                     then Some(plan)
                     else None
         else None

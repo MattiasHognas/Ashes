@@ -567,6 +567,48 @@ let checkSynthesizedIdentity unit =
 // at the source call's reference: an annotated partial application of a constrained staged binding.
 let checkPartialStageEvidence unit = checkTestProgramLeavesNoGoal("annotated_partial_resolves_evidence_before_returning_function")
 
+// A top-level binding the inference generalized over `Multiply` and the program uses at Int and at
+// Float: under typed lowering it is lowered once taking the operator's dictionary, so the typed first
+// pass defers no operator, where the legacy lowering emits its operator in the speculative integer
+// form. Both modes lower without an error.
+let checkArithmeticDictionaryBinding unit =
+    (let name = "generic_multiply_binding_used_at_int_and_float"
+    in
+        match (Ashes.IO.Directory.entries("lib/Ashes"), Ashes.IO.File.readText("tests/" + name + ".ash")) with
+            | (Ok(names), Ok(source)) ->
+                match names
+                |> readShippedSources
+                |> stitchWithShippedModules(name)(name + ".ash")(source) with
+                    | Error(error) -> Ashes.IO.panic(name + " did not stitch: " + Ashes.Trait.Show.show(error))
+                    | Ok(stitched) ->
+                        let identified = identifyStitchedProject(stitched)
+                        in
+                            match inferIdentifiedStitchedProjectFrom("standalone"
+                            |> emptyTypeEnvironmentForPackage
+                            |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                                | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(name + " inference failed: " + Ashes.Trait.Show.show(error))
+                                | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                    let clock =
+                                        given (_unit) -> 0
+                                    in
+                                        let typed =
+                                            identified.program
+                                            |> identifiedProgramSyntax
+                                            |> measureStitchedLowering(true)(None)(given (_) -> Unit)(clock)(table)(name + ".ash")
+                                        in
+                                            let legacy =
+                                                measureStitchedLowering(false)(None)(given (_) -> Unit)(clock)(table)(name + ".ash")(stitched.program)
+                                            in
+                                                let firstTyped = typed.first
+                                                in
+                                                    let firstLegacy = legacy.first
+                                                    in
+                                                        if firstTyped.error == None && firstLegacy.error == None && firstTyped.deferredOperators == 0 && typed.replayed == false && firstLegacy.deferredOperators > 0
+                                                        then Unit
+                                                        else Ashes.IO.panic(name + ": typed deferred=" + Ashes.Text.fromInt(firstTyped.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstTyped.error) + ", legacy deferred=" + Ashes.Text.fromInt(firstLegacy.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstLegacy.error))
+            | (Error(message), _) -> Ashes.IO.panic(message)
+            | (_, Error(message)) -> Ashes.IO.panic(message))
+
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
 // A binding referenced only at another binding's quantified variable is settled through that
@@ -601,6 +643,7 @@ let runRecordedInferenceCoverageTests unit =
     |> checkEnclosingEvidence
     |> checkSynthesizedIdentity
     |> checkPartialStageEvidence
+    |> checkArithmeticDictionaryBinding
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings
