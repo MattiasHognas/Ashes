@@ -234,42 +234,80 @@ Order of work. Each step lands separately and is useful if the later ones are de
    replay passes, pending and proven trait goals, deferred operators and dictionaries, the
    per-binding plan, and body re-lowering.
 
-   First slice, in place: `lowerCoreNumberedProgram` and `lowerCoreNumberedProgramWithSourceAndReuse`
-   take the numbered, deriving-expanded program and the table (the compile command uses them when
-   `ASHES_TYPED_LOWERING=1`). Lowering sees through `ExprNode` where it sees through `ExprAt`,
-   keeps the wrapper when a rewrite copies a node, and remembers the current node. With an empty
-   table its IR is byte-identical to the old entry point's on every swept program that infers. A
-   binary operator whose operands are both still open takes its operand type from the table when
-   the recorded type has no variable and no named type (named types carry the inference's own
-   symbol ids). Three swept programs change, all to the form stage 0 emits: a string `+` in a
-   handler arm, and one whose operands only a later call resolves. Measured over the test
-   programs: deferred operator goals 73 to 47, structural equality goals 7 to 2, replay passes 15
-   to 14. Over the whole compiler: deferred operator goals 19 to 2, pending trait goals 7 to 2,
-   re-lowered bodies unchanged at 2,167 and 2,138, and the replay pass still runs (discovery
-   about 820 s and replay about 760 s with a `-O0` driver, either entry point). What keeps the
-   replay is the remaining trait goals (unary trait methods and dictionaries), not operators; what
-   keeps the re-lowerings is call results whose type the body resolves late, which the table
-   answers but lowering does not yet read.
+   State on **2026-11-24** (`selfhost/round11` at `5c8434ec`). The compile command lowers from the
+   table when `ASHES_TYPED_LOWERING=1` (`lowerCoreNumberedProgram*`: the numbered,
+   deriving-expanded program and the table); the default path is unchanged. Measured with the
+   typed-lowering driver (`selfhost/tests/typed-lowering-measurement`, which also takes a single file;
+   `sweep.sh` runs it over the corpus):
+   - Test corpus, 1,148 programs with the table: 0 replays, 0 pending trait goals, 0 structural
+     equality goals, 0 deferred operators; the 6 `*_fails` diagnostics fixtures are rejected by the
+     inference by design. The default lowering on the same corpus: 26 replays, 50 pending goals,
+     6 equality goals, 123 deferred operators.
+   - Whole compiler: one lowering traversal, no replay.
+   - Flag-on behaviour check against stage 0: no row worse than the flag-off run (1,066 same and
+     187 leak-only against 1,065 and 188), zero non-leak rows.
+   - A stage 2 built by stage 1 with the flag on: 13:08 at 14.1 GiB, against 16:20 at 16.2 GiB on
+     the default path; it matches stage 0 on every non-leak behaviour row. It is not byte-identical
+     to the default-path stage 2, as expected.
 
-   Second slice, in place: recorded types are read as lowering's own by stitched type name
-   (lowering gives every named type symbol id 0; the inference numbers its own), with capability
-   rows dropped. Every recorded type of the test programs and of the compiler maps except the rigid
-   type parameters of generic implementations (`implement Eq(List(a))`, 128 nodes in `Ashes.Trait`),
-   which need an instantiation like any generic body. Operators read named types too; a call whose
-   callee's type is settled takes its expected result type from the table, and is lowered as before
-   if that fails; an open `Show.show` or `Hash.hash` operand and an open dictionary requirement are
-   pinned to the recorded type. Ten swept programs change: two in numbering only, three lose one
-   arena request word, and five change ownership placement around a call result lowering used to
-   see open, which wants the behavioural check.
+   What lowering now reads from the table, each only with a node table:
+   - Operator and trait-method operands, dictionaries and `Default` results through their recorded
+     types, closed by the enclosing instantiation and by the variables the program's uses settle;
+     a variable settles transitively, through the settled variables it is instantiated at.
+   - A partly open equality (`xs == []`) answered by the recorded type or, in a constrained body,
+     by that body's dictionary for the whole operand type.
+   - A call's requirement reduced through the implementations as the inference reduces it
+     (`Eq(List(a))` to `Eq(a)`) to match the recorded dictionaries; a requirement whose whole type
+     the body carries answered by the body's own dictionary.
+   - A requirement the inference records at a variable no use settles, which by the evidence rule
+     the enclosing function supplies: bound to the type of the body's single dictionary of that
+     trait. A bare reference to a constrained binding reads the instantiation at its own node.
+   - Synthesized identities (`NodeIdentity.ash`): a node lowering creates after numbering carries a
+     negative identity derived from its source node and a role (the prefix and resume references of
+     the strict partial-stage scheduling so far), with no counter; readers map it back to the source
+     node and bind only what matches the call's own requirements.
+   - Arithmetic-generic bindings used at more than one type (`twice x = [x + x, x]` at Int and
+     Float), top-level, recursive or a `let` below top level: planned as a constrained binding with
+     the operator's dictionary, as stage 0 and reference 21.6 do, instead of a body sealed to the
+     integer form. Top-level ones keep their per-concrete-call copies; nested ones pass the
+     dictionary. An arithmetic operator whose one operand the body's evidence covers and whose
+     other is a bare variable (a recursive self call's result) joins the two and dispatches through
+     the evidence, as stage 0's `RecordMappedBinaryTrait` does; this rule is on the default path
+     too, where it fixed a stage-0 parity bug (a recursive binding with a written `requires
+     {Add(a)}`, `tests/written_arithmetic_requirement_on_recursive_binding.ash`).
 
-   Measured on the whole compiler (`-O0` driver, the two runs one after the other): the replay pass
-   still runs. Discovery 992 s and replay 845 s with the old entry point, 822 s and 819 s plus 106 s
-   of inference with the table (the old run shared the machine with driver builds). Pending trait
-   goals 7 to 2: the five `>=` goals are answered, the two `Show.show` goals stay because their
-   recorded operand type is not closed. Deferred operator goals 19 to 2. Bodies lowered again 2,205
-   and 2,176 to 2,121 and 2,094; 20,902 calls took a recorded expected type, none fell back. Over
-   the tests: replays 15 to 12, structural equality goals 7 to 0, bodies lowered again 6,152 to
-   6,129.
+   Removed: binding a lambda parameter to its recorded type before the body, when no expected type
+   exists. It closed the parameters of generic library bodies used at one type and of closed user
+   lambdas, which switched on entry-time decisions keyed on a parameter type known at entry
+   (`normalizesAlwaysReturnedParameter`, the arena result boundary) that the default path and
+   stage 0 do not take for those shapes, and those paths leaked in eleven programs. Its premise
+   (linking a constrained body's operand to its dictionary) was wrong: a lambda with an expected
+   type already binds its parameter first. Replacing those entry decisions with rules over the
+   final type is step 8 work.
+
+   Before `ASHES_TYPED_LOWERING` becomes the default:
+   1. A flag-on bootstrap: stage 2 and stage 3 built with the flag, byte-identical, suites green.
+   2. The flag-on behaviour check equal to flag-off on every row (holds at `5c8434ec`) and the
+      typed sweep at zero replays, goals and deferred operators (holds).
+   3. Every reader that can run at a synthesized node verifies what it reads (the dictionary
+      readers do; operator and binding readers find nothing under a synthesized identity).
+   4. `ASHES_SKIP_INFERENCE_CHECK=1` has no table: it is removed, or runs the inference anyway.
+   The raw (un-numbered) lowering then remains only for the selfhost tests, the lowered-IR parity
+   fixtures and the inference-check escape; it reads operator schemes by name, top-level and nested
+   (`rawOperatorSchemesWithNestedLets`).
+
+   Deletion order after the switch, each step its own batch keeping stage 2 == stage 3 and the
+   behaviour check: (1) the default flipped, the default path kept behind an opt-out for one round;
+   (2) a replay under typed lowering becomes an internal error, then the replay pass and proven
+   goals go (`replayProgramWithProofs`, `validatedReplayItems`, the retained traversal,
+   `emitProgramWithProofs`, `pinProvenTraitGoal`, `stateTraitGoalsPinned`); (3) pending trait goals
+   become site errors, then `deferTraitGoal`, `deferMethodGoal`, `deferConstrainedGoals`,
+   `unprovenTraitGoalKey` and `openDictionaryGoalKey` go; (4) the per-binding plan (lowering's
+   speculative inference of lambda lets and constrained calls) is replaced by the recorded schemes,
+   requirements and instantiations, and the requirement reduction goes with it; (5) the deferred
+   operator machinery (`emitDeferredCoreAdd`, `emitDeferredCoreEquality`, pending operator defaults,
+   the sealing rewrite); (6) body re-lowering and the order-dependent rules (step 8), one at a time;
+   (7) raw lowering and the lowered-IR parity fixtures (step 9).
 
    Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
    a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
@@ -305,16 +343,16 @@ Order of work. Each step lands separately and is useful if the later ones are de
      through a generic body's own evidence only when that body carries it.
 
    What the table gives lowering, re-checked against the code on **2026-11-23**:
-   - Still missing: nodes that lowering synthesizes (evidence rewrites, `$partial` captures,
-     constrained-value wrappers, specialized copies) have no identity. Lowering keeps the identity of
-     the nearest numbered node around them, so a read at such a site sees the enclosing node's
-     record; readers that could be misled check what they read (a lambda parameter is matched by
-     name). They need a rule such as the source node's identity plus an instantiation.
+   - Partly in place: the prefix and resume references of the strict partial-stage scheduling carry
+     synthesized identities (above). Other nodes lowering synthesizes (evidence rewrites, `$partial`
+     captures, constrained-value wrappers, specialized copies) still keep the identity of the
+     nearest numbered node around them, so a read at such a site sees the enclosing node's record;
+     they can take a synthesized identity with their own role.
    - Recorded, read in part: handler operation arm parameters and `resume` are bound at the arm
      body; lowering reads the type recorded for a `resume` call, not the arm parameters.
    - Recorded and read: top-level schemes by the root node of their value (`declarations`), read
      for operator-generic declarations; bindings at `let`, lambda and arm nodes, read for nested
-     operator-generic lets and lambda parameters.
+     operator-generic lets.
    - Recorded, not read: record construction and update instantiations; how each operator's
      instance is reached (primitive, declared implementation, dictionary).
    - Schemes and unconstrained variables, decided on **2026-11-18** by the user. A binding's
