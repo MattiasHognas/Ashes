@@ -835,6 +835,28 @@ let expectTaskFrameRetainsCapture unit =
         |> (given (_) -> check("the task is built from the arena closure")(countContaining("CopyOutClosure")(lines) == 0))
         |> (given (_) -> check("the task names its frame dropper")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 1)))
 
+let frameCaptureResultSource (result: Str) = "let build (n: Int) = Ashes.Text.fromInt(n) + \"-tail\"\n\nlet measure (n: Int) =\n    (let text = build(n)\n    in\n        async(match await Ashes.Task.sleep(0) with\n            | Ok(_u) -> " + result + "\n            | Error(_e) -> \"err\"))\n\nmatch Ashes.Task.run(measure(7)) with\n    | Ok(t) -> Ashes.IO.print(t)\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// The frame releases a retained capture at teardown unless the task's result can share it (stage
+// 0's `CaptureSharedWithResult`): a string built from the capture holds nothing of it, so the task
+// names a frame dropper; the capture returned as it is keeps the frame's reference, and the frame
+// releases nothing.
+let expectFrameKeepsOnlyACaptureTheResultShares unit =
+    Unit
+    |> (given (_) ->
+        "text + \"!\""
+        |> frameCaptureResultSource
+        |> loopFunctionLines("[SourceFunction from measure]")
+        |> (given (lines) -> check("a capture the result is built from is released by the frame")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 1)))
+    |> (given (_) ->
+        "text"
+        |> frameCaptureResultSource
+        |> loopFunctionLines("[SourceFunction from measure]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("a capture the result returns is still retained for the frame")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+            |> (given (_) -> check("a capture the result returns is not released by the frame")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 0))))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -866,6 +888,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectCoroutineCalleeKeepsValuesInArena(Unit))
     |> (given (_) -> expectCoroutineCallResultCopiedToArena(Unit))
     |> (given (_) -> expectTaskFrameRetainsCapture(Unit))
+    |> (given (_) -> expectFrameKeepsOnlyACaptureTheResultShares(Unit))
     |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
