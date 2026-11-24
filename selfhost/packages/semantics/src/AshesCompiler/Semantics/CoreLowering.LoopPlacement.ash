@@ -32,6 +32,7 @@ export (
     value functionBodyRequest,
     value constructorLayoutNames,
     value calleeSummaryOf,
+    value calleeFactsName,
     value withNormalizedAlwaysReturnedParameter,
     value normalizeAlwaysReturnedParameter,
     value tcoListSlotElement,
@@ -136,20 +137,34 @@ let recursive constructorLayoutNames (layouts: List(CoreConstructorLayout)) =
 // body's aggregates can count a read of the parameter as a fresh owned child) and again after
 // it, when the parameter's type may have resolved further; the later decision can only add the
 // normalization, never withdraw it.
+// The name a callee's whole-program facts are recorded under: a concrete copy's call answers with
+// its source function's.
+let calleeFactsName (callee: Str) =
+    if Ashes.Text.startsWith(callee)("__core_concrete_call_")
+    then
+        match Ashes.Text.indexOf(callee)("%") with
+            | -1 -> callee
+            | separator -> Ashes.Text.substring(callee)(separator + 1)(Ashes.Text.length(callee) - separator - 1)
+    else callee
+
 // Stage 0's callee resolution to a registered function: the whole-program summary of the
 // function recorded under the name (by its lambda identity, else the first of that name, a
 // top-level one preferred), `None` for a callee outside the program's registry.
+// A call to a constrained function's concrete copy answers with its source function's summary, as
+// stage 0's root resolves the copy's label to the source function's name.
 let calleeSummaryOf (callee: Str) (state: CoreLoweringState) =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { letLambdaIdentities = identities, reachByIdentity = byIdentity, reachByName = byName } } ->
-            let found =
-                match Ashes.Collection.Map.getStr(callee)(identities) with
-                    | Some(identity) -> Ashes.Collection.Map.getStr(callee + "@" + Ashes.Text.fromInt(identity))(byIdentity)
-                    | None -> None
-            in
-                match found with
-                    | Some(summary) -> Some(summary)
-                    | None -> Ashes.Collection.Map.getStr(callee)(byName)
+    (let name = calleeFactsName(callee)
+    in
+        match state with
+            | CoreLoweringState { programState = CoreProgramState { letLambdaIdentities = identities, reachByIdentity = byIdentity, reachByName = byName } } ->
+                let found =
+                    match Ashes.Collection.Map.getStr(name)(identities) with
+                        | Some(identity) -> Ashes.Collection.Map.getStr(name + "@" + Ashes.Text.fromInt(identity))(byIdentity)
+                        | None -> None
+                in
+                    match found with
+                        | Some(summary) -> Some(summary)
+                        | None -> Ashes.Collection.Map.getStr(name)(byName))
 
 // A known let-bound function as the always-reaches walk consults it: its parameter chain and the
 // parameters its result always reaches, from the reach analysis's must-reach table. Stage 0

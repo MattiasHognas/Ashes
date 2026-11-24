@@ -328,16 +328,6 @@ let calleeRcEligible (callee: Str) (state: CoreLoweringState) =
 // the source function).
 let concreteCopyCallName (slot: Int) (closureTemp: Int) (sourceName: Str) = "__core_concrete_call_" + Ashes.Text.fromInt(slot) + "_" + Ashes.Text.fromInt(closureTemp) + "%" + sourceName
 
-// The name a callee's whole-program facts are recorded under: a concrete copy's call answers with
-// its source function's.
-let calleeFactsName (callee: Str) =
-    if Ashes.Text.startsWith(callee)("__core_concrete_call_")
-    then
-        match Ashes.Text.indexOf(callee)("%") with
-            | -1 -> callee
-            | separator -> Ashes.Text.substring(callee)(separator + 1)(Ashes.Text.length(callee) - separator - 1)
-    else callee
-
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -347,7 +337,7 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprVar(callee) ->
             match lookupLetLambdaNamed(callee)(state) with
                 | Some((recordedParameters, recordedBody)) ->
-                    match calleeReachSummary(calleeFactsName(callee))(recordedParameters)(recordedBody)(state) with
+                    match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
                         | (parameters, body, reach) ->
                             Some(CoreCalleeFacts(
                                 label = state
@@ -356,8 +346,8 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 parameters = parameters,
                                 ownership = provenParameterOwnership(calleeFactsName(callee))(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
-                                preparedReach = calleePreparedReach(calleeFactsName(callee))(parameters)(reach)(state),
-                                rcEligible = calleeRcEligible(calleeFactsName(callee))(state),
+                                preparedReach = calleePreparedReach(callee)(parameters)(reach)(state),
+                                rcEligible = calleeRcEligible(callee)(state),
                                 argumentCount = length(spine.arguments)
                             ))
                 | None -> None
