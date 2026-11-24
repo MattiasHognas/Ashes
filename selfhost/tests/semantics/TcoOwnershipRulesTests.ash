@@ -814,6 +814,13 @@ let expectCoroutineCalleeKeepsValuesInArena unit =
     |> loopFunctionLines("[ClosureHelper from fill]")
     |> (given (lines) -> check("a function called from an async body places nothing on the reference-counted heap")(countContaining("RuntimeManaged=true")(lines) == 0))
 
+// The async loop reads no callee's returns bit, so the callee's result is copied to the arena at
+// its call boundary rather than onto the reference-counted heap.
+let expectCoroutineCallResultCopiedToArena unit =
+    coroutineCalleeSource
+    |> loopFunctionLines("[ClosureHelper from $async_helper")
+    |> (given (lines) -> check("the async loop copies a call result to the arena")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -843,6 +850,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> expectCoroutineCalleeKeepsValuesInArena(Unit))
+    |> (given (_) -> expectCoroutineCallResultCopiedToArena(Unit))
     |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))

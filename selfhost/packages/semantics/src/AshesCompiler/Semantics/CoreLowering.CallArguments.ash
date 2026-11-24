@@ -1298,12 +1298,14 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
 // is not statically known and its type is read at run time, stage 0's `needsResultOwnership`.
 // Whether the last application reads the callee's returns bit, and whether its result will then
 // be normalized into an owned value on both of its branches: decided once per call, before the
-// argument's hand-off, since that hand-off depends on it.
+// argument's hand-off, since that hand-off depends on it. A coroutine body or a function that may run
+// inside one reads no bit (stage 0's `AllowsAsyncIndependentRcPlacement` term): its call results are
+// copied to the arena at their call boundary.
 let readsResultOwnershipAtRunTime (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     match context with
         | CoreCallContext { tailCall = true } -> (state, false, false)
         | CoreCallContext { facts = facts } ->
-            if arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
+            if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
             then resultOwnershipReadAtRunTime(context)(resultType)(state)
             else (state, false, false)
 
