@@ -102,6 +102,7 @@ export (
     value disposePassBuilderOptions,
     value runPasses,
     value targetMachineEmitToMemoryBuffer,
+    value targetMachineEmitToFile,
     value getBufferStart,
     value getBufferSize,
     value disposeMemoryBuffer,
@@ -289,6 +290,7 @@ external LLVMDisposePassBuilderOptions(LLVMPassBuilderOptionsRef) -> void = "LLV
 // SysV ABI leaves the returned pointer in RAX unread, which is safe to simply discard.
 external LLVMRunPasses(LLVMModuleRef, Str, LLVMTargetMachineRef, LLVMPassBuilderOptionsRef) -> void = "LLVMRunPasses@libLLVM.so"
 external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef, u32, out *u8, out LLVMMemoryBufferRef) -> Bool = "LLVMTargetMachineEmitToMemoryBuffer@libLLVM.so"
+external LLVMTargetMachineEmitToFile(LLVMTargetMachineRef, LLVMModuleRef, Str, u32, out *u8) -> Bool = "LLVMTargetMachineEmitToFile@libLLVM.so"
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
 external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemoryBuffer@libLLVM.so"
@@ -541,6 +543,9 @@ let runPasses module_ passes machine options = LLVMRunPasses(module_)(passes)(ma
 // returned buffer owns native memory and must be freed with `disposeMemoryBuffer` once its bytes
 // have been copied out (with `Ashes.Ffi.copyBytes`, via `getBufferStart`/`getBufferSize`).
 let targetMachineEmitToMemoryBuffer machine module_ fileType = LLVMTargetMachineEmitToMemoryBuffer(machine)(module_)(fileType)
+
+// Emits the module to the file at `path`; `(isBroken, errorMessage)`, as the memory-buffer form.
+let targetMachineEmitToFile machine module_ (path: Str) fileType = LLVMTargetMachineEmitToFile(machine)(module_)(path)(fileType)
 
 let getBufferStart memoryBuffer = LLVMGetBufferStart(memoryBuffer)
 

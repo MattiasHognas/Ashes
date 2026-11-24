@@ -13,6 +13,7 @@ import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Backend.ProgramPartitions
 import AshesCompiler.Backend.PartitionedObjects
+import AshesCompiler.Backend.PartitionProcesses
 export (
     value runPartitionedObjectsCases,
     value assertPartitionedMatchesWhole,
@@ -158,6 +159,33 @@ let expectPartition (label: Str) (expected: Int) (assignment: MapTree(Str, Int))
     else
         partitionFail(label + " is in partition " + Ashes.Text.fromInt(partitionOfLabel(assignment)(label)) + ", expected " + Ashes.Text.fromInt(expected))
 
+// The scratch root the partition child processes write under in these cases.
+let partitionScratchRoot = "selfhost_backend_partition_processes"
+
+let partitionScratchRootReady unit =
+    match Ashes.IO.Directory.createAll(partitionScratchRoot) with
+        | Error(message) -> partitionFail("could not create " + partitionScratchRoot + ": " + message)
+        | Ok(_) -> Unit
+
+let expectNoPartitionDirectory (path: Str) =
+    match partitionScratchRoot
+    |> partitionWorkDirectory
+    |> Ashes.IO.File.exists with
+        | Ok(false) -> Unit
+        | _ -> partitionFail(path + ": the partition child processes' directory was left behind")
+
+// The build with up to `processes` partitions at once in child processes is the sequential build
+// byte for byte, and its temporary directory is gone afterwards.
+let expectProcessBuildMatches (path: Str) (program: IrProgram) (partitions: Int) (processes: Int) (sequential: Bytes) =
+    (let _ = partitionScratchRootReady(Unit)
+    in
+        match emitPartitionedObjectWith(processes)(partitionScratchRoot)(false)(partitionEntryName)(partitionTriple)(partitionTargetMachine)([])(partitions)(program) with
+            | Error(message) -> partitionFail(path + ": the build in " + Ashes.Text.fromInt(processes) + " processes failed: " + message)
+            | Ok(merged) ->
+                if Ashes.Byte.compare(merged)(sequential) != 0
+                then partitionFail(path + ": the build in " + Ashes.Text.fromInt(processes) + " processes differs from the sequential build")
+                else expectNoPartitionDirectory(path))
+
 // The program built as one module and as `partitions` partitions: both executables print
 // `expected` (lines joined with `|`) with the same exit code, and a second partitioned build
 // produces the same executable. The merged object is kept as `<path>.o`.
@@ -183,7 +211,10 @@ let assertPartitionedMatchesWhole (path: Str) (program: IrProgram) (partitions: 
                             |> partitionedObject(program)
                             |> linkedExecutable)(linkedExecutable(merged)) != 0
                             then partitionFail(path + ": two partitioned builds produced different executables")
-                            else Unit)
+                            else
+                                Unit
+                                |> (given (_) -> expectProcessBuildMatches(path)(program)(partitions)(2)(merged))
+                                |> (given (_) -> expectProcessBuildMatches(path)(program)(partitions)(partitions)(merged)))
 
 // Calls crossing every partition and a string literal partition 0 defines printed from partition 1;
 // the runtime's console and region globals are partition 0's, used from the others.
@@ -357,9 +388,54 @@ let testObjectPartitionPlan unit =
             |> sizedObjectPartitions(2)
             |> expectPlan("one per two functions")(2)))
 
+// A function with a block and no terminator: a module the verifier rejects.
+let addUnterminatedFunction module_ context =
+    (let broken =
+        false
+        |> functionType(voidType(context))([])(0u32)
+        |> addFunction(module_)("partition_broken")
+    in
+        let _ = appendBasicBlock(context)(broken)("entry")
+        in Unit)
+
+let breakPartitionModule (index: Int) (partition: PartitionModule) =
+    if partition.partitionModuleIndex == index
+    then addUnterminatedFunction(partition.partitionModuleRef)(partition.partitionModuleContext)
+    else Unit
+
+let recursive breakPartition (index: Int) (partitions: List(PartitionModule)) =
+    match partitions with
+        | [] -> Unit
+        | partition :: rest ->
+            let _ = breakPartitionModule(index)(partition)
+            in breakPartition(index)(rest)
+
+// A partition whose child process fails (its module does not verify) fails the build with a
+// message naming the partition; every child is reaped and the temporary directory removed.
+let testPartitionChildFailure unit =
+    (let modules =
+        Unit
+        |> partitionedHandBuiltProgram
+        |> buildPartitionModules(false)(partitionEntryName)(3)
+    in
+        let _ = breakPartition(2)(modules)
+        in
+            let _ = partitionScratchRootReady(Unit)
+            in
+                match mergePartitionModulesWith(3)(partitionScratchRoot)(partitionTriple)(partitionTargetMachine)([])(modules) with
+                    | Ok(_) -> partitionFail("a partition that does not verify was built")
+                    | Error(message) ->
+                        if Ashes.Text.contains(message)("partition 2") == false
+                        then partitionFail("the failure does not name partition 2: " + message)
+                        else
+                            if waitForAnyChild(Unit) >= 0
+                            then partitionFail("a partition child process was left unreaped")
+                            else expectNoPartitionDirectory("child failure"))
+
 let runPartitionedObjectsCases unit =
     unit
     |> testObjectPartitionPlan
     |> testPartitionedHandBuiltProgram
     |> testPartitionedClosureNormalizer
     |> testPartitionedMessageConstants
+    |> testPartitionChildFailure

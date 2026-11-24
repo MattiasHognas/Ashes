@@ -19,12 +19,16 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ProgramPartitions
 import AshesCompiler.Backend.ElfRelocatableMerge
+import AshesCompiler.Backend.PartitionProcesses
 export (
     value optimizeAndEmitPartition,
     value emitPartitionedObject,
     value emitPartitionObjects,
     value buildPartitionModules,
     value mergePartitionModules,
+    value mergePartitionModulesWith,
+    value emitPartitionedObjectWith,
+    value partitionWorkDirectory,
     type PartitionModule,
 )
 
@@ -104,8 +108,15 @@ let buildPartitionModules (leakCheck: Bool) (entryName: Str) (partitions: Int) (
     in
         buildPartitionModulesFrom(leakCheck)(entryName)(assignObjectPartitions(program)(count))(program)(0)(count)([]))
 
-// Verifies, optimizes and emits one partition module with a fresh target machine, then disposes it.
-let emitPartitionModule (triple: Str) resolveMachine (payloadPaths: List(Str)) (partition: PartitionModule) =
+// A partition with its own target machine, its module set to the machine's triple and data layout.
+type PartitionJob =
+    | partitionJobIndex: Int
+    | partitionJobContext: LLVMContextRef
+    | partitionJobModule: LLVMModuleRef
+    | partitionJobBuilder: LLVMBuilderRef
+    | partitionJobMachine: LLVMTargetMachineRef
+
+let preparePartitionJob (triple: Str) resolveMachine (partition: PartitionModule) =
     match partition with
         | PartitionModule { partitionModuleIndex = index, partitionModuleContext = context, partitionModuleRef = module_, partitionModuleBuilder = builder } ->
             match resolveMachine(Unit) with
@@ -114,23 +125,38 @@ let emitPartitionModule (triple: Str) resolveMachine (payloadPaths: List(Str)) (
                     let _ = setTarget(module_)(triple)
                     in
                         let _ = applyDataLayout(module_)(machine)
-                        in
-                            match verifyModule(module_)(verifierReturnStatusAction) with
-                                | (true, report) ->
-                                    let detail =
-                                        match report with
-                                            | Ok(Some(text)) -> text
-                                            | _ -> "unknown error"
-                                    in Error("LLVM module verification failed in " + partitionText(index) + ": " + detail)
-                                | (false, _) ->
-                                    let paths =
-                                        if index == 0
-                                        then payloadPaths
-                                        else []
-                                    in
-                                        match optimizeAndEmitPartition(machine)(module_)(context)(builder)(triple)(paths) with
-                                            | (true, objectBytes) -> Ok(objectBytes)
-                                            | (false, errorText) -> Error(partitionText(index) + ": " + bytesText(errorText))
+                        in Ok(PartitionJob(partitionJobIndex = index, partitionJobContext = context, partitionJobModule = module_, partitionJobBuilder = builder, partitionJobMachine = machine))
+
+let verificationText (index: Int) report =
+    match report with
+        | Ok(Some(text)) -> "LLVM module verification failed in " + partitionText(index) + ": " + text
+        | _ -> "LLVM module verification failed in " + partitionText(index) + ": unknown error"
+
+// Verifies, optimizes and emits a prepared partition in this process, then disposes it; the
+// payloads are linked into partition 0 alone.
+let emitPartitionInProcess (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
+    match job with
+        | PartitionJob { partitionJobIndex = index, partitionJobContext = context, partitionJobModule = module_, partitionJobBuilder = builder, partitionJobMachine = machine } ->
+            match verifyModule(module_)(verifierReturnStatusAction) with
+                | (true, report) ->
+                    report
+                    |> verificationText(index)
+                    |> Error
+                | (false, _) ->
+                    let paths =
+                        if index == 0
+                        then payloadPaths
+                        else []
+                    in
+                        match optimizeAndEmitPartition(machine)(module_)(context)(builder)(triple)(paths) with
+                            | (true, objectBytes) -> Ok(objectBytes)
+                            | (false, errorText) -> Error(partitionText(index) + ": " + bytesText(errorText))
+
+// Verifies, optimizes and emits one partition module with a fresh target machine, then disposes it.
+let emitPartitionModule (triple: Str) resolveMachine (payloadPaths: List(Str)) (partition: PartitionModule) =
+    match preparePartitionJob(triple)(resolveMachine)(partition) with
+        | Error(message) -> Error(message)
+        | Ok(job) -> emitPartitionInProcess(triple)(payloadPaths)(job)
 
 let recursive emitPartitionModulesFrom (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) (acc: List(Bytes)) =
     match partitions with
@@ -148,11 +174,242 @@ let recursive emitPartitionModulesFrom (triple: Str) resolveMachine (payloadPath
 // are the bitcode payload files partition 0 links.
 let emitPartitionModules (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) = emitPartitionModulesFrom(triple)(resolveMachine)(payloadPaths)(partitions)([])
 
-// The merged relocatable object of the partition modules.
-let mergePartitionModules (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) =
-    match emitPartitionModules(triple)(resolveMachine)(payloadPaths)(partitions) with
+let recursive preparePartitionJobs (triple: Str) resolveMachine (partitions: List(PartitionModule)) (acc: List(PartitionJob)) =
+    match partitions with
+        | [] ->
+            acc
+            |> Ashes.Collection.List.reverse
+            |> Ok
+        | partition :: rest ->
+            match preparePartitionJob(triple)(resolveMachine)(partition) with
+                | Error(message) -> Error(message)
+                | Ok(job) -> preparePartitionJobs(triple)(resolveMachine)(rest)(job :: acc)
+
+let disposePartitionJob (job: PartitionJob) =
+    match job with
+        | PartitionJob { partitionJobContext = context, partitionJobModule = module_, partitionJobBuilder = builder, partitionJobMachine = machine } ->
+            Unit
+            |> (given (_) -> disposeTargetMachine(machine))
+            |> (given (_) -> disposeBuilder(builder))
+            |> (given (_) -> disposeModule(module_))
+            |> (given (_) -> contextDispose(context))
+
+let runPartitionPasses machine module_ =
+    (let options = createPassBuilderOptions(Unit)
+    in
+        let _ = runPasses(module_)("default<O2>")(machine)(options)
+        in disposePassBuilderOptions(options))
+
+// The temporary directory of this run's partition child processes, under `tempRoot`.
+let partitionWorkDirectory (tempRoot: Str) =
+    tempRoot + "/ashes-partitions-" + Ashes.Text.fromInt(currentProcessId(Unit))
+
+let partitionObjectPath (directory: Str) (index: Int) = directory + "/partition" + Ashes.Text.fromInt(index) + ".o"
+
+let partitionDonePath (directory: Str) (index: Int) = directory + "/partition" + Ashes.Text.fromInt(index) + ".done"
+
+let partitionErrorPath (directory: Str) (index: Int) = directory + "/partition" + Ashes.Text.fromInt(index) + ".error"
+
+// The body of a partition's child process: verify and optimize the partition, link the payloads
+// into partition 0, emit it into its object file, record the outcome in a `.done` or `.error`
+// file, and end the process with `_exit`, so none of the parent's exit paths run in the child. The
+// steps are the in-process path's in the same order. It reads only the partition's LLVM handles and
+// builds a few strings: it never walks or releases the parent's Ashes heap, so the child keeps
+// sharing those pages copy-on-write and only its own module's pages become private.
+let runPartitionChild (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
+    match job with
+        | PartitionJob { partitionJobIndex = index, partitionJobContext = context, partitionJobModule = module_, partitionJobMachine = machine } ->
+            let outcome =
+                match verifyModule(module_)(verifierReturnStatusAction) with
+                    | (true, report) ->
+                        report
+                        |> verificationText(index)
+                        |> Error
+                    | (false, _) ->
+                        let _ = runPartitionPasses(machine)(module_)
+                        in
+                            let paths =
+                                if index == 0
+                                then payloadPaths
+                                else []
+                            in
+                                match linkPartitionPayloads(context)(module_)(triple)(paths) with
+                                    | Error(message) -> Error(partitionText(index) + ": " + message)
+                                    | Ok(_) ->
+                                        match targetMachineEmitToFile(machine)(module_)(partitionObjectPath(directory)(index))(objectFileType) with
+                                            | (true, _) -> Error(partitionText(index) + ": LLVM could not emit the object file.")
+                                            | (false, _) -> Ok(Unit)
+            in
+                let _ =
+                    match outcome with
+                        | Ok(_) ->
+                            Ashes.IO.File.writeText(partitionDonePath(directory)(index))("")
+                        | Error(message) ->
+                            Ashes.IO.File.writeText(partitionErrorPath(directory)(index))(message)
+                in exitChildProcess(0)
+
+// A started partition child: its process id and the partition, whose handles the parent disposes
+// once the child is reaped.
+type PartitionChild =
+    | childProcessId: Int
+    | childJob: PartitionJob
+
+let partitionIndexOf (job: PartitionJob) =
+    match job with
+        | PartitionJob { partitionJobIndex = index } -> index
+
+// Forks the child for `job`: the child runs `runPartitionChild` and never returns.
+let startPartitionChild (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
+    (let processId = forkProcess(Unit)
+    in
+        if processId == 0
+        then
+            let _ = runPartitionChild(directory)(triple)(payloadPaths)(job)
+            in Error("a partition child process returned")
+        else
+            if processId < 0
+            then
+                Error(partitionText(partitionIndexOf(job)) + ": the child process could not be started.")
+            else Ok(PartitionChild(childProcessId = processId, childJob = job)))
+
+let recursive runningCount (running: List(PartitionChild)) (count: Int) =
+    match running with
+        | [] -> count
+        | _ :: rest -> runningCount(rest)(count + 1)
+
+let recursive childJobOf (processId: Int) (running: List(PartitionChild)) =
+    match running with
+        | [] -> None
+        | PartitionChild { childProcessId = candidate, childJob = job } :: rest ->
+            if candidate == processId
+            then Some(job)
+            else childJobOf(processId)(rest)
+
+let recursive withoutChild (processId: Int) (running: List(PartitionChild)) =
+    match running with
+        | [] -> []
+        | child :: rest ->
+            match child with
+                | PartitionChild { childProcessId = candidate } ->
+                    if candidate == processId
+                    then rest
+                    else child :: withoutChild(processId)(rest)
+
+// While nothing failed, starts a child for the next pending partition as long as fewer than `limit`
+// run; otherwise reaps the next child to exit and disposes the parent's copy of its partition; with
+// nothing left running, stops. After a failure no further child starts, but every running one is
+// still reaped. Answers the first failure.
+let recursive drivePartitionChildren (directory: Str) (limit: Int) (triple: Str) (payloadPaths: List(Str)) (pending: List(PartitionJob)) (running: List(PartitionChild)) (failure: Maybe(Str)) =
+    match (failure, pending) with
+        | (None, job :: rest) when runningCount(running)(0) < limit ->
+            match startPartitionChild(directory)(triple)(payloadPaths)(job) with
+                | Error(message) -> drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(rest)(running)(Some(message))
+                | Ok(child) -> drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(rest)(child :: running)(failure)
+        | _ ->
+            match running with
+                | [] -> failure
+                | _ ->
+                    let processId = waitForAnyChild(Unit)
+                    in
+                        if processId < 0
+                        then Some("waiting for a partition child process failed")
+                        else
+                            let _ =
+                                match childJobOf(processId)(running) with
+                                    | Some(job) -> disposePartitionJob(job)
+                                    | None -> Unit
+                            in
+                                drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(pending)(withoutChild(processId)(running))(failure)
+
+// The object file a child wrote, read through an LLVM memory buffer and copied into managed bytes
+// as the in-process path copies its emitted buffer.
+let readPartitionObjectFile (index: Int) (path: Str) =
+    match createMemoryBufferWithContentsOfFile(path) with
+        | (false, Some(buffer), _message) ->
+            let copied =
+                buffer
+                |> getBufferSize
+                |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+            in
+                let _ = disposeMemoryBuffer(buffer)
+                in
+                    match copied with
+                        | Ok(objectBytes) -> Ok(objectBytes)
+                        | Error(message) -> Error(partitionText(index) + ": its object could not be copied: " + message)
+        | _ -> Error(partitionText(index) + ": its object file " + path + " could not be read.")
+
+// A reaped child's object, or the reason it has none: its error file, or that it died first.
+let childPartitionObject (directory: Str) (index: Int) =
+    match index
+    |> partitionDonePath(directory)
+    |> Ashes.IO.File.exists with
+        | Ok(true) ->
+            index
+            |> partitionObjectPath(directory)
+            |> readPartitionObjectFile(index)
+        | _ ->
+            match index
+            |> partitionErrorPath(directory)
+            |> Ashes.IO.File.readText with
+                | Ok(message) -> Error(message)
+                | Error(_) -> Error(partitionText(index) + ": its child process ended without an object.")
+
+let recursive collectChildObjects (directory: Str) (jobs: List(PartitionJob)) (acc: List(Bytes)) =
+    match jobs with
+        | [] ->
+            acc
+            |> Ashes.Collection.List.reverse
+            |> Ok
+        | job :: rest ->
+            match job
+            |> partitionIndexOf
+            |> childPartitionObject(directory) with
+                | Error(message) -> Error(message)
+                | Ok(objectBytes) -> collectChildObjects(directory)(rest)(objectBytes :: acc)
+
+// Every partition's object in partition order, each verified, optimized and emitted by a child
+// process, at most `processes` at once, partition 0 with the payloads linked in. Each child works
+// on the same module the in-process path would, with the same target machine, pass pipeline and
+// payload step, so the objects are the in-process path's byte for byte and are merged in the same
+// order. Every child is reaped and the temporary directory under `tempRoot` removed before this
+// returns, whatever the outcome.
+let emitPartitionModulesInProcesses (processes: Int) (tempRoot: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) =
+    match preparePartitionJobs(triple)(resolveMachine)(partitions)([]) with
         | Error(message) -> Error(message)
-        | Ok(objects) -> mergeElfRelocatableObjects(objects)
+        | Ok(jobs) ->
+            let directory = partitionWorkDirectory(tempRoot)
+            in
+                match Ashes.IO.Directory.createAll(directory) with
+                    | Error(message) -> Error("Could not create the partition directory " + directory + ": " + message)
+                    | Ok(_) ->
+                        let objects =
+                            match drivePartitionChildren(directory)(processes)(triple)(payloadPaths)(jobs)([])(None) with
+                                | Some(message) -> Error(message)
+                                | None -> collectChildObjects(directory)(jobs)([])
+                        in
+                            let _ = Ashes.IO.Directory.removeTree(directory)
+                            in objects
+
+let mergePartitionObjects (objects: Result(Str, List(Bytes))) =
+    match objects with
+        | Error(message) -> Error(message)
+        | Ok(parts) -> mergeElfRelocatableObjects(parts)
+
+// The merged relocatable object of the partition modules, built in this process one partition
+// after another (`processes` 1), or with up to `processes` partitions at once in child processes.
+let mergePartitionModulesWith (processes: Int) (tempRoot: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) =
+    if processes > 1
+    then
+        partitions
+        |> emitPartitionModulesInProcesses(processes)(tempRoot)(triple)(resolveMachine)(payloadPaths)
+        |> mergePartitionObjects
+    else
+        partitions
+        |> emitPartitionModules(triple)(resolveMachine)(payloadPaths)
+        |> mergePartitionObjects
+
+// The merged relocatable object of the partition modules, built one after another in this process.
+let mergePartitionModules (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) = mergePartitionModulesWith(1)("")(triple)(resolveMachine)(payloadPaths)(partitions)
 
 // Every partition's object, partition 0 first, for `partitions` partitions of `program`.
 let emitPartitionObjects (leakCheck: Bool) (entryName: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: Int) (program: IrProgram) =
@@ -160,8 +417,12 @@ let emitPartitionObjects (leakCheck: Bool) (entryName: Str) (triple: Str) resolv
     |> buildPartitionModules(leakCheck)(entryName)(partitions)
     |> emitPartitionModules(triple)(resolveMachine)(payloadPaths)
 
-// The merged relocatable object of a partitioned build of `program`.
-let emitPartitionedObject (leakCheck: Bool) (entryName: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: Int) (program: IrProgram) =
+// The merged relocatable object of a partitioned build of `program`, with up to `processes`
+// partitions built at once in child processes (1: one after another in this process).
+let emitPartitionedObjectWith (processes: Int) (tempRoot: Str) (leakCheck: Bool) (entryName: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: Int) (program: IrProgram) =
     program
     |> buildPartitionModules(leakCheck)(entryName)(partitions)
-    |> mergePartitionModules(triple)(resolveMachine)(payloadPaths)
+    |> mergePartitionModulesWith(processes)(tempRoot)(triple)(resolveMachine)(payloadPaths)
+
+// The merged relocatable object of a partitioned build of `program`, one partition after another.
+let emitPartitionedObject (leakCheck: Bool) (entryName: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: Int) (program: IrProgram) = emitPartitionedObjectWith(1)("")(leakCheck)(entryName)(triple)(resolveMachine)(payloadPaths)(partitions)(program)

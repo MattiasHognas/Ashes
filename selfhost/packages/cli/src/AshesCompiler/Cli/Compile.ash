@@ -886,22 +886,54 @@ let emitAndLinkPrepared outputPath prepared =
                                 | Error(message) -> Error(message)
                                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
-// Optimizes and emits the partition modules one after another, merges their objects, writes the
-// requested link map of the merged object, and links and writes the executable to `outputPath`.
+// How many partitions are optimized and emitted at once, in child processes, with partitions
+// requested: `ASHES_LLVM_PROCESSES`, else 6, at most the partition count. 1 builds them one after
+// another in this process. A child shares the parent's memory copy-on-write and makes only its own
+// module and LLVM working set private, about 0.5-1 GiB for a sixteenth of the compiler, so 6 keeps
+// the self-compile near 23 GiB at worst. The image does not depend on the count.
+let defaultPartitionProcesses = 6
+
+let partitionProcessesRequested (partitions: Int) =
+    (let requested =
+        match Ashes.IO.Environment.get("ASHES_LLVM_PROCESSES") with
+            | Ok(Some(value)) when value != "" ->
+                match Ashes.Text.parseInt(value) with
+                    | Ok(count) when count >= 1 -> count
+                    | _ -> 1
+            | _ -> defaultPartitionProcesses
+    in
+        if requested > partitions
+        then partitions
+        else requested)
+
+// The directory the partition child processes write their objects under.
+let partitionTemporaryRoot unit =
+    match Ashes.IO.Environment.temporaryDirectory(Unit) with
+        | Ok(directory) -> directory
+        | Error(_) -> "/tmp"
+
+// Optimizes and emits the partition modules, up to `partitionProcessesRequested` at once, merges
+// their objects, writes the requested link map of the merged object, and links and writes the
+// executable to `outputPath`.
 let emitAndLinkPartitioned outputPath prepared =
     match prepared with
         | (modules, payloadPaths, libraries, linkNames) ->
-            match mergePartitionModules(linuxX64Triple)(partitionTargetMachine)(payloadPaths)(modules) with
-                | Error(message) -> Error(message)
-                | Ok(objectBytes) ->
-                    let _ = reportDiagnosticPhase("emitted")
-                    in
-                        match writeRequestedLinkMap(linkNames)(objectBytes) with
-                            | Error(message) -> Error(message)
-                            | Ok(_) ->
-                                match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
-                                    | Error(message) -> Error(message)
-                                    | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+            let processes =
+                modules
+                |> Ashes.Collection.List.length
+                |> partitionProcessesRequested
+            in
+                match mergePartitionModulesWith(processes)(partitionTemporaryRoot(Unit))(linuxX64Triple)(partitionTargetMachine)(payloadPaths)(modules) with
+                    | Error(message) -> Error(message)
+                    | Ok(objectBytes) ->
+                        let _ = reportDiagnosticPhase("emitted")
+                        in
+                            match writeRequestedLinkMap(linkNames)(objectBytes) with
+                                | Error(message) -> Error(message)
+                                | Ok(_) ->
+                                    match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                                        | Error(message) -> Error(message)
+                                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
