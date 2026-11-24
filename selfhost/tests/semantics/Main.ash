@@ -91,6 +91,7 @@ import TypeGraphSearchTests
 import TypeGraphIndexTests
 import ResultReachSummariesTests
 import TcoOwnershipRulesTests
+import StrictPartialStagesTests
 import PatternBindingOwnershipTests
 import TcoLoopLoweringTests
 import OwnedAggregateReleaseTests
@@ -190,6 +191,7 @@ let run unit =
     |> (given (_) -> ResultReachSummariesTests.runResultReachSummariesTests(Unit))
     |> (given (_) -> PatternBindingOwnershipTests.runPatternBindingOwnershipTests(Unit))
     |> (given (_) -> TcoOwnershipRulesTests.runTcoOwnershipRulesTests(Unit))
+    |> (given (_) -> StrictPartialStagesTests.runStrictPartialStagesTests(Unit))
     |> (given (_) -> TcoLoopLoweringTests.runTcoLoopLoweringTests(Unit))
     |> (given (_) -> OwnedAggregateReleaseTests.runOwnedAggregateReleaseTests(Unit))
     |> (given (_) -> LoweringDiagnosticsTests.runLoweringDiagnosticsTests(Unit))
