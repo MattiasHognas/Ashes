@@ -43,6 +43,7 @@ export (
     value recordedCopyInstantiation,
     value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
+    value recordedUnsettledOperatorGeneric,
     value rawOperatorDeclarationSchemes,
     value recordedDeferredEvaluation,
     value deferredEvaluationKey,
@@ -473,6 +474,35 @@ let recordedOperatorGenericScheme name (node: Int) (state: CoreLoweringState) =
             match nodeDeclarationAt(node)(table) with
                 | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)
                 | None -> None
+
+let recursive anyUnsettledVariable (variables: List(Int)) (settled: MapTree(Int, SemanticType)) =
+    match variables with
+        | [] -> false
+        | variable :: rest ->
+            match Ashes.Collection.Map.getInt(variable)(settled) with
+                | Some(_type) -> anyUnsettledVariable(rest)(settled)
+                | None -> true
+
+let recursive anyUnsettledOperatorRequirement (constraints: List(TraitConstraint)) (settled: MapTree(Int, SemanticType)) =
+    match constraints with
+        | [] -> false
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            isMonomorphicOperatorTrait(traitName) && anyUnsettledVariable(freeTypeVariables(SemTuple(arguments)))(settled) || anyUnsettledOperatorRequirement(rest)(settled)
+
+// The operator-generic scheme recorded for a top-level binding, under typed lowering only, when one
+// of its operator requirements is at a variable the program's uses do not settle to one type: the
+// binding is used at more than one type through that requirement (`twice` at Int and at Float). A
+// binding used at one type is answered by its settled uses instead.
+let recordedUnsettledOperatorGeneric name (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> false
+        | Some(_table) ->
+            match recordedOperatorGenericScheme(name)(node)(state) with
+                | Some(TypeScheme { constraints = constraints }) ->
+                    state
+                    |> stateSettledNodeVariables
+                    |> anyUnsettledOperatorRequirement(constraints)
+                | None -> false
 
 // A recorded type, read through the instantiation of the body being lowered, with the variables the
 // program's uses settle replaced by their settled types, as lowering writes it, when that leaves no
