@@ -989,34 +989,43 @@ let copiesFreshScalarListHeadIntoLoopCell (headTemp: Int) (resolved: SemanticTyp
 
 // Stage 0's `CopyFreshStringHeadIntoArenaCell`: an arena cell never releases its head, so a newly
 // produced reference-counted string, or a reference the cell took on a binding's string, is stored
-// as an arena copy and released right away. A cell whose parts the back edge copies, or whose
-// duplicate a late release still names, keeps its head as it is. A retain the call the cell is an
-// argument of collected is released here, so it leaves the frame either way.
+// as an arena copy and released right away. A cell whose parts the back edge copies, or whose head
+// is a pattern owner's duplicate a late release still names (stage 0's `lateDuplicate`), keeps its
+// head as it is; a fresh head of a cell the back edge may copy later (a self call's successor under
+// a pending one-shot post) is copied like any other. A retain the call the cell is an argument of
+// collected is released here, so it leaves the frame either way.
 let arenaCellHeadOf (request: ConsumerRequest) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
-    (let retained =
-        match definitionOfTemp(headTemp)(state.reversedInstructions) with
-            | Some(RcDup(_target, _source, true, _mayBeEmpty)) -> true
-            | _ -> false
+    (let definition = definitionOfTemp(headTemp)(state.reversedInstructions)
     in
-        let fresh = isFreshRuntimeTemp(headTemp)(state)
+        let retained =
+            match definition with
+                | Some(RcDup(_target, _source, true, _mayBeEmpty)) -> true
+                | _ -> false
         in
-            if resolveType(state)(headType) != SemString || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell || !(fresh || retained)
-            then (state, headTemp)
-            else
-                match freshTemp(state) with
-                    | FreshTemp { state = allocated, temp = copyTemp } ->
-                        let copied =
-                            emit(CopyOutArena(copyTemp)(headTemp)(-1)(false)(IndependentClone)(None))(allocated)
-                        in
-                            if fresh
-                            then
-                                (copied
-                                |> releaseConsumedOperand(headTemp)
-                                |> forgetCallArgumentTransferRetain(headTemp), copyTemp)
-                            else
-                                (copied
-                                |> emit(RcDrop(headTemp)("String")(-1)(true)(false)(None))
-                                |> forgetCallArgumentTransferRetain(headTemp), copyTemp))
+            let lateDuplicate =
+                match definition with
+                    | Some(RcDup(_target, _source, false, _mayBeEmpty)) -> request.lateCopiedCellParts
+                    | _ -> false
+            in
+                let fresh = isFreshRuntimeTemp(headTemp)(state)
+                in
+                    if resolveType(state)(headType) != SemString || request.borrowsCellParts || lateDuplicate || request.recordFieldCell || !(fresh || retained)
+                    then (state, headTemp)
+                    else
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = copyTemp } ->
+                                let copied =
+                                    emit(CopyOutArena(copyTemp)(headTemp)(-1)(false)(IndependentClone)(None))(allocated)
+                                in
+                                    if fresh
+                                    then
+                                        (copied
+                                        |> releaseConsumedOperand(headTemp)
+                                        |> forgetCallArgumentTransferRetain(headTemp), copyTemp)
+                                    else
+                                        (copied
+                                        |> emit(RcDrop(headTemp)("String")(-1)(true)(false)(None))
+                                        |> forgetCallArgumentTransferRetain(headTemp), copyTemp))
 
 // Stage 0's `TryCopyFreshScalarListHeadIntoArenaCell`: inside a loop, a newly produced
 // reference-counted list of scalars (a call's owned `List(Int)` result pushed onto an arena worklist
