@@ -1907,29 +1907,26 @@ let isOpenVariable (semanticType: SemanticType) =
         | SemVariable(_id) -> true
         | _ -> false
 
-// Under typed lowering, an arithmetic operator inside a body carrying the operator trait's evidence
-// for one operand type, whose other operand is still a bare variable (a recursive body's self call
-// result, `x + addTimes(x)(n + 1)`), joins the two operand types and dispatches through that
-// evidence, as an operator over two operands of the evidence's type does. None without a node table
-// or when neither operand is covered.
+// An arithmetic operator inside a body carrying the operator trait's evidence for one operand type,
+// whose other operand is still a bare variable (a recursive body's self call result,
+// `x + addTimes(x)(n + 1)`), joins the two operand types and dispatches through that evidence, as
+// stage 0's mapped binary trait does (it unifies the operands before resolving the evidence). None
+// when neither operand is covered.
 let activeArithmeticJoin (traitName: Str) (left: SemanticType) (right: SemanticType) (state: CoreLoweringState) =
-    match stateNodeTypes(state) with
-        | None -> None
-        | Some(_table) ->
-            let joined =
-                if hasActiveTraitEvidence(traitName)(left)(state) && isOpenVariable(right)
-                then Some((right, left))
-                else
-                    if hasActiveTraitEvidence(traitName)(right)(state) && isOpenVariable(left)
-                    then Some((left, right))
-                    else None
-            in
-                match joined with
-                    | Some((uncovered, covered)) ->
-                        match bindType(uncovered)(covered)(state) with
-                            | (bound, None) -> Some((observeLoweringEvent(0)(bound), covered))
-                            | (_failed, Some(_error)) -> None
-                    | None -> None
+    (let joined =
+        if hasActiveTraitEvidence(traitName)(left)(state) && isOpenVariable(right)
+        then Some((right, left))
+        else
+            if hasActiveTraitEvidence(traitName)(right)(state) && isOpenVariable(left)
+            then Some((left, right))
+            else None
+    in
+        match joined with
+            | Some((uncovered, covered)) ->
+                match bindType(uncovered)(covered)(state) with
+                    | (bound, None) -> Some((observeLoweringEvent(0)(bound), covered))
+                    | (_failed, Some(_error)) -> None
+            | None -> None)
 
 let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
     match binary with
