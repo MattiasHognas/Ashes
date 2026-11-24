@@ -13104,8 +13104,7 @@ public sealed partial class Lowering
             || _tcoCtx?.InTailPosition != true
             || _backEdgeArgumentPosition is not null
             || _tcoArgumentDestination is not null
-            || _constructorFieldArgument is null
-            || !ReferenceEquals(StripOrSelf(_constructorFieldArgument), cons)
+            || !(IsConstructorFieldCell(cons) || IsProducerResultCell(cons))
             || IsRuntimeManagedResultTemp(cellTemp)
             || _inst.FindLast(instruction => instruction is IrInst.Alloc allocation && allocation.Target == cellTemp) is not IrInst.Alloc { RuntimeManaged: false }
             || ContainsUnresolvedLayoutType(Prune(headType), []))
@@ -13117,6 +13116,20 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(ownedSlot, duplicateTemp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(headType));
     }
+
+    private bool IsConstructorFieldCell(Expr.Cons cons)
+        => _constructorFieldArgument is not null && ReferenceEquals(StripOrSelf(_constructorFieldArgument), cons);
+
+    // A cell that is the function's result itself, consed onto a recursive producer call: the
+    // producer's result is reference-counted on both sides of its returns bit, so the return copies
+    // the arena cell onto the heap with a reference of its own to the head, and the cell is read by
+    // nothing else between its construction and that copy (it is the value of the arm that built
+    // it). The duplicate the cell took of its pattern-owned head is released behind the result, as a
+    // constructor field cell's is; each arm builds its own cell and registers its own slot.
+    private bool IsProducerResultCell(Expr.Cons cons)
+        => _constructorFieldArgument is null
+            && Environment.GetEnvironmentVariable("GRC_NO_PRODUCERRESULTCELLHEADDUP") is null
+            && IsRecursiveProducerTail(cons.Tail);
 
     private void RecordLateCopiedCellHeadDuplicate(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
     {

@@ -30,6 +30,7 @@ import AshesCompiler.Semantics.CoreLowering.CallResults
 import AshesCompiler.Semantics.CoreLowering.Matches
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 export (
+    value keepLoopResultFieldCellHeadDuplicateOwned,
     value recordArenaCellTransferRetain,
     value neutralizeElementDuplicate,
     value isPromotableCellMarker,
@@ -1585,6 +1586,56 @@ let recordCallArgumentCellOwnerDuplicates (request: ConsumerRequest) (ownedHead:
                 cell with state = state |> recordCallArgumentCellOwnerPart(ownedHead)(duplicatedHead) |> recordCallArgumentCellOwnerPart(ownedTail)(duplicatedTail)
         | _ -> cell
 
+// The temp a cell's construction stored at an offset, the most recent store first.
+let recursive cellWordSource (cell: Int) (offset: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePtr, storedOffset, source) } :: rest ->
+            if basePtr == cell && storedOffset == offset
+            then Some(source)
+            else cellWordSource(cell)(offset)(rest)
+        | _instruction :: rest -> cellWordSource(cell)(offset)(rest)
+
+// Stage 0's `KeepLoopResultFieldCellHeadDuplicateOwned`: an arena cons cell built as a constructor
+// argument at a loop function's result (`Spine(root = root, arguments = argument :: arguments)`
+// over a part of the loop parameter) holds the pattern-owner duplicate of its head; the return
+// normalizes the result into a copy that retains the head itself and the arena cell releases
+// nothing, so the duplicate goes to an owned slot released behind the result. The duplicate is a
+// marker or already a real retain, as when the head's pattern owner is runtime-managed
+// (`fn with calls = target :: fn.calls`, `target` matched out of a list parameter).
+let keepLoopResultFieldCellHeadDuplicateOwned (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+    match (lowered, unspanArgument(argument)) with
+        | (LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None }, ExprCons(headExpression, _tail)) ->
+            match (cellWordSource(cellTemp)(0)(state.reversedInstructions), unspanArgument(headExpression), resolveType(state)(listType)) with
+                | (Some(headTemp), ExprVar(name), SemList(headType)) ->
+                    if !runtimeManaged && (request.tailPosition || request.consTailPosition) && generalRcEnabled(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot, patternOwnerBinding(name)(state)) with
+                        | (Some(_frame), None, None, Some(_fact)) -> true
+                        | _ -> false) && (match (definitionOfTemp(headTemp)(state.reversedInstructions), definitionOfTemp(cellTemp)(state.reversedInstructions)) with
+                        | (Some(RcDup(_target, _source, _runtimeManagedRetain, _mayBeEmpty)), Some(Alloc(_cell, 16, false))) -> true
+                        | _ -> false)
+                    then
+                        match freshLocal(state) with
+                            | FreshLocal { state = allocated, local = ownedSlot } ->
+                                lowered with state = allocated |> emit(StoreLocal(ownedSlot)(headTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(headType))
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
+// Stage 0's producer-result cell in `KeepLoopResultFieldCellHeadDuplicateOwned`: an arena cell that
+// is the function's result itself, consed onto a recursive producer call, is read by nothing
+// between its construction and the copy that places the producer's result on the
+// reference-counted heap with a reference of its own to the head, so the pattern-owner duplicate
+// the cell took of its head goes to an owned slot released behind the result, as a constructor
+// field cell's does.
+let keepProducerResultCellHeadDuplicateOwned (request: ConsumerRequest) headExpression tailExpression (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            if recursiveProducerResult(tailExpression)(state)
+            then
+                keepLoopResultFieldCellHeadDuplicateOwned(request)(false)(ExprCons(headExpression)(tailExpression))(lowered)
+            else lowered
+        | _ -> lowered
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -1604,6 +1655,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
+                                    |> keepProducerResultCellHeadDuplicateOwned(cellRequest)(headExpression)(tailExpression)
                                     |> keepArgumentExitCellOwned(request)(tailExpression)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
