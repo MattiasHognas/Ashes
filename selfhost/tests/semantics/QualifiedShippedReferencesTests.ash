@@ -42,9 +42,17 @@ let testNoShippedTextsNeedNothing unit =
     |> qualifiedShippedModulesNeedingSource([])
     |> test.assertEqual([])
 
+// A shipped module naming its own binding by its full path does not depend on itself; the other
+// modules it names stay.
+let testOwnModuleIsNoDependency unit =
+    "Ashes.Collection.List.length(Ashes.IO.Path.join(a)(b)) + Ashes.Collection.List.length(xs)"
+    |> qualifiedShippedDependenciesOf("Ashes.Collection.List")(["Ashes.IO.Path", "Ashes.Collection.List"])
+    |> test.assertEqual(["Ashes.IO.Path"])
+
 let runQualifiedShippedReferencesTests unit =
     Unit
     |> testCollectsLongestKnownModulePrefixes
     |> testModulesNeedingSourceSkipIntrinsicMembers
     |> testNoShippedTextsNeedNothing
+    |> testOwnModuleIsNoDependency
     |> (given (_) -> Ashes.IO.print("all qualified shipped reference tests passed"))
