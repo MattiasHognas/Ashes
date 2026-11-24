@@ -24,6 +24,8 @@ import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithGoalDe
 import AshesCompiler.Semantics.CoreLowering.measureStitchedLowering
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorSchemesWithNestedLets
+import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithSchemes
 import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
 import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
 import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
@@ -546,7 +548,9 @@ let checkPartialStageEvidence unit = checkTestProgramLeavesNoGoal("annotated_par
 // A top-level binding the inference generalized over an arithmetic trait and the program uses at two
 // types (`square` at Int and Float, the recursive `sumWith` and `addTimes`): under typed lowering it is
 // lowered once taking the operator's dictionary, so the typed first pass defers no operator, where the
-// legacy lowering emits its operator in the speculative integer form. Both modes lower without error.
+// legacy lowering emits its operator in the speculative integer form. Both modes lower without error;
+// the legacy run is given the operator schemes of top-level and nested lets as the default compile
+// path gives them, read from the numbered program.
 let checkArithmeticDictionaryProgram (name: Str) =
     (let sourcePath = "tests/" + name + ".ash"
     in
@@ -573,7 +577,7 @@ let checkArithmeticDictionaryProgram (name: Str) =
                                             |> measureStitchedLowering(true)(None)(given (_) -> Unit)(clock)(table)(name + ".ash")
                                         in
                                             let legacy =
-                                                measureStitchedLowering(false)(None)(given (_) -> Unit)(clock)(table)(name + ".ash")(stitched.program)
+                                                measureCoreProgramLoweringWithSchemes(rawOperatorSchemesWithNestedLets(Ashes.Collection.Map.empty)(identifiedProgramSyntax(identified.program))(table))(clock)(None)(name + ".ash")("")(stitched.program)
                                             in
                                                 let firstTyped = typed.first
                                                 in
