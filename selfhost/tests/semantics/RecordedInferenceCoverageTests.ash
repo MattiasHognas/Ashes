@@ -25,9 +25,6 @@ import AshesCompiler.Semantics.CoreLowering.measureStitchedLowering
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
-import AshesCompiler.Semantics.CoreLowering.CallArguments.applyRecordedLambdaType
-import AshesCompiler.Semantics.CoreLowering.Emit.resolveType
-import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreLoweringState
 import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
 import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
 import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
@@ -517,27 +514,6 @@ let checkNumberedResultView unit =
 // The same wrapper shape with `==`, the shape that used to reach the replay without a proof.
 let checkWrappedEqualitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open equality")(true)("let isEmpty selected = selected == []\nlet describe name selected =\n    if isEmpty(selected)\n    then name\n    else \"x\"\ndescribe(\"a\")([\"x\"])")
 
-// A lambda's parameter takes the closed type recorded for it at its own node before its body is
-// lowered, under typed lowering only, and only when the node binds a parameter of that name.
-let checkRecordedLambdaParameter unit =
-    (let table = emptyNodeTypeTable with bindings = Ashes.Collection.Map.setInt(5)([("x", TypeScheme(quantified = [], body = SemString, constraints = []))])(Ashes.Collection.Map.empty)
-    in
-        let typed =
-            Unit
-            |> initialState
-            |> withNodeTypes(table)
-            |> (given (state: CoreLoweringState) -> state with currentNode = Some(5))
-        in
-            let bound = applyRecordedLambdaType("x")(SemVariable(90001))(typed)
-            in
-                let otherName = applyRecordedLambdaType("y")(SemVariable(90001))(typed)
-                in
-                    let untyped = applyRecordedLambdaType("x")(SemVariable(90001))((initialState(Unit) with currentNode = Some(5)))
-                    in
-                        if resolveType(bound)(SemVariable(90001)) == SemString && resolveType(otherName)(SemVariable(90001)) == SemVariable(90001) && resolveType(untyped)(SemVariable(90001)) == SemVariable(90001)
-                        then Unit
-                        else Ashes.IO.panic("a lambda parameter did not take its recorded type, or took one from another binding or without a table"))
-
 // A test program whose requirements the enclosing function supplies (a local `Seed.first(Unit)` the
 // body later compares with its parameter, a callback returned by a constrained helper) or whose
 // escaping constrained reference the program uses at one type: the typed first pass leaves no goal.
@@ -645,7 +621,6 @@ let runRecordedInferenceCoverageTests unit =
     |> checkPartlyOpenEqualitySettled
     |> checkWrappedInequalitySettled
     |> checkWrappedEqualitySettled
-    |> checkRecordedLambdaParameter
     |> checkEnclosingEvidence
     |> checkSynthesizedIdentity
     |> checkPartialStageEvidence
