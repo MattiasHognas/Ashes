@@ -2419,18 +2419,6 @@ let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (funct
                 match transformCoroutineFunction(label)(captureCount)(rest) with
                     | (transformed, stateStructSize) -> (function_ :: transformed, stateStructSize)
 
-// Stage 0's `RetainCoroutineCapture`: the task frame keeps its own reference to each captured value,
-// because the frame outlives the expression that created the task and that scope releases its
-// bindings. The closure is copied to its reference-counted form, whose environment normalizer
-// retains (or copies) every capture, and the task takes its captures from that copy.
-let frameOwnedClosure (closureTemp: Int) (captureCount: Int) (state: CoreLoweringState) =
-    if captureCount == 0
-    then (state, closureTemp)
-    else
-        match freshTemp(state) with
-            | FreshTemp { state = allocated, temp = copyTemp } ->
-                (emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), copyTemp)
-
 // Whether the lifted function `label` forks a child task.
 let recursive functionForks (label: Str) (functions: List(IrFunction)) =
     match functions with
@@ -2491,14 +2479,12 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
                                 in
                                     match transformCoroutineFunction(label)(captureCount)(typedState.functions) with
                                         | (functions, stateStructSize) ->
-                                            match frameOwnedClosure(closureTemp)(captureCount)((typedState with functions = functions)) with
-                                                | (ownedState, frameClosure) ->
-                                                    match freshTemp(ownedState) with
-                                                        | FreshTemp { state = tempState, temp = taskTemp } ->
-                                                            tempState
-                                                            |> withCompletedTaskFrameDropper(None)
-                                                            |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(stateCompletedTaskFrameDropper(typedState))(false))
-                                                            |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
+                                            match freshTemp((typedState with functions = functions)) with
+                                                | FreshTemp { state = tempState, temp = taskTemp } ->
+                                                    tempState
+                                                    |> withCompletedTaskFrameDropper(None)
+                                                    |> emit(CreateTask(taskTemp)(closureTemp)(stateStructSize)(captureCount)(stateCompletedTaskFrameDropper(typedState))(false))
+                                                    |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
                     | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
 
 let recursive typeHoldsJoinHandle (semanticType: SemanticType) (state: CoreLoweringState) =

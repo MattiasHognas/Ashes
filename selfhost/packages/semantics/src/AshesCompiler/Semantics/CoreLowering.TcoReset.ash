@@ -76,6 +76,8 @@ export (
     value typeMayContainArgumentType,
     value callResultMayContainArgumentType,
     value callResultMayContainAnyArgumentType,
+    value resultTypeMayHoldPartOf,
+    value closureNormalizerCopiesCaptures,
     value ownedSlotsOutside,
     value ownedSlotsOutsideResult,
     value typeAtIndex,
@@ -1118,6 +1120,17 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
                                 | (synthesized, label) -> (synthesized, Some(label)) with
                         | (dropped, dropperLabel) -> synthesizeDeepCopyClosureNormalizer(closureLabel)(closureOrigin)(layout)(shared)(dropperLabel)(dropped)
                 | None -> withStatePendingClosureNormalizers((closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: statePendingClosureNormalizers(state))(state)
+
+// Whether the closure's environment normalizer copies or retains a capture: its deep-copy layout
+// is decided at the closure and names at least one capture. A layout decided at program
+// finalization covers scalar captures only.
+let closureNormalizerCopiesCaptures (captures: List(CoreBinding)) (state: CoreLoweringState) =
+    match captures with
+        | [] -> false
+        | _ ->
+            match deepCopyCaptureLayout(capturesSelfClosure(captures))(capturesTraitEvidence(captures))(captures)(0)(state) with
+                | Some((_copied :: _rest, _shared)) -> true
+                | _ -> false
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
     match functions with
