@@ -611,7 +611,9 @@ let checkArithmeticDictionaryProgram (name: Str) =
 
 let checkArithmeticDictionaryBinding unit =
     (let _ = checkArithmeticDictionaryProgram("generic_multiply_binding_used_at_int_and_float")
-    in checkArithmeticDictionaryProgram("generic_add_non_tail_recursive_binding_used_at_int_and_float"))
+    in
+        let _ = checkArithmeticDictionaryProgram("generic_add_non_tail_recursive_binding_used_at_int_and_float")
+        in checkArithmeticDictionaryProgram("generic_add_let_below_top_level_used_at_int_and_float"))
 
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
