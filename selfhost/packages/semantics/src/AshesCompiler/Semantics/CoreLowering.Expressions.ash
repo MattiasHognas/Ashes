@@ -51,6 +51,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedUnsettledOperatorGeneric
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
@@ -3395,17 +3396,13 @@ let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) =
             | _ -> false)
 
 // Under typed lowering, a top-level binding the standalone inference generalized over an operator
-// trait lowering otherwise holds monomorphic (`twice x = [x + x, x]` at `Add(a)`): its arithmetic
-// requirements are supported as a written one is, so the binding is lowered once as a body taking
-// the operator's dictionary, as stage 0 does, instead of a body whose operator is emitted in the
-// integer form while each concrete call takes its own copy. Without a node table nothing changes.
+// trait lowering otherwise holds monomorphic, used at more than one type through it (`twice x =
+// [x + x, x]` at Int and Float): its arithmetic requirements are supported as a written one is, so
+// the binding is lowered once as a body taking the operator's dictionary, as stage 0 does, instead of
+// a body whose operator is emitted in the integer form while each concrete call takes its own copy.
+// A binding used at one type keeps its settled reading. Without a node table nothing changes.
 let recordedArithmeticGeneric name value (state: CoreLoweringState) =
-    match stateNodeTypes(state) with
-        | Some(_table) ->
-            match recordedOperatorGenericScheme(name)(nodeIdentityOf(value))(state) with
-                | Some(_scheme) -> true
-                | None -> false
-        | None -> false
+    recordedUnsettledOperatorGeneric(name)(nodeIdentityOf(value))(state)
 
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
