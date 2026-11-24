@@ -569,8 +569,21 @@ let testLoopExitFieldResultIsReferenceCounted unit =
     |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
     |> test.assertEqual(1)
 
+let loopExitFieldIfSource = "type State =\n    | refs: List(Str)\n\nlet recursive scanIf (tokens: List(Str)) (state: State) =\n    if Ashes.Collection.List.length(tokens) == 0\n    then state.refs\n    else\n        match tokens with\n            | [] -> []\n            | text :: rest -> scanIf(rest)(State(refs = text :: state.refs))\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\ncount(scanIf([\"a\"])(State(refs = [])))(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The same exit from an `if` branch beside a nil arm: the branch's value is normalized with a
+// reference of its own while its retain still looks unowned, so the retain stays an identity and
+// the join of the normalized value and nil is the loop's owned reference-counted result.
+let testLoopExitFieldResultThroughIfIsReferenceCounted unit =
+    loopExitFieldIfSource
+    |> loweredLines
+    |> functionLines("SourceFunction from scanIf")
+    |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
+    |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testLoopExitFieldResultThroughIfIsReferenceCounted
     |> testLoopExitFieldResultIsReferenceCounted
     |> testBackEdgeRetainsLetAliasOfIterationOwner
     |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
