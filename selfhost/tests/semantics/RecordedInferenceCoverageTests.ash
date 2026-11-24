@@ -567,14 +567,14 @@ let checkSynthesizedIdentity unit =
 // at the source call's reference: an annotated partial application of a constrained staged binding.
 let checkPartialStageEvidence unit = checkTestProgramLeavesNoGoal("annotated_partial_resolves_evidence_before_returning_function")
 
-// A top-level binding the inference generalized over `Multiply` and the program uses at Int and at
-// Float: under typed lowering it is lowered once taking the operator's dictionary, so the typed first
-// pass defers no operator, where the legacy lowering emits its operator in the speculative integer
-// form. Both modes lower without an error.
-let checkArithmeticDictionaryBinding unit =
-    (let name = "generic_multiply_binding_used_at_int_and_float"
+// A top-level binding the inference generalized over an arithmetic trait and the program uses at two
+// types (`square` at Int and Float, the recursive `sumWith` and `addTimes`): under typed lowering it is
+// lowered once taking the operator's dictionary, so the typed first pass defers no operator, where the
+// legacy lowering emits its operator in the speculative integer form. Both modes lower without error.
+let checkArithmeticDictionaryProgram (name: Str) =
+    (let sourcePath = "tests/" + name + ".ash"
     in
-        match (Ashes.IO.Directory.entries("lib/Ashes"), Ashes.IO.File.readText("tests/" + name + ".ash")) with
+        match (Ashes.IO.Directory.entries("lib/Ashes"), Ashes.IO.File.readText(sourcePath)) with
             | (Ok(names), Ok(source)) ->
                 match names
                 |> readShippedSources
@@ -608,6 +608,10 @@ let checkArithmeticDictionaryBinding unit =
                                                         else Ashes.IO.panic(name + ": typed deferred=" + Ashes.Text.fromInt(firstTyped.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstTyped.error) + ", legacy deferred=" + Ashes.Text.fromInt(firstLegacy.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstLegacy.error))
             | (Error(message), _) -> Ashes.IO.panic(message)
             | (_, Error(message)) -> Ashes.IO.panic(message))
+
+let checkArithmeticDictionaryBinding unit =
+    (let _ = checkArithmeticDictionaryProgram("generic_multiply_binding_used_at_int_and_float")
+    in checkArithmeticDictionaryProgram("generic_add_non_tail_recursive_binding_used_at_int_and_float"))
 
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 

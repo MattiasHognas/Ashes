@@ -1902,6 +1902,35 @@ let isUserTypeOperand (semanticType: SemanticType) =
 
 // An operator over a user type's operands dispatches through the operator's trait, a negation
 // `0 - x` of one through `Negate`; every other operator takes its primitive route.
+let isOpenVariable (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(_id) -> true
+        | _ -> false
+
+// Under typed lowering, an arithmetic operator inside a body carrying the operator trait's evidence
+// for one operand type, whose other operand is still a bare variable (a recursive body's self call
+// result, `x + addTimes(x)(n + 1)`), joins the two operand types and dispatches through that
+// evidence, as an operator over two operands of the evidence's type does. None without a node table
+// or when neither operand is covered.
+let activeArithmeticJoin (traitName: Str) (left: SemanticType) (right: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> None
+        | Some(_table) ->
+            let joined =
+                if hasActiveTraitEvidence(traitName)(left)(state) && isOpenVariable(right)
+                then Some((right, left))
+                else
+                    if hasActiveTraitEvidence(traitName)(right)(state) && isOpenVariable(left)
+                    then Some((left, right))
+                    else None
+            in
+                match joined with
+                    | Some((uncovered, covered)) ->
+                        match bindType(uncovered)(covered)(state) with
+                            | (bound, None) -> Some((observeLoweringEvent(0)(bound), covered))
+                            | (_failed, Some(_error)) -> None
+                    | None -> None
+
 let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
     match binary with
         | LoweredCoreBinary { state = state, leftType = leftType, rightTemp = rightTemp, rightType = rightType, error = None } ->
@@ -1916,7 +1945,10 @@ let emitPreparedOrTraitBinary operator left lower (binary: LoweredCoreBinary) =
                             | Some((traitName, methodName)) ->
                                 if resolvedLeft == resolvedRight && (isUserTypeOperand(resolvedLeft) || hasActiveTraitEvidence(traitName)(resolvedLeft)(state))
                                 then emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with leftType = resolvedLeft, rightType = resolvedRight))
-                                else emitPreparedCoreBinary(operator)(lower)(binary)
+                                else
+                                    match activeArithmeticJoin(traitName)(resolvedLeft)(resolvedRight)(state) with
+                                        | Some((joinedState, operandType)) -> emitCoreTraitArithmetic(traitName)(methodName)(lower)((binary with state = joinedState, leftType = operandType, rightType = operandType))
+                                        | None -> emitPreparedCoreBinary(operator)(lower)(binary)
                             | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
         | _ -> emitPreparedCoreBinary(operator)(lower)(binary)
 
