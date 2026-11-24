@@ -581,8 +581,23 @@ let testLoopExitFieldResultThroughIfIsReferenceCounted unit =
     |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
     |> test.assertEqual(1)
 
+let lastOfSource = "let recursive lastOf list =\n    match list with\n        | last :: [] -> last\n        | _ :: rest -> lastOf(rest)\n        | [] -> \"\"\n\nAshes.IO.print(lastOf([\"a\", \"b\" + Ashes.Text.fromInt(1)]))"
+
+// A loop exit arm returning a head bound under a nested pattern (`| last :: [] -> last`) beside a
+// literal arm: the arm's duplicate of the pattern owner is only normalized by the join (a reference
+// or a reference-counted copy), so it stays an identity and the normalization's reference is the
+// result's. Promoted as well, it made two references for one result. Four real retains remain: the
+// parameter's entry normalization, the owner's protective retain, the join's and the back edge's.
+let testExitArmPatternOwnerNormalizedOnce unit =
+    lastOfSource
+    |> loweredLines
+    |> functionLines("SourceFunction from lastOf")
+    |> countContainingBoth("RcDup")("RuntimeManaged=true")
+    |> test.assertEqual(4)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testExitArmPatternOwnerNormalizedOnce
     |> testLoopExitFieldResultThroughIfIsReferenceCounted
     |> testLoopExitFieldResultIsReferenceCounted
     |> testBackEdgeRetainsLetAliasOfIterationOwner

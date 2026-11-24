@@ -1161,26 +1161,59 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
+// `(every reader is part of a reference-or-copy normalization, any reader)` of `temp`: a
+// representation test, a retain, or a copy onto the reference-counted heap.
+let recursive readersOnlyNormalize (temp: Int) (instructions: List(IrInstruction)) (anyReader: Bool) =
+    match instructions with
+        | [] -> anyReader
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getUsedTemps
+            |> containsInt(temp)
+            then
+                match kind with
+                    | IsReferenceCounted(_target, _source) -> readersOnlyNormalize(temp)(rest)(true)
+                    | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutList(_target, _source, _headCopy, true, _purpose) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutArena(_target, _source, _size, true, _purpose, _deferred) -> readersOnlyNormalize(temp)(rest)(true)
+                    | _ -> false
+            else readersOnlyNormalize(temp)(rest)(anyReader)
+
+// The identity duplicates of a pattern owner's aliases that the lowering then only took a reference
+// or a reference-counted copy of: an arm returning the owner (`| last :: [] -> last`) duplicated it
+// while it still looked unplaced, and the arm's join normalized that duplicate. Stage 0's
+// `TransferDeferredPatternOwnerResult` takes that one reference or copy itself, so such a duplicate
+// stays an identity and the normalization's reference is the arm's.
+let recursive normalizedOnlyMarkers (scan: List(IrInstruction)) (instructions: List(IrInstruction)) (aliases: List(Int)) (kept: List(Int)) =
+    match scan with
+        | [] -> kept
+        | IrInstruction { instruction = RcDup(target, source, false, _mayBeEmpty) } :: rest ->
+            normalizedOnlyMarkers(rest)(instructions)(aliases)(if containsInt(source)(aliases) && readersOnlyNormalize(target)(instructions)(false)
+            then target :: kept
+            else kept)
+        | _instruction :: rest -> normalizedOnlyMarkers(rest)(instructions)(aliases)(kept)
+
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
 // type name, naming the structural dropper of a value whose release reaches past its own cell
 // (the marker is one instruction, so an aggregate owner's walk lives behind that label). A release
-// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate.
-let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
+// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate. A
+// duplicate in `kept` (`normalizedOnlyMarkers`) stays an identity.
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) (kept: List(Int)) =
     match instructions with
         | [] -> []
         | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
-            (if containsInt(source)(aliases) && !runtimeManaged
+            (if containsInt(source)(aliases) && !runtimeManaged && !containsInt(target)(kept)
             then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
         | (IrInstruction { instruction = RcDrop(source, markerTypeName, ownerSlot, runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
             (if ownerSlot == slot
             then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
             else
                 if !runtimeManaged && containsInt(source)(released) && containsInt(source)(aliases)
                 then instruction with instruction = RcDrop(source)(markerTypeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
-                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
-        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
 
 let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
@@ -1203,7 +1236,9 @@ let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringStat
                         synthesized
                         |> markRuntimeTemps(aliases)
                         |> (given (marked: CoreLoweringState) ->
-                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
+                            marked with reversedInstructions = reverse([]
+                            |> normalizedOnlyMarkers(instructions)(instructions)(aliases)
+                            |> promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
 
 let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
     match sites with
@@ -1379,24 +1414,6 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
 // A loop parameter placed on the reference-counted heap: a runtime-managed list or ADT slot, or
 // a runtime-managed `Str` candidate.
 let tcoParameterPlaced (slot: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) = managedSlotResult(slot)(managedLists)(managedAdts)([]) || candidateStrManaged(slot)(candidates)
-
-// `(every reader is part of a reference-or-copy normalization, any reader)` of `temp`: a
-// representation test, a retain, or a copy onto the reference-counted heap.
-let recursive readersOnlyNormalize (temp: Int) (instructions: List(IrInstruction)) (anyReader: Bool) =
-    match instructions with
-        | [] -> anyReader
-        | IrInstruction { instruction = kind } :: rest ->
-            if kind
-            |> getUsedTemps
-            |> containsInt(temp)
-            then
-                match kind with
-                    | IsReferenceCounted(_target, _source) -> readersOnlyNormalize(temp)(rest)(true)
-                    | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) -> readersOnlyNormalize(temp)(rest)(true)
-                    | CopyOutList(_target, _source, _headCopy, true, _purpose) -> readersOnlyNormalize(temp)(rest)(true)
-                    | CopyOutArena(_target, _source, _size, true, _purpose, _deferred) -> readersOnlyNormalize(temp)(rest)(true)
-                    | _ -> false
-            else readersOnlyNormalize(temp)(rest)(anyReader)
 
 // A retain marker whose value the lowering then took a reference or a reference-counted copy of
 // (a mixed join normalized the arm while the marker still looked unowned) stays an identity: the
