@@ -9,6 +9,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -675,7 +676,7 @@ let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: Lowe
 // Whether a lowered child is represented on the reference-counted heap: a newly produced or
 // handed-on runtime temp, the borrowed read of a binding that still owns its reference, or the
 // read of a loop parameter the frame places on the reference-counted heap.
-let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
+let childIsRuntimeManagedRead (child: Expr) (temp: Int) (state: CoreLoweringState) =
     if isRuntimeTemp(temp)(state)
     then true
     else
@@ -685,6 +686,18 @@ let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
                     | Some(_slot) -> true
                     | None -> loopParameterIsRuntimeManaged(name)(state)
             | _ -> false
+
+// As `childIsRuntimeManagedRead`, except for a read of a pattern owner that needs a protective
+// reference, which is not one unless the read was
+// copied onto the heap: stage 0 tracks such an owner without a runtime representation
+// (`TrackOwnedValue` from the pattern binding sites, `runtimeManaged: false`) until the loop's
+// finalize places it, so its read and the identity duplicate an aggregate takes of it are not
+// `RuntimeRc` while the aggregate is built, and a cell, tuple or constructor holding it stays in the
+// arena, borrowing the owner's reference.
+let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
+    if isPatternOwnerRead(child)(state) && !containsInt(temp)(statePatternOwnerCopyTemps(state))
+    then false
+    else childIsRuntimeManagedRead(child)(temp)(state)
 
 let isRuntimeManageableHeapChild (semanticType: SemanticType) (listOverScalarsOnly: Bool) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
