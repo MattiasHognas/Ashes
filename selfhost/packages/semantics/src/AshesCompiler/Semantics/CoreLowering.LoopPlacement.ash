@@ -11,6 +11,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
+import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReach.resultReachesVariableOutsideCells
@@ -1870,6 +1871,83 @@ let recursive managedAdtSlotsOf (managedAdts: List((Int, Int, SemanticType, Str)
 let withdrawLetCellTailDuplicatesOf (ownerSlots: List(Int)) (parameterSlots: List(Int)) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
     state with reversedInstructions = withdrawLetCopiedCellTailDuplicates(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(parameterSlots)(managedAdtSlotsOf(managedAdts))(state.reversedInstructions)
 
+let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (sources: List(Int)) =
+    match instructions with
+        | [] -> sources
+        | IrInstruction { instruction = StoreLocal(stored, source) } :: rest ->
+            if stored == slot
+            then slotStoreSources(slot)(rest)(source :: sources)
+            else slotStoreSources(slot)(rest)(sources)
+        | _instruction :: rest -> slotStoreSources(slot)(rest)(sources)
+
+// How the value of `temp` was produced, read from the most recent instruction defining it: a
+// reference-counted retain (2), a constant (1, the no-match arm's or nil's placeholder), the
+// reload of a join slot (3, with the slot), or anything else (0).
+let recursive joinSourceKind (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> (0, -1)
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest ->
+            if target == temp
+            then
+                if value == 0
+                then (1, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then (3, slot)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then (0, -1)
+            else joinSourceKind(temp)(rest)
+
+// `(all sources owned or neutral, any retain)` over the values stored into a join slot, nested
+// joins followed `depth` levels.
+let recursive joinStoresRetains (sources: List(Int)) (depth: Int) (instructions: List(IrInstruction)) (anyRetain: Bool) =
+    match sources with
+        | [] -> (true, anyRetain)
+        | source :: rest ->
+            match joinSourceKind(source)(instructions) with
+                | (2, _slot) -> joinStoresRetains(rest)(depth)(instructions)(true)
+                | (1, _slot) -> joinStoresRetains(rest)(depth)(instructions)(anyRetain)
+                | (3, slot) ->
+                    if depth > 0
+                    then
+                        match joinStoresRetains(slotStoreSources(slot)(instructions)([]))(depth - 1)(instructions)(false) with
+                            | (true, nestedRetain) -> joinStoresRetains(rest)(depth)(instructions)(anyRetain || nestedRetain)
+                            | (false, _nested) -> (false, anyRetain)
+                    else (false, anyRetain)
+                | _ -> (false, anyRetain)
+
+// Stage 0 settles a loop parameter's placement before its body is lowered, so the retain an exit
+// arm takes of a heap field of a reference-counted parameter (`| [] -> state.refs`) is
+// reference-counted when the arm stores it, and `ReachingArmsAllReferenceCounted` marks the join
+// reference-counted: the function returns an owned result, its closure says so, and the caller
+// takes it without a copy. This lowering places the parameter, and promotes that retain, only
+// here; a body result that is the reload of a join every reaching arm of which stores a promoted
+// retain (the no-match arm and nil store a constant) is marked the same way before the result's
+// finishing reads it.
+let markPromotedRetainJoin (bodyTemp: Int) (state: CoreLoweringState) =
+    if isRuntimeTemp(bodyTemp)(state)
+    then state
+    else
+        match joinSourceKind(bodyTemp)(state.reversedInstructions) with
+            | (3, slot) ->
+                match joinStoresRetains(slotStoreSources(slot)(state.reversedInstructions)([]))(3)(state.reversedInstructions)(false) with
+                    | (true, true) -> markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
+                    | _ -> state
+            | _ -> state
+
 let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
@@ -1883,6 +1961,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
+                    |> markPromotedRetainJoin(bodyTemp)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
                     |> withdrawLetCellTailDuplicatesOf(state

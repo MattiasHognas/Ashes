@@ -557,8 +557,21 @@ let testBackEdgeRetainsLetAliasOfIterationOwner unit =
     |> (given (lines: List(Str)) -> borrowsRetainedNext(lines)(0))
     |> test.assertEqual(1)
 
+let loopExitFieldSource = "type State =\n    | refs: List(Str)\n\nlet recursive scanMatch (tokens: List(Str)) (state: State) =\n    match tokens with\n        | [] -> state.refs\n        | text :: rest -> scanMatch(rest)(State(refs = text :: state.refs))\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\ncount(scanMatch([\"a\"])(State(refs = [])))(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// A loop's exit returning a heap field of its reference-counted record parameter returns the
+// retain the arm took, promoted once the parameter is placed, so the loop's result is
+// reference-counted and owned and its closure carries `ReturnsRuntimeManaged`, as stage 0's.
+let testLoopExitFieldResultIsReferenceCounted unit =
+    loopExitFieldSource
+    |> loweredLines
+    |> functionLines("SourceFunction from scanMatch")
+    |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
+    |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testLoopExitFieldResultIsReferenceCounted
     |> testBackEdgeRetainsLetAliasOfIterationOwner
     |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
     |> testSuccessorJoinArmOfLetOwnerIsDemoted
