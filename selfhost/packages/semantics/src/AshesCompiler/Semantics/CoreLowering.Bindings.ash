@@ -7,6 +7,7 @@ import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
+import AshesCompiler.Semantics.ValueFlowSlots.tempsReachingTemps
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TopLevelItem
@@ -1021,20 +1022,50 @@ let coroutineFrameRetainsCaptures (outer: CoreLoweringState) captures (state: Co
         | _ ->
             statePendingCoroutineBody(outer) && capturesStoredAsCopied(outer)(closureNormalizerCopiesCaptures(captures)(state))(captures)(state)
 
+let recursive returnSources (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = Return(source) } :: rest -> source :: returnSources(rest)
+        | _ :: rest -> returnSources(rest)
+
+let recursive reachedEnvironmentIndices (instructions: List(IrInstruction)) (visited: MapTree(Int, Bool)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = LoadEnv(target, index) } :: rest ->
+            match Ashes.Collection.Map.getInt(target)(visited) with
+                | Some(_seen) -> index :: reachedEnvironmentIndices(rest)(visited)
+                | None -> reachedEnvironmentIndices(rest)(visited)
+        | _ :: rest -> reachedEnvironmentIndices(rest)(visited)
+
+// Stage 0's `CoroutineCapturesReachingResult`: the environment indices the body's returned value
+// can have been read from, through a value-flow walk back from every `Return` over the linear body
+// (most recent first).
+let capturesReachingResult (reversedInstructions: List(IrInstruction)) =
+    reversedInstructions
+    |> tempsReachingTemps(returnSources(reversedInstructions))
+    |> reachedEnvironmentIndices(reversedInstructions)
+
+let recursive containsIndexOf (index: Int) (indices: List(Int)) =
+    match indices with
+        | [] -> false
+        | candidate :: rest -> candidate == index || containsIndexOf(index)(rest)
+
 // The frame offset and type of every retained capture the frame releases at teardown, in
 // environment order. Teardown runs when the task completes, before its result is read, so a
-// capture of which the result can hold a part keeps the frame's reference unreleased.
-let recursive retainedCaptureSlots (outer: CoreLoweringState) (reachType: SemanticType) captures (offset: Int) (state: CoreLoweringState) =
+// capture the result can share keeps the frame's reference unreleased (stage 0's
+// `CaptureSharedWithResult`): its value flows into the returned value and the result's type can
+// hold a part of its type.
+let recursive retainedCaptureSlots (outer: CoreLoweringState) (reachType: SemanticType) (reached: List(Int)) captures (index: Int) (state: CoreLoweringState) =
     match captures with
         | [] -> []
         | binding :: rest ->
-            let following = retainedCaptureSlots(outer)(reachType)(rest)(offset + 8)(state)
+            let following = retainedCaptureSlots(outer)(reachType)(reached)(rest)(index + 1)(state)
             in
                 match coroutineFrameRetainedType(outer)(binding)(state) with
                     | Some(retainedType) ->
-                        if resultTypeMayHoldPartOf(reachType)(retainedType)(state)
+                        if containsIndexOf(index)(reached) && resultTypeMayHoldPartOf(reachType)(retainedType)(state)
                         then following
-                        else (offset, retainedType) :: following
+                        else (taskHeaderSize + index * 8, retainedType) :: following
                     | None -> following
 
 // Stage 0's frame-dropper slot release: the word is released when present and cleared, so a
@@ -1075,11 +1106,11 @@ let makeRetainingFrameDropper (label: Str) (socketOffsets: List(Int)) (retained:
                     socketDropper with instructions = append(withoutLastInstruction(socketDropper.instructions))(reverse(instructions)), tempCount = tempCount, localCount = localCount
                 in ((state with functions = dropper :: functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState), dropper.label))
 
-let registerTaskFrameDropper label (retains: Bool) (reachType: SemanticType) survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
+let registerTaskFrameDropper label (retains: Bool) (reachType: SemanticType) (reached: List(Int)) survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
     if statePendingCoroutineBody(outer)
     then
         match (localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished), if retains
-        then retainedCaptureSlots(outer)(reachType)(survivors)(taskHeaderSize)(value.state)
+        then retainedCaptureSlots(outer)(reachType)(reached)(survivors)(0)(value.state)
         else []) with
             | ([], []) -> value with state = withCompletedTaskFrameDropper(None)(value.state)
             | (offsets, []) ->
@@ -1146,7 +1177,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                             |> markCapturedResourcesMoved(survivors)
                                             |> allocateEnvironmentIn(runtimeClosureRequested(stackAllocate)(typedOuter))(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
                                             |> emitPrunedClosureIn(runtimeClosureRequested(stackAllocate)(typedOuter))(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
-                                            |> registerTaskFrameDropper(label)(retains)(coroutineResultReachType(body)(bodyType)(finishedBody))(survivors)(body)(typedOuter)(finishedBody)
+                                            |> registerTaskFrameDropper(label)(retains)(coroutineResultReachType(body)(bodyType)(finishedBody))(capturesReachingResult(prunedInstructions))(survivors)(body)(typedOuter)(finishedBody)
                                             |> copyTaskClosure(retains)(survivors)(typedOuter)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
