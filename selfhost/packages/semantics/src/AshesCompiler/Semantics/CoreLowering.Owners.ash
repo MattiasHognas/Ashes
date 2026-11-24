@@ -196,7 +196,6 @@ export (
     value capturedBindings,
     value captureCount,
     value allocateEnvironment,
-    value allocateEnvironmentIn,
     value storeCaptureAsRead,
     value pruneDeadCaptures,
     value capturedScope,
@@ -3091,7 +3090,7 @@ let recursive captureCount captures =
 // The environment holds the surviving captures; every capture of the free-variable analysis
 // still lowers its fill, the pruned ones only to reserve their temps. `copyCapture` answers the
 // temp a surviving capture is stored from: the capture itself, or a copy the environment keeps.
-let allocateEnvironmentIn (runtimeManaged: Bool) copyCapture captures survivors stackAllocate state =
+let allocateEnvironment copyCapture captures survivors stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = environmentTemp } ->
             match captures with
@@ -3107,13 +3106,9 @@ let allocateEnvironmentIn (runtimeManaged: Bool) copyCapture captures survivors 
                             then
                                 emit(AllocStack(environmentTemp)(byteCount))(tempState)
                             else
-                                emit(Alloc(environmentTemp)(byteCount)(runtimeManaged))(tempState)
+                                emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
                         in fillEnvironment(copyCapture)(environmentTemp)(captures)(survivors)(0)(allocatedState)
 
-// An environment in the arena or on the stack, as every closure but a runtime-managed one has.
-let allocateEnvironment copyCapture captures survivors stackAllocate state = allocateEnvironmentIn(false)(copyCapture)(captures)(survivors)(stackAllocate)(state)
-
-// Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
 // lowered, so a capture the lowered body never reads through LoadEnv still gets an environment
 // word and a fill. The body is lowered first here, into its own instruction list, so the captures
 // its instructions actually read are known before the environment is built at the creation site:

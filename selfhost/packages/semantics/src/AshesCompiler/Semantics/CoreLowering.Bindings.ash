@@ -1175,8 +1175,8 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                             |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
                                             |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                             |> markCapturedResourcesMoved(survivors)
-                                            |> allocateEnvironmentIn(runtimeClosureRequested(stackAllocate)(typedOuter))(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
-                                            |> emitPrunedClosureIn(runtimeClosureRequested(stackAllocate)(typedOuter))(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                            |> allocateEnvironment(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
+                                            |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
                                             |> registerTaskFrameDropper(label)(retains)(coroutineResultReachType(body)(bodyType)(finishedBody))(capturesReachingResult(prunedInstructions))(survivors)(body)(typedOuter)(finishedBody)
                                             |> copyTaskClosure(retains)(survivors)(typedOuter)
 

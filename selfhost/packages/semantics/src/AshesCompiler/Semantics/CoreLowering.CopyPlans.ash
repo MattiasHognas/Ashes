@@ -22,7 +22,6 @@ export (
     type ArgumentCopyPlan(..),
     value restoreOuterFrame,
     value emitClosure,
-    value emitClosureIn,
     value prepareLambdaBodyState,
     value freshTempRun,
     value listHeadCopyKindOf,
@@ -163,7 +162,7 @@ let restoreOuterFrame outer bodyState =
                 |> withStateOwnFieldPendingParameters(stateOwnFieldPendingParameters(bodyState)))
             |> carryTypeObservation(bodyState)
 
-let emitClosureIn (runtimeManaged: Bool) label environmentTemp captureTotal stackAllocate state =
+let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = closureTemp } ->
             let byteCount = captureTotal * 8
@@ -185,10 +184,8 @@ let emitClosureIn (runtimeManaged: Bool) label environmentTemp captureTotal stac
                                 then
                                     emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
                                 else
-                                    emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(runtimeManaged)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
+                                    emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
                             in (closureState, closureTemp)
-
-let emitClosure label environmentTemp captureTotal stackAllocate state = emitClosureIn(false)(label)(environmentTemp)(captureTotal)(stackAllocate)(state)
 
 let prepareLambdaBodyState parameter parameterType captures lambdaId origin (state: CoreLoweringState) =
     (let functionBindings =
