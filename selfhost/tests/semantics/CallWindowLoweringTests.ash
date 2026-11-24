@@ -225,6 +225,20 @@ let expectPlainConsTailStaysInTheArena unit =
     |> expectNoInstructionText("Alloc                 Target=10 SizeBytes=16 RuntimeManaged")
     |> (given (_) -> Unit)
 
+// A cons whose head is a pattern owner read off the list being walked (`binder :: addUse(...)`)
+// is not built on the reference-counted heap while the loop is lowered: stage 0 tracks the owner
+// with no runtime representation until the loop's finalize places it, so the cell stays in the
+// arena and the recursion keeps its ordinary non-tail form rather than a tail-modulo-constructor
+// spine. Holding the owner's duplicates in arena cells there leaked the matched element per call.
+let patternOwnerHeadProgram = "type Binder =\n    | key: Int\n    | uses: List(Int)\n\nlet recursive addUse (key: Int) (use: Int) (binders: List(Binder)) =\n    match binders with\n        | [] -> []\n        | (Binder { key = candidate, uses = uses } as binder) :: rest ->\n            if candidate == key\n            then (binder with uses = use :: uses) :: rest\n            else binder :: addUse(key)(use)(rest)\n\nmatch addUse(1)(0)([Binder(key = 1, uses = []), Binder(key = 2, uses = [])]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
+
+let expectPatternOwnerHeadKeepsArenaCell unit =
+    patternOwnerHeadProgram
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectNoInstructionText("tmc_first_")
+    |> (given (_) -> Unit)
+
 // A recursive group member's tail call to its sibling is the fused self call: no returns bit,
 // no copy-out block between the call and the return.
 let expectGroupSiblingTailCallKeepsWindowOpen unit =
@@ -408,6 +422,7 @@ let runCallWindowLoweringTests unit =
     |> expectInlinePatternFieldNeverRetained
     |> expectPatternTransfersUseTheirLexicalBinding
     |> expectPlainConsTailStaysInTheArena
+    |> expectPatternOwnerHeadKeepsArenaCell
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
     |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit
