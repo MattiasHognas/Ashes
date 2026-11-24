@@ -52,6 +52,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiat
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedUnsettledOperatorGeneric
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.schemeHasUnsettledOperatorRequirement
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
@@ -3382,14 +3383,23 @@ let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) =
             | SemFunction(_argument, _result, _row) -> true
             | _ -> false)
 
-// Under typed lowering, a top-level binding the standalone inference generalized over an operator
-// trait lowering otherwise holds monomorphic, used at more than one type through it (`twice x =
-// [x + x, x]` at Int and Float): its arithmetic requirements are supported as a written one is, so
-// the binding is lowered once as a body taking the operator's dictionary, as stage 0 does, instead of
-// a body whose operator is emitted in the integer form while each concrete call takes its own copy.
-// A binding used at one type keeps its settled reading. Without a node table nothing changes.
+// Under typed lowering, a binding (top-level, or a `let` below top level) the standalone inference
+// generalized over an operator trait lowering otherwise holds monomorphic, used at more than one type
+// through it (`twice x = [x + x, x]` at Int and Float): its arithmetic requirements are supported as
+// a written one is, so the binding is lowered once as a body taking the operator's dictionary, as
+// stage 0 does, instead of a body whose operator is emitted in the integer form while each concrete
+// call takes its own copy. A binding used at one type keeps its settled reading. Without a node
+// table nothing changes.
 let recordedArithmeticGeneric name value (state: CoreLoweringState) =
-    recordedUnsettledOperatorGeneric(name)(nodeIdentityOf(value))(state)
+    if recordedUnsettledOperatorGeneric(name)(nodeIdentityOf(value))(state)
+    then true
+    else
+        match stateNodeTypes(state) with
+            | None -> false
+            | Some(_table) ->
+                match nestedOperatorGenericLetScheme(name)(value)(state) with
+                    | Some(scheme) -> schemeHasUnsettledOperatorRequirement(scheme)(state)
+                    | None -> false
 
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.

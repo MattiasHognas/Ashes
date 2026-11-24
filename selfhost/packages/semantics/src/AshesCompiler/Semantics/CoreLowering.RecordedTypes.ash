@@ -44,6 +44,7 @@ export (
     value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
     value recordedUnsettledOperatorGeneric,
+    value schemeHasUnsettledOperatorRequirement,
     value rawOperatorDeclarationSchemes,
     value recordedDeferredEvaluation,
     value deferredEvaluationKey,
@@ -488,6 +489,15 @@ let recursive anyUnsettledOperatorRequirement (constraints: List(TraitConstraint
         | [] -> false
         | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
             isMonomorphicOperatorTrait(traitName) && anyUnsettledVariable(freeTypeVariables(SemTuple(arguments)))(settled) || anyUnsettledOperatorRequirement(rest)(settled)
+
+// Whether one of a recorded operator-generic scheme's operator requirements is at a variable the
+// program's uses leave unsettled: the binding is used at more than one type through it.
+let schemeHasUnsettledOperatorRequirement (scheme: TypeScheme) (state: CoreLoweringState) =
+    match scheme with
+        | TypeScheme { constraints = constraints } ->
+            state
+            |> stateSettledNodeVariables
+            |> anyUnsettledOperatorRequirement(constraints)
 
 // The operator-generic scheme recorded for a top-level binding, under typed lowering only, when one
 // of its operator requirements is at a variable the program's uses do not settle to one type: the
