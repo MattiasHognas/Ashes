@@ -89,29 +89,6 @@ let isTupleType (semanticType: SemanticType) =
         | SemTuple(_elements) -> true
         | _ -> false
 
-// A field whose resolved type is a function: stage 0 asks a closure child for its runtime
-// representation only there (a type-parameter field takes it through the escaping-capture rule).
-let resolvedFunctionField (fieldType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(fieldType) with
-        | SemFunction(_parameter, _result, _row) -> true
-        | _ -> false
-
-// Stage 0's closure representation for a constructor argument that is a closure literal owning its
-// captures: a one-shot mark the lambda takes (see `stateRuntimeClosureRequest`).
-let requestRuntimeClosure (requested: Bool) (state: CoreLoweringState) =
-    if requested
-    then withStateRuntimeClosureRequest(true)(state)
-    else state
-
-// The closure request an argument set is spent once the argument is lowered, whether or not a
-// lambda took it.
-let clearRuntimeClosureRequest (lowered: LoweredCoreValue) =
-    match lowered with
-        | LoweredCoreValue { state = state } ->
-            if stateRuntimeClosureRequest(state)
-            then lowered with state = withStateRuntimeClosureRequest(false)(state)
-            else lowered
-
 // The request one constructor argument is lowered under, stage 0's
 // `LowerRuntimeManagedConstructorArgument` with `LowerConstructorArguments`' child
 // representations: the parent's flags minus the ADT and record ones, the ADT flag again when the
@@ -765,9 +742,7 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
         | (argument :: restArguments, fieldType :: restTypes) ->
             match state
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
-            |> requestRuntimeClosure(runtimeManaged && resolvedFunctionField(fieldType)(state) && isRuntimeRcOwningClosureExpression(argument)(state))
             |> lower(argument)
-            |> clearRuntimeClosureRequest
             |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
             |> ownPatternBoundStringChild(runtimeManaged)(argument)(fieldType)
             |> normalizeConstructorChildArgument(runtimeManaged)(argument)(fieldType)

@@ -1231,7 +1231,6 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
-            |> takeRuntimeClosureRequest
             |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
             |> noteLetBoundFunction("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)
