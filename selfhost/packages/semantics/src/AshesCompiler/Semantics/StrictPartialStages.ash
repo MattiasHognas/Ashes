@@ -114,12 +114,15 @@ let recursive hasLatentStage stages =
         | [] -> false
         | arity :: rest -> arity > 0 || hasLatentStage(rest)
 
+// Stage 0 splits only a partial whose binding carries trait requirements. With the inference's
+// node table, a call with no recorded evidence stages has none, so it is not split. Without the
+// table nothing is known about the call, and it is split.
 let residualNeedsDictionary (stage: StrictStage) expression =
     match stage.nodeTypes with
         | Some(table) ->
             match nodeEvidenceStagesAt(nodeIdentityOf(expression))(table) with
                 | Some(stages) -> hasLatentStage(stages)
-                | None -> true
+                | None -> false
         | None -> true
 
 let strictPartial (stage: StrictStage) names expression =
