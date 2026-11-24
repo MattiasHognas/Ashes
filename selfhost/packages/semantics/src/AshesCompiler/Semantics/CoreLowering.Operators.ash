@@ -460,13 +460,18 @@ let releaseFreshComparisonOperand (operandType: SemanticType) (temp: Int) (state
         | _ -> state
 
 // The two closure calls stage 0's `RecordMappedBinaryTrait` emits: the method applied to the left
-// operand, the partial application to the right, then the release of a fresh operand.
+// operand, the partial application to the right, then the release of a fresh operand. The result
+// is a Bool that holds neither operand and neither call passes an ownership word, so both calls
+// only borrow their argument (stage 0's `MarkComparisonOperandBorrowed`): lifetime placement gives
+// an operand used again later no compensating duplicate, which nothing would release.
 let emitTraitMethodCalls (closureTemp: Int) (leftTemp: Int) (rightTemp: Int) (operandType: SemanticType) (state: CoreLoweringState) =
     match reserveCoreTemps(2)(state) with
         | ReservedCoreTemps { state = callState, first = first } ->
             callState
             |> emit(CallClosure(first)(closureTemp)(leftTemp)(-1))
+            |> recordBorrowedCall(true)(first)
             |> emit(CallClosure(first + 1)(first)(rightTemp)(-1))
+            |> recordBorrowedCall(true)(first + 1)
             |> releaseFreshComparisonOperand(operandType)(leftTemp)
             |> releaseFreshComparisonOperand(operandType)(rightTemp)
             |> success(first + 1)(SemBool)

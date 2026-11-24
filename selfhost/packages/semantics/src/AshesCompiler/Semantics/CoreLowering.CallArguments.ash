@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.CoreLowering.LoopFrames
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
 import AshesCompiler.Semantics.NodeTypeTable.nodeBindingsAt
 export (
+    value recordBorrowedCall,
     type CoreCallContext(..),
     type CoreConsumedArgument(..),
     type CoreCallStage(..),
