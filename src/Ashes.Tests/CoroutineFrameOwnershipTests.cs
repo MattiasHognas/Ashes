@@ -121,6 +121,39 @@ public sealed class CoroutineFrameOwnershipTests
     }
 
     [Test]
+    public void Capture_the_result_returns_is_not_released_by_teardown()
+    {
+        // Teardown runs when the task completes, before the awaiter reads the result. A result that
+        // is the captured string itself must not be released by it, so the frame keeps the word.
+        var diagnostics = new Frontend.Diagnostics();
+        Frontend.Program parsed = new Frontend.Parser(
+            """
+            let build = given (n) -> Ashes.Text.fromInt(n) + "-tail" in
+            let text = build(7) in
+            let job = async(match await Ashes.Task.sleep(1) with
+                | Ok(_u) -> text
+                | Error(_e) -> "err") in
+            match Ashes.Task.run(job) with
+                | Ok(t) -> Ashes.IO.print(t)
+                | Error(_e2) -> Ashes.IO.print("bad")
+            """,
+            diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        IrProgram program = lowering.Lower(parsed);
+        diagnostics.ThrowIfAny();
+
+        lowering.CoroutineRepresentationDecisions.ShouldContain(record =>
+            record.Kind == CoroutineFrameSlotKind.Capture
+            && record.Reason == CoroutineFrameSlotReason.SharedWithTaskResult);
+        program.Functions
+            .Where(function => function.Origin?.Kind == IrFunctionOriginKind.CoroutineFrameDropper)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.RcDrop>()
+            .ShouldBeEmpty();
+    }
+
+    [Test]
     public void Declared_resource_capture_moves_cleanup_into_task_frame()
     {
         var diagnostics = new Frontend.Diagnostics();
