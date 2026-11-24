@@ -739,14 +739,15 @@ let expectTupleResultPartsPrecedeExitRelease unit =
             match indices with
                 | (partsIndex, exitIndex) -> check("the tuple result's parts are handed over before the exit releases the loop parameters")(partsIndex >= 0 && exitIndex >= 0 && partsIndex < exitIndex)))
 
-let routedMapSetTwoValueTypesSource = "let recursive assign (labels: List(Str)) (current: Int) (m: MapTree(Str, Int)) =\n    match labels with\n        | [] -> m\n        | label :: rest ->\n            if current > 3\n            then\n                m\n                |> Ashes.Collection.Map.setStr(label)(current)\n                |> assign(rest)(0)\n            else\n                m\n                |> Ashes.Collection.Map.setStr(label)(current)\n                |> assign(rest)(current + 1)\n\nlet recursive mark (names: List(Str)) (flag: Bool) (m: MapTree(Str, Bool)) =\n    match names with\n        | [] -> m\n        | name :: rest ->\n            if flag\n            then\n                m\n                |> Ashes.Collection.Map.setStr(name)(true)\n                |> mark(rest)(false)\n            else\n                m\n                |> Ashes.Collection.Map.setStr(name)(false)\n                |> mark(rest)(true)\n\nlet a = assign([\"a\", \"b\", \"c\"])(0)(Ashes.Collection.Map.empty)\n\nlet b = mark([\"x\", \"y\"])(true)(Ashes.Collection.Map.empty)\n\nAshes.Collection.Map.size(a) + Ashes.Collection.Map.size(b)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+let routedTreePushTwoValueTypesSource = "type Tree(V) =\n    | Leaf\n    | Node(Tree(V), V, Tree(V))\n\nlet push value =\n    (let recursive go tree =\n        match tree with\n            | Leaf -> Node(Leaf)(value)(Leaf)\n            | Node(left, existing, right) ->\n                right\n                |> go\n                |> Node(left)(existing)\n    in go)\n\nlet recursive assign (labels: List(Str)) (flag: Bool) (m: Tree(Int)) =\n    match labels with\n        | [] -> m\n        | _label :: rest ->\n            if flag\n            then\n                m\n                |> push(1)\n                |> assign(rest)(false)\n            else\n                m\n                |> push(2)\n                |> assign(rest)(true)\n\nlet recursive mark (names: List(Str)) (flag: Bool) (m: Tree(Bool)) =\n    match names with\n        | [] -> m\n        | _name :: rest ->\n            if flag\n            then\n                m\n                |> push(true)\n                |> mark(rest)(false)\n            else\n                m\n                |> push(false)\n                |> mark(rest)(true)\n\nlet a = assign([\"a\", \"b\", \"c\"])(true)(Leaf)\n\nlet b = mark([\"x\", \"y\"])(true)(Leaf)\n\nmatch (a, b) with\n    | (Node(_left, first, _right), Node(_bLeft, flag, _bRight)) ->\n        if flag\n        then\n            first\n            |> Ashes.Text.fromInt\n            |> Ashes.IO.print\n        else Ashes.IO.print(\"no\")\n    | _ -> Ashes.IO.print(\"empty\")"
 
-// Two loops routed to the in-place specialization of the same map insertion, each from two call
-// sites so the second takes the cached specialization, at `Int` and then `Bool` values: the
-// cached calls bind the callee at a fresh instantiation, so the second loop lowers and both reach
-// their specializations.
+// Two loops routed to the in-place specialization of the same tree insertion (defined in the
+// source, since this harness lowers without the shipped library), each from two call sites so the
+// second takes the cached specialization, at `Int` and then `Bool` values: the cached calls bind
+// the callee at a fresh instantiation, so the second loop lowers and both reach their
+// specializations.
 let expectRoutedCallsAtTwoValueTypesLower unit =
-    routedMapSetTwoValueTypesSource
+    routedTreePushTwoValueTypesSource
     |> loopFunctionLines("[ClosureHelper from mark]")
     |> (given (lines) -> check("the second loop's calls reach the specialization")(countContaining("__reuse")(lines) > 0))
 
