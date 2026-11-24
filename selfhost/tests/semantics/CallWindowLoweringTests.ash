@@ -238,6 +238,19 @@ let expectPatternOwnerHeadKeepsOrdinaryRecursion unit =
     |> expectNoInstructionText("tmc_first_")
     |> (given (_) -> Unit)
 
+// A perform's adopted string consed onto a loop's accumulator (`perform Cap.get(Unit) :: acc`, a
+// self call's successor the back edge copies only under a pending one-shot post) is stored as an
+// arena copy and the adopted string released right away, as stage 0's
+// `CopyFreshStringHeadIntoArenaCell` does: the arena cell would otherwise be its only holder.
+let performHeadProgram = "capability Cap =\n    | get : Unit -> Str\n\nlet recursive collect (i: Int) (acc: List(Str)) =\n    if i == 0\n    then acc\n    else collect(i - 1)(perform Cap.get(Unit) :: acc)\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\nlet items (n: Int) =\n    count(handle collect(3)([Ashes.Text.fromInt(n)]) with\n        | Cap.get(u) ->\n            let x = resume(\"lit\")\n            in \"s\" :: x\n        | return(r) -> r)(0)\n\nAshes.IO.print(Ashes.Text.fromInt(items(1)))"
+
+let expectPerformHeadCopiedIntoArenaCell unit =
+    performHeadProgram
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectOperands("CopyOutArena")(" Purpose=IndependentClone")
+    |> (given (_) -> Unit)
+
 // A recursive group member's tail call to its sibling is the fused self call: no returns bit,
 // no copy-out block between the call and the return.
 let expectGroupSiblingTailCallKeepsWindowOpen unit =
@@ -422,6 +435,7 @@ let runCallWindowLoweringTests unit =
     |> expectPatternTransfersUseTheirLexicalBinding
     |> expectPlainConsTailStaysInTheArena
     |> expectPatternOwnerHeadKeepsOrdinaryRecursion
+    |> expectPerformHeadCopiedIntoArenaCell
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
     |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit
