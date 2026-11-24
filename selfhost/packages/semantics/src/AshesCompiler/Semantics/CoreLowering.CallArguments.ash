@@ -48,6 +48,7 @@ export (
     value preparedReachOfSummary,
     value calleeReachSummary,
     value calleeFactsOf,
+    value concreteCopyCallName,
     value isOwnLabelCallee,
     value isSelfCallee,
     value calleeSchemeOf,
@@ -320,6 +321,23 @@ let calleeRcEligible (callee: Str) (state: CoreLoweringState) =
             |> lookupRcEligible(key)
         | None -> false
 
+// The name a call to a constrained function's concrete copy binds the copy's closure under: the
+// call site's slot and closure temp, then the source function's name after a `%` no source name
+// holds, so the call's facts are the source function's (stage 0's
+// `BindConstrainedSpecializationRoot`, whose slot carries the copy's label and whose label names
+// the source function).
+let concreteCopyCallName (slot: Int) (closureTemp: Int) (sourceName: Str) = "__core_concrete_call_" + Ashes.Text.fromInt(slot) + "_" + Ashes.Text.fromInt(closureTemp) + "%" + sourceName
+
+// The name a callee's whole-program facts are recorded under: a concrete copy's call answers with
+// its source function's.
+let calleeFactsName (callee: Str) =
+    if Ashes.Text.startsWith(callee)("__core_concrete_call_")
+    then
+        match Ashes.Text.indexOf(callee)("%") with
+            | -1 -> callee
+            | separator -> Ashes.Text.substring(callee)(separator + 1)(Ashes.Text.length(callee) - separator - 1)
+    else callee
+
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -329,17 +347,17 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprVar(callee) ->
             match lookupLetLambdaNamed(callee)(state) with
                 | Some((recordedParameters, recordedBody)) ->
-                    match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
+                    match calleeReachSummary(calleeFactsName(callee))(recordedParameters)(recordedBody)(state) with
                         | (parameters, body, reach) ->
                             Some(CoreCalleeFacts(
                                 label = state
                                 |> stateLetLambdaLabels
                                 |> lookupLetLambdaLabel(callee),
                                 parameters = parameters,
-                                ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
+                                ownership = provenParameterOwnership(calleeFactsName(callee))(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
-                                preparedReach = calleePreparedReach(callee)(parameters)(reach)(state),
-                                rcEligible = calleeRcEligible(callee)(state),
+                                preparedReach = calleePreparedReach(calleeFactsName(callee))(parameters)(reach)(state),
+                                rcEligible = calleeRcEligible(calleeFactsName(callee))(state),
                                 argumentCount = length(spine.arguments)
                             ))
                 | None -> None

@@ -1488,7 +1488,12 @@ let concreteCopyAdmissible label (recursesAtItsType: Bool) original generated =
         | None -> false
         | Some(IrFunction { instructions = instructions }) -> !concreteRootReadsEnvironment(instructions)) && (recursesAtItsType || !concreteNewFunctionsReferenceSelf(label)(concreteFunctionsBoundary(original.functions))(generated.functions))
 
-let lowerConcreteCopyCall label functionType arguments lower state =
+// The call to a concrete copy, through the copy's closure bound under a fresh name for the call.
+// The name carries the copy's label and its source function's lambda chain, so the call reads the
+// facts of the copy it calls as a call by name does (stage 0's `BindConstrainedSpecializationRoot`):
+// without them a copy returning a reference-counted result was taken for an arena one and never
+// released.
+let lowerConcreteCopyCall (candidate: CoreConcreteCandidate) label functionType arguments lower state =
     match freshTemp(state) with
         | FreshTemp { state = environmentState, temp = environmentTemp } ->
             match environmentState
@@ -1497,10 +1502,15 @@ let lowerConcreteCopyCall label functionType arguments lower state =
                 | (closureState, closureTemp) ->
                     match freshLocal(closureState) with
                         | FreshLocal { state = slotState, local = slot } ->
-                            let name = "__core_concrete_call_" + Ashes.Text.fromInt(slot) + "_" + Ashes.Text.fromInt(closureTemp)
+                            let name = concreteCopyCallName(slot)(closureTemp)(candidate.name)
                             in
                                 slotState
                                 |> emit(StoreLocal(slot)(closureTemp))
+                                |> recordLetLambda(name)(candidate.source)
+                                |> (given (recorded: CoreLoweringState) ->
+                                    withStateLetLambdaLabels(recorded
+                                    |> stateLetLambdaLabels
+                                    |> Ashes.Collection.Map.setStr(name)(label))(recorded))
                                 |> addBinding(name)(emptyScheme(functionType))(CoreLocal(slot))
                                 |> lower(appendConstrainedArguments(ExprVar(name))(arguments))
                                 |> restoreLoweredBindings(state.bindings)
@@ -1540,7 +1550,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                                         |> recordConcreteCopy(candidate)(parameters)(Some(member.label))
                                     in
                                         (restored, restored
-                                        |> lowerConcreteCopyCall(member.label)(functionType)(arguments)(lower)
+                                        |> lowerConcreteCopyCall(candidate)(member.label)(functionType)(arguments)(lower)
                                         |> Some)
                                 else rejectedConcreteCopy(candidate)(parameters)(state)
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
@@ -1685,7 +1695,7 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                 |> lookupCoreConcreteCopy(candidate.identity)(parameters) with
                     | Some(Some(label)) ->
                         (observed, observed
-                        |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
+                        |> lowerConcreteCopyCall(candidate)(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) ->
                         declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(concreteCopyDeclined(observed))(observed)
