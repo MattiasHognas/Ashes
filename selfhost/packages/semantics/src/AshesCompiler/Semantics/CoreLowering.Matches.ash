@@ -225,6 +225,18 @@ let withReconcilableFreshStringJoinRequest (join: Expr) (request: ConsumerReques
     then request with runtimeString = true
     else request
 
+// Stage 0 hands an `if`'s closure representation to both branches and never to its condition:
+// the one-shot mark is taken at the `if` and set again before each branch.
+let closureRequestInThenBranch (requested: Bool) (plan: CoreIfPlan) =
+    if requested
+    then plan with state = withStateRuntimeClosureRequest(true)(plan.state)
+    else plan
+
+let closureRequestInElseBranch (requested: Bool) (loweredThen: CoreIfThen) =
+    if requested
+    then loweredThen with state = withStateRuntimeClosureRequest(true)(loweredThen.state)
+    else loweredThen
+
 let lowerIf condition thenBranch elseBranch lower state =
     (let request =
         state
@@ -233,14 +245,19 @@ let lowerIf condition thenBranch elseBranch lower state =
         |> (given (branch: ConsumerRequest) ->
             withReconcilableFreshStringJoinRequest(ExprIf(condition)(thenBranch)(elseBranch))(branch)(state))
     in
-        let normalizeStaticStrings = ifBranchesNormalizeStaticStrings(thenBranch)(elseBranch)(request)(state)
+        let closureRequested = stateRuntimeClosureRequest(state)
         in
-            state
-            |> clearConsumerRequest
-            |> lower(condition)
-            |> prepareIfPlan
-            |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
-            |> finishIfElseBranch(isArenaSuccessorJoin(state))(elseBranch)(request)(normalizeStaticStrings)(lower))
+            let normalizeStaticStrings = ifBranchesNormalizeStaticStrings(thenBranch)(elseBranch)(request)(state)
+            in
+                state
+                |> clearConsumerRequest
+                |> takeRuntimeClosureRequest
+                |> lower(condition)
+                |> prepareIfPlan
+                |> closureRequestInThenBranch(closureRequested)
+                |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
+                |> closureRequestInElseBranch(closureRequested)
+                |> finishIfElseBranch(isArenaSuccessorJoin(state))(elseBranch)(request)(normalizeStaticStrings)(lower))
 
 let patternName pattern =
     match pattern with
