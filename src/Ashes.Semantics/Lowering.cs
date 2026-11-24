@@ -15412,11 +15412,17 @@ public sealed partial class Lowering
     // reference-counted heap (a join of a fresh `None` beside a field it read) would hand over a
     // reference nothing releases, so the call asks for an arena result, which such a callee
     // deep-copies into the arena before releasing its own.
+    // A list result of a closure no label resolves follows the same rule: a list whose element the
+    // call copy-out cannot express (a tuple, a record) is kept as an arena value just the same, and a
+    // callee that built it on the reference-counted heap would hand over a list nothing releases. A
+    // known callee whose body is still being lowered (a non-tail self call) keeps its list result as
+    // before, so a recursive producer is not deep-copied once per level.
     private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, int argumentCount, TypeRef resultType, bool needsResultOwnership)
         => Environment.GetEnvironmentVariable("GRC_NO_UNKNOWNCALLEEARENA") is null
             && !needsResultOwnership
             && rootExpr is not Expr.Lambda
-            && Prune(resultType) is TypeRef.TNamedType
+            && (Prune(resultType) is TypeRef.TNamedType
+                || (Prune(resultType) is TypeRef.TList && !TryResolveKnownFunctionLabel(rootExpr, out _)))
             && !CanArenaReset(Prune(resultType))
             && !ContainsUnresolvedLayoutType(resultType, [])
             && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None

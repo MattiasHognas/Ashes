@@ -1396,9 +1396,15 @@ let calleeResultUnsettled (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringSt
         | Some(_runtimeManaged) -> false
         | None -> true
 
+// Stage 0's `RequestsArenaResultFromUnknownCallee`: a call through a closure no name resolves,
+// whose named or list result has no fixed copy-out and lies outside the contract, keeps that
+// result as an arena value, so it asks the callee for an arena result; a known callee whose body is
+// still being lowered asks only for a named result, so a recursive list producer is not
+// deep-copied once per level.
 let requestsArenaResultFromUnknownCallee (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
     match (readsResult, context.facts, context.appliedLambdaLabel, resolveType(state)(resultType)) with
         | (false, None, None, SemNamed(_symbolId, _name, _arguments) as named) -> !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
+        | (false, None, None, SemList(_element) as list) -> !resultSurvivesReset(list)(state) && !containsUnresolvedLayout(list)(state) && !hasCallCopyOut(list)(state) && !isGeneralRcValueType(list)(state) && canNormalizeResultIntoArena(list)(state)
         | (false, Some(_facts) as facts, None, SemNamed(_symbolId, _name, _arguments) as named) -> calleeResultUnsettled(facts)(state) && !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
         | _ -> false
 
