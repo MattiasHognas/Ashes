@@ -606,7 +606,7 @@ let parseShippedModule shipped name path source =
         | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
             match parseProgram(sourceWithoutImports) with
                 | ProgramParseResult { program = program, diagnostics = [] } ->
-                    shippedUnit(name)(path)(imports)(qualifiedShippedModulesNeedingSource(shippedNames(shipped))(sourceWithoutImports))(program)
+                    shippedUnit(name)(path)(imports)(qualifiedShippedDependenciesOf(name)(shippedNames(shipped))(sourceWithoutImports))(program)
                 | ProgramParseResult { diagnostics = diagnostics } ->
                     Ok(LoadedProjectModule(
                         units = [],
