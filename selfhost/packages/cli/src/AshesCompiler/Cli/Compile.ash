@@ -7,8 +7,9 @@
 //   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
 //   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
 //   program through the standalone type inference (the type checker: a program it rejects fails
-//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through
-//   `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
+//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through lowering from
+//   its recorded types (`lowerCoreNumberedProgramWithRegionsAndReuse`; the stitched program with
+//   `ASHES_TYPED_LOWERING=0` or without the check) and `optimizeIrProgram`, the lowered `IrProgram`
 //   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
 //   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
@@ -391,44 +392,21 @@ let lowerStitchedProgram reuseEnabled inputPath source (stitched: StitchedSyntax
     |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
     |> loweredStitchedResult
 
-// With `ASHES_TYPED_LOWERING=1` the standalone type inference runs on the stitched program first
-// and lowering is given the numbered program with the types the inference recorded against it. A
-// program the inference rejects is not lowered; the inference's error is the compile error. Unset,
-// lowering infers the program's types as it lowers it.
+// Lowering reads the types the standalone inference recorded against the numbered program. With
+// `ASHES_TYPED_LOWERING=0` it lowers the stitched program as before, inferring the program's types
+// as it lowers it, for comparison with the typed path.
 let typedLoweringRequested unit =
     match Ashes.IO.Environment.get("ASHES_TYPED_LOWERING") with
-        | Ok(Some(value)) -> value == "1"
-        | _ -> false
-
-let typedLoweringInferenceError (result: ProgramInferenceResult) (error: ProgramInferenceError) =
-    match result.errorLocation with
-        | Some(location) -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location)
-        | None -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error)
+        | Ok(Some(value)) -> value != "0"
+        | _ -> true
 
 // The numbered units of a stitched project as the one program lowering walks.
 let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
 
-let lowerStitchedTyped reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    (let identified = identifyStitchedProject(stitched)
-    in
-        match inferIdentifiedStitchedProjectFrom(
-            "standalone"
-            |> emptyTypeEnvironmentForPackage
-            |> withIntrinsicBuiltinSignatures,
-            stitched,
-            identified
-        ) with
-            | ProgramInferenceResult { error = Some(error) } as result ->
-                error
-                |> typedLoweringInferenceError(result)
-                |> Error
-            | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
-                nodeTypes
-                |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
-                |> loweredStitchedResult)
-
 // With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
-// alone decides whether it is accepted, as before the check existed.
+// alone decides whether it is accepted, as before the check existed. Without the check there is no
+// recorded type table, so the program is lowered as the stitched program on either setting of
+// `ASHES_TYPED_LOWERING`.
 let inferenceCheckSkipped unit =
     match Ashes.IO.Environment.get("ASHES_SKIP_INFERENCE_CHECK") with
         | Ok(Some(value)) -> value == "1"
@@ -472,8 +450,8 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         else inferenceText)
 
 // The standalone type inference is the type checker: it runs on every stitched program before
-// lowering, and a program it rejects is not lowered further. An accepted program is lowered as it
-// is without the check, or from the inference's recorded types with `ASHES_TYPED_LOWERING=1`.
+// lowering, and a program it rejects is not lowered further. An accepted program is lowered
+// from the inference's recorded types, or, with `ASHES_TYPED_LOWERING=0`, as the stitched program.
 let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     (let builtins = builtinInferenceEnvironment(Unit)
     in
@@ -495,10 +473,7 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                         |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))(nodeTypes)
                         |> loweredStitchedResult)
 
-let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    if typedLoweringRequested(Unit)
-    then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
-    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
+let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) = lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
 
 // The stitched project type-checked, lowered and optimized, with the placement facts the reports
 // read.

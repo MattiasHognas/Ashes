@@ -1,6 +1,6 @@
 # Typed lowering measurement
 
-Run from the repository root. The driver reads shipped modules from `lib/Ashes` and takes a project manifest and either `legacy` or `typed`. Both modes load and stitch the project, number its syntax and run inference. Legacy lowering receives the original stitched program and closed top-level declaration schemes for arithmetic specialization. Typed lowering receives the identified program and its recorded node types. Run each mode in a separate process with the same driver binary and input.
+Run from the repository root. The driver reads shipped modules from `lib/Ashes` and takes a project manifest (or a single `.ash` file) and a mode, `typed` (the default, as in the compiler) or `legacy` (the stitched-program lowering `ASHES_TYPED_LOWERING=0` selects). Both modes load and stitch the project, number its syntax and run inference. Legacy lowering receives the original stitched program and closed top-level declaration schemes for arithmetic specialization. Typed lowering receives the identified program and its recorded node types. Run each mode in a separate process with the same driver binary and input.
 
 Build with a current stage-0 compiler in the coordinator’s shared build slot. Set `S0` to its absolute path and `OUT` to a fresh absolute directory. The example measures the self-hosted CLI.
 

@@ -234,9 +234,9 @@ Order of work. Each step lands separately and is useful if the later ones are de
    replay passes, pending and proven trait goals, deferred operators and dictionaries, the
    per-binding plan, and body re-lowering.
 
-   State on **2026-11-24** (`selfhost/round11` at `5c8434ec`). The compile command lowers from the
-   table when `ASHES_TYPED_LOWERING=1` (`lowerCoreNumberedProgram*`: the numbered,
-   deriving-expanded program and the table); the default path is unchanged. Measured with the
+   State on **2026-11-24** (`selfhost/round11` at `5c8434ec`), when the compile command lowered from
+   the table only with `ASHES_TYPED_LOWERING=1` (`lowerCoreNumberedProgram*`: the numbered,
+   deriving-expanded program and the table). Measured with the
    typed-lowering driver (`selfhost/tests/typed-lowering-measurement`, which also takes a single file;
    `sweep.sh` runs it over the corpus):
    - Test corpus, 1,148 programs with the table: 0 replays, 0 pending trait goals, 0 structural
@@ -285,14 +285,33 @@ Order of work. Each step lands separately and is useful if the later ones are de
    type already binds its parameter first. Replacing those entry decisions with rules over the
    final type is step 8 work.
 
-   Before `ASHES_TYPED_LOWERING` becomes the default:
-   1. A flag-on bootstrap: stage 2 and stage 3 built with the flag, byte-identical, suites green.
-   2. The flag-on behaviour check equal to flag-off on every row (holds at `5c8434ec`) and the
-      typed sweep at zero replays, goals and deferred operators (holds).
-   3. Every reader that can run at a synthesized node verifies what it reads (the dictionary
-      readers do; operator and binding readers find nothing under a synthesized identity).
-   4. `ASHES_SKIP_INFERENCE_CHECK=1` has no table: it is removed, or runs the inference anyway.
-   The raw (un-numbered) lowering then remains only for the selfhost tests, the lowered-IR parity
+   The switch, **2026-11-25**: lowering from the table is the default of `compile` and `run` (the
+   only commands of the stage-1 CLI that lower); `ASHES_TYPED_LOWERING=0` selects the stitched-program
+   lowering for one more round, as the comparison. The preconditions held:
+   1. A flag-on bootstrap at `5c8434ec`: stage 2 (13:08, 14.1 GiB) and stage 3 (11:30) built with
+      the flag, stage 3 byte-identical to stage 2.
+   2. The flag-on behaviour check no worse than flag-off on any row, and the typed sweep at zero
+      replays, goals and deferred operators.
+   3. Readers that can run at a node lowering synthesized: an expression built by
+      `lowerSynthesized` is lowered with no current node, so nothing is read for it. Otherwise:
+      the operator readers (`recordedSiteOperator`, under `recordedOperandType`,
+      `recordedSettledOperandType`, `pinRecordedOperands`) read only a record whose trait is the
+      site's own (`recordedTraitMatches`; `0 - x` is recorded as `Negate`); the dictionary readers
+      (`recordedDictionariesAt`, `recordedSettledDictionariesAt`, through `instantiationSourceNode`)
+      bind a recorded type only to a requirement of the same trait and only when it unifies; the
+      readers by an expression's own wrapper (`recordedClosedTypeAt`, `recordedSettledTypeAt`, the
+      resume call, trait-method operands and results) read only that expression's record and bind
+      it by unification, falling back to lowering's own inference otherwise; the call result reader
+      (`recordedClosedNodeType`) retries without the expected type when lowering against it fails;
+      the scheme readers check the binding name and value type (`recordedSchemeForValue`) or read
+      the declaration at the value's own node.
+   4. `ASHES_SKIP_INFERENCE_CHECK=1`: without the check there is no table, so that mode lowers the
+      stitched program whatever `ASHES_TYPED_LOWERING` says. Stage 0 has no such mode (its lowering
+      is its type checker); once the stitched-program lowering is deleted the mode goes with it,
+      since lowering then needs the table and the inference that builds it is the check.
+   The raw (un-numbered) lowering then remains for the comparison setting, the skipped check, the
+   selfhost tests and the lowered-IR parity fixtures; it reads operator schemes by name, top-level
+   and nested (`rawOperatorSchemesWithNestedLets`).
    fixtures and the inference-check escape; it reads operator schemes by name, top-level and nested
    (`rawOperatorSchemesWithNestedLets`).
 
@@ -382,8 +401,8 @@ step 3 must exist before they start.
 Decided on **2026-11-16**: the standalone inference is stage 1's type checker. `compile` and
 `run`, file and project forms, infer the stitched program before lowering it; a program it rejects
 fails with stage 0's code and message (`InferenceDiagnostics.ash` maps every error the inference
-raises), and an accepted program is lowered exactly as before, without reading the inference's
-results unless `ASHES_TYPED_LOWERING=1`. A bare unification error carries no call, argument or
+raises), and an accepted program is lowered from the types it recorded (since the 2026-11-25 switch;
+before it, only with `ASHES_TYPED_LOWERING=1`). A bare unification error carries no call, argument or
 operator site, so for it lowering's own diagnostic is printed when lowering words one.
 `ASHES_SKIP_INFERENCE_CHECK=1` skips the check. This gives stage 1 the checks lowering lacks
 (capability rows, providers, handlers, written requirements, type alias cycles) and costs about
