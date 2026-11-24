@@ -821,6 +821,20 @@ let expectCoroutineCallResultCopiedToArena unit =
     |> loopFunctionLines("[ClosureHelper from $async_helper")
     |> (given (lines) -> check("the async loop copies a call result to the arena")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0))
 
+let frameRetainedCaptureSource = "let build (n: Int) = Ashes.Text.fromInt(n) + \"-tail\"\n\nlet measure (n: Int) =\n    (let text = build(n)\n    in\n        async(match await Ashes.Task.sleep(0) with\n            | Ok(_u) -> Ashes.Text.byteLength(text)\n            | Error(_e) -> -1))\n\nmatch Ashes.Task.run(measure(7)) with\n    | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// A task frame takes its own reference to a captured reference-counted string (stage 0's
+// `RetainCoroutineCapture`) and its frame dropper releases it: the task is built from the arena
+// closure, with no reference-counted copy of it, and names the dropper.
+let expectTaskFrameRetainsCapture unit =
+    frameRetainedCaptureSource
+    |> loopFunctionLines("[SourceFunction from measure]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the captured string is retained for the frame")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the task is built from the arena closure")(countContaining("CopyOutClosure")(lines) == 0))
+        |> (given (_) -> check("the task names its frame dropper")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 1)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -851,6 +865,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> expectCoroutineCalleeKeepsValuesInArena(Unit))
     |> (given (_) -> expectCoroutineCallResultCopiedToArena(Unit))
+    |> (given (_) -> expectTaskFrameRetainsCapture(Unit))
     |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
