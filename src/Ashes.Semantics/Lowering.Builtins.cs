@@ -1267,7 +1267,8 @@ public sealed partial class Lowering
             emitBody,
             coroutineLabel,
             origin,
-            saved.TempOwnershipFacts);
+            saved.TempOwnershipFacts,
+            successType);
 
         LowerCapturedStringTaskRestoreState(saved);
 
@@ -1388,7 +1389,8 @@ public sealed partial class Lowering
         Func<IReadOnlyList<int>, int> emitBody,
         string coroutineLabel,
         Expr generationExpression,
-        IReadOnlyDictionary<int, LoweredTempOwnershipFact> enclosingTempFacts)
+        IReadOnlyDictionary<int, LoweredTempOwnershipFact> enclosingTempFacts,
+        TypeRef resultType)
     {
         var coroutineCaptureTemps = new int[captureTemps.Count];
         for (int i = 0; i < captureTemps.Count; i++)
@@ -1399,6 +1401,7 @@ public sealed partial class Lowering
 
         int bodyTemp = emitBody(coroutineCaptureTemps);
         Emit(new IrInst.Return(bodyTemp));
+        HashSet<int> capturesSharedWithResult = CoroutineCapturesReachingResult();
 
         // Place lifetime markers on the linear body, where an await is still an ordinary CFG edge.
         // After the split a suspend returns to the scheduler and its resume state is entered by a
@@ -1441,7 +1444,7 @@ public sealed partial class Lowering
         AddFunction(coroutineFunc, coroutineOrigin);
 
         List<CoroutineFrameSlot> frameSlots = BuildCoroutineFrameSlots(
-            transformResult, captureTemps, enclosingTempFacts, placementResult.Instructions);
+            transformResult, captureTemps, enclosingTempFacts, placementResult.Instructions, resultType, capturesSharedWithResult);
         RecordCoroutineFrameRepresentation(coroutineLabel, coroutineOrigin, frameSlots);
         string? frameDropperLabel = SynthesizeCoroutineFrameDropper(coroutineLabel, frameSlots, coroutineOrigin);
         return new CoroutineEmission(

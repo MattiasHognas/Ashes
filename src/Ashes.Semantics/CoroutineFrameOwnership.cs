@@ -67,6 +67,12 @@ internal enum CoroutineFrameSlotReason
     /// </summary>
     AliasesOwnedFrameWord,
 
+    /// <summary>
+    /// The word is a capture the task's result can share, read after teardown, so the frame keeps
+    /// its reference.
+    /// </summary>
+    SharedWithTaskResult,
+
     /// <summary>No ownership fact was established for the value.</summary>
     NoOwnershipFact,
 }
