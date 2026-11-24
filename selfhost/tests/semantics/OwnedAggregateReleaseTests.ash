@@ -521,8 +521,45 @@ let testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate unit =
     |> countContainingBoth("RcDup")("MayBeEmpty=true")
     |> test.assertEqual(1)
 
+let letAliasBackEdgeSource = "let recursive build (n: Int) (acc: List(Int)) =\n    if n == 0\n    then acc\n    else build(n - 1)(n :: acc)\n\nlet recursive walk (n: Int) (known: List(Int)) (total: Int) =\n    if n == 0\n    then total + Ashes.Collection.List.length(known)\n    else\n        let fresh = build(3)([])\n        in\n            let next = fresh\n            in walk(n - 1)(next)(total + Ashes.Collection.List.length(known))\n\nwalk(5)([])(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The temp after `key=` in one whitespace-separated token of an IR line, when it carries it.
+let recursive tokenOperand (key: Str) (tokens: List(Str)) =
+    match tokens with
+        | [] -> ""
+        | token :: rest ->
+            if Ashes.Text.startsWith(token)(key + "=")
+            then Ashes.Text.drop(token)(Ashes.Text.length(key) + 1)
+            else tokenOperand(key)(rest)
+
+let lineOperand (key: Str) (line: Str) =
+    " "
+    |> Ashes.Text.split(line)
+    |> tokenOperand(key)
+
+// How many retains take a reference to the borrow on the line before them.
+let recursive borrowsRetainedNext (lines: List(Str)) (count: Int) =
+    match lines with
+        | first :: second :: rest ->
+            if Ashes.Text.contains(first)("Borrow ") && Ashes.Text.contains(second)("RcDup ") && lineOperand("SourceTemp")(second) == lineOperand("Target")(first)
+            then borrowsRetainedNext(second :: rest)(count + 1)
+            else borrowsRetainedNext(second :: rest)(count)
+        | _ -> count
+
+// A back edge handing the arena parameter `known` a `let` alias of an iteration owner
+// (`let next = fresh in walk(n - 1)(next)`) retains the alias's read, as stage 0's
+// DuplicateRuntimeManagedOwnedValueForTransfer does, so the successor keeps its own reference
+// when the back edge releases `fresh`.
+let testBackEdgeRetainsLetAliasOfIterationOwner unit =
+    letAliasBackEdgeSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from walk")
+    |> (given (lines: List(Str)) -> borrowsRetainedNext(lines)(0))
+    |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testBackEdgeRetainsLetAliasOfIterationOwner
     |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
     |> testSuccessorJoinArmOfLetOwnerIsDemoted
     |> testRetainedSuccessorFieldLeavesIterationOwnersReleased

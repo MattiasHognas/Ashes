@@ -2229,6 +2229,21 @@ let recordBorrowedOwners (name: Str) (valueTemp: Int) (slot: Int) (state: CoreLo
                     |> withStateBorrowedOwners((slot, owners) :: stateBorrowedOwners(state))
                 | _ -> withStatePendingBorrowedOwners(remaining)(state)
 
+// Stage 0 tracks a `let` binding of a live runtime owner's read (`let nextInts = fallback`) as a
+// reference-counted value its original owner alone releases (`TrackLetOwnership` over the borrow
+// `LowerVar` marks reference-counted): a transfer of the alias, a back-edge argument or a cell's
+// field, retains it as it retains the owner's own read. The alias resolves to the owner's slot.
+let aliasLetOfRuntimeOwner (value: Expr) (ownerState: CoreLoweringState) (slot: Int) (state: CoreLoweringState) =
+    match unspanArgument(value) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(ownerState) with
+                | Some(ownerSlot) ->
+                    if runtimeOwnerStateOf(slot)(state) == None
+                    then withStateRuntimeOwnerAliases((slot, ownerSlot) :: stateRuntimeOwnerAliases(state))(state)
+                    else state
+                | None -> state
+        | _ -> state
+
 let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
@@ -2240,6 +2255,7 @@ let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindin
                     (fresh
                     |> storeLetValue(name)(tailForwarded)(bodyRequest)(outerBindings)(temp)(semanticType)
                     |> recordBorrowedOwners(name)(temp)(local)
+                    |> aliasLetOfRuntimeOwner(value)(state)(local)
                     |> success(temp)(semanticType), local)
 
 let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
