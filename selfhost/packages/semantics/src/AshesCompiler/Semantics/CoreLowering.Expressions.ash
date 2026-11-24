@@ -3412,9 +3412,9 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
                 in
-                    // A non-recursive binding the inference generalized over an arithmetic trait is
+                    // A binding the inference generalized over an arithmetic trait is
                     // planned as if its requirement were written.
-                    let arithmetic = !isRecursive && recordedArithmeticGeneric(name)(value)(state)
+                    let arithmetic = recordedArithmeticGeneric(name)(value)(state)
                     in
                         let forwards = written || arithmetic || forwardsRequirementsOf(value)(state)
                         in (forwards || canOriginateRequirement(value)(state), forwards, false)
