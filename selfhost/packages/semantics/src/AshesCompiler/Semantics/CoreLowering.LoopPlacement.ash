@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
+import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReach.resultReachesVariableOutsideCells
@@ -1379,11 +1380,33 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
 // a runtime-managed `Str` candidate.
 let tcoParameterPlaced (slot: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) = managedSlotResult(slot)(managedLists)(managedAdts)([]) || candidateStrManaged(slot)(candidates)
 
+// `(every reader is part of a reference-or-copy normalization, any reader)` of `temp`: a
+// representation test, a retain, or a copy onto the reference-counted heap.
+let recursive readersOnlyNormalize (temp: Int) (instructions: List(IrInstruction)) (anyReader: Bool) =
+    match instructions with
+        | [] -> anyReader
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getUsedTemps
+            |> containsInt(temp)
+            then
+                match kind with
+                    | IsReferenceCounted(_target, _source) -> readersOnlyNormalize(temp)(rest)(true)
+                    | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutList(_target, _source, _headCopy, true, _purpose) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutArena(_target, _source, _size, true, _purpose, _deferred) -> readersOnlyNormalize(temp)(rest)(true)
+                    | _ -> false
+            else readersOnlyNormalize(temp)(rest)(anyReader)
+
+// A retain marker whose value the lowering then took a reference or a reference-counted copy of
+// (a mixed join normalized the arm while the marker still looked unowned) stays an identity: the
+// normalization's own reference is the arm's, as stage 0's arm, which knows the placement up front,
+// stores the retain itself and normalizes nothing.
 let recursive promotedRetainTemps (sites: List((Int, Int, SemanticType))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match sites with
         | [] -> []
         | (duplicate, slot, semanticType) :: rest ->
-            if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates)
+            if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates) && readersOnlyNormalize(duplicate)(state.reversedInstructions)(false) == false
             then
                 (duplicate, semanticType
                 |> resolveType(state)
@@ -1881,12 +1904,27 @@ let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (
         | _instruction :: rest -> slotStoreSources(slot)(rest)(sources)
 
 // How the value of `temp` was produced, read from the most recent instruction defining it: a
-// reference-counted retain (2), a constant (1, the no-match arm's or nil's placeholder), the
+// reference-counted retain or copy onto the reference-counted heap (2), a constant (1, the
+// no-match arm's or nil's placeholder), the
 // reload of a join slot (3, with the slot), or anything else (0).
 let recursive joinSourceKind (temp: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> (0, -1)
         | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = CopyOutList(target, _source, _headCopy, runtimeManaged, _purpose) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = CopyOutArena(target, _source, _size, runtimeManaged, _purpose, _deferred) } :: rest ->
             if target == temp
             then
                 if runtimeManaged
