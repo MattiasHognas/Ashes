@@ -4187,14 +4187,132 @@ let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) 
             then dispatched with expectedType = request.expectedType
             else dispatched
 
-// A `let?` is lowered as the match it means, under the whole request: its body stands where the
-// `let?` does, as stage 0's `LowerLetResult` lowers it.
+// Stage 0's `IsViewingBuiltinKind`: the builtins whose result views their first argument's bytes
+// (the uncons family's tail, a byte range, a text's bytes), with their arity.
+let viewingBuiltinArity (moduleName: Str) (memberName: Str) =
+    match (moduleName, memberName) with
+        | ("Ashes.Text", "uncons") -> 1
+        | ("Ashes.Text", "unconsText") -> 1
+        | ("Ashes.Byte", "subView") -> 3
+        | ("Ashes.Byte", "fromText") -> 1
+        | _ -> 0
+
+// The root of a call spine and its arguments, first argument first.
+let recursive viewedCallSpine (expression: Expr) (arguments: List(Expr)) =
+    match expression with
+        | ExprAt(_span, inner) -> viewedCallSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> viewedCallSpine(inner)(arguments)
+        | ExprCall(function, argument, _sugar, _layout) -> viewedCallSpine(function)(argument :: arguments)
+        | root -> (root, arguments)
+
+// Stage 0's `ViewedBuiltinArgument`: the viewed argument of a saturated call to a viewing builtin,
+// when it is an expression that may produce a value of its own (not a name or a literal).
+let viewedBuiltinArgument (expression: Expr) =
+    match viewedCallSpine(expression)([]) with
+        | (ExprQualifiedVar(moduleName, memberName), first :: rest) ->
+            if viewingBuiltinArity(moduleName)(memberName) == length(first :: rest)
+            then
+                match unspanArgument(first) with
+                    | ExprVar(_name) -> None
+                    | ExprQualifiedVar(_module, _member) -> None
+                    | ExprString(_value) -> None
+                    | ExprInt(_value) -> None
+                    | _ -> Some(first)
+            else None
+        | _ -> None
+
+// The call spine with its argument at `index` (counted from the first) replaced, its wrappers kept.
+let recursive replaceSpineArgument (expression: Expr) (index: Int) (replacement: Expr) =
+    match expression with
+        | ExprAt(span, inner) ->
+            replacement
+            |> replaceSpineArgument(inner)(index)
+            |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            replacement
+            |> replaceSpineArgument(inner)(index)
+            |> ExprNode(node)
+        | ExprCall(function, argument, sugar, layout) ->
+            match viewedCallSpine(function)([]) with
+                | (_root, earlier) ->
+                    if length(earlier) == index
+                    then ExprCall(function)(replacement)(sugar)(layout)
+                    else
+                        ExprCall(replaceSpineArgument(function)(index)(replacement))(argument)(sugar)(layout)
+        | other -> other
+
+let recursive viewedArgumentPosition (arguments: List(Expr)) (index: Int) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            match viewedBuiltinArgument(argument) with
+                | Some(viewed) -> Some((index, argument, viewed))
+                | None -> viewedArgumentPosition(rest)(index + 1)
+
+let bindViewedArgument (viewed: Expr) rebuild (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = named, temp = temp } ->
+            let name = "$viewed" + Ashes.Text.fromInt(temp)
+            in
+                Some((named, ExprVar(name)
+                |> rebuild
+                |> plainLet(name)(viewed)))
+
+let bindViewedCallArgument (expression: Expr) (state: CoreLoweringState) =
+    match viewedBuiltinArgument(expression) with
+        | Some(viewed) ->
+            bindViewedArgument(viewed)(given (named) -> replaceSpineArgument(expression)(0)(named))(state)
+        | None ->
+            match viewedCallSpine(expression)([]) with
+                | (_root, arguments) ->
+                    match viewedArgumentPosition(arguments)(0) with
+                        | Some((index, argument, viewed)) ->
+                            bindViewedArgument(viewed)(given (named) ->
+                                named
+                                |> replaceSpineArgument(argument)(0)
+                                |> replaceSpineArgument(expression)(index))(state)
+                        | None -> None
+
+// Stage 0's `BindViewedBuiltinArgument`: a viewing builtin's newly produced argument bound by an
+// anonymous `let` around the expression consuming the builtin's result (the match it is the
+// scrutinee of, the `let` it is the value of, the call it is an argument of, or the builtin call
+// itself anywhere else), so the let's scope owns it exactly as in the let-bound form. The name is
+// unique in the function by a fresh temp's number.
+let bindViewedBuiltinArgument (expression: Expr) (state: CoreLoweringState) =
+    if !generalRcEnabled(state)
+    then None
+    else
+        match expression with
+            | ExprMatch(value, cases, position) ->
+                match viewedBuiltinArgument(value) with
+                    | Some(viewed) ->
+                        bindViewedArgument(viewed)(given (named) ->
+                            ExprMatch(replaceSpineArgument(value)(0)(named))(cases)(position))(state)
+                    | None -> None
+            | ExprLet(name, value, body, [], annotation, requirements) ->
+                match viewedBuiltinArgument(value) with
+                    | Some(viewed) ->
+                        bindViewedArgument(viewed)(given (named) ->
+                            ExprLet(name)(replaceSpineArgument(value)(0)(named))(body)([])(annotation)(requirements))(state)
+                    | None -> None
+            | ExprCall(_function, _argument, _sugar, _layout) -> bindViewedCallArgument(expression)(state)
+            | _ -> None
+
+let bindsViewedBuiltinArgument (expression: Expr) (state: CoreLoweringState) =
+    match bindViewedBuiltinArgument(expression)(state) with
+        | Some(_bound) -> true
+        | None -> false
+
 let recursive lowerCore expression state =
     match (expression, state
     |> resolveLoopCallFlow
     |> consumerRequestOf) with
         | (ExprLetResult(name, value, body), _request) ->
             lowerCore(letResultMatch(name)(value)(body))(state)
+        | (_expression, _request) when bindsViewedBuiltinArgument(expression)(state) ->
+            match bindViewedBuiltinArgument(expression)(state) with
+                | Some((named, bound)) -> lowerCore(bound)(named)
+                | None -> lowerCoreDispatch(expression)(lowerCore)(state)
         | (_expression, request) ->
             match if isEmptyConsumerRequest(request)
             then request

@@ -3514,6 +3514,11 @@ public sealed partial class Lowering
         Expr e,
         LoweredValueRequest request)
     {
+        if (BindViewedBuiltinArgument(e) is Expr.Let bound)
+        {
+            return LowerLet(bound, request);
+        }
+
         return e switch
         {
             Expr.IntLit lit => LowerInt(lit),
