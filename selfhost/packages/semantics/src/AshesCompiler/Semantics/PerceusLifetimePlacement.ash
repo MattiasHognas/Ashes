@@ -256,13 +256,19 @@ let propagateAliasInto (sets: AliasSets) (index: Int) (start: Int) (end: Int) (a
                 else withAliasTemp(target)(sets)
             else sets
         | IrInstruction { instruction = StoreMemOffset(basePtr, _offset, source) } ->
-            if inTempSet(source)(sets.aliasSet)
-            then withAliasTemp(basePtr)(sets)
-            else sets
+            if inTempSet(source)(sets.viewAliasSet)
+            then withViewAliasTemp(basePtr)(sets)
+            else
+                if inTempSet(source)(sets.aliasSet)
+                then withAliasTemp(basePtr)(sets)
+                else sets
         | IrInstruction { instruction = SetAdtField(ptr, _fieldIndex, source, _tagless) } ->
-            if inTempSet(source)(sets.aliasSet) && inTempSet(ptr)(arenaAdtCells)
-            then withAliasTemp(ptr)(sets)
-            else sets
+            if inTempSet(ptr)(arenaAdtCells) && inTempSet(source)(sets.viewAliasSet)
+            then withViewAliasTemp(ptr)(sets)
+            else
+                if inTempSet(source)(sets.aliasSet) && inTempSet(ptr)(arenaAdtCells)
+                then withAliasTemp(ptr)(sets)
+                else sets
         | IrInstruction { instruction = MakeClosure(target, _label, environmentPtr, _size, _managed, _returnsManaged, _acceptsManaged, _returnsOwned) } ->
             if inTempSet(environmentPtr)(sets.aliasSet)
             then withAliasTemp(target)(sets)
