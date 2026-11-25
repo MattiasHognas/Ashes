@@ -48,6 +48,7 @@ export (
     value normalizeRuntimeManagedConsHead,
     value listCellReuseTokenAvailable,
     value ownBorrowedHeadForProducerCell,
+    value isProducerCellHeadType,
     value lowerCons,
     value lowerListLiteral,
     value allCopyTypeElements,
