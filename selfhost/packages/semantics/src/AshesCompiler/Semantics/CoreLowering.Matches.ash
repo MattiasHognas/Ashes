@@ -2057,6 +2057,14 @@ and anyConstructorCarriesTextBytes (visited: List(Str)) (layouts: List(CoreConst
             match layoutFieldTypes(layout)(state) with
                 | (fieldTypes, _resultType) -> anyTypeCarriesTextBytes(visited)(fieldTypes)(state) || anyConstructorCarriesTextBytes(visited)(rest)(state)
 
+// Stage 0's `CapturesScopeViews`: a closure the scope returns may capture a view of the backing
+// (`given (u) -> tail`, the tail of an uncons of the backing), stored in its environment as the view
+// it is, so the backing is kept alive for it.
+let capturesScopeViews (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_argument, _result, _row) -> true
+        | _ -> false
+
 // Stage 0's `MarkOwnerViewedByResult` and `MaterializeScopeResultViews`: a `let` owning a
 // reference-counted string or bytes value whose result may name its bytes materializes the result
 // before the binding is released. A result the arena deep copy reproduces is copied into the
@@ -2068,7 +2076,7 @@ and anyConstructorCarriesTextBytes (visited: List(Str)) (layouts: List(CoreConst
 // view left pointing into freed memory. Returns the state, the result temp, and whether the
 // binding's release is withheld.
 let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !typeCarriesTextBytes([])(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isRuntimeTemp(resultTemp)(state)
     then (state, resultTemp, false)
     else
         if canNormalizeResultIntoArena(resultType)(state)
