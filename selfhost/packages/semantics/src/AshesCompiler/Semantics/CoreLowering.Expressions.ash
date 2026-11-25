@@ -51,11 +51,14 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedCopyInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedOperatorGenericScheme
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedUnsettledOperatorGeneric
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.schemeHasUnsettledOperatorRequirement
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDictionariesAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDeferredEvaluation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowDictionaryGoalTypeText
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -503,6 +506,19 @@ let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, 
 // arguments to it exactly as it would to any other bound function. The callee is marked in progress
 // for that continuation exactly as generation marks it, since the rebuilt call otherwise qualifies
 // again, hits this same cache entry, and recurses without end.
+// The specialization's closure is bound under the callee's name at a fresh instantiation of the
+// callee's scheme, as stage 0 reads a scheme binding's type (`TryGetKnownBindingType` instantiates
+// it). Binding the scheme's own body instead would unify its quantified variables with this call's
+// argument types in the shared substitution, and every later routed call to the same callee would
+// read the callee's type at those arguments: a map loop over `Int` values followed by one over
+// `Bool` values reported a mismatch that was not there.
+let bindRoutedCallee (callee: Str) (functionType: SemanticType) (slot: Int) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(binding) ->
+            match instantiateBinding(binding)(state) with
+                | InstantiatedBinding { state = instantiated, semanticType = fresh } -> addBinding(callee)(TypeScheme(quantified = [], body = fresh, constraints = []))(CoreLocal(slot))(instantiated)
+        | None -> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot))(state)
+
 let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = envState, temp = environmentTemp } ->
@@ -514,7 +530,7 @@ let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: Se
                         | FreshLocal { state = slotState, local = slot } ->
                             match slotState
                             |> emit(StoreLocal(slot)(closureTemp))
-                            |> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot))
+                            |> bindRoutedCallee(callee)(functionType)(slot)
                             |> (given (bound: CoreLoweringState) -> withStateSpecializingInProgress(callee :: stateSpecializingInProgress(bound))(bound))
                             |> lower(specializedCallExpression(ExprVar(callee))(arguments)) with
                                 | LoweredCoreValue { state = callState, temp = temp, semanticType = semanticType, error = error } ->
@@ -896,12 +912,35 @@ let recursive firstInactiveTraitMethod (traitName: Str) (operand: SemanticType) 
                 | Some(_binding) -> firstInactiveTraitMethod(traitName)(operand)(rest)(state)
                 | None -> Some(name)
 
+// Under typed lowering, the evidence of a requirement the body being lowered carries for its whole
+// type argument: a constrained body lowered with a dictionary for `Eq(List(a))` answers a call's
+// `Eq(List(a))` with that dictionary, where evidence resolution would pick the list implementation
+// and ask for an `Eq(a)` nothing supplies. None without a node table, for a closed argument, or when
+// the body carries no such evidence.
+let activeWholeEvidencePlan (constraint: TraitConstraint) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), constraint) with
+        | (Some(_table), TraitConstraint { traitName = traitName, typeArguments = argument :: [] }) ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) != [] && hasActiveTraitEvidence(traitName)(resolved)(state)
+                then Some(TraitEvidenceParameter((constraint with typeArguments = [resolved])))
+                else None
+        | _ -> None
+
+// The plan a dictionary is built from: the body's own evidence for the whole type under typed
+// lowering, otherwise what evidence resolution answers.
+let constrainedDictionaryPlan (constraint: TraitConstraint) (state: CoreLoweringState) =
+    match activeWholeEvidencePlan(constraint)(state) with
+        | Some(plan) -> TraitEvidenceResolution(plan = Some(plan), error = None)
+        | None ->
+            state
+            |> stateTraitEnvironment
+            |> resolveTraitEvidence(constraint)
+
 // The requirement a dictionary cannot be built for, decided before any supertrait dictionary is
 // lowered so the report names the requirement the source asked for and not a trait it implies.
 let unansweredDictionaryRequirement (constraint: TraitConstraint) (methods: List(Str)) (state: CoreLoweringState) =
-    match state
-    |> stateTraitEnvironment
-    |> resolveTraitEvidence(constraint) with
+    match constrainedDictionaryPlan(constraint)(state) with
         | TraitEvidenceResolution { plan = Some(TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = operand :: [] })), error = None } ->
             match firstInactiveTraitMethod(traitName)(operand)(methods)(state) with
                 | Some(_name) ->
@@ -927,9 +966,7 @@ let recursive lowerConstrainedDictionary shape lower state closes =
                 | None ->
                     match lowerConstrainedDictionaries(supertraits)(lower)(state)([])(closes) with
                         | (superState, superExpressions, superCloses, None) ->
-                            match superState
-                            |> stateTraitEnvironment
-                            |> resolveTraitEvidence(constraint) with
+                            match constrainedDictionaryPlan(constraint)(superState) with
                                 | TraitEvidenceResolution { plan = Some(plan), error = None } ->
                                     match lowerConstrainedDictionaryMethods(constraint)(plan)(methods)(lower)(superState)([])(superCloses) with
                                         | (methodState, methodExpressions, methodCloses, None) ->
@@ -1030,7 +1067,7 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
         | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as goal) :: rest ->
             let resolved = resolveType(state)(argument)
             in
-                match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
+                match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), constrainedDictionaryPlan((goal with typeArguments = [resolved]))(state)) with
                     | (Some(key), TraitEvidenceResolution { plan = Some(plan), error = None }) ->
                         if constrainedPlanLacksEvidence(plan)(state)
                         then (key, resolved, dictionaryGoalCandidates(traitName)(state)) :: openConstrainedGoals(index + 1)(rest)(state)
@@ -1038,18 +1075,37 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
                     | _ -> openConstrainedGoals(index + 1)(rest)(state)
         | _goal :: rest -> openConstrainedGoals(index + 1)(rest)(state)
 
+// Step-8 shadow comparison, rule 2: a constrained call's dictionary left for a later pass, against
+// the dictionary the table records at the call's root reference.
+let shadowDictionaryGoal (key: Str) (root: Int) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(2)("pending")(shadowDictionaryGoalTypeText(key)(root)(state))(state)
+    else state
+
 // The value a call lowers to while any of its dictionaries waits on a type: every open requirement
-// joins the pass's record and the call stands as a constant of its own result type.
-let recursive deferConstrainedGoals (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
+// joins the pass's record and the call stands as a constant of its own result type. Lowered from the
+// type table the first open requirement is refused (deferTraitGoalUnshadowed).
+let recursive deferConstrainedGoals (root: Int) (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
     match goals with
         | [] ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(state)
-        | (key, goalType, candidates) :: [] -> deferTraitGoalWithMethods(candidates)(key)(goalType)(resultType)(state)
-        | (key, goalType, candidates) :: rest ->
+        | (key, goalType, candidates) :: [] ->
             state
-            |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
-            |> observePendingGoal(false)(key)(goalType)
-            |> deferConstrainedGoals(rest)(resultType)
+            |> shadowDictionaryGoal(key)(root)
+            |> deferTraitGoalUnshadowed(candidates)(key)(goalType)(resultType)
+        | (key, goalType, candidates) :: rest ->
+            match stateNodeTypes(state) with
+                | Some(_table) ->
+                    state
+                    |> shadowDictionaryGoal(key)(root)
+                    |> deferTraitGoalUnshadowed(candidates)(key)(goalType)(resultType)
+                | None ->
+                    state
+                    |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
+                    |> observePendingGoal(false)(key)(goalType)
+                    |> shadowDictionaryGoal(key)(root)
+                    |> deferConstrainedGoals(root)(rest)(resultType)
 
 // A requirement whose type argument is still open takes the type the standalone inference recorded
 // for the same trait's dictionary at the reference, the first unused one of that trait in the
@@ -1109,6 +1165,137 @@ let recursive pinSettledDictionaries (constraints: List(TraitConstraint)) (recor
                         | (_failed, Some(_error)) -> pinSettledDictionaries(rest)(recordedRest)(state)
         | (_constraint :: rest, _entry :: recordedRest) -> pinSettledDictionaries(rest)(recordedRest)(state)
 
+// The requirements an evidence plan still asks of its context: a parameter's own requirement, and
+// for an implementation the leaves of the plans of its requirements, in their order. Supertraits
+// are left out, as the inference's reduction leaves them.
+let recursive planRequirementLeaves (plan: TraitEvidencePlan) (leaves: List(TraitConstraint)) =
+    match plan with
+        | TraitEvidenceParameter(constraint) -> constraint :: leaves
+        | TraitEvidenceInstance(_goal, _implementation, requirements, _supertraits) -> planListRequirementLeaves(requirements)(leaves)
+and planListRequirementLeaves (plans: List(TraitEvidencePlan)) (leaves: List(TraitConstraint)) =
+    match plans with
+        | [] -> leaves
+        | plan :: rest ->
+            leaves
+            |> planRequirementLeaves(plan)
+            |> planListRequirementLeaves(rest)
+
+// A call's open requirements reduced through the implementations the way the standalone inference
+// reduces a scheme's requirements (`Eq(List(a))` becomes `Eq(a)`), most recent last; a requirement
+// whose evidence does not resolve, or that the body being lowered already carries, is left out.
+let recursive reducedOpenRequirements (constraints: List(TraitConstraint)) (state: CoreLoweringState) (reduced: List(TraitConstraint)) =
+    match constraints with
+        | [] -> reverse(reduced)
+        | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as constraint) :: rest ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state)
+                then reducedOpenRequirements(rest)(state)(reduced)
+                else
+                    match state |> stateTraitEnvironment |> resolveTraitEvidence((constraint with typeArguments = [resolved])) with
+                        | TraitEvidenceResolution { plan = Some(plan), error = None } ->
+                            reduced
+                            |> planRequirementLeaves(plan)
+                            |> reducedOpenRequirements(rest)(state)
+                        | _ -> reducedOpenRequirements(rest)(state)(reduced)
+        | _constraint :: rest -> reducedOpenRequirements(rest)(state)(reduced)
+
+let recursive traitCount (traitName: Str) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> 0
+        | TraitConstraint { traitName = name } :: rest ->
+            if name == traitName
+            then 1 + traitCount(traitName)(rest)
+            else traitCount(traitName)(rest)
+
+let recursive recordedTraitCount (traitName: Str) (recorded: List((Str, Maybe(SemanticType)))) =
+    match recorded with
+        | [] -> 0
+        | (name, _settled) :: rest ->
+            if name == traitName
+            then 1 + recordedTraitCount(traitName)(rest)
+            else recordedTraitCount(traitName)(rest)
+
+let recursive recordedSettledOfTrait (traitName: Str) (recorded: List((Str, Maybe(SemanticType)))) =
+    match recorded with
+        | [] -> None
+        | (name, settled) :: rest ->
+            if name == traitName
+            then settled
+            else recordedSettledOfTrait(traitName)(rest)
+
+let recursive pinReducedLeaves (leaves: List(TraitConstraint)) (all: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match leaves with
+        | [] -> state
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            let resolved = resolveType(state)(argument)
+            in
+                if freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state) || traitCount(traitName)(all) != 1 || recordedTraitCount(traitName)(recorded) != 1
+                then pinReducedLeaves(rest)(all)(recorded)(state)
+                else
+                    match recordedSettledOfTrait(traitName)(recorded) with
+                        | Some(settled) ->
+                            match bindType(argument)(settled)(state) with
+                                | (bound, None) ->
+                                    bound
+                                    |> observeLoweringEvent(0)
+                                    |> pinReducedLeaves(rest)(all)(recorded)
+                                | (_failed, Some(_error)) -> pinReducedLeaves(rest)(all)(recorded)(state)
+                        | None -> pinReducedLeaves(rest)(all)(recorded)(state)
+        | _leaf :: rest -> pinReducedLeaves(rest)(all)(recorded)(state)
+
+// Under typed lowering, a call's requirement still open after the recorded and settled
+// dictionaries are pinned: lowering asks for the unreduced requirement of its own scheme
+// (`Eq(List(a))`) where the standalone inference recorded the reduced one (`Eq(a)`). The open
+// requirements are reduced through the implementations as the inference reduces them, and a reduced
+// requirement whose trait occurs once among them and once among the recorded dictionaries takes
+// that dictionary's type closed by the program's settled uses. Without a node table nothing is
+// recorded and nothing changes.
+let pinReducedSettledDictionaries (constraints: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match recorded with
+        | [] -> state
+        | _entries ->
+            let leaves = reducedOpenRequirements(constraints)(state)([])
+            in pinReducedLeaves(leaves)(leaves)(recorded)(state)
+
+let recursive openRecordedTraitCount (traitName: Str) (recorded: List((Str, Maybe(SemanticType)))) =
+    match recorded with
+        | [] -> 0
+        | (name, None) :: rest ->
+            if name == traitName
+            then 1 + openRecordedTraitCount(traitName)(rest)
+            else openRecordedTraitCount(traitName)(rest)
+        | _entry :: rest -> openRecordedTraitCount(traitName)(rest)
+
+// Under typed lowering, a requirement of a call or trait method whose operand is still open, where
+// the standalone inference recorded the requirement at a variable the program's uses do not settle:
+// by the evidence rule such a requirement is supplied by the enclosing function. When the body being
+// lowered carries exactly one dictionary of that trait (and the recorded requirements name the trait
+// once), the operand is that dictionary's type, the type a later expression of the body relates it
+// to (`x == initial`), and the requirement takes the body's own dictionary, as the replay would. No
+// concrete type is chosen. Without a node table nothing is recorded and nothing changes.
+let pinEnclosingEvidence (traitName: Str) (operand: SemanticType) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(operand)
+    in
+        if freeTypeVariables(resolved) == [] || hasActiveTraitEvidence(traitName)(resolved)(state) || openRecordedTraitCount(traitName)(recorded) != 1 || recordedTraitCount(traitName)(recorded) != 1
+        then state
+        else
+            match dictionaryGoalCandidates(traitName)(state) with
+                | (_binding, candidate) :: [] ->
+                    match bindType(operand)(candidate)(state) with
+                        | (bound, None) -> observeLoweringEvent(0)(bound)
+                        | (_failed, Some(_error)) -> state
+                | _ -> state)
+
+let recursive pinEnclosingEvidenceOf (constraints: List(TraitConstraint)) (recorded: List((Str, Maybe(SemanticType)))) (state: CoreLoweringState) =
+    match constraints with
+        | [] -> state
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            state
+            |> pinEnclosingEvidence(traitName)(argument)(recorded)
+            |> pinEnclosingEvidenceOf(rest)(recorded)
+        | _constraint :: rest -> pinEnclosingEvidenceOf(rest)(recorded)(state)
+
 // The identity of the innermost numbered node around a call's root, the callee reference the
 // inference recorded the call's instantiation at; `enclosing` when none is met below it, -1 for an
 // unnumbered tree.
@@ -1118,6 +1305,19 @@ let recursive callRootNode (expression: Expr) (enclosing: Int) =
         | ExprNode(node, inner) -> callRootNode(inner)(node)
         | ExprCall(function, _argument, _whitespace, _layout) -> callRootNode(function)(-1)
         | _ -> enclosing
+
+// The reference a constrained call's instantiation is recorded at: the call's root, or, for a bare
+// reference lowered without its node wrapper (an escaping use of a constrained binding), the node
+// being lowered, which is the reference's own.
+let constrainedCallRootNode (expression: Expr) (state: CoreLoweringState) =
+    (let root = callRootNode(expression)(-1)
+    in
+        if root != -1
+        then root
+        else
+            match (stripExprAt(expression), state.currentNode) with
+                | (ExprVar(_name), Some(node)) -> node
+                | _ -> -1)
 
 let lowerConstrainedCallWithName expression name privateName (binding: CoreBinding) lower (state: CoreLoweringState) =
     match instantiatePreservingConstraintOrder(binding.scheme)(state.typeSupply) with
@@ -1146,8 +1346,10 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                 | (bound, None) ->
                                                     match bound
                                                     |> pinConstrainedGoals(0)(constraints)
-                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(callRootNode(expression)(-1))(bound))
-                                                    |> pinSettledDictionaries(constraints)(recordedSettledDictionariesAt(callRootNode(expression)(-1))(bound)) with
+                                                    |> pinRecordedDictionaries(constraints)(recordedDictionariesAt(constrainedCallRootNode(expression)(state))(bound))
+                                                    |> pinSettledDictionaries(constraints)(recordedSettledDictionariesAt(constrainedCallRootNode(expression)(state))(bound))
+                                                    |> pinReducedSettledDictionaries(constraints)(recordedSettledDictionariesAt(constrainedCallRootNode(expression)(state))(bound))
+                                                    |> pinEnclosingEvidenceOf(constraints)(recordedSettledDictionariesAt(constrainedCallRootNode(expression)(state))(bound)) with
                                                         | settled ->
                                                             let goals =
                                                                 map((given (constraint: TraitConstraint) ->
@@ -1156,7 +1358,7 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                                 match openConstrainedGoals(0)(goals)(settled) with
                                                                     | _first :: _rest as open ->
                                                                         settled
-                                                                        |> deferConstrainedGoals(open)(resolveType(settled)(resultType))
+                                                                        |> deferConstrainedGoals(constrainedCallRootNode(expression)(state))(open)(resolveType(settled)(resultType))
                                                                         |> restoreConstrainedCall(state)
                                                                     | [] ->
                                                                         match settled
@@ -1637,8 +1839,6 @@ let tryConcreteSourceCall expression lower state =
                         | Some(nested) ->
                             tryConcreteCandidateCall(nested)(callRootNode(expression)(-1))(arguments)(lower)(state)
                         | None ->
-                                        // Lowering's own inference stays the authority: a call that
-                                        // fails against the recorded type is lowered as before.
                             match state
                             |> stateConcreteRegistry
                             |> lookupCoreConcreteCandidate(name) with
@@ -1735,6 +1935,8 @@ let lowerUnconstrainedGeneralCall expression function argument lower state =
                                     | None ->
                                         lowerExpecting(expectedTypeOf(state))(state)
                                     | Some(recorded) ->
+                                        // Lowering's own inference stays the authority: a call that
+                                        // fails against the recorded type is lowered as before.
                                         match state
                                         |> observeLoweringEvent(3)
                                         |> lowerExpecting(Some(recorded)) with
@@ -2117,7 +2319,7 @@ let bindMethodResultContext traitName arguments resultType outer state =
                 | None -> (pinRecordedResultType(traitName)(resultType)(state), None)
         | _ -> (state, None)
 
-let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeScheme) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeScheme) (arguments: List(Expr)) (rootNode: Int) lower (state: CoreLoweringState) =
     match (arguments, instantiate(scheme)(state.typeSupply)) with
         | (first :: rest, InstantiationResult { semanticType = SemFunction(parameterType, resultType, _row), constraints = TraitConstraint { typeArguments = typeArgument :: [] } :: [], supply = nextSupply }) ->
             match state
@@ -2132,15 +2334,18 @@ let lowerUserTraitMethodCall (traitName: Str) (methodName: Str) (scheme: TypeSch
                                 | (parameterState, None) ->
                                     match bindMethodResultContext(traitName)(rest)(resultType)(state)(parameterState) with
                                         | (failedState, Some(error)) -> failure(failedState)(error)
-                                        | (boundState, None) ->
-                                            match boundState
-                                            |> consumerRequestForDispatch(rest)(state.consumerRequest)
-                                            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
-                                                | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
-                                                    dispatched
-                                                    |> withConsumerRequest(state.consumerRequest)
-                                                    |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
-                                                | failed -> failed
+                                        | (unpinnedState, None) ->
+                                            let boundState =
+                                                pinEnclosingEvidence(traitName)(typeArgument)(recordedSettledDictionariesAt(rootNode)(unpinnedState))(unpinnedState)
+                                            in
+                                                match boundState
+                                                |> consumerRequestForDispatch(rest)(state.consumerRequest)
+                                                |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resolveType(boundState)(resultType))(lower)(operandTemp)(resolveType(boundState)(typeArgument)) with
+                                                    | LoweredCoreValue { state = dispatched, temp = resultTemp, semanticType = dispatchedType, error = None } ->
+                                                        dispatched
+                                                        |> withConsumerRequest(state.consumerRequest)
+                                                        |> applyRemainingTraitArguments(resultTemp)(dispatchedType)(rest)(lower)
+                                                    | failed -> failed
                 | failed -> failed
         | _ ->
             SemNever
@@ -2686,7 +2891,7 @@ let lowerJoinOrCall expression function argument lower (state: CoreLoweringState
     match joinedHandleLocal(expression)(state) with
         | Some((name, slot)) ->
             match resourceStateOf(slot)(state) with
-                | Some(ResourceMoved) -> failure(state)(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))
+                | Some(ResourceMoved) -> failureAt(argument)(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))(state)
                 | _ ->
                     match lowerNonAsyncCallExpression(expression)(function)(argument)(lower)(state) with
                         | LoweredCoreValue { state = loweredState, error = None } as lowered -> lowered with state = markResourceReleased(slot)(ResourceMoved)(loweredState)
@@ -3211,6 +3416,24 @@ let forwardedCallbackPlanApplies (plan: CoreConstrainedInference) =
             | SemFunction(_argument, _result, _row) -> true
             | _ -> false)
 
+// Under typed lowering, a binding (top-level, or a `let` below top level) the standalone inference
+// generalized over an operator trait lowering otherwise holds monomorphic, used at more than one type
+// through it (`twice x = [x + x, x]` at Int and Float): its arithmetic requirements are supported as
+// a written one is, so the binding is lowered once as a body taking the operator's dictionary, as
+// stage 0 does, instead of a body whose operator is emitted in the integer form while each concrete
+// call takes its own copy. A binding used at one type keeps its settled reading. Without a node
+// table nothing changes.
+let recordedArithmeticGeneric name value (state: CoreLoweringState) =
+    if recordedUnsettledOperatorGeneric(name)(nodeIdentityOf(value))(state)
+    then true
+    else
+        match stateNodeTypes(state) with
+            | None -> false
+            | Some(_table) ->
+                match nestedOperatorGenericLetScheme(name)(value)(state) with
+                    | Some(scheme) -> schemeHasUnsettledOperatorRequirement(scheme)(state)
+                    | None -> false
+
 // `written` says the binding declares a `requires`: its plan is then inferred whatever its value
 // mentions, and may rest on `Show` or `Hash` as well as on the mapped operators.
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
@@ -3219,8 +3442,12 @@ let constrainedBindingPlan name isRecursive value annotation requirements (state
             | Some(_parts) ->
                 let written = writtenRequirements(requirements)
                 in
-                    let forwards = written || forwardsRequirementsOf(value)(state)
-                    in (forwards || canOriginateRequirement(value)(state), forwards, false)
+                    // A binding the inference generalized over an arithmetic trait is
+                    // planned as if its requirement were written.
+                    let arithmetic = recordedArithmeticGeneric(name)(value)(state)
+                    in
+                        let forwards = written || arithmetic || forwardsRequirementsOf(value)(state)
+                        in (forwards || canOriginateRequirement(value)(state), forwards, false)
             | None ->
                 if isRecursive
                 then (false, false, false)
@@ -3877,7 +4104,8 @@ let lowerCoreDispatch expression lowerCore state =
                                                     | Some(_default) -> lowerTraitDefaultCall(argument)(lowerCore)(state)
                                                     | None ->
                                                         match userTraitMethodCall(expression)(state) with
-                                                            | Some((traitName, methodName, scheme, arguments)) -> lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(lowerCore)(state)
+                                                            | Some((traitName, methodName, scheme, arguments)) ->
+                                                                lowerUserTraitMethodCall(traitName)(methodName)(scheme)(arguments)(callRootNode(expression)(-1))(lowerCore)(state)
                                                             | None ->
                                                                 state
                                                                 |> lowerCallExpression(expression)(function)(argument)(lowerCore)

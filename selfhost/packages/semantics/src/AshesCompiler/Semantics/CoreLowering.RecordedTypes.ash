@@ -20,6 +20,7 @@ import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
+import AshesCompiler.Semantics.NodeIdentity.synthesizedNodeSource
 import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes
 import AshesCompiler.Semantics.NodeIdentity.foldItemNodes
 import AshesCompiler.Frontend.Syntax.Expr
@@ -42,12 +43,21 @@ export (
     value recordedCopyInstantiation,
     value recordedConcreteCallType,
     value recordedOperatorGenericScheme,
+    value recordedUnsettledOperatorGeneric,
+    value schemeHasUnsettledOperatorRequirement,
     value rawOperatorDeclarationSchemes,
     value recordedDeferredEvaluation,
     value deferredEvaluationKey,
     value withRawOperatorDeclarationSchemes,
     value recordedSettledType,
     value recordedSettledTypeAt,
+    value shadowSiteType,
+    value shadowSiteTypeText,
+    value recordedSiteInstance,
+    value shadowSiteOperandText,
+    value shadowGoalTypeText,
+    value shadowLambdaParameterType,
+    value shadowDictionaryGoalTypeText,
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
     value recordedNestedOperatorGenericScheme,
@@ -235,13 +245,22 @@ let recursive closedRecordedRequirements (requirements: List(TraitConstraint)) (
                 | Error(_message) -> closedRecordedRequirements(rest)(state)
         | _requirement :: rest -> closedRecordedRequirements(rest)(state)
 
+// The node whose recorded instantiation a reference reads: its own, or, for a reference lowering
+// synthesized (a prefix or resume call of a staged binding), the source reference it stands for.
+// The readers bind only what matches the call's own requirements by trait and type, so a record
+// that does not fit leaves the call to lowering's own inference.
+let instantiationSourceNode (node: Int) =
+    match synthesizedNodeSource(node) with
+        | Some((source, _role)) -> source
+        | None -> node
+
 // The dictionaries the reference with this identity was recorded to pass, as trait names with closed
 // type arguments in the scheme's order; requirements with an open or unreadable argument are left
 // out.
 let recordedDictionariesAt (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | Some(table) ->
-            match nodeInstantiationAt(node)(table) with
+            match nodeInstantiationAt(instantiationSourceNode(node))(table) with
                 | Some(NodeInstantiation { dictionaries = dictionaries }) -> closedRecordedRequirements(dictionaries)(state)
                 | None -> []
         | None -> []
@@ -464,6 +483,44 @@ let recordedOperatorGenericScheme name (node: Int) (state: CoreLoweringState) =
                 | Some((_name, recorded)) -> operatorGenericScheme(recorded)(state)
                 | None -> None
 
+let recursive anyUnsettledVariable (variables: List(Int)) (settled: MapTree(Int, SemanticType)) =
+    match variables with
+        | [] -> false
+        | variable :: rest ->
+            match Ashes.Collection.Map.getInt(variable)(settled) with
+                | Some(_type) -> anyUnsettledVariable(rest)(settled)
+                | None -> true
+
+let recursive anyUnsettledOperatorRequirement (constraints: List(TraitConstraint)) (settled: MapTree(Int, SemanticType)) =
+    match constraints with
+        | [] -> false
+        | TraitConstraint { traitName = traitName, typeArguments = arguments } :: rest ->
+            isMonomorphicOperatorTrait(traitName) && anyUnsettledVariable(freeTypeVariables(SemTuple(arguments)))(settled) || anyUnsettledOperatorRequirement(rest)(settled)
+
+// Whether one of a recorded operator-generic scheme's operator requirements is at a variable the
+// program's uses leave unsettled: the binding is used at more than one type through it.
+let schemeHasUnsettledOperatorRequirement (scheme: TypeScheme) (state: CoreLoweringState) =
+    match scheme with
+        | TypeScheme { constraints = constraints } ->
+            state
+            |> stateSettledNodeVariables
+            |> anyUnsettledOperatorRequirement(constraints)
+
+// The operator-generic scheme recorded for a top-level binding, under typed lowering only, when one
+// of its operator requirements is at a variable the program's uses do not settle to one type: the
+// binding is used at more than one type through that requirement (`twice` at Int and at Float). A
+// binding used at one type is answered by its settled uses instead.
+let recordedUnsettledOperatorGeneric name (node: Int) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | None -> false
+        | Some(_table) ->
+            match recordedOperatorGenericScheme(name)(node)(state) with
+                | Some(TypeScheme { constraints = constraints }) ->
+                    state
+                    |> stateSettledNodeVariables
+                    |> anyUnsettledOperatorRequirement(constraints)
+                | None -> false
+
 // A recorded type, read through the instantiation of the body being lowered, with the variables the
 // program's uses settle replaced by their settled types, as lowering writes it, when that leaves no
 // variable. A body lowering holds at one type while the inference generalized it reads its
@@ -494,7 +551,7 @@ let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) 
 let recordedSettledDictionariesAt (node: Int) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | Some(table) ->
-            match nodeInstantiationAt(node)(table) with
+            match nodeInstantiationAt(instantiationSourceNode(node))(table) with
                 | Some(NodeInstantiation { dictionaries = dictionaries }) -> settledRecordedRequirements(dictionaries)(state)
                 | None -> []
         | None -> []
@@ -508,6 +565,118 @@ let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
                 | Some(recorded) -> recordedSettledType(recorded)(state)
                 | None -> None
         | None -> None
+
+// The step-8 shadow comparison's final type for the site being lowered: the type recorded at its
+// node, closed by the body's instantiation and the variables the program's uses settle. None at a
+// node lowering synthesized, or where that leaves a variable.
+let shadowSiteType (state: CoreLoweringState) =
+    match state.currentNode with
+        | Some(node) -> recordedSettledTypeAt(node)(state)
+        | None -> None
+
+let shadowSiteTypeText (state: CoreLoweringState) =
+    match shadowSiteType(state) with
+        | Some(settled) ->
+            settled
+            |> Ashes.Trait.Show.show
+            |> Some
+        | None -> None
+
+// How the table records the operator at the site being lowered is reached: "evidence" through a
+// dictionary the body carries, "direct" through a primitive or a declared implementation.
+let recordedSiteInstance (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { instance = DictionaryInstance }) -> Some("evidence")
+                | Some(_operator) -> Some("direct")
+                | None -> None
+        | _ -> None
+
+let settledText (recorded: SemanticType) (state: CoreLoweringState) =
+    match recordedSettledType(recorded)(state) with
+        | Some(settled) ->
+            settled
+            |> Ashes.Trait.Show.show
+            |> Some
+        | None -> None
+
+// The operand type the table records for the operator at the site being lowered, closed as
+// shadowSiteType closes a type.
+let shadowSiteOperandText (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { operandType = operandType }) -> settledText(operandType)(state)
+                | None -> None
+        | _ -> None
+
+let recursive firstSettledOfTrait (traitName: Str) (dictionaries: List((Str, Maybe(SemanticType)))) =
+    match dictionaries with
+        | [] -> None
+        | (name, Some(settled)) :: rest ->
+            if name == traitName
+            then
+                settled
+                |> Ashes.Trait.Show.show
+                |> Some
+            else firstSettledOfTrait(traitName)(rest)
+        | _open :: rest -> firstSettledOfTrait(traitName)(rest)
+
+// The type the table answers a trait goal at the site being lowered with: the operand of the
+// operator recorded there for that trait, or the first closed dictionary of that trait the
+// reference there was recorded to pass. `key` is the goal key, `start:end:Trait:method`.
+let shadowGoalTypeText (key: Str) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode, Ashes.Text.split(key)(":")) with
+        | (Some(table), Some(node), _start :: _end :: traitName :: _method) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { traitName = recordedTrait, operandType = operandType }) ->
+                    if recordedTrait == traitName
+                    then settledText(operandType)(state)
+                    else
+                        state
+                        |> recordedSettledDictionariesAt(node)
+                        |> firstSettledOfTrait(traitName)
+                | None ->
+                    state
+                    |> recordedSettledDictionariesAt(node)
+                    |> firstSettledOfTrait(traitName)
+        | _ -> None
+
+// The type the table answers a constrained call's dictionary goal with: the first closed dictionary
+// of the goal's trait recorded at the call's root reference.
+let shadowDictionaryGoalTypeText (key: Str) (root: Int) (state: CoreLoweringState) =
+    match Ashes.Text.split(key)(":") with
+        | _start :: _end :: traitName :: _method ->
+            state
+            |> recordedSettledDictionariesAt(root)
+            |> firstSettledOfTrait(traitName)
+        | _ -> None
+
+let recursive boundSchemeNamed (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (bound, scheme) :: rest ->
+            if bound == name
+            then Some(scheme)
+            else boundSchemeNamed(name)(rest)
+
+// The type the table records for a lambda's parameter: the binding the inference notes at the
+// lambda's own node, closed as shadowSiteType closes a type. Ok(None) when the node in effect
+// binds no parameter of that name (it is not the lambda's node: an applied lambda is lowered
+// under its call's node), Ok(Some) with the type, Error when the binding's type stays open.
+let shadowLambdaParameterType (parameter: Str) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match table
+            |> nodeBindingsAt(node)
+            |> boundSchemeNamed(parameter) with
+                | Some(TypeScheme { body = body }) ->
+                    match recordedSettledType(body)(state) with
+                        | Some(settled) -> Ok(Some(settled))
+                        | None -> Error("open or untranslatable type")
+                | None -> Ok(None)
+        | _ -> Ok(None)
 
 // The name and scheme the standalone inference gave the top-level binding whose value is the node
 // with this identity, as lowering writes it. The scheme keeps the inference's quantified variable

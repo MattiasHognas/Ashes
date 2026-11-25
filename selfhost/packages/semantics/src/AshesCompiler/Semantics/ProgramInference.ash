@@ -20,6 +20,7 @@ import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
+import AshesCompiler.Semantics.RequirementSites.requirementSiteWithContext
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.sortBy
@@ -370,8 +371,8 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
 let recursive seedRecursiveBindings pending environment substitution supply =
     match pending with
         | [] -> RecursiveInference(resolved = [], substitution = substitution, supply = supply, error = None)
-        | PendingRecursiveBinding { annotation = annotation, placeholderType = placeholderType } :: tail ->
-            match seedRecursiveSignature(annotation)(placeholderType)(environment)(substitution)(supply) with
+        | PendingRecursiveBinding { annotation = annotation, value = value, placeholderType = placeholderType } :: tail ->
+            match seedRecursiveBinding(annotation)(value)(placeholderType)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> seedRecursiveBindings(tail)(environment)(seededSubstitution)(seededSupply)
                 | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } ->
                     RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(
@@ -407,8 +408,12 @@ let recursive defaultRecursiveBuiltinArguments bindings outerEnvironment substit
 // A `print` argument error located at the `print` call in `value` that raised it, as stage 0
 // reports it.
 let printArgumentErrorAt (value: Expr) (error: TypeInferenceError) =
-    match requirementSiteSpan("$PrintArgument")(value) with
-        | Some(site) -> InferenceErrorAt(site)(error)
+    match requirementSiteWithContext("$PrintArgument")(value) with
+        | Some((site, None)) -> InferenceErrorAt(site)(error)
+        | Some((site, Some(context))) ->
+            error
+            |> InferenceErrorInContext(context)
+            |> InferenceErrorAt(site)
         | None -> error
 
 // The `print` argument a member of the group would generalize over, once the group's defaults are

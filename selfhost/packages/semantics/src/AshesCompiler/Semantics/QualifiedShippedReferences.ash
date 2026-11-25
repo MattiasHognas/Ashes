@@ -21,6 +21,7 @@ export (
     type QualifiedShippedReference(..),
     value collectQualifiedShippedReferences,
     value qualifiedShippedModulesNeedingSource,
+    value qualifiedShippedDependenciesOf,
 )
 
 type QualifiedShippedReference =
@@ -155,3 +156,20 @@ let qualifiedShippedModulesNeedingSource (shippedNames: List(Str)) (source: Str)
     |> collectQualifiedShippedReferences(appendList(shippedNames)(intrinsicBuiltinModuleNames))
     |> sourcesNeeded(shippedNames)
     |> (given (names) -> dedupe(names)([]))
+
+let recursive withoutName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: rest ->
+            if head == name
+            then withoutName(name)(rest)
+            else head :: withoutName(name)(rest)
+
+// The shipped modules the shipped module `moduleName` reaches only through bare qualified
+// references, leaving out the module itself: a module naming its own binding by its full path
+// (`Ashes.Task.Parallel.both` inside `Ashes.Task.Parallel`) does not depend on itself. Stage 0
+// scans no shipped module for qualified references at all.
+let qualifiedShippedDependenciesOf (moduleName: Str) (shippedNames: List(Str)) (source: Str) =
+    source
+    |> qualifiedShippedModulesNeedingSource(shippedNames)
+    |> withoutName(moduleName)

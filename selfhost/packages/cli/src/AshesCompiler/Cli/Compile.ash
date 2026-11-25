@@ -7,8 +7,8 @@
 //   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
 //   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
 //   program through the standalone type inference (the type checker: a program it rejects fails
-//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through
-//   `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
+//   with stage 0's diagnostic), then through lowering from its recorded types
+//   (`lowerCoreNumberedProgramWithRegionsAndReuse`) and `optimizeIrProgram`, the lowered `IrProgram`
 //   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
 //   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
@@ -52,6 +52,10 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Backend.LinkNames
+import AshesCompiler.Backend.ProgramPartitions.requestedObjectPartitions
+import AshesCompiler.Backend.ProgramPartitions.partitionProcessesFor
+import AshesCompiler.Backend.PartitionProcesses.onlineProcessorCount
+import AshesCompiler.Backend.PartitionedObjects
 import AshesCompiler.Frontend.ImportHeader.parseImportHeader
 import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
 import AshesCompiler.Frontend.Parser.parseProgram
@@ -373,105 +377,30 @@ let loweringErrorTextAt (recorded: Maybe(IrSourceLocation)) (error: CoreLowering
             in locationPrefix(location) + codePrefix(code) + message
         | None -> Ashes.Trait.Show.show(error)
 
-let loweringErrorText (error: CoreLoweringError) = loweringErrorTextAt(None)(error)
-
 let loweredStitchedResult (lowering: CoreLoweringResult) =
     match lowering with
-        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
+        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, (valuePlacements, joinRepresentations)))
         | CoreLoweringResult { error = Some(error), errorLocation = recorded } ->
             error
             |> loweringErrorTextAt(recorded)
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-let lowerStitchedProgram reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    stitched.program
-    |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-    |> loweredStitchedResult
-
-// With `ASHES_TYPED_LOWERING=1` the standalone type inference runs on the stitched program first
-// and lowering is given the numbered program with the types the inference recorded against it. A
-// program the inference rejects is not lowered; the inference's error is the compile error. Unset,
-// lowering infers the program's types as it lowers it.
-let typedLoweringRequested unit =
-    match Ashes.IO.Environment.get("ASHES_TYPED_LOWERING") with
-        | Ok(Some(value)) -> value == "1"
-        | _ -> false
-
-let typedLoweringInferenceError (result: ProgramInferenceResult) (error: ProgramInferenceError) =
-    match result.errorLocation with
-        | Some(location) -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error) + " at " + Ashes.Trait.Show.show(location)
-        | None -> "Type inference before lowering failed: " + Ashes.Trait.Show.show(error)
-
 // The numbered units of a stitched project as the one program lowering walks.
 let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
-
-let lowerStitchedTyped reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    (let identified = identifyStitchedProject(stitched)
-    in
-        match inferIdentifiedStitchedProjectFrom(
-            "standalone"
-            |> emptyTypeEnvironmentForPackage
-            |> withIntrinsicBuiltinSignatures,
-            stitched,
-            identified
-        ) with
-            | ProgramInferenceResult { error = Some(error) } as result ->
-                error
-                |> typedLoweringInferenceError(result)
-                |> Error
-            | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
-                nodeTypes
-                |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
-                |> loweredStitchedResult)
-
-// With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
-// alone decides whether it is accepted, as before the check existed.
-let inferenceCheckSkipped unit =
-    match Ashes.IO.Environment.get("ASHES_SKIP_INFERENCE_CHECK") with
-        | Ok(Some(value)) -> value == "1"
-        | _ -> false
 
 let builtinInferenceEnvironment unit =
     "standalone"
     |> emptyTypeEnvironmentForPackage
     |> withIntrinsicBuiltinSignatures
 
-// A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
-// program or rejects it with an error that keeps its structural form. An error lowering does not
-// locate (an operator's operands of two types) is printed at `fallbackPrefix`, the location the
-// inference rejected the program at, which is where stage 0 reports it.
-let wordedLoweringError (fallbackPrefix: Str) (lowering: CoreLoweringResult) =
-    match lowering with
-        | CoreLoweringResult { error = Some(error) } ->
-            match (loweringErrorDiagnostic(error), loweringErrorLocation(error)) with
-                | (Some(DiagnosticEntry { message = message, code = code }), None) -> Some(fallbackPrefix + codePrefix(code) + message)
-                | (Some(_diagnostic), Some(_location)) ->
-                    error
-                    |> loweringErrorText
-                    |> Some
-                | (None, _) -> None
-        | _ -> None
-
-// The compile error of a program the inference rejects. A bare unification error lacks the call,
-// argument or operator stage 0 words its message after, so lowering is asked for its own
-// diagnostic of the program, which has that site; every other error is the inference's own,
-// worded as stage 0 words it.
-let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxProject) builtins (result: ProgramInferenceResult) (error: ProgramInferenceError) =
-    (let inferenceText = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
-    in
-        if inferenceErrorWantsCallSiteWording(stitched.definitionPlacements)(error)
-        then
-            match stitched.program
-            |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-            |> wordedLoweringError(inferenceErrorLocationPrefix(inputPath)(source)(result)) with
-                | Some(text) -> text
-                | None -> inferenceText
-        else inferenceText)
+// The compile error of a program the inference rejects, worded from the inference's own error as
+// stage 0 words it.
+let rejectedProgramText (stitched: StitchedSyntaxProject) builtins inputPath source (result: ProgramInferenceResult) (_error: ProgramInferenceError) = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
 
 // The standalone type inference is the type checker: it runs on every stitched program before
-// lowering, and a program it rejects is not lowered further. An accepted program is lowered as it
-// is without the check, or from the inference's recorded types with `ASHES_TYPED_LOWERING=1`.
+// lowering, and a program it rejects is not lowered further. An accepted program is lowered from the
+// types the inference recorded against the numbered program.
 let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     (let builtins = builtinInferenceEnvironment(Unit)
     in
@@ -480,32 +409,19 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
             match inferIdentifiedStitchedProjectFrom(builtins)(stitched)(identified) with
                 | ProgramInferenceResult { error = Some(error) } as result ->
                     error
-                    |> rejectedProgramText(reuseEnabled)(inputPath)(source)(stitched)(builtins)(result)
+                    |> rejectedProgramText(stitched)(builtins)(inputPath)(source)(result)
                     |> Error
                 | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
-                    if typedLoweringRequested(Unit)
-                    then
-                        nodeTypes
-                        |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
-                        |> loweredStitchedResult
-                    else
-                        stitched.program
-                        |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))(nodeTypes)
-                        |> loweredStitchedResult)
-
-let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    if typedLoweringRequested(Unit)
-    then lowerStitchedTyped(reuseEnabled)(inputPath)(source)(stitched)
-    else lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
+                    nodeTypes
+                    |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
+                    |> loweredStitchedResult)
 
 // The stitched project type-checked, lowered and optimized, with the placement facts the reports
 // read.
 let lowerStitched reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    match if inferenceCheckSkipped(Unit)
-    then lowerUnchecked(reuseEnabled)(inputPath)(source)(stitched)
-    else lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
+    match lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
         | Error(message) -> Error(message)
-        | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
+        | Ok((lowered, valuePlacements)) -> Ok((stitched, lowered, optimizeIrProgram(lowered), valuePlacements))
 
 // The module-qualified name of a stitched binding for the reports. The single-file form is stage
 // 0's standalone layout, whose entry module is named `Main`; every other definition reports under
@@ -718,27 +634,112 @@ let leakCheckRequested unit =
         | Ok(Some(value)) -> value == "1"
         | _ -> false
 
-// The lowered program as a linux-x64 relocatable object, through `codegenProgram` and real LLVM.
-let emitObject lowered =
+// The link map path `ASHES_LINK_MAP` names, if any.
+let requestedLinkMapPath unit =
+    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
+        | Ok(Some(path)) when path != "" -> Some(path)
+        | _ -> None
+
+// The program built into an LLVM module, with what emission and linking still read from it: its
+// runtime payloads, its external libraries, and, when a link map was requested, the origin text of
+// every function. The program itself is not part of the result, so a caller that took the program
+// from a call's result releases it before the module is optimized and emitted.
+let preparedEmission optimized =
     (let _ = initializeX86Target(Unit)
     in
         let context = contextCreate(Unit)
         in
             let _ = reportDiagnosticPhase("codegen-start")
             in
-                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(lowered) with
+                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(optimized) with
                     | (module_, builder) ->
                         let _ = reportDiagnosticPhase("codegen-done")
                         in
-                            match resolveHostTargetMachine(linuxX64Triple) with
-                                | Error(message) -> Error(message)
-                                | Ok(machine) ->
-                                    emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
+                            let linkNames =
+                                match requestedLinkMapPath(Unit) with
+                                    | Some(_path) ->
+                                        optimized
+                                        |> linkNamesText
+                                        |> Some
+                                    | None -> None
+                            in (module_, builder, context, runtimePayloadsFor(optimized), externalLibraries(optimized), linkNames))
 
-let linkExecutable program objectBytes =
-    program
-    |> externalLibraries
-    |> linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)
+// The prepared module as a linux-x64 relocatable object, through real LLVM.
+let emitPreparedObject module_ builder context payloads =
+    match resolveHostTargetMachine(linuxX64Triple) with
+        | Error(message) -> Error(message)
+        | Ok(machine) -> emitObjectWithMachine(payloads)(machine)(builder)(module_)(context)
+
+// Each vendored payload the program needs, resolved to its file.
+let recursive resolveRuntimePayloadPaths (fileNames: List(Str)) (acc: List(Str)) =
+    match fileNames with
+        | [] ->
+            acc
+            |> Ashes.Collection.List.reverse
+            |> Ok
+        | fileName :: rest ->
+            match runtimePayloadPath(fileName) with
+                | Error(message) -> Error(message)
+                | Ok(path) -> resolveRuntimePayloadPaths(rest)(path :: acc)
+
+// A fresh host target machine for each partition of a partitioned build.
+let partitionTargetMachine unit = resolveHostTargetMachine(linuxX64Triple)
+
+// The partition count setting, stage 0's `ASHES_LLVM_JOBS` (`requestedObjectPartitions`); unset
+// or empty, the plan is sized from the program, and `1` builds it as one module.
+let objectPartitionsSetting unit =
+    match Ashes.IO.Environment.get("ASHES_LLVM_JOBS") with
+        | Ok(Some(value)) when value != "" -> Some(value)
+        | _ -> None
+
+// A program prepared for emission: one module (`preparedEmission`'s tuple), or the partition
+// modules of a partitioned build with the payload files partition 0 links, the external libraries
+// and the link-map names.
+type PreparedBuild(W, P) =
+    | WholeModuleBuild(W)
+    | PartitionedBuild(P)
+
+// The program built into `partitions` partition modules, every one built while the program is
+// read, with the payload files resolved and what linking still needs read up front. Like
+// `preparedEmission`, the program is not part of the result, so it is released before the first
+// partition is optimized; the unoptimized partition modules are then all alive together.
+let preparedPartitionedEmission (partitions: Int) optimized =
+    (let _ = initializeX86Target(Unit)
+    in
+        match resolveRuntimePayloadPaths(runtimePayloadsFor(optimized))([]) with
+            | Error(message) -> Error(message)
+            | Ok(payloadPaths) ->
+                let _ = reportDiagnosticPhase("codegen-start")
+                in
+                    let modules =
+                        buildPartitionModules(leakCheckRequested(Unit))(entrySymbolName)(partitions)(optimized)
+                    in
+                        let _ = reportDiagnosticPhase("codegen-done")
+                        in
+                            let linkNames =
+                                match requestedLinkMapPath(Unit) with
+                                    | Some(_path) ->
+                                        optimized
+                                        |> linkNamesText
+                                        |> Some
+                                    | None -> None
+                            in Ok(PartitionedBuild((modules, payloadPaths, externalLibraries(optimized), linkNames))))
+
+// The program prepared as one module when its plan is one partition (`ASHES_LLVM_JOBS=1`, or a
+// program below two partitions' worth of functions), otherwise as partition modules. The plan
+// depends on the program and the setting alone; the machine decides only how many partitions are
+// built at once.
+let preparedBuild optimized =
+    (let partitions =
+        requestedObjectPartitions(objectPartitionsSetting(Unit))(optimized)
+    in
+        if partitions > 1
+        then preparedPartitionedEmission(partitions)(optimized)
+        else
+            optimized
+            |> preparedEmission
+            |> WholeModuleBuild
+            |> Ok)
 
 // The output's directory is created first, as stage 0 does, so a fresh project's
 // `<outDir>/<name>` needs no prior `mkdir`.
@@ -768,35 +769,83 @@ let writeExecutable outputPath executableBytes =
 
 // With `ASHES_LINK_MAP` set to a path, the link map of the executable (one line per function,
 // `<hex address> <hex size> <name>`, sorted by address) is written there, and the origin of every
-// IR function to `<path>.names`. The executable itself is the same either way.
-let writeLinkMapFiles path optimized objectBytes =
+// IR function (`namesText`, read from the program before code generation) to `<path>.names`. The
+// executable itself is the same either way.
+let writeLinkMapFiles path (namesText: Str) objectBytes =
     match linuxLinkMapText(objectBytes) with
         | Error(message) -> Error(message)
         | Ok(mapText) ->
             match Ashes.IO.File.writeText(path)(mapText) with
                 | Error(message) -> Error("Could not write " + path + ": " + message)
                 | Ok(_) ->
-                    match optimized
-                    |> linkNamesText
-                    |> Ashes.IO.File.writeText(path + ".names") with
+                    match Ashes.IO.File.writeText(path + ".names")(namesText) with
                         | Error(message) -> Error("Could not write " + path + ".names: " + message)
                         | Ok(_) -> Ok(Unit)
 
-let writeRequestedLinkMap optimized objectBytes =
-    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
-        | Ok(Some(path)) when path != "" -> writeLinkMapFiles(path)(optimized)(objectBytes)
+let writeRequestedLinkMap (linkNames: Maybe(Str)) objectBytes =
+    match (requestedLinkMapPath(Unit), linkNames) with
+        | (Some(path), Some(namesText)) -> writeLinkMapFiles(path)(namesText)(objectBytes)
         | _ -> Ok(Unit)
 
-let emitAndLink outputPath optimized =
-    match emitObject(optimized) with
-        | Error(message) -> Error(message)
-        | Ok(objectBytes) ->
-            match writeRequestedLinkMap(optimized)(objectBytes) with
+// Optimizes and emits a prepared module, writes the requested link map, and links and writes the
+// executable to `outputPath`, returning the written byte count.
+let emitAndLinkPrepared outputPath prepared =
+    match prepared with
+        | (module_, builder, context, payloads, libraries, linkNames) ->
+            match emitPreparedObject(module_)(builder)(context)(payloads) with
                 | Error(message) -> Error(message)
-                | Ok(_) ->
-                    match linkExecutable(optimized)(objectBytes) with
+                | Ok(objectBytes) ->
+                    match writeRequestedLinkMap(linkNames)(objectBytes) with
                         | Error(message) -> Error(message)
-                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                        | Ok(_) ->
+                            match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                                | Error(message) -> Error(message)
+                                | Ok(executableBytes) ->
+                                    let _ = reportDiagnosticPhase("linked")
+                                    in writeExecutable(outputPath)(executableBytes)
+
+// How many partitions are optimized and emitted at once, in child processes:
+// `ASHES_LLVM_PROCESSES` when set, else the backend's default capped by the online processors, at
+// most the partition count (`partitionProcessesFor`). 1 builds them one after another in this
+// process. The image does not depend on the count.
+let partitionProcessesRequested (partitions: Int) =
+    (let setting =
+        match Ashes.IO.Environment.get("ASHES_LLVM_PROCESSES") with
+            | Ok(Some(value)) when value != "" -> Some(value)
+            | _ -> None
+    in
+        partitionProcessesFor(setting)(onlineProcessorCount(Unit))(partitions))
+
+// The directory the partition child processes write their objects under.
+let partitionTemporaryRoot unit =
+    match Ashes.IO.Environment.temporaryDirectory(Unit) with
+        | Ok(directory) -> directory
+        | Error(_) -> "/tmp"
+
+// Optimizes and emits the partition modules, up to `partitionProcessesRequested` at once, merges
+// their objects, writes the requested link map of the merged object, and links and writes the
+// executable to `outputPath`.
+let emitAndLinkPartitioned outputPath prepared =
+    match prepared with
+        | (modules, payloadPaths, libraries, linkNames) ->
+            let processes =
+                modules
+                |> Ashes.Collection.List.length
+                |> partitionProcessesRequested
+            in
+                match mergePartitionModulesWith(processes)(partitionTemporaryRoot(Unit))(linuxX64Triple)(partitionTargetMachine)(payloadPaths)(modules) with
+                    | Error(message) -> Error(message)
+                    | Ok(objectBytes) ->
+                        let _ = reportDiagnosticPhase("emitted")
+                        in
+                            match writeRequestedLinkMap(linkNames)(objectBytes) with
+                                | Error(message) -> Error(message)
+                                | Ok(_) ->
+                                    match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                                        | Error(message) -> Error(message)
+                                        | Ok(executableBytes) ->
+                                            let _ = reportDiagnosticPhase("linked")
+                                            in writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
@@ -831,22 +880,30 @@ let runShadowInference stitched =
                     |> Ashes.IO.writeErrorLine
         | _ -> Unit
 
-// Lowers, reports, emits, and links an already stitched program to `outputPath`, returning the
-// written byte count; `inputPath` and `source` are the text source locations are computed from.
-let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
+// Lowers an already stitched program and prints the requested reports and dumps; `inputPath` and
+// `source` are the text source locations are computed from. Only the optimized program leaves
+// this function: the stitched syntax, the inference tables, the unoptimized program and the
+// placement facts are held by its frames alone, so they are released before code generation.
+let optimizedStitchedProgram (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
     (let _ = runShadowInference(stitched)
     in
         match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
             | Error(message) -> Error(message)
             | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
-                optimized
-                |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-                |> (given (_) ->
+                let _ = writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)(optimized)
+                in
                     let _ = reportDiagnosticPhase("ir-optimized")
                     in
                         match writeDiagnosticIrDump(lowered)(optimized) with
                             | Error(message) -> Error(message)
-                            | Ok(_) -> emitAndLink(outputPath)(optimized)))
+                            | Ok(_) -> Ok(optimized))
+
+// Emits and links a prepared module to `outputPath`, returning the written byte count.
+let compilePreparedToExecutable outputPath prepared =
+    match prepared with
+        | Error(message) -> Error(message)
+        | Ok(WholeModuleBuild(emission)) -> emitAndLinkPrepared(outputPath)(emission)
+        | Ok(PartitionedBuild(partitioned)) -> emitAndLinkPartitioned(outputPath)(partitioned)
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
@@ -952,9 +1009,9 @@ let projectStitchErrorText (entryPath: Str) (source: Str) (error: ProjectStitchE
         | Some(diagnostics) -> parseDiagnosticsText(entryPath)(source)(diagnostics)
         | None -> Ashes.Trait.Show.show(error)
 
-// Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
-// on the way, and returns the written byte count.
-let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+// The optimized program of the file `inputPath`, printing the `explain` reports to stderr on the
+// way. The source text, the shipped modules and the stitched program stay inside this function.
+let optimizedFileProgram inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match readSourceText(inputPath) with
         | Error(message) -> Error("Could not read " + inputPath + ": " + message)
         | Ok(source) ->
@@ -966,12 +1023,26 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                             error
                             |> stitchErrorText(inputPath)(source)
                             |> Error
-                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
+                        | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
-// Compiles the project at `layout` to the executable at `outputPath`: its modules, its
-// dependencies' modules, and the shipped modules they reach are stitched into one program,
-// lowered against the entry module's text, and emitted exactly like the single-file form.
-let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+// The file `inputPath` built into an LLVM module. The optimized program is held by this frame
+// alone, so it is released when this returns, before the module is optimized and emitted.
+let preparedFileEmission inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match optimizedFileProgram(inputPath)(explain)(reuseEnabled) with
+        | Error(message) -> Error(message)
+        | Ok(optimized) -> preparedBuild(optimized)
+
+// Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
+// on the way, and returns the written byte count.
+let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    reuseEnabled
+    |> preparedFileEmission(inputPath)(explain)
+    |> compilePreparedToExecutable(outputPath)
+
+// The optimized program of the project at `layout`: its modules, its dependencies' modules, and
+// the shipped modules they reach stitched into one program and lowered against the entry module's
+// text, exactly like the single-file form.
+let optimizedProjectProgram (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
     match readSourceText(layout.entryPath) with
         | Error(message) -> Error("Could not read " + layout.entryPath + ": " + message)
         | Ok(source) ->
@@ -983,7 +1054,21 @@ let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: Expl
                             error
                             |> projectStitchErrorText(layout.entryPath)(source)
                             |> Error
-                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
+                        | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
+
+// The project at `layout` built into an LLVM module, released from its program as
+// `preparedFileEmission` is.
+let preparedProjectEmission (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match optimizedProjectProgram(layout)(explain)(reuseEnabled) with
+        | Error(message) -> Error(message)
+        | Ok(optimized) -> preparedBuild(optimized)
+
+// Compiles the project at `layout` to the executable at `outputPath`, printing the `explain`
+// reports to stderr on the way, and returns the written byte count.
+let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    reuseEnabled
+    |> preparedProjectEmission(layout)(explain)
+    |> compilePreparedToExecutable(outputPath)
 
 let compileResolvedInput resolved outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match resolved with

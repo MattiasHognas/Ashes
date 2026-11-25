@@ -72,6 +72,24 @@ export (
     value previousInstructionAddress,
     value instructionOpcodeAt,
     value valueNameAt,
+    value firstGlobalAddress,
+    value nextGlobalAddress,
+    value isDeclarationAt,
+    value linkageAt,
+    value getNamedGlobal,
+    value setVisibility,
+    value visibilityHidden,
+    value linkageWeakOdr,
+    value globalValueType,
+    value isGlobalConstant,
+    value getAlignment,
+    value setAlignment,
+    value isThreadLocal,
+    value setThreadLocalMode,
+    value threadLocalModeLocalExec,
+    value setValueName,
+    value replaceAllUsesWith,
+    value deleteGlobal,
     value verifierAbortProcessAction,
     value verifierPrintMessageAction,
     value verifierReturnStatusAction,
@@ -84,6 +102,7 @@ export (
     value disposePassBuilderOptions,
     value runPasses,
     value targetMachineEmitToMemoryBuffer,
+    value targetMachineEmitToFile,
     value getBufferStart,
     value getBufferSize,
     value disposeMemoryBuffer,
@@ -234,6 +253,22 @@ external LLVMGetLastInstructionAddress(Int) -> Int = "LLVMGetLastInstruction@lib
 external LLVMGetPreviousInstructionAddress(Int) -> Int = "LLVMGetPreviousInstruction@libLLVM.so"
 external LLVMGetInstructionOpcodeAt(Int) -> u32 = "LLVMGetInstructionOpcode@libLLVM.so"
 external LLVMGetValueNameAt(Int) -> FfiStr(borrowed) = "LLVMGetValueName@libLLVM.so"
+// The global walk and symbol export of partitioned code generation, in the same native-word form.
+external LLVMGetFirstGlobalAddress(LLVMModuleRef) -> Int = "LLVMGetFirstGlobal@libLLVM.so"
+external LLVMGetNextGlobalAddress(Int) -> Int = "LLVMGetNextGlobal@libLLVM.so"
+external LLVMIsDeclarationAt(Int) -> Bool = "LLVMIsDeclaration@libLLVM.so"
+external LLVMGetLinkageAt(Int) -> u32 = "LLVMGetLinkage@libLLVM.so"
+external LLVMGetNamedGlobal(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedGlobal@libLLVM.so"
+external LLVMSetVisibility(LLVMValueRef, u32) -> void = "LLVMSetVisibility@libLLVM.so"
+external LLVMGlobalGetValueType(LLVMValueRef) -> LLVMTypeRef = "LLVMGlobalGetValueType@libLLVM.so"
+external LLVMIsGlobalConstant(LLVMValueRef) -> Bool = "LLVMIsGlobalConstant@libLLVM.so"
+external LLVMGetAlignment(LLVMValueRef) -> u32 = "LLVMGetAlignment@libLLVM.so"
+external LLVMSetAlignment(LLVMValueRef, u32) -> void = "LLVMSetAlignment@libLLVM.so"
+external LLVMIsThreadLocal(LLVMValueRef) -> Bool = "LLVMIsThreadLocal@libLLVM.so"
+external LLVMSetThreadLocalMode(LLVMValueRef, u32) -> void = "LLVMSetThreadLocalMode@libLLVM.so"
+external LLVMSetValueName2(LLVMValueRef, Str, Int) -> void = "LLVMSetValueName2@libLLVM.so"
+external LLVMReplaceAllUsesWith(LLVMValueRef, LLVMValueRef) -> void = "LLVMReplaceAllUsesWith@libLLVM.so"
+external LLVMDeleteGlobal(LLVMValueRef) -> void = "LLVMDeleteGlobal@libLLVM.so"
 external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@libLLVM.so"
 external LLVMInitializeX86Target() -> void = "LLVMInitializeX86Target@libLLVM.so"
 external LLVMInitializeX86TargetMC() -> void = "LLVMInitializeX86TargetMC@libLLVM.so"
@@ -255,6 +290,7 @@ external LLVMDisposePassBuilderOptions(LLVMPassBuilderOptionsRef) -> void = "LLV
 // SysV ABI leaves the returned pointer in RAX unread, which is safe to simply discard.
 external LLVMRunPasses(LLVMModuleRef, Str, LLVMTargetMachineRef, LLVMPassBuilderOptionsRef) -> void = "LLVMRunPasses@libLLVM.so"
 external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef, u32, out *u8, out LLVMMemoryBufferRef) -> Bool = "LLVMTargetMachineEmitToMemoryBuffer@libLLVM.so"
+external LLVMTargetMachineEmitToFile(LLVMTargetMachineRef, LLVMModuleRef, Str, u32, out *u8) -> Bool = "LLVMTargetMachineEmitToFile@libLLVM.so"
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
 external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemoryBuffer@libLLVM.so"
@@ -412,6 +448,52 @@ let instructionOpcodeAt (instruction: Int) = LLVMGetInstructionOpcodeAt(instruct
 // The name of the function at `function_` (`LLVMGetValueName`).
 let valueNameAt (function_: Int) = LLVMGetValueNameAt(function_)
 
+// The module's first global variable and the one after `global`, as native words, 0 past the end.
+let firstGlobalAddress module_ = LLVMGetFirstGlobalAddress(module_)
+
+let nextGlobalAddress (global: Int) = LLVMGetNextGlobalAddress(global)
+
+// Whether the global value (function or variable) at `global` has no body or initializer.
+let isDeclarationAt (global: Int) = LLVMIsDeclarationAt(global)
+
+// The `LLVMLinkage` of the global value at `global`.
+let linkageAt (global: Int) = LLVMGetLinkageAt(global)
+
+// The module's global variable named `name`; the name must exist.
+let getNamedGlobal module_ name = LLVMGetNamedGlobal(module_)(name)
+
+let setVisibility global visibility = LLVMSetVisibility(global)(visibility)
+
+// `LLVMHiddenVisibility`: a hidden symbol is implicitly `dso_local`, so LLVM addresses it directly
+// rather than through the GOT.
+let visibilityHidden = 1u32
+
+let linkageWeakOdr = 6u32
+
+let globalValueType global = LLVMGlobalGetValueType(global)
+
+let isGlobalConstant global = LLVMIsGlobalConstant(global)
+
+let getAlignment global = LLVMGetAlignment(global)
+
+let setAlignment global alignment = LLVMSetAlignment(global)(alignment)
+
+let isThreadLocal global = LLVMIsThreadLocal(global)
+
+let setThreadLocalMode global mode = LLVMSetThreadLocalMode(global)(mode)
+
+// `LLVMLocalExecTLSModel`.
+let threadLocalModeLocalExec = 4u32
+
+let setValueName value name =
+    name
+    |> Ashes.Text.byteLength
+    |> LLVMSetValueName2(value)(name)
+
+let replaceAllUsesWith oldValue newValue = LLVMReplaceAllUsesWith(oldValue)(newValue)
+
+let deleteGlobal global = LLVMDeleteGlobal(global)
+
 let initializeX86TargetInfo _ = LLVMInitializeX86TargetInfo(Unit)
 
 let initializeX86TargetOnly _ = LLVMInitializeX86Target(Unit)
@@ -461,6 +543,9 @@ let runPasses module_ passes machine options = LLVMRunPasses(module_)(passes)(ma
 // returned buffer owns native memory and must be freed with `disposeMemoryBuffer` once its bytes
 // have been copied out (with `Ashes.Ffi.copyBytes`, via `getBufferStart`/`getBufferSize`).
 let targetMachineEmitToMemoryBuffer machine module_ fileType = LLVMTargetMachineEmitToMemoryBuffer(machine)(module_)(fileType)
+
+// Emits the module to the file at `path`; `(isBroken, errorMessage)`, as the memory-buffer form.
+let targetMachineEmitToFile machine module_ (path: Str) fileType = LLVMTargetMachineEmitToFile(machine)(module_)(path)(fileType)
 
 let getBufferStart memoryBuffer = LLVMGetBufferStart(memoryBuffer)
 

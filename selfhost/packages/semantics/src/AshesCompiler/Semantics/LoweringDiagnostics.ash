@@ -160,6 +160,8 @@ let loweringErrorDiagnostic (error: CoreLoweringError) =
         | CoreImmediateEvidenceDiagnostic(message) -> unlocatedDiagnostic(Some("ASH010"))(message)
         | CoreCapabilityDiagnostic(code, message) -> unlocatedDiagnostic(Some(code))(message)
         | ResourcePatternAliasConflict(message) -> unlocatedDiagnostic(None)(message)
+        | CoreUnrecordedOperatorType(traitName) -> unlocatedDiagnostic(None)("Internal compiler error: no recorded type for the operands of this " + traitName + " operator; the type checker settles every operator before lowering.")
+        | CoreUnrecordedTraitGoal(traitName, _goalType) -> unlocatedDiagnostic(None)("Internal compiler error: no recorded type answers the " + traitName + " requirement here; the type checker settles every requirement before lowering.")
         | _ -> None
 
 let loweringErrorLocation (error: CoreLoweringError) =

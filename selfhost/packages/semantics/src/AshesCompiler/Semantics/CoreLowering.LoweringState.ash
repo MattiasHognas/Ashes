@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 import AshesCompiler.Semantics.NodeTypeTable.settledInstantiationArguments
+import AshesCompiler.Semantics.NodeTypeTable.nodeTypeAt
 export (
     type ConsumerRequest(..),
     type RuntimeTempState(..),
@@ -53,6 +54,13 @@ export (
     type CoreHeapQueryContext(..),
     type CoreTypeObservation(..),
     type ObservedPendingGoal(..),
+    type ShadowSite(..),
+    value shadowing,
+    value observeShadow,
+    value observeShadowPending,
+    value observeShadowUnrecorded,
+    value withSingleLoweringMeasurement,
+    value stateSingleLowering,
     value withPendingGoalObservation,
     value observePendingGoal,
     value observeDeferredOperatorGoal,
@@ -179,6 +187,8 @@ export (
     value withStateNormalizableRecordTypes,
     value stateBodyRuntimeManagedByLabel,
     value withStateBodyRuntimeManagedByLabel,
+    value stateTrivialParameterFieldAccessorLabels,
+    value withStateTrivialParameterFieldAccessorLabels,
     value stateDropperLabels,
     value withStateDropperLabels,
     value withStateDropperResult,
@@ -284,6 +294,8 @@ export (
     value statePendingBorrowedOwners,
     value withStatePendingBorrowedOwners,
     value statePendingRuntimeArgumentFlags,
+    value statePendingAccessorResultRetains,
+    value withStatePendingAccessorResultRetains,
     value withStatePendingRuntimeArgumentFlags,
     value stateGenericDeepCopiedListTemps,
     value withStateGenericDeepCopiedListTemps,
@@ -853,6 +865,22 @@ type ObservedPendingGoal =
     | operand: SemanticType
     | activeMethods: List((Str, SemanticType, Str, Str))
 
+// A site where an order-dependent rule (numbered as in the step-8 plan) decided otherwise than the
+// same rule over the final type would, or where no final type answers it. `final` is None when the
+// table records nothing closed for the site. `calleeFacts` holds the callee of a call whose result
+// was asked for in the arena because its body was not lowered yet; the comparison is made once
+// every body is lowered.
+type ShadowSite =
+    | entry: Int
+    | region: Int
+    | node: Maybe(Int)
+    | span: Maybe(TextSpan)
+    | current: Str
+    | final: Maybe(Str)
+    // Why the table answers nothing for the site, when `final` is None.
+    | reason: Str
+    | calleeFacts: Maybe(CoreCalleeFacts)
+
 type CoreTypeObservation =
     | goalSites: Maybe(List(ObservedPendingGoal))
     | topLevelScope: List(CoreBinding)
@@ -870,6 +898,14 @@ type CoreTypeObservation =
     // Concrete source-copy calls whose argument tree was skipped or inferred.
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
+    // The step-8 shadow comparison: per order-dependent rule (1 to 11), how many sites the rule
+    // decided as the rule over the final type would, and every other site.
+    | shadowAgree: List(Int)
+    | shadowSites: List(ShadowSite)
+    // A measurement of the re-lowering cost: no body is lowered a second time, whatever its first
+    // lowering left open, so the time of a lowering without rules 4 and 10 can be set against the
+    // ordinary one. The lowered program is not meant to be used.
+    | singleLowering: Bool
 
 type CoreTraitGoalAnswer =
     | ProvenOperandType(SemanticType)
@@ -936,6 +972,9 @@ type CoreProgramState =
     // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
     | tupleBinderParameters: List((Int, Int))
     | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
+    // Stage 0's `_isTrivialParameterFieldAccessorByLabel`: the functions whose whole body is a
+    // borrowed field read of their own parameter, of a type with a shallow copy-out.
+    | trivialParameterFieldAccessorLabels: MapTree(Str, Bool)
     // The functions whose compiled result is owned under the contract: each normalizes a result of
     // the contract's types at its return, so a caller that names one takes the result over as it is.
     | generalRcOwnedResultLabels: List(Str)
@@ -1201,6 +1240,10 @@ type CoreOwnerState =
     // finalize pass still decides, with that parameter's slot; the flag is zeroed at finalize
     // when the frame does not admit the parameter to the reference-counted heap.
     | pendingRuntimeArgumentFlags: List((Int, Int))
+    // Stage 0's `_pendingAccessorResultRetains`: the retain of a trivial accessor call's result
+    // whose argument reads a loop parameter not yet placed, with that parameter's slot; finalize
+    // makes it a reference-counted retain when the frame admits the parameter.
+    | pendingAccessorResultRetains: List((Int, Int))
     // Stage 0's `_genericDeepCopiedListTemps`: the result temps of this function's calls whose
     // generic list result was deep-copied out of the call window. Consumed by a later call whose
     // result reach is unknown, such a list is left to that callee's arena result rather than
@@ -1438,7 +1481,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -2018,6 +2061,14 @@ let withStateBodyRuntimeManagedByLabel value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with bodyRuntimeManagedByLabel = value))
 
+let stateTrivialParameterFieldAccessorLabels (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.trivialParameterFieldAccessorLabels)
+
+let withStateTrivialParameterFieldAccessorLabels value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with trivialParameterFieldAccessorLabels = value))
+
 let stateDropperLabels (state: CoreLoweringState) =
     (let group = state.programState
     in group.dropperLabels)
@@ -2458,6 +2509,14 @@ let statePendingRuntimeArgumentFlags (state: CoreLoweringState) =
 let withStatePendingRuntimeArgumentFlags value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with pendingRuntimeArgumentFlags = value))
+
+let statePendingAccessorResultRetains (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.pendingAccessorResultRetains)
+
+let withStatePendingAccessorResultRetains value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with pendingAccessorResultRetains = value))
 
 let stateGenericDeepCopiedListTemps (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -3299,3 +3358,78 @@ let observePendingGoal structural key operand (state: CoreLoweringState) = obser
 // Records an operator site lowering deferred because both operands were still open, when the
 // lowering observes its goal sites; otherwise the state is unchanged.
 let observeDeferredOperatorGoal key operand (state: CoreLoweringState) = observeGoalSite(false)(true)(key)(operand)(state)
+
+// Whether this lowering records the step-8 shadow comparison; a caller computes the final-type
+// answer only when it does, so an ordinary compile does no extra work.
+let shadowing (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(_observation) -> true
+            | None -> false)
+
+let recursive incrementAt (index: Int) (counts: List(Int)) =
+    match counts with
+        | [] -> []
+        | head :: rest ->
+            if index == 0
+            then head + 1 :: rest
+            else head :: incrementAt(index - 1)(rest)
+
+let recordShadowSite (site: ShadowSite) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with shadowSites = Ashes.Internal.deepCopy(site) :: observation.shadowSites))))
+
+// Why a site's final-type answer is missing: no node is in effect (code lowering synthesized
+// with no identity), the node is one lowering synthesized from a source node, or the recorded type
+// is open after the instantiation and the settled variables, or does not translate.
+let shadowUnrecordedReason (state: CoreLoweringState) =
+    match state.currentNode with
+        | None -> "no node"
+        | Some(node) ->
+            if node < 0
+            then "synthesized node"
+            else
+                match stateNodeTypes(state) with
+                    | Some(table) ->
+                        match nodeTypeAt(node)(table) with
+                            | Some(_recorded) -> "open or untranslatable type"
+                            | None -> "no type recorded at the node"
+                    | None -> "no node table"
+
+// A decision whose final-type answer is missing for a reason the caller knows.
+let observeShadowUnrecorded (entry: Int) (current: Str) (reason: Str) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = reason, calleeFacts = None))(state)
+
+// One decision of order-dependent rule `entry`: what the rule decided at the site and what the rule
+// over the final type decides there (None when the table records nothing closed for it). An
+// agreeing site is only counted; any other is kept with its location.
+let observeShadow (entry: Int) (current: Str) (final: Maybe(Str)) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) ->
+                if final == Some(current)
+                then state with programState = (group with typeObservation = Some((observation with shadowAgree = incrementAt(entry - 1)(observation.shadowAgree))))
+                else recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = final, reason = shadowUnrecordedReason(state), calleeFacts = None))(state))
+
+// Whether this lowering measures the cost of re-lowering by lowering every body once.
+let stateSingleLowering (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(CoreTypeObservation { singleLowering = single }) -> single
+            | None -> false)
+
+let withSingleLoweringMeasurement (single: Bool) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with singleLowering = single))))
+
+// A decision of rule 9 whose final answer is known only once every body is lowered.
+let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = "settled after lowering", calleeFacts = facts))(state)

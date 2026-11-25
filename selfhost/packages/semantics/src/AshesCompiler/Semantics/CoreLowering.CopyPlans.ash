@@ -229,6 +229,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateArenaParameterCopies([])
             |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
+            |> withStatePendingAccessorResultRetains([])
             |> withStateBackEdgeArgumentSlot(None)
             |> withStateAffineAppendContext(None)
             |> withStateAffineAppendReservation(None))

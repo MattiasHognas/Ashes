@@ -19,6 +19,7 @@ import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowLambdaParameterType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -181,18 +182,46 @@ let normalizesAlwaysReturnedParameter parameter body label parameterType (state:
             |> stateConstructorLayouts
             |> constructorLayoutNames)(mustReachCallee(loneRecursiveBindingNames(state))(state))(body)(parameter)
 
+// Step-8 shadow comparison, rule 11: whether the parameter is normalized at entry on the type it
+// has there, against the same decision on the parameter type the table records for the lambda.
+let shadowEntryNormalization parameter body label parameterType (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let decisionText =
+            given (normalizes: Bool) ->
+                if normalizes
+                then "normalize"
+                else "keep"
+        in
+            let current =
+                state
+                |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)
+                |> decisionText
+            in
+                match shadowLambdaParameterType(parameter)(state) with
+                    | Ok(Some(recordedParameter)) ->
+                        observeShadow(11)(current)(state
+                        |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(recordedParameter)
+                        |> decisionText
+                        |> Some)(state)
+                    | Ok(None) -> observeShadowUnrecorded(11)(current)("the node in effect binds no parameter '" + parameter + "' (an applied or synthesized lambda)")(state)
+                    | Error(reason) -> observeShadowUnrecorded(11)(current)(reason)(state)
+    else state
+
 // The entry-normalized parameter (if any) made visible to the body's placement decisions; the
 // direct argument lives in local slot 1.
-let withNormalizedAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
-    if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
-    then
-        state
-        |> withStateNormalizedParameterCloned(false)
-        |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
-    else
-        state
-        |> withStateNormalizedParameterCloned(false)
-        |> withStateNormalizedAlwaysReturnedParameter(None)
+let withNormalizedAlwaysReturnedParameter parameter body label parameterType (unshadowed: CoreLoweringState) =
+    (let state = shadowEntryNormalization(parameter)(body)(label)(parameterType)(unshadowed)
+    in
+        if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
+        then
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
+        else
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(None))
 
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
@@ -1405,6 +1434,32 @@ let recursive zeroPendingFlagInstructions (instructions: List(IrInstruction)) (f
             else instruction) :: zeroPendingFlagInstructions(rest)(flags)
         | instruction :: rest -> instruction :: zeroPendingFlagInstructions(rest)(flags)
 
+let recursive upgradeAccessorRetainMarker (dupTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, runtime, flag) } as instruction) :: rest ->
+            if target == dupTemp && !runtime
+            then (instruction with instruction = RcDup(target)(source)(true)(flag)) :: rest
+            else instruction :: upgradeAccessorRetainMarker(dupTemp)(rest)
+        | instruction :: rest -> instruction :: upgradeAccessorRetainMarker(dupTemp)(rest)
+
+let recursive finalizeAccessorRetains (retains: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match retains with
+        | [] -> state
+        | (dupTemp, slot) :: rest ->
+            finalizeAccessorRetains(rest)(managedLists)(managedAdts)(candidates)((if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates)
+            then markRuntimeTemp(dupTemp)(RuntimeNewlyProduced)((state with reversedInstructions = upgradeAccessorRetainMarker(dupTemp)(state.reversedInstructions)))
+            else state))
+
+// Stage 0's `FinalizeAccessorResultRetains`: the identity marker a trivial accessor call over a
+// pending loop parameter emitted becomes a reference-counted retain when the frame placed the
+// parameter on the reference-counted heap, and stays an identity copy when it kept the parameter
+// in the arena, where the zeroed result flag brings the call's copy back.
+let finalizeAccessorResultRetains (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    state
+    |> finalizeAccessorRetains(statePendingAccessorResultRetains(state))(managedLists)(managedAdts)(candidates)
+    |> withStatePendingAccessorResultRetains([])
+
 // Stage 0's `ResolvePendingRuntimeArgumentFlags`: the ownership flag of a call argument that
 // reads a loop parameter the frame did not admit to the reference-counted heap (or a pattern
 // binding extracted from one) is rewritten to zero where it is defined, so the call neither
@@ -1790,6 +1845,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
+                    |> finalizeAccessorResultRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
                     |> finishTcoManagedPlacement(label)(state

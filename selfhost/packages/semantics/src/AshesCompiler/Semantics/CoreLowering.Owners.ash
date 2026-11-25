@@ -43,6 +43,7 @@ export (
     type BuiltinResourceRole(..),
     type ScopeCopyOut(..),
     value dispatchRequest,
+    value scopeCopyOutOf,
     value unifyUnforwardedExpectedType,
     value constructorLayout,
     value constructorNameKnown,

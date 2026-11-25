@@ -10,8 +10,8 @@ import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
 import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.CoreLowering.Emit.initialState
-import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLowering
-import AshesCompiler.Semantics.CoreLowering.measureRawCoreProgramLowering
+import AshesCompiler.Semantics.CoreLowering.Measurement.measureCoreProgramLowering
+import AshesCompiler.Semantics.CoreLowering.Measurement.measureRawCoreProgramLowering
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withNodeTypes
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateNodeInstantiation
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
@@ -20,10 +20,12 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedConcreteCallTy
 import AshesCompiler.Semantics.CoreLowering.Owners.stripExprAt
 import AshesCompiler.Semantics.CoreLowering.LoweringState.withStateActiveTypeParameters
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
-import AshesCompiler.Semantics.CoreLowering.measureCoreProgramLoweringWithGoalDetails
-import AshesCompiler.Semantics.CoreLowering.measureStitchedLowering
+import AshesCompiler.Semantics.CoreLowering.Measurement.measureCoreProgramLoweringWithGoalDetails
+import AshesCompiler.Semantics.CoreLowering.Measurement.measureStitchedLowering
 import AshesCompiler.Semantics.CoreLowering.Emit.CoreBinaryOperator
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorDeclarationSchemes
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorSchemesWithNestedLets
+import AshesCompiler.Semantics.CoreLowering.Measurement.measureCoreProgramLoweringWithSchemes
 import AshesCompiler.Semantics.CoreLowering.Matches.resultMayViewCallArgument
 import AshesCompiler.Semantics.CoreLowering.Operators.observeDeferredOperator
 import AshesCompiler.Semantics.CoreLowering.LoweringState.CoreTypeObservation
@@ -488,9 +490,11 @@ let checkTypedEqualityLeavesNoGoal (label: Str) (noReplay: Bool) (source: Str) =
 // `xs == []` in a recursive binding used at `List(Str)`.
 let checkPartlyOpenEqualitySettled unit = checkTypedEqualityLeavesNoGoal("partly open equality")(true)("let recursive countUntilEmpty xs n =\n    if xs == []\n    then n\n    else\n        match xs with\n            | _ :: rest -> countUntilEmpty(rest)(n + 1)\n            | [] -> n\ncountUntilEmpty([\"a\", \"b\", \"c\"])(0) + countUntilEmpty([\"d\"])(0)")
 
-// `selected != []` in a constrained helper used only from a generic wrapper.
-// Not in the run list: with the node table, this wrapper's dictionary goal is still answered by the replay, which fails for this program; the default path lowers it.
-let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(false)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
+// `selected != []` in a constrained helper used only from a generic wrapper: the first pass compares
+// through the helper's own Eq dictionary, and the wrapper's dictionary for the helper, which lowering
+// asks as `Eq(List(a))` where the table records the reduced `Eq(a)`, takes the settled element
+// type, so no goal is left and no replay runs.
+let checkWrappedInequalitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open inequality")(true)("let hasAny selected =\n    if selected != []\n    then \"some\"\n    else \"none\"\nlet describe name selected = name + \":\" + hasAny(selected)\ndescribe(\"a\")([\"x\"]) + \" \" + describe(\"b\")([\"y\", \"z\"])")
 
 let trailingBody (program: ProgramSyntax) =
     match program with
@@ -508,6 +512,88 @@ let checkNumberedResultView unit =
                     then Unit
                     else Ashes.IO.panic("a numbered let body lost the view of its scrutinized call argument")
         | _ -> Ashes.IO.panic("result view fixture did not parse")
+
+// The same wrapper shape with `==`, the shape that used to reach the replay without a proof.
+let checkWrappedEqualitySettled unit = checkTypedEqualityLeavesNoGoal("wrapped partly open equality")(true)("let isEmpty selected = selected == []\nlet describe name selected =\n    if isEmpty(selected)\n    then name\n    else \"x\"\ndescribe(\"a\")([\"x\"])")
+
+// A test program whose requirements the enclosing function supplies (a local `Seed.first(Unit)` the
+// body later compares with its parameter, a callback returned by a constrained helper) or whose
+// escaping constrained reference the program uses at one type: the typed first pass leaves no goal.
+let checkTestProgramLeavesNoGoal (name: Str) =
+    match Ashes.IO.File.readText("tests/" + name + ".ash") with
+        | Ok(source) -> checkTypedEqualityLeavesNoGoal(name)(true)(source)
+        | Error(message) -> Ashes.IO.panic(message)
+
+let checkEnclosingEvidence unit =
+    (let _ = checkTestProgramLeavesNoGoal("local_eager_seed_uses_evidence_of_its_enclosing_function")
+    in
+        let _ = checkTestProgramLeavesNoGoal("returned_callback_keeps_evidence_until_invoked")
+        in checkTestProgramLeavesNoGoal("escaping_recursive_function_applied_with_evidence"))
+
+// A synthesized identity is derived from its source node and role alone and maps back to both; it
+// never collides with a numbered node or the no-identity marker.
+let checkSynthesizedIdentity unit =
+    (let prefix = synthesizedNodeIdentity(1037)(partialPrefixRole)
+    in
+        let resume = synthesizedNodeIdentity(1037)(partialResumeRole)
+        in
+            if prefix < -1 && resume < -1 && prefix != resume && synthesizedNodeIdentity(1037)(partialPrefixRole) == prefix && synthesizedNodeSource(prefix) == Some((1037, partialPrefixRole)) && synthesizedNodeSource(resume) == Some((1037, partialResumeRole)) && synthesizedNodeSource(0) == None && synthesizedNodeSource(-1) == None && synthesizedNodeIdentity(-1)(partialPrefixRole) == -1 && synthesizedNodeSource(synthesizedNodeIdentity(0)(partialResumeRole)) == Some((0, partialResumeRole))
+            then Unit
+            else Ashes.IO.panic("synthesized node identities do not round-trip to their source and role"))
+
+// A staged binding's call split into its prefix and resume functions reads the dictionaries recorded
+// at the source call's reference: an annotated partial application of a constrained staged binding.
+let checkPartialStageEvidence unit = checkTestProgramLeavesNoGoal("annotated_partial_resolves_evidence_before_returning_function")
+
+// A top-level binding the inference generalized over an arithmetic trait and the program uses at two
+// types (`square` at Int and Float, the recursive `sumWith` and `addTimes`): under typed lowering it is
+// lowered once taking the operator's dictionary, so the typed first pass defers no operator, where the
+// legacy lowering emits its operator in the speculative integer form. Both modes lower without error;
+// the legacy run is given the operator schemes of top-level and nested lets as the default compile
+// path gives them, read from the numbered program.
+let checkArithmeticDictionaryProgram (name: Str) =
+    (let sourcePath = "tests/" + name + ".ash"
+    in
+        match (Ashes.IO.Directory.entries("lib/Ashes"), Ashes.IO.File.readText(sourcePath)) with
+            | (Ok(names), Ok(source)) ->
+                match names
+                |> readShippedSources
+                |> stitchWithShippedModules(name)(name + ".ash")(source) with
+                    | Error(error) -> Ashes.IO.panic(name + " did not stitch: " + Ashes.Trait.Show.show(error))
+                    | Ok(stitched) ->
+                        let identified = identifyStitchedProject(stitched)
+                        in
+                            match inferIdentifiedStitchedProjectFrom("standalone"
+                            |> emptyTypeEnvironmentForPackage
+                            |> withIntrinsicBuiltinSignatures)(stitched)(identified) with
+                                | ProgramInferenceResult { error = Some(error) } -> Ashes.IO.panic(name + " inference failed: " + Ashes.Trait.Show.show(error))
+                                | ProgramInferenceResult { nodeTypes = table, error = None } ->
+                                    let clock =
+                                        given (_unit) -> 0
+                                    in
+                                        let typed =
+                                            identified.program
+                                            |> identifiedProgramSyntax
+                                            |> measureStitchedLowering(true)(None)(given (_) -> Unit)(clock)(table)(name + ".ash")
+                                        in
+                                            let legacy =
+                                                measureCoreProgramLoweringWithSchemes(rawOperatorSchemesWithNestedLets(Ashes.Collection.Map.empty)(identifiedProgramSyntax(identified.program))(table))(clock)(None)(name + ".ash")("")(stitched.program)
+                                            in
+                                                let firstTyped = typed.first
+                                                in
+                                                    let firstLegacy = legacy.first
+                                                    in
+                                                        if firstTyped.error == None && firstLegacy.error == None && firstTyped.deferredOperators == 0 && typed.replayed == false && firstLegacy.deferredOperators > 0
+                                                        then Unit
+                                                        else Ashes.IO.panic(name + ": typed deferred=" + Ashes.Text.fromInt(firstTyped.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstTyped.error) + ", legacy deferred=" + Ashes.Text.fromInt(firstLegacy.deferredOperators) + " first error=" + Ashes.Trait.Show.show(firstLegacy.error))
+            | (Error(message), _) -> Ashes.IO.panic(message)
+            | (_, Error(message)) -> Ashes.IO.panic(message))
+
+let checkArithmeticDictionaryBinding unit =
+    (let _ = checkArithmeticDictionaryProgram("generic_multiply_binding_used_at_int_and_float")
+    in
+        let _ = checkArithmeticDictionaryProgram("generic_add_non_tail_recursive_binding_used_at_int_and_float")
+        in checkArithmeticDictionaryProgram("generic_add_let_below_top_level_used_at_int_and_float"))
 
 let instantiationAt (arguments: List((Int, SemanticType))) = NodeInstantiation(arguments = arguments, requirements = [], dictionaries = [], evidenceDemands = [])
 
@@ -537,6 +623,12 @@ let runRecordedInferenceCoverageTests unit =
     |> checkTransitiveSettlement
     |> checkNumberedResultView
     |> checkPartlyOpenEqualitySettled
+    |> checkWrappedInequalitySettled
+    |> checkWrappedEqualitySettled
+    |> checkEnclosingEvidence
+    |> checkSynthesizedIdentity
+    |> checkPartialStageEvidence
+    |> checkArithmeticDictionaryBinding
     |> checkDeferredOperatorObservation
     |> checkDeferredOperatorDetails
     |> checkHandlerBindings

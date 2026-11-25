@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
@@ -390,12 +391,81 @@ let expectPatternTransfersUseTheirLexicalBinding unit =
                 | _firstTail :: _secondTail :: [] -> Unit
                 | _ -> test.fail("expected one nullable retain per transferred list tail")
 
+// The words of an instruction line, its operands as `Name=value`.
+let instructionWords (line: Str) =
+    " "
+    |> Ashes.Text.split(Ashes.Text.trim(line))
+    |> Ashes.Collection.List.filter(given (word: Str) -> word != "")
+
+// The value of a closure call's `Target=` operand.
+let callTargetOf (line: Str) =
+    match instructionWords(line) with
+        | "CallClosure" :: target :: _rest ->
+            match Ashes.Text.split(target)("=") with
+                | "Target" :: value :: [] -> Some(value)
+                | _ -> None
+        | _ -> None
+
+let recursive hasWord (wanted: Str) (words: List(Str)) =
+    match words with
+        | [] -> false
+        | word :: rest -> word == wanted || hasWord(wanted)(rest)
+
+// Whether the line retains `target`, and with `requireRuntimeManaged` whether it retains it as a
+// reference-counted value rather than as the identity marker a pending loop parameter leaves.
+let retainsCallTarget (requireRuntimeManaged: Bool) (target: Str) (line: Str) =
+    match instructionWords(line) with
+        | "RcDup" :: _retained :: source :: rest -> source == "SourceTemp=" + target && (!requireRuntimeManaged || hasWord("RuntimeManaged=true")(rest))
+        | _ -> false
+
+// How many closure calls have their result retained by the very next instruction.
+let recursive retainedCallResultCount (requireRuntimeManaged: Bool) (lines: List(Str)) =
+    match lines with
+        | first :: second :: rest ->
+            match callTargetOf(first) with
+                | Some(target) ->
+                    (if retainsCallTarget(requireRuntimeManaged)(target)(second)
+                    then 1
+                    else 0) + retainedCallResultCount(requireRuntimeManaged)(second :: rest)
+                | None -> retainedCallResultCount(requireRuntimeManaged)(second :: rest)
+        | _ -> 0
+
+// A loop applying a function whose whole body reads a `Str` or `Bytes` field of its parameter to
+// the loop's record parameter. Stage 0 admits the parameter to the reference-counted heap, forces
+// both calls' result flags to one and retains each field right after the call instead of copying it
+// out of the arena; the fixture must show both retains, or it was not read as stage 0 wrote it. The
+// self-hosted lowering emits the same retain after both calls, as the marker of a pending loop
+// parameter. It keeps this parameter in the arena (the loop-parameter admission gap the elaborated
+// `tco_parameter_kept_by_borrowing_callee_result` fixture records), so finalize leaves the markers
+// as identity copies and zeroes the forced flags, which brings the copy back; once the parameter is
+// admitted the markers become stage 0's retains.
+let expectFieldAccessorCallRetainsResult unit =
+    (let expected =
+        "field_accessor_call_retains_result"
+        |> stageZeroFixtureLines
+        |> withoutLocations
+        |> retainedCallResultCount(true)
+    in
+        if expected != 2
+        then test.fail("the stage-0 fixture field_accessor_call_retains_result shows " + Ashes.Text.fromInt(expected) + " retained accessor call results, not 2: it was not read as stage 0 wrote it")
+        else
+            let actual =
+                "field_accessor_call_retains_result"
+                |> loweredFixtureLines
+                |> withoutLocations
+                |> retainedCallResultCount(false)
+            in
+                if actual == expected
+                then Unit
+                else test.fail("expected a retain after each of the " + Ashes.Text.fromInt(expected) + " accessor calls as stage 0 has, found " + Ashes.Text.fromInt(actual)))
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
     |> expectUnknownResultPlacementReadsReturnsBit
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
     |> (given (_) -> expectLoopResultPartDuplicateMatchesStageZero(Unit))
+    |> (given (_) -> expectFieldAccessorCallRetainsResult(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
     |> expectFreshArgumentHandedOverUnderAcceptsBit

@@ -1145,6 +1145,7 @@ worklist_of_indices_refilled_in_loop_released	same
 worklist_of_paths_walked_and_refilled	same	
 worklist_pair_released_past_unrelated_log_successor	same	
 worklist_pushes_two_cells_onto_consumed_tail	same	
+written_arithmetic_requirement_on_recursive_binding	same	
 ws_app_mixed_styles	same	
 ws_app_multi_arg	same	
 ws_app_paren_expr_arg	same	

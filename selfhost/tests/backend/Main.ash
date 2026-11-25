@@ -9,6 +9,7 @@ import Ashes.Test as test
 import NativeFfiFixtures
 import ElfRelocatableMergeCases
 import ElfRelocatableMergeLink
+import PartitionedObjectsCases
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -19,6 +20,7 @@ import AshesCompiler.Semantics.ModuleReferenceRewriting.rewriteStitchedModuleRef
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
@@ -1910,7 +1912,7 @@ let buildRcTriReleaseModule name context =
 // The first genuinely IR-DRIVEN tests in this arc: every module builder above hand-encodes the
 // LLVM calls a human decided represent some IR shape. This one instead runs real source through
 // the REAL self-hosted `AshesCompiler.Frontend.Parser.parseProgram` +
-// `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource` pipeline (the same one
+// `AshesCompiler.Semantics.CoreLowering.Raw.lowerCoreProgramWithSource` pipeline (the same one
 // `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR text output for both
 // fixtures used below) and hands the resulting REAL `IrFunction` to
 // `AshesCompiler.Backend.IrCodegen.codegenEntryFunction`. If the shape `IrProgram`/`IrFunction`
@@ -5529,8 +5531,6 @@ let testServerStopSignals unit =
     in assertProgramPrints(build)("serverStopSignals")("selfhost_backend_server_stop_signals")("0"))
 
 // Seed the detected CPU count before linking so even a broken override can fork at most one child.
-external lookupWorkerCapGlobal(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedGlobal@libLLVM.so"
-
 let testAutomaticServerWorkerOverride unit =
     (let build name context =
         let entry =
@@ -5575,7 +5575,7 @@ let testAutomaticServerWorkerOverride unit =
                                 |> Ashes.Text.contains(text)
                                 |> test.assertEqual(true)
                             in
-                                let cap = lookupWorkerCapGlobal(module_)("__ashes_parallel_cap")
+                                let cap = getNamedGlobal(module_)("__ashes_parallel_cap")
                                 in
                                     let _ =
                                         false
@@ -6381,6 +6381,13 @@ let testCopyOutTcoListCellInnerList unit = assertProgramPrints(buildCopyOutTcoLi
 
 let testLoadArgumentOwnership unit = assertProgramPrintsLines(buildLoadArgumentOwnershipModule)("selfhostBackendLoadArgumentOwnership")("selfhost_backend_load_argument_ownership_e2e")(["0", "1", "1", "0", "5"])
 
+// A lowered source program with top-level functions, a function passed as a value and a
+// recursive loop, built as three partitions: it prints what its single-module build prints.
+let testPartitionedRealSourceProgram unit =
+    "partitionedSource"
+    |> lowerRealSource("let double x = x * 2\nlet addTen x = double(x + 10)\nlet apply f x = f(x)\nlet recursive sumTo n acc = if n == 0 then acc else sumTo(n - 1)(acc + n)\nAshes.IO.print(apply(addTen)(5) + sumTo(100)(0))")
+    |> (given (program) -> assertPartitionedMatchesWhole("selfhost_backend_partitioned_source_e2e")(program)(3)("5080"))
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -6558,6 +6565,8 @@ let run shipped =
     |> testLinkAndRunDynamicMallocFreeModule
     |> runElfRelocatableMergeCases
     |> testLinkAndRunMergedObjects
+    |> runPartitionedObjectsCases
+    |> testPartitionedRealSourceProgram
     |> testArenaRestoreReusesCursor
     |> testArenaGrowAndReclaim
     |> testCopyOutArenaRcAdt

@@ -6,6 +6,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.RequirementSites.requirementSiteSpan
+import AshesCompiler.Semantics.RequirementSites.requirementSiteWithContext
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.Unification
@@ -301,8 +302,17 @@ let siteStart traitName source =
                 | None -> -1
         | _ -> test.fail("requirement site fixture should parse")
 
+let siteContext traitName source =
+    match parseExpression(source) with
+        | ExpressionParseResult { expression = expression, diagnostics = [] } ->
+            match requirementSiteWithContext(traitName)(expression) with
+                | Some((_span, Some(context))) -> context
+                | _ -> ""
+        | _ -> test.fail("requirement context fixture should parse")
+
 // A requirement is located at the operator or `print` argument that raised it; a `let`'s function
-// value is not searched, its requirements belonging to the function's own scheme.
+// value is not searched, its requirements belonging to the function's own scheme. Stage 0's contexts (an
+// else branch, a match arm) are named outermost first, and a stitched trait name is recognised.
 let expectRequirementSites unit =
     Unit
     |> (given (_) ->
@@ -317,6 +327,21 @@ let expectRequirementSites unit =
         "let recursive invert x = !x in invert"
         |> siteStart("Not")
         |> test.assertEqual(-1))
+    |> (given (_) ->
+        "if true then Unit else (match 1 with | _ -> Ashes.IO.print(1.5))"
+        |> siteContext("$PrintArgument")
+        |> test.assertEqual("in if branches -> in match arm 1"))
+    |> (given (_) ->
+        "Ashes_Trait_Default.default(Unit)"
+        |> siteStart("Default")
+        |> test.assertEqual(0))
+
+// A local recursive binding whose value does not unify with its written signature is reported at
+// the value, as stage 0 reports it.
+let expectRecursiveSignatureMismatchAtValue unit =
+    "let recursive helper : Int -> Bool = given (k) -> 1 in helper(2)"
+    |> rejectionStart
+    |> test.assertEqual(37)
 
 // An alias cycle is reported at the declaration of the alias that reached itself again.
 let expectAliasCycleAtDeclaration unit =
@@ -345,4 +370,5 @@ let runProgramInferenceTests unit =
     |> expectPatternAndArityPositions
     |> expectRequirementSites
     |> expectAliasCycleAtDeclaration
+    |> expectRecursiveSignatureMismatchAtValue
     |> (given (_) -> Ashes.IO.print("all self-hosted type declaration inference tests passed"))

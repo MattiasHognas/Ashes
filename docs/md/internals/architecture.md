@@ -353,6 +353,22 @@ static, and a section past 0xFFFF relocations uses the `IMAGE_SCN_LNK_NRELOC_OVF
 `ASHES_DUMP_OBJECTS=<dir>` writes the partition objects and the merged object into that
 directory.
 
+The self-hosted compiler (`ProgramPartitions`, `PartitionedObjects` and `PartitionProcesses` in
+the self-hosted backend) uses the same plan with the same default: `ASHES_LLVM_JOBS` unset,
+empty or `auto` sizes it from the program, a number fixes it, and `1` keeps a single module, so
+every program below 2048 lifted functions, which includes every test-sized program, takes the
+single-module path. It targets linux-x64 only and has no debug or optimization-level options, so
+every build it makes is eligible. Rather than threads, it optimizes and emits the partitions in
+child processes forked from the compiler (`fork` through glibc), each writing its object under
+`<TMPDIR or /tmp>/ashes-partitions-<pid>`; `ASHES_LLVM_PROCESSES` bounds how many run at once
+(default 6, at most the online processors and the partition count; `1` builds the partitions one
+after another in the compiling process). Each child works on the module the in-process path
+would and the parent merges the objects in partition order, so the image depends on the plan
+alone, never on the process count, the host's processor count or timing. The children end with
+the compiler (`PR_SET_PDEATHSIG`), a watchdog process outside the compiler's process group
+removes the directory when the compiler is interrupted or terminated first, and a temporary
+directory that cannot be created falls back to the in-process path, which gives the same image.
+
 ### External dependencies
 
 | Dependency | Source | Purpose |
@@ -2909,7 +2925,7 @@ Dictionary closures and tuples use ordinary lexical ownership scopes. Their owne
 normal call-result normalization, so a returned closure or aggregate must preserve any evidence it
 captures. Dictionary construction cannot consume reuse tokens belonging to the source arguments.
 The supported ordinary operator evidence path currently covers `Eq`, `Ord`, and `Not`; the
-[self-hosting deferred work table](../future/SELF_HOSTING.md#known-gaps-deferred-during-step-f)
+[archived self-hosting known-gaps table](https://github.com/MattiasHognas/Ashes/blob/main/docs/selfhost-archive/2026-11-25/SELF_HOSTING.superseded.md#known-gaps-deferred-on-the-way-to-the-fixpoint)
 records the remaining operator dispatch and runtime validation limits.
 
 The self-hosted concrete-copy registry retains original source and logical schemes for constrained

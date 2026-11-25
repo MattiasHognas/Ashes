@@ -12,6 +12,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.AggregateOwnership
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
