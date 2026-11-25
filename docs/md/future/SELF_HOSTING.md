@@ -217,7 +217,7 @@ taken against the one the final recorded type gives, as agree / differ / unrecor
 | 1 | Skip the constrained-binding plan when a syntactic check shows the binding cannot be constrained | Not recorded |
 | 2 | Make the standalone inference run on real programs, from the compile command | In place: it is the type checker |
 | 3 | The behavioural check: compile the corpus with both stages, compare output and exit live cells | In place: `selfhost/tests/behaviour/check.sh` |
-| 4 | Make the standalone inference complete over the language | Not recorded |
+| 4 | Make the standalone inference complete over the language | In place: it type-checks the compiler and the whole test corpus |
 | 5 | Compare the standalone inference with lowering's own | Done for top-level schemes and binary operator sites |
 | 6 | Give syntax nodes an identity and record types against it | In place (the node table above) |
 | 7 | Lower from the table | Exit condition met |
