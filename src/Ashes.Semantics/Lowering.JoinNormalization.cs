@@ -134,7 +134,7 @@ public sealed partial class Lowering
         ReplaceJoinArmStore(store, source =>
         {
             int copied = EmitRuntimeManagedTcoListDeepCopyByCopy(source, list.Element, shareReferenceCountedSuffix: true, moveSharedSuffix: ownedSlot != -2, takenOverSlot: ownedSlot);
-            WriteArmCellHeadSlot(headSlot, body);
+            WriteArmCellHeadSlot(headSlot, store.Source, body);
             return copied;
         });
     }
@@ -1043,7 +1043,7 @@ public sealed partial class Lowering
             int normalized = freshValue
                 ? EmitOwnedResultOrCopy(source, type)
                 : EmitRuntimeManagedTcoDeepCopy(source, type);
-            WriteArmCellHeadSlot(headSlot, body);
+            WriteArmCellHeadSlot(headSlot, store.Source, body);
             return normalized;
         });
     }

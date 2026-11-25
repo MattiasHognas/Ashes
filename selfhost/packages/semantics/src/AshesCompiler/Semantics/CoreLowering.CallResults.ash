@@ -2373,6 +2373,24 @@ let recursive armCellStoredHead (cell: Int) (instructions: List(IrInstruction)) 
             else armCellStoredHead(cell)(rest)
         | _instruction :: rest -> armCellStoredHead(cell)(rest)
 
+// The write of an arm cell's head duplicate, run only when the cell was copied: a cell that is
+// reference-counted at run time is shared by the join's copy as it is and keeps its head's
+// duplicate (stage 0's guard in `WriteArmCellHeadSlot`).
+let emitWhenArmCellCopied (cell: Int) write (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+            match freshLabel("arm_cell_head_copied")(tested) with
+                | FreshLabel { state = writeLabelled, label = writeLabel } ->
+                    match freshLabel("arm_cell_head_shared")(writeLabelled) with
+                        | FreshLabel { state = labelled, label = doneLabel } ->
+                            labelled
+                            |> emit(IsReferenceCounted(referenceCountedTemp)(cell))
+                            |> emit(JumpIfFalse(referenceCountedTemp)(writeLabel))
+                            |> emit(Jump(doneLabel))
+                            |> emit(Label(writeLabel))
+                            |> write
+                            |> emit(Label(doneLabel))
+
 // Stage 0's `WriteArmCellHeadSlot`: right behind the join's copy of an arm's own arena cell, the
 // cell's head duplicate goes into the slot registered at the cons. A duplicate still a pattern
 // owner's marker is written as zero and handed to the cell marker slots, which store it once the
@@ -2385,13 +2403,17 @@ let writeArmCellHeadSlot (arm: MatchArmResult) (original: CoreLoweringState) (st
             | (Some(slot), Some(head)) ->
                 match definitionOfTemp(head)(original.reversedInstructions) with
                     | Some(RcDup(_target, _source, true, _mayBeEmpty)) ->
-                        emit(StoreLocal(slot)(head))(state)
+                        emitWhenArmCellCopied(arm.armStoreTemp)(head
+                        |> StoreLocal(slot)
+                        |> emit)(state)
                     | Some(RcDup(_target, _source, false, _mayBeEmpty)) ->
                         match freshTemp(state) with
                             | FreshTemp { state = withTemp, temp = zeroTemp } ->
                                 withTemp
-                                |> emit(LoadConstInt(zeroTemp)(0))
-                                |> emit(StoreLocal(slot)(zeroTemp))
+                                |> emitWhenArmCellCopied(arm.armStoreTemp)(given (guarded: CoreLoweringState) ->
+                                    guarded
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> emit(StoreLocal(slot)(zeroTemp)))
                                 |> (given (stored: CoreLoweringState) -> withStateCellMarkerSlots((slot, head, zeroTemp) :: stateCellMarkerSlots(stored))(stored))
                     | _ -> state
             | _ -> state

@@ -8953,6 +8953,7 @@ public sealed partial class Lowering
         ResolvePendingRuntimeArgumentFlags(tco);
         WithdrawBorrowedScrutineeRetains(tco);
         WithdrawLetCopiedCellTailDuplicates(tco);
+        SettlePendingArmCellHeadWrites();
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
             tco,
@@ -8967,7 +8968,6 @@ public sealed partial class Lowering
         if (tco is null || _patternBindingPlacementSites.Count == 0)
         {
             _patternBindingPlacementSites.Clear();
-            SettlePendingArmCellHeadWrites();
             return;
         }
 
@@ -9006,7 +9006,6 @@ public sealed partial class Lowering
                 Prune(site.Type));
         }
 
-        SettlePendingArmCellHeadWrites();
         _patternBindingPlacementSites.Clear();
     }
 

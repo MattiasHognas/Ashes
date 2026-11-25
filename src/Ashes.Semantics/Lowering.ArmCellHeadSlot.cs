@@ -16,14 +16,14 @@ namespace Ashes.Semantics;
 /// An arm the join does not copy leaves the slot zero, which releases nothing. Each cell's record
 /// is taken once by the join, so no duplicate gets two slots; a cell that is a constructor field,
 /// a back edge's successor or a call's argument is left to the rules that already own its
-/// duplicates. A duplicate that is still a pattern-owner marker at the join is written only if the
-/// loop's finalize makes it a real retain: the write is neutralized otherwise.
+/// duplicates. The write reaches the slot only if the duplicate is a real retain once the function's
+/// retains are final, and only on the path where the join copied the cell.
 /// </summary>
 public sealed partial class Lowering
 {
     private sealed record ArmCellHeadSlot(List<IrInst> Body, int Slot, int Duplicate);
 
-    private sealed record PendingArmCellHeadWrite(List<IrInst> Body, IrInst.StoreLocal Store, int Duplicate);
+    private sealed record PendingArmCellHeadWrite(List<IrInst> Body, IrInst.StoreLocal Store, int Duplicate, int Slot);
 
     private static bool ArmCellHeadSlotRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_ARMCELLHEADSLOT") is null;
@@ -83,31 +83,38 @@ public sealed partial class Lowering
     }
 
     // Right behind the join's copy (emitted into the join's buffer, which replaces the arm's store):
-    // the duplicate goes into the slot registered at the cons.
-    private void WriteArmCellHeadSlot(ArmCellHeadSlot? record, List<IrInst> functionBody)
+    // the duplicate goes into the slot registered at the cons, but only once the function's
+    // ownership is final. The write is emitted into a slot nothing reads and retargeted to the
+    // registered slot by `SettlePendingArmCellHeadWrites` only when the duplicate is then still a
+    // real retain: a marker left an identity, a retain a later rule withdraws, or a duplicate the
+    // pattern-owner placement replaced by a plain read retained nothing, and its release would free
+    // a value the cell's source still owns. The write runs only when the cell was in fact copied: a
+    // cell that is reference-counted at run time is shared by the copy as it is and keeps its head's
+    // duplicate.
+    private void WriteArmCellHeadSlot(ArmCellHeadSlot? record, int cellTemp, List<IrInst> functionBody)
     {
-        if (record is null)
+        if (record is null
+            || (_tcoCtx is null && DefinitionInBody(functionBody, record.Duplicate) is not IrInst.RcDup { RuntimeManaged: true }))
         {
             return;
         }
 
-        bool settled = DefinitionInBody(functionBody, record.Duplicate) is IrInst.RcDup { RuntimeManaged: true };
-        if (!settled && _tcoCtx is null)
-        {
-            return;
-        }
-
-        var store = new IrInst.StoreLocal(record.Slot, record.Duplicate);
+        int referenceCountedTemp = NewTemp();
+        string writeLabel = NewLabel("arm_cell_head_copied");
+        string doneLabel = NewLabel("arm_cell_head_shared");
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, cellTemp));
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, writeLabel));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(writeLabel));
+        var store = new IrInst.StoreLocal(NewLocal(), record.Duplicate);
         Emit(store);
-        if (!settled)
-        {
-            _pendingArmCellHeadWrites.Add(new PendingArmCellHeadWrite(functionBody, store, record.Duplicate));
-        }
+        Emit(new IrInst.Label(doneLabel));
+        _pendingArmCellHeadWrites.Add(new PendingArmCellHeadWrite(functionBody, store, record.Duplicate, record.Slot));
     }
 
-    // After the loop's pattern owners are placed: a write whose duplicate stayed a marker (an
-    // identity, which retained nothing) is redirected to a slot nothing reads, so the registered slot
-    // stays zero and releases nothing.
+    // Once the function's retains are final (its loop's pattern owners placed and its withdrawals
+    // done): a write whose duplicate is a real retain goes to the registered slot; any other stays in
+    // the slot nothing reads, so the registered slot stays zero and releases nothing.
     private void SettlePendingArmCellHeadWrites()
     {
         if (_pendingArmCellHeadWrites.Count == 0)
@@ -124,15 +131,15 @@ public sealed partial class Lowering
             }
 
             settled.Add(pending);
-            if (DefinitionOf(pending.Duplicate) is IrInst.RcDup { RuntimeManaged: true })
+            if (DefinitionOf(pending.Duplicate) is not IrInst.RcDup { RuntimeManaged: true })
             {
                 continue;
             }
 
-            int index = _inst.FindIndex(instruction => ReferenceEquals(instruction, pending.Store));
+            int index = _inst.FindIndex(instruction => instruction is IrInst.StoreLocal write && write.Slot == pending.Store.Slot && write.Source == pending.Duplicate);
             if (index >= 0)
             {
-                _inst[index] = new IrInst.StoreLocal(NewLocal(), pending.Duplicate);
+                _inst[index] = new IrInst.StoreLocal(pending.Slot, pending.Duplicate);
             }
         }
 
