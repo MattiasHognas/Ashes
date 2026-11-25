@@ -1683,6 +1683,8 @@ let appliedLambdaLabelOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprLambda(_parameter, _body, _annotation) -> Some("lambda_" + Ashes.Text.fromInt(state.nextLambdaId))
         | _ -> None
 
+let requestsCallArgument (request: ConsumerRequest) = request.callArgument
+
 let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (resultDiscarded: Bool) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
@@ -1698,7 +1700,10 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             appliedLambdaLabel = appliedLambdaLabelOf(spine)(state),
             siteSpan = state.currentSpan,
             resultDiscarded = resultDiscarded,
-            arguments = spine.arguments
+            arguments = spine.arguments,
+            resultIsCallArgument = state
+            |> consumerRequestOf
+            |> requestsCallArgument
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless

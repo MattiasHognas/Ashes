@@ -456,6 +456,8 @@ type CoreCallContext =
     | resultDiscarded: Bool
     // The spine's arguments, first applied first.
     | arguments: List(Expr)
+    // The call is itself an ordinary call's argument (the consumer request's `callArgument`).
+    | resultIsCallArgument: Bool
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -1334,13 +1336,26 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
 // argument's hand-off, since that hand-off depends on it. A coroutine body or a function that may run
 // inside one reads no bit (stage 0's `AllowsAsyncIndependentRcPlacement` term): its call results are
 // copied to the arena at their call boundary.
+// Stage 0's `GetOwnershipSummaryForCallRoot` answers nothing for a lone recursive binding's call to
+// itself inside its own body, so the call's result ownership is read at run time from the self
+// closure's returns bit: the result is copied out of the call window when it is still in the arena
+// and taken as owned when it is reference-counted, and as the argument of a further call it is
+// handed over to that call (with the callee closure's adoption bit) and released when not adopted.
+// Only a self call that is itself an ordinary call's argument reads the bit here: a self call in
+// tail position hands its result on as the function's own, and one stored in a constructor or
+// returned keeps the ownership the callee's predicted result gives it.
+let selfCallArgumentReadsResultBit (context: CoreCallContext) (state: CoreLoweringState) = context.resultIsCallArgument && selfCallReadsNoSummary(context.selfCallee)(state)
+
 let readsResultOwnershipAtRunTime (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     match context with
         | CoreCallContext { tailCall = true } -> (state, false, false)
         | CoreCallContext { facts = facts } ->
-            if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
-            then resultOwnershipReadAtRunTime(context)(resultType)(state)
-            else (state, false, false)
+            if asyncIndependentRcPlacementAllowed(state) && arity == 1 && selfCallArgumentReadsResultBit(context)(state)
+            then (state, true, false)
+            else
+                if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
+                then resultOwnershipReadAtRunTime(context)(resultType)(state)
+                else (state, false, false)
 
 let emitResultOwnershipFlag (reads: Bool) (functionTemp: Int) (state: CoreLoweringState) =
     if reads
