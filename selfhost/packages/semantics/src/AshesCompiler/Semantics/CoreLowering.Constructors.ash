@@ -14,6 +14,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteTypeText
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -940,28 +941,45 @@ let shadowDeepCopy (copied: Maybe(SemanticType)) (state: CoreLoweringState) =
             | None -> None)(state)
     else state
 
-// Stage 0's `LowerInternalDeepCopy`: the argument's independent clone, synthesized by its
-// resolved type. An argument whose type is still a variable passes through as it is and its
-// type is recorded, so the body is lowered again once the type resolves (stage 0 defers the
-// copy to that point).
-// A value just produced on the reference-counted heap and handed only to the copy (a call's owned
-// result) is released once it is copied: nothing else holds it.
-let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemNever -> success(temp)(SemNever)(state)
-        | SemVariable(_id) as unresolved ->
+// The argument's independent clone at its resolved type. A value just produced on the
+// reference-counted heap and handed only to the copy (a call's owned result) is released once it is
+// copied: nothing else holds it.
+let deepCopyAtType (temp: Int) (resolved: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> shadowDeepCopy(Some(resolved))
+    |> emitTcoDeepCopy(temp)(resolved) with
+        | (copied, resultTemp) ->
+            (if tempIsNewlyProduced(temp)(state)
+            then emitArenaResultRelease(temp)(resolved)(copied)
+            else copied) |> success(resultTemp)(resolved)
+
+// An argument whose type is still a variable. Without a table it passes through as it is and its
+// type is recorded, so the body is lowered again once the type resolves (stage 0 defers the copy to
+// that point). Lowered from the type table, the copy is made at the type recorded for the call,
+// closed by the body's instantiation and the settled variables, which is the type that later
+// lowering would have resolved; a record that is open, missing or does not bind keeps the deferral.
+let deepCopyOfOpenType (temp: Int) (unresolved: SemanticType) (state: CoreLoweringState) =
+    (let deferred =
+        given (unit: Unit) ->
             state
             |> withStateUnresolvedCallResults(unresolved :: stateUnresolvedCallResults(state))
             |> shadowDeepCopy(None)
             |> success(temp)(unresolved)
-        | resolved ->
-            match state
-            |> shadowDeepCopy(Some(resolved))
-            |> emitTcoDeepCopy(temp)(resolved) with
-                | (copied, resultTemp) ->
-                    (if tempIsNewlyProduced(temp)(state)
-                    then emitArenaResultRelease(temp)(resolved)(copied)
-                    else copied) |> success(resultTemp)(resolved)
+    in
+        match (stateNodeTypes(state), shadowSiteType(state)) with
+            | (Some(_table), Some(recorded)) ->
+                match bindType(unresolved)(recorded)(state) with
+                    | (bound, None) -> deepCopyAtType(temp)(recorded)(bound)
+                    | (_failed, Some(_error)) -> deferred(Unit)
+            | _ -> deferred(Unit))
+
+// Stage 0's `LowerInternalDeepCopy`: the argument's independent clone, synthesized by its resolved
+// type; an argument whose type is still a variable as deepCopyOfOpenType.
+let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNever -> success(temp)(SemNever)(state)
+        | SemVariable(_id) as unresolved -> deepCopyOfOpenType(temp)(unresolved)(state)
+        | resolved -> deepCopyAtType(temp)(resolved)(state)
 
 let emitBuiltin layout resultType lower runtimeManaged reuseInput lowered =
     match (layout, lowered) with
