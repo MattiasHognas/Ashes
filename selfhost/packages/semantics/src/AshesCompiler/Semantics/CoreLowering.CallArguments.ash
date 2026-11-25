@@ -24,6 +24,7 @@ import AshesCompiler.Semantics.ToSpaceCopiers
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.PatternBindingOwnership
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
@@ -1384,13 +1385,18 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                         then 7
                         else 8
                 in
-                    observeShadow(rule)(requestText(current))(match shadowSiteType(state) with
-                        | Some(recorded) ->
-                            state
-                            |> requestsArenaResult(recorded)
-                            |> requestText
-                            |> Some
-                        | None -> None)(state)
+                    match (shadowSiteType(state), resolveType(state)(resultType)) with
+                        | (Some(recorded), resolved) ->
+                            if freeTypeVariables(resolved) == [] && recorded != resolved
+                            then
+                                observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
+                            else
+                                observeShadow(rule)(requestText(current))(state
+                                |> requestsArenaResult(recorded)
+                                |> requestText
+                                |> Some)(state)
+                        | (None, _resolved) ->
+                            observeShadow(rule)(requestText(current))(None)(state)
     else state
 
 // Step-8 shadow comparison, rule 9: a known callee asked for an arena result because its body was
