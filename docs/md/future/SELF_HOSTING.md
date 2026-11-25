@@ -3508,6 +3508,55 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   Worth knowing for any future change here: the gate that missed the miscompile covered semantics, IR
   parity and backend but not the formatter, frontend, projects or cli suites. A change to
   call-boundary ownership needs all of them.
+- [ ] **OPT-88** A call whose result is a borrowed part of its argument copies that part instead of
+  retaining it, in both compilers (2026-11-25). Stage 0 has one fast path, the trivial field
+  accessor (`IsTrivialParameterFieldAccessorBody`, `RetainAccessorCallResult`), now mirrored in
+  stage 1 (`recordTrivialParameterFieldAccessor`, `retainAccessorCallResult`); every other shape
+  pays a copy of the whole value per call. Measured with 2,000 calls on a 4 MB value, where 0 ms
+  means no copy:
+
+  | Shape | Stage 0 | Stage 1 before the mirror |
+  |---|---|---|
+  | accessor matching its parameter (`match h with \| Holder { b = b } -> b`) | 475 ms | 193 ms |
+  | field accessor returning `Bytes` (`h.holderBytes`) | 0 ms | 185 ms |
+  | field accessor returning `Str` | 0 ms | 185 ms |
+  | `Str` field read through a pattern | 489 ms | 188 ms |
+  | curried accessor (second parameter is the record) | 475 ms | 174 ms |
+  | nested pattern (`Holder { inner = Inner { b = b } }`) | 457 ms | 189 ms |
+  | identity (`let same (b: Bytes) = b`) | 507 ms | 197 ms |
+  | list head (`Str`) | 485 ms | 202 ms |
+  | tuple component | 541 ms | 203 ms |
+  | inline field or pattern reads, list or record results, scalars | 0 ms | 0 ms |
+
+  Two rules choose the copy. The call-result copy-out (`LowerCallConditionalCopyOutResult`, stage 1
+  `CoreLowering.CallResults`) copies whenever the callee's returns bit (bit 63 of the closure's
+  packed environment word) is clear, and a callee that only reads a part of its parameter never
+  produces a reference-counted value of its own, so the bit is clear. Inside an accessor that
+  matches its parameter, the match window's scope copy-out (`EmitScopeCopyOutInstruction`) copies
+  the bound part once more before the window resets. The field accessor escapes both: its body has
+  no match window, and the caller forces the result flag to one and retains the field instead.
+
+  The open item is to widen that static rule (i): record a callee whose result is, on every path, a
+  part of one parameter reached through field reads, pattern bindings, tuple components or list
+  heads with nothing allocated, and at a call over a reference-counted argument retain the result
+  instead of copying it, with the scope copy-out in such a callee dropped too. It is sound for the
+  same reason the accessor path is: a non-inline child of a reference-counted parent is a value
+  with its own header, so one more reference to it outlives the parent's release, and the decision
+  is static, so lowering knows the result is shared and never treats it as uniquely owned. A list
+  result needs the null check the accessor path avoids by excluding lists, and a pending loop
+  parameter keeps the accessor path's marker and finalize pair.
+
+  A runtime variant (ii), retaining instead of copying whenever the copy branch finds a
+  reference-counted value (`IsReferenceCounted`), is ruled out. Lowering decides `ReuseInput` on
+  the `Bytes` updates statically, from the fact that a copied call result is uniquely owned, and
+  `EmitBytesCopyOnWrite` then returns the source unchanged and writes into it. A retain chosen at
+  run time behind that static decision would write into the field the parent still holds.
+
+  To size the gain on the compiler itself, run a stage-1 compile and sample it with
+  `perf record -e cpu-clock:u -p <pid>` (the only event that works here, with no call graphs), then
+  `perf report --sort symbol` and look for `memcpy` and the arena copy helpers under the lambdas of
+  accessor-shaped functions; the shapes above come from small probes, one per row, compiled by both
+  stages and timed with `Ashes.IO.Console.monotonicMillis`.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
