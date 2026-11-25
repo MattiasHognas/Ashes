@@ -19,7 +19,7 @@ import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
-import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowLambdaParameterType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -193,15 +193,19 @@ let shadowEntryNormalization parameter body label parameterType (state: CoreLowe
                 then "normalize"
                 else "keep"
         in
-            observeShadow(11)(state
-            |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)
-            |> decisionText)(match shadowSiteType(state) with
-                | Some(SemFunction(recordedParameter, _result, _row)) ->
-                    state
-                    |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(recordedParameter)
-                    |> decisionText
-                    |> Some
-                | _ -> None)(state)
+            let current =
+                state
+                |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)
+                |> decisionText
+            in
+                match shadowLambdaParameterType(parameter)(state) with
+                    | Ok(Some(recordedParameter)) ->
+                        observeShadow(11)(current)(state
+                        |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(recordedParameter)
+                        |> decisionText
+                        |> Some)(state)
+                    | Ok(None) -> observeShadowUnrecorded(11)(current)("the node in effect binds no parameter '" + parameter + "' (an applied or synthesized lambda)")(state)
+                    | Error(reason) -> observeShadowUnrecorded(11)(current)(reason)(state)
     else state
 
 // The entry-normalized parameter (if any) made visible to the body's placement decisions; the

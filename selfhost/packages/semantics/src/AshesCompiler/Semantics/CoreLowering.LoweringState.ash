@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.NodeTypeTable.NodeTypeTable
 import AshesCompiler.Semantics.NodeTypeTable.settledInstantiationArguments
+import AshesCompiler.Semantics.NodeTypeTable.nodeTypeAt
 export (
     type ConsumerRequest(..),
     type RuntimeTempState(..),
@@ -57,6 +58,7 @@ export (
     value shadowing,
     value observeShadow,
     value observeShadowPending,
+    value observeShadowUnrecorded,
     value withPendingGoalObservation,
     value observePendingGoal,
     value observeDeferredOperatorGoal,
@@ -869,6 +871,8 @@ type ShadowSite =
     | span: Maybe(TextSpan)
     | current: Str
     | final: Maybe(Str)
+    // Why the table answers nothing for the site, when `final` is None.
+    | reason: Str
     | calleeFacts: Maybe(CoreCalleeFacts)
 
 type CoreTypeObservation =
@@ -3346,6 +3350,26 @@ let recordShadowSite (site: ShadowSite) (state: CoreLoweringState) =
             | None -> state
             | Some(observation) -> state with programState = (group with typeObservation = Some((observation with shadowSites = Ashes.Internal.deepCopy(site) :: observation.shadowSites))))
 
+// Why a site's final-type answer is missing: no node is in effect (code lowering synthesized
+// with no identity), the node is one lowering synthesized from a source node, or the recorded type
+// is open after the instantiation and the settled variables, or does not translate.
+let shadowUnrecordedReason (state: CoreLoweringState) =
+    match state.currentNode with
+        | None -> "no node"
+        | Some(node) ->
+            if node < 0
+            then "synthesized node"
+            else
+                match stateNodeTypes(state) with
+                    | Some(table) ->
+                        match nodeTypeAt(node)(table) with
+                            | Some(_recorded) -> "open or untranslatable type"
+                            | None -> "no type recorded at the node"
+                    | None -> "no node table"
+
+// A decision whose final-type answer is missing for a reason the caller knows.
+let observeShadowUnrecorded (entry: Int) (current: Str) (reason: Str) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = reason, calleeFacts = None))(state)
+
 // One decision of order-dependent rule `entry`: what the rule decided at the site and what the rule
 // over the final type decides there (None when the table records nothing closed for it). An
 // agreeing site is only counted; any other is kept with its location.
@@ -3357,7 +3381,7 @@ let observeShadow (entry: Int) (current: Str) (final: Maybe(Str)) (state: CoreLo
             | Some(observation) ->
                 if final == Some(current)
                 then state with programState = (group with typeObservation = Some((observation with shadowAgree = incrementAt(entry - 1)(observation.shadowAgree))))
-                else recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = final, calleeFacts = None))(state))
+                else recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = final, reason = shadowUnrecordedReason(state), calleeFacts = None))(state))
 
 // A decision of rule 9 whose final answer is known only once every body is lowered.
-let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, calleeFacts = facts))(state)
+let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = "settled after lowering", calleeFacts = facts))(state)

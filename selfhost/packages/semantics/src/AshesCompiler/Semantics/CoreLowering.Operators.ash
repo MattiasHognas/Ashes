@@ -45,6 +45,7 @@ export (
     value deferTraitGoal,
     value shadowPendingGoal,
     value deferTraitGoalWithMethods,
+    value deferTraitGoalUnshadowed,
     value dictionaryGoalCandidates,
     value observeDeferredOperator,
     value emitCoreTraitUnaryDispatch,
@@ -1114,12 +1115,19 @@ let shadowPinnedGoal (key: Str) (pinned: (CoreLoweringState, SemanticType)) =
 let shadowEvidenceDispatch (throughEvidence: Bool) (state: CoreLoweringState) =
     if shadowing(state)
     then
-        observeShadow(3)(if throughEvidence
-        then "evidence"
-        else "no-evidence")(match shadowSiteInstance(state) with
-            | Some("evidence") -> Some("evidence")
-            | Some(_direct) -> Some("no-evidence")
-            | None -> None)(state)
+        let current =
+            if throughEvidence
+            then "evidence"
+            else "no-evidence"
+        in
+            match (shadowSiteInstance(state), state.currentNode) with
+                | (Some("evidence"), _node) -> observeShadow(3)(current)(Some("evidence"))(state)
+                | (Some(_direct), _node) -> observeShadow(3)(current)(Some("no-evidence"))(state)
+                | (None, Some(node)) ->
+                    if node >= 0
+                    then observeShadowUnrecorded(3)(current)("no operator record at the node (a trait-method call)")(state)
+                    else observeShadow(3)(current)(None)(state)
+                | (None, None) -> observeShadow(3)(current)(None)(state)
     else state
 
 // Step-8 shadow comparison, rule 1: an operator emitted in its speculative integer form, against
@@ -1176,17 +1184,23 @@ let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: Semant
 // The value lowered at a deferred site: the goal joins the pass's record, and the site gets a
 // constant of the method's own result type. A deferring pass exists to resolve types, and its
 // instructions are discarded, so the constant is never run.
-let deferTraitGoalWithMethods candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+let deferTraitGoalUnshadowed candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
     (let recorded =
         state
         |> withStatePendingTraitGoals((key, operandType, candidates) :: statePendingTraitGoals(state))
         |> observePendingGoal(false)(key)(operandType)
-        |> shadowPendingGoal(key)
     in
         match resultType with
             | SemString -> lowerString("")(recorded)
             | _ ->
                 lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(recorded))
+
+// As deferTraitGoalUnshadowed, recording the goal for the step-8 shadow comparison at the node in
+// effect (an operator's or a trait method call's).
+let deferTraitGoalWithMethods candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> shadowPendingGoal(key)
+    |> deferTraitGoalUnshadowed(candidates)(key)(operandType)(resultType)
 
 let deferTraitGoal key operand result state = deferTraitGoalWithMethods([])(key)(operand)(result)(state)
 

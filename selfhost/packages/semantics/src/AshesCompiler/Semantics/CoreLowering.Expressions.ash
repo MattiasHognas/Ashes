@@ -58,6 +58,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledDiction
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedNestedOperatorGenericScheme
 import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDeferredEvaluation
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowDictionaryGoalTypeText
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1074,19 +1075,30 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
                     | _ -> openConstrainedGoals(index + 1)(rest)(state)
         | _goal :: rest -> openConstrainedGoals(index + 1)(rest)(state)
 
+// Step-8 shadow comparison, rule 2: a constrained call's dictionary left for a later pass, against
+// the dictionary the table records at the call's root reference.
+let shadowDictionaryGoal (key: Str) (root: Int) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(2)("pending")(shadowDictionaryGoalTypeText(key)(root)(state))(state)
+    else state
+
 // The value a call lowers to while any of its dictionaries waits on a type: every open requirement
 // joins the pass's record and the call stands as a constant of its own result type.
-let recursive deferConstrainedGoals (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
+let recursive deferConstrainedGoals (root: Int) (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
     match goals with
         | [] ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(state)
-        | (key, goalType, candidates) :: [] -> deferTraitGoalWithMethods(candidates)(key)(goalType)(resultType)(state)
+        | (key, goalType, candidates) :: [] ->
+            state
+            |> shadowDictionaryGoal(key)(root)
+            |> deferTraitGoalUnshadowed(candidates)(key)(goalType)(resultType)
         | (key, goalType, candidates) :: rest ->
             state
             |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
             |> observePendingGoal(false)(key)(goalType)
-            |> shadowPendingGoal(key)
-            |> deferConstrainedGoals(rest)(resultType)
+            |> shadowDictionaryGoal(key)(root)
+            |> deferConstrainedGoals(root)(rest)(resultType)
 
 // A requirement whose type argument is still open takes the type the standalone inference recorded
 // for the same trait's dictionary at the reference, the first unused one of that trait in the
@@ -1339,7 +1351,7 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                                 match openConstrainedGoals(0)(goals)(settled) with
                                                                     | _first :: _rest as open ->
                                                                         settled
-                                                                        |> deferConstrainedGoals(open)(resolveType(settled)(resultType))
+                                                                        |> deferConstrainedGoals(constrainedCallRootNode(expression)(state))(open)(resolveType(settled)(resultType))
                                                                         |> restoreConstrainedCall(state)
                                                                     | [] ->
                                                                         match settled

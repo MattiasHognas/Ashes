@@ -56,6 +56,8 @@ export (
     value shadowSiteInstance,
     value shadowSiteOperandText,
     value shadowGoalTypeText,
+    value shadowLambdaParameterType,
+    value shadowDictionaryGoalTypeText,
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
     value recordedNestedOperatorGenericScheme,
@@ -640,6 +642,41 @@ let shadowGoalTypeText (key: Str) (state: CoreLoweringState) =
                     |> recordedSettledDictionariesAt(node)
                     |> firstSettledOfTrait(traitName)
         | _ -> None
+
+// The type the table answers a constrained call's dictionary goal with: the first closed dictionary
+// of the goal's trait recorded at the call's root reference.
+let shadowDictionaryGoalTypeText (key: Str) (root: Int) (state: CoreLoweringState) =
+    match Ashes.Text.split(key)(":") with
+        | _start :: _end :: traitName :: _method ->
+            state
+            |> recordedSettledDictionariesAt(root)
+            |> firstSettledOfTrait(traitName)
+        | _ -> None
+
+let recursive boundSchemeNamed (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> None
+        | (bound, scheme) :: rest ->
+            if bound == name
+            then Some(scheme)
+            else boundSchemeNamed(name)(rest)
+
+// The type the table records for a lambda's parameter: the binding the inference notes at the
+// lambda's own node, closed as shadowSiteType closes a type. Ok(None) when the node in effect
+// binds no parameter of that name (it is not the lambda's node: an applied lambda is lowered
+// under its call's node), Ok(Some) with the type, Error when the binding's type stays open.
+let shadowLambdaParameterType (parameter: Str) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match table
+            |> nodeBindingsAt(node)
+            |> boundSchemeNamed(parameter) with
+                | Some(TypeScheme { body = body }) ->
+                    match recordedSettledType(body)(state) with
+                        | Some(settled) -> Ok(Some(settled))
+                        | None -> Error("open or untranslatable type")
+                | None -> Ok(None)
+        | _ -> Ok(None)
 
 // The name and scheme the standalone inference gave the top-level binding whose value is the node
 // with this identity, as lowering writes it. The scheme keeps the inference's quantified variable

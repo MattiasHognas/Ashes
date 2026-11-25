@@ -198,11 +198,11 @@ let spanText (span: Maybe(TextSpan)) =
 let recursive reportShadowSites regions (sites: List(ShadowSite)) =
     match sites with
         | [] -> Unit
-        | ShadowSite { entry = entry, region = region, node = node, span = span, current = current, final = final } :: rest ->
+        | ShadowSite { entry = entry, region = region, node = node, span = span, current = current, final = final, reason = reason } :: rest ->
             let finalText =
                 match final with
                     | Some(answer) -> answer
-                    | None -> "unrecorded"
+                    | None -> "unrecorded: " + reason
             in
                 let nodeText =
                     match node with
