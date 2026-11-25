@@ -4281,20 +4281,33 @@ let bindViewedArgument (viewed: Expr) rebuild (state: CoreLoweringState) =
                 |> rebuild
                 |> plainLet(name)(viewed)))
 
+// A loop's back edge: a call to the loop's own function. Stage 1 places such a loop's parameters
+// apart from stage 0 (a parameter stage 0 keeps on the reference-counted heap, whose successor the
+// back edge copies, can stay in the arena here), so a successor viewing an anonymous owner the
+// back edge releases would be left pointing into freed bytes: the argument keeps its own
+// hand-off instead.
+let isLoopSelfCall (root: Expr) (state: CoreLoweringState) =
+    match (unspanArgument(root), stateTcoLoop(state)) with
+        | (ExprVar(name), Some(loop)) -> name == loop.selfName
+        | _ -> false
+
 let bindViewedCallArgument (expression: Expr) (state: CoreLoweringState) =
     match viewedBuiltinArgument(expression) with
         | Some(viewed) ->
             bindViewedArgument(viewed)(given (named) -> replaceSpineArgument(expression)(0)(named))(state)
         | None ->
             match viewedCallSpine(expression)([]) with
-                | (_root, arguments) ->
-                    match viewedArgumentPosition(arguments)(0) with
-                        | Some((index, argument, viewed)) ->
-                            bindViewedArgument(viewed)(given (named) ->
-                                named
-                                |> replaceSpineArgument(argument)(0)
-                                |> replaceSpineArgument(expression)(index))(state)
-                        | None -> None
+                | (root, arguments) ->
+                    if isLoopSelfCall(root)(state)
+                    then None
+                    else
+                        match viewedArgumentPosition(arguments)(0) with
+                            | Some((index, argument, viewed)) ->
+                                bindViewedArgument(viewed)(given (named) ->
+                                    named
+                                    |> replaceSpineArgument(argument)(0)
+                                    |> replaceSpineArgument(expression)(index))(state)
+                            | None -> None
 
 // Stage 0's `BindViewedBuiltinArgument`: a viewing builtin's newly produced argument bound by an
 // anonymous `let` around the expression consuming the builtin's result (the match it is the

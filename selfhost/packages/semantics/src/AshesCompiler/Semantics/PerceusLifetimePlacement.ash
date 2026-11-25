@@ -168,6 +168,12 @@ type AliasSets =
     // tuple a view-producing instruction allocates. Only these follow a field read, so an ordinary
     // aggregate holding the owner does not lengthen the owner's liveness through every read of it.
     | viewAliasSet: MapTree(Int, Bool)
+    | viewAliasSetSize: Int
+    // The slots a view alias was stored into: a load of one reads the view back, so it is a view
+    // alias too, and the field reads of what it holds follow it (a `let` binding the result of an
+    // `uncons`, matched later).
+    | viewSlotSet: MapTree(Int, Bool)
+    | viewSlotCount: Int
     | aliasStoreIndices: MapTree(Int, Bool)
     | aliasStoreCount: Int
     | aliasSlotStores: MapTree(Int, SlotAliasStores)
@@ -187,7 +193,12 @@ let withViewAliasTemp (target: Int) (sets: AliasSets) =
     in
         if inTempSet(target)(aliased.viewAliasSet)
         then aliased
-        else aliased with viewAliasSet = Ashes.Collection.Map.setInt(target)(true)(aliased.viewAliasSet))
+        else aliased with viewAliasSet = Ashes.Collection.Map.setInt(target)(true)(aliased.viewAliasSet), viewAliasSetSize = aliased.viewAliasSetSize + 1)
+
+let withViewSlot (slot: Int) (sets: AliasSets) =
+    if inTempSet(slot)(sets.viewSlotSet)
+    then sets
+    else sets with viewSlotSet = Ashes.Collection.Map.setInt(slot)(true)(sets.viewSlotSet), viewSlotCount = sets.viewSlotCount + 1
 
 let slotStoresWith (index: Int) (start: Int) (end: Int) (known: Maybe(SlotAliasStores)) =
     match known with
@@ -221,16 +232,28 @@ let loadSeesStoredAlias (slot: Int) (loadIndex: Int) (start: Int) (end: Int) (se
 let propagateAliasInto (sets: AliasSets) (index: Int) (start: Int) (end: Int) (arenaAdtCells: MapTree(Int, Bool)) (instruction: IrInstruction) =
     match instruction with
         | IrInstruction { instruction = Borrow(target, source) } ->
-            if inTempSet(source)(sets.aliasSet)
-            then withAliasTemp(target)(sets)
-            else sets
+            if inTempSet(source)(sets.viewAliasSet)
+            then withViewAliasTemp(target)(sets)
+            else
+                if inTempSet(source)(sets.aliasSet)
+                then withAliasTemp(target)(sets)
+                else sets
         | IrInstruction { instruction = StoreLocal(slot, source) } ->
             if inTempSet(source)(sets.aliasSet)
-            then withAliasStore(slot)(index)(start)(end)(sets)
+            then
+                sets
+                |> withAliasStore(slot)(index)(start)(end)
+                |> (given (stored: AliasSets) ->
+                    if inTempSet(source)(sets.viewAliasSet)
+                    then withViewSlot(slot)(stored)
+                    else stored)
             else sets
         | IrInstruction { instruction = LoadLocal(target, slot) } ->
             if loadSeesStoredAlias(slot)(index)(start)(end)(sets)
-            then withAliasTemp(target)(sets)
+            then
+                if inTempSet(slot)(sets.viewSlotSet)
+                then withViewAliasTemp(target)(sets)
+                else withAliasTemp(target)(sets)
             else sets
         | IrInstruction { instruction = StoreMemOffset(basePtr, _offset, source) } ->
             if inTempSet(source)(sets.aliasSet)
@@ -301,7 +324,7 @@ let recursive propagateAliasesAlong (spans: List((Int, Int, Int))) (indexed: Lis
 let recursive aliasSetFixpoint (spans: List((Int, Int, Int))) (indexed: List((Int, IrInstruction, List(Int)))) (arenaAdtCells: MapTree(Int, Bool)) (sets: AliasSets) =
     (let next = propagateAliasesAlong(spans)(indexed)(arenaAdtCells)(sets)
     in
-        if next.aliasSetSize > sets.aliasSetSize || next.aliasStoreCount > sets.aliasStoreCount
+        if next.aliasSetSize > sets.aliasSetSize || next.aliasStoreCount > sets.aliasStoreCount || next.viewAliasSetSize > sets.viewAliasSetSize || next.viewSlotCount > sets.viewSlotCount
         then aliasSetFixpoint(spans)(indexed)(arenaAdtCells)(next)
         else next)
 
@@ -320,7 +343,7 @@ let recursive ownerLoadsInto (indexed: List((Int, IrInstruction, List(Int)))) (s
 // Every temp aliasing the owner within the region, to a fixpoint.
 let collectOwnerAliasSet (spans: List((Int, Int, Int))) (indexed: List((Int, IrInstruction, List(Int)))) (slot: Int) (arenaAdtCells: MapTree(Int, Bool)) =
     (let settled =
-        AliasSets(aliasSet = Ashes.Collection.Map.empty, aliasSetSize = 0, viewAliasSet = Ashes.Collection.Map.empty, aliasStoreIndices = Ashes.Collection.Map.empty, aliasStoreCount = 0, aliasSlotStores = Ashes.Collection.Map.empty)
+        AliasSets(aliasSet = Ashes.Collection.Map.empty, aliasSetSize = 0, viewAliasSet = Ashes.Collection.Map.empty, viewAliasSetSize = 0, viewSlotSet = Ashes.Collection.Map.empty, viewSlotCount = 0, aliasStoreIndices = Ashes.Collection.Map.empty, aliasStoreCount = 0, aliasSlotStores = Ashes.Collection.Map.empty)
         |> ownerLoadsInto(indexed)(slot)
         |> aliasSetFixpoint(spans)(indexed)(arenaAdtCells)
     in settled.aliasSet)
