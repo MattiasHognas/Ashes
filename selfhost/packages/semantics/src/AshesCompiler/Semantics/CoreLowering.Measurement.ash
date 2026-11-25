@@ -21,6 +21,8 @@ import AshesCompiler.Semantics.CoreLowering.Program
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.untranslatableRecordedTypes
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.withRawOperatorDeclarationSchemes
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.rawOperatorSchemesWithNestedLets
+import AshesCompiler.Semantics.CallOwnership.compiledResultRuntimeManaged
+import Ashes.Collection.List.reverse
 // What one pass of a measured lowering counted: operator sites answered from the recorded node
 // types, operator goals deferred or pended, function bodies lowered again, and calls whose expected
 // result type came from the recorded node types and how many of those fell back, in the lowering
@@ -33,6 +35,9 @@ type CorePassCounts =
     | tableFallbacks: Int
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
+    // The step-8 shadow comparison of the pass: agreeing sites per rule (1 to 11) and every other site.
+    | shadowAgree: List(Int)
+    | shadowSites: List(ShadowSite)
     | error: Maybe(CoreLoweringError)
 
 type CoreLoweringMeasurement =
@@ -48,13 +53,39 @@ type CoreLoweringMeasurement =
     | first: CorePassCounts
     | replay: CorePassCounts
 
-let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, error = None)
+let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], error = None)
+
+let recursive incrementShadowAgree (index: Int) (counts: List(Int)) =
+    match counts with
+        | [] -> []
+        | head :: rest ->
+            if index == 0
+            then head + 1 :: rest
+            else head :: incrementShadowAgree(index - 1)(rest)
+
+// The shadow sites of a pass with rule 9's settled once every body is lowered: a callee asked for
+// an arena result because its body was not lowered yet, whose result fact the finished lowering
+// knows, is a call the rule over the final facts would not have asked; one whose fact is still
+// unknown agrees.
+let recursive settledShadowSites (state: CoreLoweringState) (sites: List(ShadowSite)) (agree: List(Int)) (kept: List(ShadowSite)) =
+    match sites with
+        | [] -> (agree, reverse(kept))
+        | (ShadowSite { calleeFacts = Some(_facts) } as site) :: rest ->
+            match state
+            |> stateBodyRuntimeManagedByLabel
+            |> compiledResultRuntimeManaged(site.calleeFacts)(stateFunctionReturnedClosureLabels(state)) with
+                | Some(_known) -> settledShadowSites(state)(rest)(agree)((site with final = Some("no-arena")) :: kept)
+                | None ->
+                    settledShadowSites(state)(rest)(incrementShadowAgree(site.entry - 1)(agree))(kept)
+        | site :: rest -> settledShadowSites(state)(rest)(agree)(site :: kept)
 
 let passCountsOf (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, error = error } ->
             match stateTypeObservation(state) with
-                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies }) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies, error = error)
+                | Some(CoreTypeObservation { tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies, shadowAgree = agree, shadowSites = sites }) ->
+                    match settledShadowSites(state)(sites)(agree)([]) with
+                        | (settledAgree, settledSites) -> CorePassCounts(tableOperators = tableOperators, deferredOperators = deferredOperators, relowerings = relowerings, tableCallResults = tableCallResults, tableFallbacks = tableFallbacks, recordedCopyCalls = recordedCopies, inferredCopyCalls = inferredCopies, shadowAgree = settledAgree, shadowSites = settledSites, error = error)
                 | None -> noPassCounts with error = error
 
 // The seed every program-level lowering starts from with source locations and reuse on, given the

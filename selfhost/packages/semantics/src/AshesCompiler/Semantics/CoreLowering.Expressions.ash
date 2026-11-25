@@ -1085,6 +1085,7 @@ let recursive deferConstrainedGoals (goals: List((Str, SemanticType, List((Str, 
             state
             |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
             |> observePendingGoal(false)(key)(goalType)
+            |> shadowPendingGoal(key)
             |> deferConstrainedGoals(rest)(resultType)
 
 // A requirement whose type argument is still open takes the type the standalone inference recorded

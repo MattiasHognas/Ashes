@@ -53,6 +53,10 @@ export (
     type CoreHeapQueryContext(..),
     type CoreTypeObservation(..),
     type ObservedPendingGoal(..),
+    type ShadowSite(..),
+    value shadowing,
+    value observeShadow,
+    value observeShadowPending,
     value withPendingGoalObservation,
     value observePendingGoal,
     value observeDeferredOperatorGoal,
@@ -853,6 +857,20 @@ type ObservedPendingGoal =
     | operand: SemanticType
     | activeMethods: List((Str, SemanticType, Str, Str))
 
+// A site where an order-dependent rule (numbered as in the step-8 plan) decided otherwise than the
+// same rule over the final type would, or where no final type answers it. `final` is None when the
+// table records nothing closed for the site. `calleeFacts` holds the callee of a call whose result
+// was asked for in the arena because its body was not lowered yet; the comparison is made once
+// every body is lowered.
+type ShadowSite =
+    | entry: Int
+    | region: Int
+    | node: Maybe(Int)
+    | span: Maybe(TextSpan)
+    | current: Str
+    | final: Maybe(Str)
+    | calleeFacts: Maybe(CoreCalleeFacts)
+
 type CoreTypeObservation =
     | goalSites: Maybe(List(ObservedPendingGoal))
     | topLevelScope: List(CoreBinding)
@@ -870,6 +888,10 @@ type CoreTypeObservation =
     // Concrete source-copy calls whose argument tree was skipped or inferred.
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
+    // The step-8 shadow comparison: per order-dependent rule (1 to 11), how many sites the rule
+    // decided as the rule over the final type would, and every other site.
+    | shadowAgree: List(Int)
+    | shadowSites: List(ShadowSite)
 
 type CoreTraitGoalAnswer =
     | ProvenOperandType(SemanticType)
@@ -1438,7 +1460,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = []))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -3299,3 +3321,43 @@ let observePendingGoal structural key operand (state: CoreLoweringState) = obser
 // Records an operator site lowering deferred because both operands were still open, when the
 // lowering observes its goal sites; otherwise the state is unchanged.
 let observeDeferredOperatorGoal key operand (state: CoreLoweringState) = observeGoalSite(false)(true)(key)(operand)(state)
+
+// Whether this lowering records the step-8 shadow comparison; a caller computes the final-type
+// answer only when it does, so an ordinary compile does no extra work.
+let shadowing (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(_observation) -> true
+            | None -> false)
+
+let recursive incrementAt (index: Int) (counts: List(Int)) =
+    match counts with
+        | [] -> []
+        | head :: rest ->
+            if index == 0
+            then head + 1 :: rest
+            else head :: incrementAt(index - 1)(rest)
+
+let recordShadowSite (site: ShadowSite) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with shadowSites = Ashes.Internal.deepCopy(site) :: observation.shadowSites))))
+
+// One decision of order-dependent rule `entry`: what the rule decided at the site and what the rule
+// over the final type decides there (None when the table records nothing closed for it). An
+// agreeing site is only counted; any other is kept with its location.
+let observeShadow (entry: Int) (current: Str) (final: Maybe(Str)) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) ->
+                if final == Some(current)
+                then state with programState = (group with typeObservation = Some((observation with shadowAgree = incrementAt(entry - 1)(observation.shadowAgree))))
+                else recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = final, calleeFacts = None))(state))
+
+// A decision of rule 9 whose final answer is known only once every body is lowered.
+let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, calleeFacts = facts))(state)

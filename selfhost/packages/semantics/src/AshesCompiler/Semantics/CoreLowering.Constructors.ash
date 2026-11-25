@@ -13,6 +13,7 @@ import AshesCompiler.Semantics.PatternBindingOwnership
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteTypeText
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -927,6 +928,18 @@ let finishBuiltinEmission resultType lower consumedOperand consumedBytes state e
             |> releaseConsumedBytesOperands(consumedBytes)
             |> finishBuiltinResult(resultType)(lower)(result)
 
+// Step-8 shadow comparison, rule 5: what a deep copy did at the site (passed a value whose type is
+// still a variable through, or copied it at its type), against a copy at the recorded type.
+let shadowDeepCopy (copied: Maybe(SemanticType)) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(5)(match copied with
+            | Some(copiedType) -> "copy " + Ashes.Trait.Show.show(copiedType)
+            | None -> "pass-through")(match shadowSiteTypeText(state) with
+            | Some(recorded) -> Some("copy " + recorded)
+            | None -> None)(state)
+    else state
+
 // Stage 0's `LowerInternalDeepCopy`: the argument's independent clone, synthesized by its
 // resolved type. An argument whose type is still a variable passes through as it is and its
 // type is recorded, so the body is lowered again once the type resolves (stage 0 defers the
@@ -939,9 +952,12 @@ let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreL
         | SemVariable(_id) as unresolved ->
             state
             |> withStateUnresolvedCallResults(unresolved :: stateUnresolvedCallResults(state))
+            |> shadowDeepCopy(None)
             |> success(temp)(unresolved)
         | resolved ->
-            match emitTcoDeepCopy(temp)(resolved)(state) with
+            match state
+            |> shadowDeepCopy(Some(resolved))
+            |> emitTcoDeepCopy(temp)(resolved) with
                 | (copied, resultTemp) ->
                     (if tempIsNewlyProduced(temp)(state)
                     then emitArenaResultRelease(temp)(resolved)(copied)

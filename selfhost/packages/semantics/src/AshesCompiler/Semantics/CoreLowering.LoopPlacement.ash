@@ -19,6 +19,7 @@ import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -181,18 +182,42 @@ let normalizesAlwaysReturnedParameter parameter body label parameterType (state:
             |> stateConstructorLayouts
             |> constructorLayoutNames)(mustReachCallee(loneRecursiveBindingNames(state))(state))(body)(parameter)
 
+// Step-8 shadow comparison, rule 11: whether the parameter is normalized at entry on the type it
+// has there, against the same decision on the parameter type the table records for the lambda.
+let shadowEntryNormalization parameter body label parameterType (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let decisionText =
+            given (normalizes: Bool) ->
+                if normalizes
+                then "normalize"
+                else "keep"
+        in
+            observeShadow(11)(state
+            |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)
+            |> decisionText)(match shadowSiteType(state) with
+                | Some(SemFunction(recordedParameter, _result, _row)) ->
+                    state
+                    |> normalizesAlwaysReturnedParameter(parameter)(body)(label)(recordedParameter)
+                    |> decisionText
+                    |> Some
+                | _ -> None)(state)
+    else state
+
 // The entry-normalized parameter (if any) made visible to the body's placement decisions; the
 // direct argument lives in local slot 1.
-let withNormalizedAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
-    if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
-    then
-        state
-        |> withStateNormalizedParameterCloned(false)
-        |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
-    else
-        state
-        |> withStateNormalizedParameterCloned(false)
-        |> withStateNormalizedAlwaysReturnedParameter(None)
+let withNormalizedAlwaysReturnedParameter parameter body label parameterType (unshadowed: CoreLoweringState) =
+    (let state = shadowEntryNormalization(parameter)(body)(label)(parameterType)(unshadowed)
+    in
+        if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
+        then
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
+        else
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(None))
 
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
