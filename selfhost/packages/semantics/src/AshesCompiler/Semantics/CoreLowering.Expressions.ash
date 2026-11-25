@@ -58,6 +58,7 @@ import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDeferredEvaluation
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
 import AshesCompiler.Semantics.CoreLowering.TcoReset
 import AshesCompiler.Semantics.CoreLowering.Bindings
@@ -2936,11 +2937,18 @@ let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweri
 // even with the watermark moved past each cell, an arena cell stores its head raw while the back
 // edge is free to release the parameter graph that head was borrowed from. A head the cell cannot
 // own as a reference hands the cons back to the ordinary path, which recurses: correct, just not
-// stack-safe.
+// stack-safe. A head that reads a pattern owner needing a protective reference is one: stage 0
+// tracks such an owner with no runtime representation until the loop's finalize places it
+// (`TrackOwnedValue` from the pattern binding sites, runtimeManaged false), so its read is not a
+// reference-counted temp when `CanBuildRuntimeManagedCell` asks, and `binder :: addUse(...)` over a
+// part of the walked list keeps the ordinary recursion. A copy of the read onto the heap counts.
+let unplacedPatternOwnerHead (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    isPatternOwnerRead(headExpression)(state) && !containsInt(headTemp)(statePatternOwnerCopyTemps(state)) && !isProducerCellHeadType(resolveType(state)(headType))
+
 let finishConsTmc (request: ConsumerRequest) (transfers: Bool) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (headExpression: Expr) (tailExpression: Expr) lower head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false || unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
         | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } ->
             match duplicatePatternOwnerTemp(headExpression)(headTemp)(headState) with
                 | (duplicatedState, duplicatedHead) ->
