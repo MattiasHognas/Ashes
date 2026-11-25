@@ -186,12 +186,6 @@ let lowerValidatedCoreProgramWithSchemesAndReuse (reuseEnabled: Bool) (regions: 
 
 let lowerValidatedCoreProgramWithRegionsAndReuse reuseEnabled regions program = lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(Ashes.Collection.Map.empty)(program)
 
-// The raw stitched program, lowered with the operator-generic schemes the standalone inference
-// recorded against `numbered`, the numbered form of the same program: top-level bindings by name,
-// and `let` bindings below top level by their region, span and name.
-let lowerInferredRawProgramWithRegionsAndReuse reuseEnabled (regions: SourceRegions) numbered table program =
-    lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)(regions)(rawOperatorSchemesWithNestedLets(regions.regionOfName)(numbered)(table))(program)
-
 let lowerCoreProgramWithRegionsAndReuse reuseEnabled regions program =
     regions
     |> lowerValidatedCoreProgramWithSchemesAndReuse(reuseEnabled)

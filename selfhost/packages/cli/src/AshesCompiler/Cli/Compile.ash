@@ -7,9 +7,8 @@
 //   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
 //   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
 //   program through the standalone type inference (the type checker: a program it rejects fails
-//   with stage 0's diagnostic, unless `ASHES_SKIP_INFERENCE_CHECK=1`), then through lowering from
-//   its recorded types (`lowerCoreNumberedProgramWithRegionsAndReuse`; the stitched program with
-//   `ASHES_TYPED_LOWERING=0` or without the check) and `optimizeIrProgram`, the lowered `IrProgram`
+//   with stage 0's diagnostic), then through lowering from its recorded types
+//   (`lowerCoreNumberedProgramWithRegionsAndReuse`) and `optimizeIrProgram`, the lowered `IrProgram`
 //   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
 //   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
@@ -387,30 +386,8 @@ let loweredStitchedResult (lowering: CoreLoweringResult) =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-let lowerStitchedProgram reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    stitched.program
-    |> lowerCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-    |> loweredStitchedResult
-
-// Lowering reads the types the standalone inference recorded against the numbered program. With
-// `ASHES_TYPED_LOWERING=0` it lowers the stitched program as before, inferring the program's types
-// as it lowers it, for comparison with the typed path.
-let typedLoweringRequested unit =
-    match Ashes.IO.Environment.get("ASHES_TYPED_LOWERING") with
-        | Ok(Some(value)) -> value != "0"
-        | _ -> true
-
 // The numbered units of a stitched project as the one program lowering walks.
 let numberedStitchedProgram (identified: IdentifiedStitchedProject) = identifiedProgramSyntax(identified.program)
-
-// With `ASHES_SKIP_INFERENCE_CHECK=1` the program is lowered without the inference check: lowering
-// alone decides whether it is accepted, as before the check existed. Without the check there is no
-// recorded type table, so the program is lowered as the stitched program on either setting of
-// `ASHES_TYPED_LOWERING`.
-let inferenceCheckSkipped unit =
-    match Ashes.IO.Environment.get("ASHES_SKIP_INFERENCE_CHECK") with
-        | Ok(Some(value)) -> value == "1"
-        | _ -> false
 
 let builtinInferenceEnvironment unit =
     "standalone"
@@ -450,8 +427,8 @@ let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxP
         else inferenceText)
 
 // The standalone type inference is the type checker: it runs on every stitched program before
-// lowering, and a program it rejects is not lowered further. An accepted program is lowered
-// from the inference's recorded types, or, with `ASHES_TYPED_LOWERING=0`, as the stitched program.
+// lowering, and a program it rejects is not lowered further. An accepted program is lowered from the
+// types the inference recorded against the numbered program.
 let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
     (let builtins = builtinInferenceEnvironment(Unit)
     in
@@ -463,24 +440,14 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
                     |> rejectedProgramText(reuseEnabled)(inputPath)(source)(stitched)(builtins)(result)
                     |> Error
                 | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
-                    if typedLoweringRequested(Unit)
-                    then
-                        nodeTypes
-                        |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
-                        |> loweredStitchedResult
-                    else
-                        stitched.program
-                        |> lowerInferredRawProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))(nodeTypes)
-                        |> loweredStitchedResult)
-
-let lowerUnchecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject) = lowerStitchedProgram(reuseEnabled)(inputPath)(source)(stitched)
+                    nodeTypes
+                    |> lowerCoreNumberedProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))(numberedStitchedProgram(identified))
+                    |> loweredStitchedResult)
 
 // The stitched project type-checked, lowered and optimized, with the placement facts the reports
 // read.
 let lowerStitched reuseEnabled inputPath source (stitched: StitchedSyntaxProject) =
-    match if inferenceCheckSkipped(Unit)
-    then lowerUnchecked(reuseEnabled)(inputPath)(source)(stitched)
-    else lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
+    match lowerChecked(reuseEnabled)(inputPath)(source)(stitched) with
         | Error(message) -> Error(message)
         | Ok((lowered, valuePlacements)) -> Ok((stitched, lowered, optimizeIrProgram(lowered), valuePlacements))
 
