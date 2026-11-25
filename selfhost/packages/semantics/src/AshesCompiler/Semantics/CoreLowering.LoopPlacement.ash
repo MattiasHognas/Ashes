@@ -580,8 +580,8 @@ let tcoPassThroughSlotCopy (slot: Int) (state: CoreLoweringState) =
 
 // A list-only self-call shape (a choice between handing the parameter on and a call consuming it,
 // say) says nothing about a named type's cells: stage 0's `IsRcEligibleScalarTupleOrAdtType` places
-// a named loop parameter whatever its self-calls pass, short of handing it on unchanged. Every
-// other type keeps the list-shape gate.
+// a named loop parameter whatever its self-calls pass (`tcoAdtSlotCopy`). Every other type keeps
+// the list-shape gate.
 let tcoUnnamedSlotCopy (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (resolved: Maybe(SemanticType)) (state: CoreLoweringState) =
     if isTcoListShape(shape) && shape != TcoRefilledFreshListShape
     then None
@@ -602,22 +602,27 @@ let tcoUnnamedSlotCopy (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop)
                 else None
             | _ -> None
 
+// Stage 0's `EvaluateTcoRcEligibility` reads only the parameter's resolved type, never its self-calls'
+// shape, so a named loop parameter every self-call hands on unchanged (a state record threaded
+// through the loop) is placed like one the loop rebuilds: normalized at the loop entry, kept as it
+// is at the back edges (no copy, no predecessor release), and released at the exit. Any other type
+// handed on unchanged keeps the pass-through gate.
 let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    if shape == TcoPassThroughShape
-    then tcoPassThroughSlotCopy(slot)(state)
-    else
-        match slotResolvedType(slot)(state.bindings)(state) with
-            | Some(SemNamed(_symbolId, name, _arguments) as named) ->
-                if isResourceHandle(named)(state)
-                then None
-                else
-                    let layouts = state |> stateConstructorsOfType(name)
-                    in
-                        match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
-                            | Some(true) -> Some((named, name))
-                            | Some(false) -> None
-                            | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
-            | resolved -> tcoUnnamedSlotCopy(slot)(shape)(loop)(resolved)(state)
+    match slotResolvedType(slot)(state.bindings)(state) with
+        | Some(SemNamed(_symbolId, name, _arguments) as named) ->
+            if isResourceHandle(named)(state)
+            then None
+            else
+                let layouts = state |> stateConstructorsOfType(name)
+                in
+                    match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
+                        | Some(true) -> Some((named, name))
+                        | Some(false) -> None
+                        | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
+        | resolved ->
+            if shape == TcoPassThroughShape
+            then tcoPassThroughSlotCopy(slot)(state)
+            else tcoUnnamedSlotCopy(slot)(shape)(loop)(resolved)(state)
 
 let tcoAdtSlotAdmitted (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match tcoAdtSlotCopy(ordinal)(slot)(shape)(loop)(state) with

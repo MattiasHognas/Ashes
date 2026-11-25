@@ -649,10 +649,26 @@ let testExitArmPatternOwnerNormalizedOnce unit =
     |> countContainingBoth("RcDup")("RuntimeManaged=true")
     |> test.assertEqual(4)
 
+// `retarget(rest)(fn)` hands the record `fn` on unchanged at its back edge. Stage 0 places it by
+// its type alone, so the loop normalizes the argument at its entry (one `rc_arg_normalize_copy`
+// block) and releases it at the exit, as it does for a record the loop rebuilds.
+let testPassThroughRecordParameterNormalizedAtEntry unit =
+    match Ashes.IO.File.readText(unchangedFieldUpdateSourcePath) with
+        | Error(message) -> test.fail("could not read " + unchangedFieldUpdateSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from retarget")
+            |> Ashes.Collection.List.filter(given (line: Str) ->
+                Ashes.Text.startsWith(Ashes.Text.trim(line))("rc_arg_normalize_copy_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+            |> length
+            |> test.assertEqual(1)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
     |> testExitArmPatternOwnerNormalizedOnce
     |> testLoopExitFieldResultThroughIfIsReferenceCounted
+    |> testPassThroughRecordParameterNormalizedAtEntry
     |> testLoopExitFieldResultIsReferenceCounted
     |> testBackEdgeRetainsLetAliasOfIterationOwner
     |> testUnplacedParameterTailSlotStaysZero
