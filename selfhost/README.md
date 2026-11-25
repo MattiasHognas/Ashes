@@ -56,7 +56,7 @@ comments explain non-obvious behavioral contracts, ordering rules, ownership con
 algorithmic choices where the code alone does not explain why they matter. The .NET stage-0 comments
 are audit input for these contracts, but C#-specific API narration and implementation details are not
 copied into the pure-Ashes sources. Migration status remains in this README and
-`docs/md/future/SELF_HOSTING.md`, not in module headers.
+`docs/md/future/SELF_HOSTING_CHECKLIST.md`, not in module headers.
 
 ## Phase benchmarks
 
