@@ -35,9 +35,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification.UnificationError
 export (
     value inferenceErrorDiagnostic,
-    value inferenceErrorWantsCallSiteWording,
     value inferenceErrorText,
-    value inferenceErrorLocationPrefix,
     value parseDiagnosticsText,
 )
 
@@ -541,6 +539,15 @@ let branchTypeDiagnostic placements mismatch code context =
         | Some((_code, message)) -> coded(code)(message + " Context: " + context + ".")
         | None -> None
 
+// A callee as the source names it: a definition stitching renamed reads by its declared name.
+let sourceCallee (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) =
+    match callee with
+        | Some(name) ->
+            name
+            |> sourceNameOf(placements)
+            |> Some
+        | None -> None
+
 let callArgumentContext (ordinal: Int) (callee: Maybe(Str)) =
     match callee with
         | Some(name) -> " Context: in argument #" + Ashes.Text.fromInt(ordinal) + " of call to '" + name + "'."
@@ -554,8 +561,10 @@ let callArgumentDiagnostic (placements: List(StitchedDefinitionPlacement)) (mism
             match right
             |> withSourceNames(placements)
             |> diagnosticTypePairText(withSourceNames(placements)(left)) with
-                | (leftText, rightText) -> coded(typeMismatchCode)("Type mismatch: " + leftText + " vs " + rightText + "." + callArgumentContext(ordinal)(callee))
-        | InfiniteType(_variable, _semanticType) -> uncoded("Occurs check failed (recursive type)." + callArgumentContext(ordinal)(callee))
+                | (leftText, rightText) ->
+                    coded(typeMismatchCode)("Type mismatch: " + leftText + " vs " + rightText + "." + callArgumentContext(ordinal)(sourceCallee(placements)(callee)))
+        | InfiniteType(_variable, _semanticType) ->
+            uncoded("Occurs check failed (recursive type)." + callArgumentContext(ordinal)(sourceCallee(placements)(callee)))
         | TypeArityMismatch(_left, _right) -> None
 
 let constructorShapeSuffix placements environment name =
@@ -585,8 +594,8 @@ let callChainArityDiagnostic (placements: List(StitchedDefinitionPlacement)) (en
                 then uncoded("Constructor '" + sourceNameOf(placements)(name) + "' expects " + counts + constructorShapeSuffix(placements)(environment)(name))
                 else
                     if expected == 0
-                    then uncoded("Attempted to call '" + name + "' with " + Ashes.Text.fromInt(provided) + " argument(s), but its type is " + typeText(placements)(calleeType) + ", not a function.")
-                    else uncoded("Call to '" + name + "' expects " + counts)
+                    then uncoded("Attempted to call '" + sourceNameOf(placements)(name) + "' with " + Ashes.Text.fromInt(provided) + " argument(s), but its type is " + typeText(placements)(calleeType) + ", not a function.")
+                    else uncoded("Call to '" + sourceNameOf(placements)(name) + "' expects " + counts)
             | None ->
                 if expected == 0
                 then uncoded("Attempted to call non-function type " + typeText(placements)(calleeType) + ".")
@@ -764,6 +773,13 @@ let externalAbiDiagnostic (error: ExternalAbiError) =
         | InvalidExternalNativeStringDestructor(destructor) -> coded(ffiStringCode)("Owned FfiStr destructor '" + destructor + "' must be an external (*u8) -> void function in the same file.")
         | _ -> None
 
+// Operands of `+` of two different types, as stage 0 words them.
+let addOperandDiagnostic (placements: List(StitchedDefinitionPlacement)) (left: SemanticType) (right: SemanticType) =
+    match right
+    |> withSourceNames(placements)
+    |> diagnosticTypePairText(withSourceNames(placements)(left)) with
+        | (leftText, rightText) -> coded(typeMismatchCode)("'+' requires Int+Int, Float+Float, or Str+Str, got " + leftText + " and " + rightText + ".")
+
 // A diagnostic with stage 0's context appended.
 let withDiagnosticContext (context: Str) (diagnostic: Maybe((Maybe(Str), Str))) =
     match diagnostic with
@@ -781,6 +797,7 @@ let recursive expressionDiagnostic (placements: List(StitchedDefinitionPlacement
             |> unknownValueDiagnostic(placements)(builtins)(location)
             |> unimportedNameOr("Constructor")(name)
         | InferenceUnificationError(unification) -> unificationDiagnostic(placements)(unification)
+        | AddOperandMismatch(left, right) -> addOperandDiagnostic(placements)(left)(right)
         | IfBranchTypeMismatch(mismatch) -> branchTypeDiagnostic(placements)(mismatch)(typeMismatchCode)("in if branches")
         | MatchArmTypeMismatch(mismatch, armIndex) -> branchTypeDiagnostic(placements)(mismatch)("ASH004")("in match arm " + Ashes.Text.fromInt(armIndex))
         | InferenceTypeResolutionError(resolution) -> typeResolutionDiagnostic(resolution)
@@ -930,38 +947,7 @@ let recursive inferenceErrorDiagnosticIn (placements: List(StitchedDefinitionPla
         | ReservedTypeDeclaration(_name) -> uncoded("'Ashes' and built-in runtime types are reserved")
         | _ -> None
 
-// Whether a callee name is a definition stitching renamed (a module's binding under its compiler
-// name): stage 0 names it as the source spells it, which the error no longer knows.
 let inferenceErrorDiagnostic placements items builtins location error = inferenceErrorDiagnosticIn(placements)(items)(builtins)(builtins)(location)(error)
-
-let renamedDefinition (placements: List(StitchedDefinitionPlacement)) (name: Str) =
-    match definitionNamed(placements)(name) with
-        | Some(definition) -> definition.sourceName != definition.compilerName
-        | None -> false
-
-let renamedCallee (placements: List(StitchedDefinitionPlacement)) (callee: Maybe(Str)) =
-    match callee with
-        | Some(name) -> renamedDefinition(placements)(name)
-        | None -> false
-
-// A unification error carries the two types but not the call, argument, constructor or operator
-// it was raised at, which stage 0 words its message after (an argument count, a non-function
-// callee, an operand pair). Lowering knows that site, so its own diagnostic, when it words one, is
-// the closer rendering. A mismatch between two capability rows is the closed-row check, and one
-// between two tuples of different lengths is a pattern's shape against its value's; the inference
-// words both itself. A call's argument mismatch and arity error carry their site and are worded by
-// the inference too, unless the callee is a renamed definition.
-let recursive inferenceErrorWantsCallSiteWording (placements: List(StitchedDefinitionPlacement)) (error: ProgramInferenceError) =
-    match error with
-        | ProgramErrorAt(_location, inner) -> inferenceErrorWantsCallSiteWording(placements)(inner)
-        | ProgramExpressionError(InferenceErrorAt(_span, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
-        | ProgramExpressionError(InferenceErrorInContext(_context, inner)) -> inferenceErrorWantsCallSiteWording(placements)(ProgramExpressionError(inner))
-        | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemRow(_left, _leftTail), SemRow(_right, _rightTail)))) -> false
-        | ProgramExpressionError(InferenceUnificationError(TypeMismatch(SemTuple(_leftElements), SemTuple(_rightElements)))) -> false
-        | ProgramExpressionError(InferenceUnificationError(_unification)) -> true
-        | ProgramExpressionError(CallArgumentMismatch(_mismatch, _ordinal, callee)) -> renamedCallee(placements)(callee)
-        | ProgramExpressionError(CallChainArityMismatch(callee, _expected, _provided, _calleeType)) -> renamedCallee(placements)(callee)
-        | _ -> false
 
 let maybeText (value: Maybe(Str)) =
     match value with
@@ -1031,10 +1017,6 @@ let recursive parseDiagnosticsText (entryPath: Str) (entrySource: Str) (diagnost
         | [] -> ""
         | (sourcePath, entry) :: [] -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry)
         | (sourcePath, entry) :: rest -> parseDiagnosticLine(entryPath)(entrySource)(sourcePath)(entry) + "\n" + parseDiagnosticsText(entryPath)(entrySource)(rest)
-
-// The `path:line:column ` of the error the inference rejected a program with, or "" when it has
-// no location.
-let inferenceErrorLocationPrefix (entryPath: Str) (entrySource: Str) (result: ProgramInferenceResult) = locationPrefix(entryPath)(entrySource)(result.errorLocation)
 
 // Stage 0 names the entry module `Main` and qualifies nothing declared there: a trait of the entry
 // module reads by its bare name, where stitching qualified it by the entry file's module name.

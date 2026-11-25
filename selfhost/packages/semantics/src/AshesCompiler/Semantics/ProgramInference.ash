@@ -371,8 +371,8 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
 let recursive seedRecursiveBindings pending environment substitution supply =
     match pending with
         | [] -> RecursiveInference(resolved = [], substitution = substitution, supply = supply, error = None)
-        | PendingRecursiveBinding { annotation = annotation, placeholderType = placeholderType } :: tail ->
-            match seedRecursiveSignature(annotation)(placeholderType)(environment)(substitution)(supply) with
+        | PendingRecursiveBinding { annotation = annotation, value = value, placeholderType = placeholderType } :: tail ->
+            match seedRecursiveBinding(annotation)(value)(placeholderType)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> seedRecursiveBindings(tail)(environment)(seededSubstitution)(seededSupply)
                 | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } ->
                     RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(
