@@ -333,6 +333,16 @@ let recursive lastArgument (arguments: List(Expr)) =
 // whose callee's whole-program result reach keeps none of its parameters, so the value handed to
 // the specialization is freshly built here and aliased by nothing the specialization could
 // overwrite out from under.
+// Stage 0's `IsFreshOwnershipResultCall` reads the callee's ownership summary, which a lone
+// recursive binding's own call to itself does not have yet inside its body
+// (`GetOwnershipSummaryForCallRoot`, `selfCallReadsNoSummary`): such a call's result is never a
+// proven fresh accumulator, so the call it feeds stays on its ordinary path.
+let selfCallWithoutSummary (callee: Str) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) ->
+            length(stateRecursiveGroupNames(state)) == 1
+        | _ -> false
+
 let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringState) =
     match collectCallSpine(argument) with
         | CoreCallSpine { arguments = [] } -> false
@@ -342,7 +352,7 @@ let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringStat
                     match lookupLetLambdaNamed(callee)(state) with
                         | Some((recordedParameters, recordedBody)) ->
                             match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
-                                | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach)
+                                | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach) && !selfCallWithoutSummary(callee)(state)
                         | None -> false
                 | _ -> false
 
