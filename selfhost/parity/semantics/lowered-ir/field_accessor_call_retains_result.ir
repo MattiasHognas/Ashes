@@ -1,0 +1,541 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8651)
+  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9348)
+  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
+  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:10214)
+  resolved requirement=Ashes.Trait.Ord(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:2928)
+
+function lambda_0  [SourceFunction from textOf]
+  locals=2 temps=2
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:6:31)
+    GetAdtField           Target=1 Ptr=0 FieldIndex=1 Tagless=true   (field_accessor_call_retains_result.ash:6:31)
+    Return                Source=1   (field_accessor_call_retains_result.ash:6:1)
+
+function lambda_1  [SourceFunction from bytesOf]
+  locals=2 temps=2
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:8:32)
+    GetAdtField           Target=1 Ptr=0 FieldIndex=0 Tagless=true   (field_accessor_call_retains_result.ash:8:32)
+    Return                Source=1   (field_accessor_call_retains_result.ash:8:1)
+
+function __rcdrop_record_6  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:14:69)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_6   (field_accessor_call_retains_result.ash:14:69)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (field_accessor_call_retains_result.ash:14:69)
+    RcDrop                SourceTemp=2 TypeName=Bytes RuntimeManaged=true
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1 Tagless=true   (field_accessor_call_retains_result.ash:14:69)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+  rc_drop_shared_6:
+    RcDrop                SourceTemp=0 TypeName=Holder RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (field_accessor_call_retains_result.ash:14:69)
+    Return                Source=4   (field_accessor_call_retains_result.ash:14:69)
+
+function __rcnorm_7  [RuntimeManagedAdtNormalizer]
+  locals=5 temps=15
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:10:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_13   (field_accessor_call_retains_result.ash:10:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (field_accessor_call_retains_result.ash:10:1)
+    Jump                  Target=rc_representation_done_14   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_copy_13:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (field_accessor_call_retains_result.ash:10:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_15   (field_accessor_call_retains_result.ash:10:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (field_accessor_call_retains_result.ash:10:1)
+    Jump                  Target=rc_representation_done_16   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_copy_15:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_done_16:
+    LoadLocal             Target=8 Slot=3   (field_accessor_call_retains_result.ash:10:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (field_accessor_call_retains_result.ash:10:1)
+    GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (field_accessor_call_retains_result.ash:10:1)
+    IsReferenceCounted    Target=10 SourceTemp=9
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_17   (field_accessor_call_retains_result.ash:10:1)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=11   (field_accessor_call_retains_result.ash:10:1)
+    Jump                  Target=rc_representation_done_18   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_copy_17:
+    CopyOutArena          DestTemp=12 SrcTemp=9 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=12   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_done_18:
+    LoadLocal             Target=13 Slot=4   (field_accessor_call_retains_result.ash:10:1)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=13 Tagless=true   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=2 Source=3   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_done_14:
+    LoadLocal             Target=14 Slot=2   (field_accessor_call_retains_result.ash:10:1)
+    Return                Source=14   (field_accessor_call_retains_result.ash:10:1)
+
+function lambda_5  [ClosureHelper from total]
+  locals=25 temps=62
+    LoadEnv               Target=0 Index=0   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=2 Source=0   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=1 Index=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=3 Source=1   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=2 Index=2   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=4 Source=2   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=48 Slot=4   (field_accessor_call_retains_result.ash:10:1)
+    IsReferenceCounted    Target=49 SourceTemp=48
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_11   (field_accessor_call_retains_result.ash:10:1)
+    RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=50   (field_accessor_call_retains_result.ash:10:1)
+    Jump                  Target=rc_representation_done_12   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_copy_11:
+    LoadConstInt          Target=53 Value=0   (field_accessor_call_retains_result.ash:10:1)
+    CallKnown             Target=54 FuncLabel=__rcnorm_7 EnvTemp=53 ArgTemp=48   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=23 Source=54   (field_accessor_call_retains_result.ash:10:1)
+  rc_representation_done_12:
+    LoadLocal             Target=55 Slot=23   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=4 Source=55   (field_accessor_call_retains_result.ash:10:1)
+    LoadConstInt          Target=56 Value=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=10 Source=56   (field_accessor_call_retains_result.ash:10:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=7 Source=3   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=8 Source=3   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=9 Source=3   (field_accessor_call_retains_result.ash:10:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    SaveStackPointer      Slot=13   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=4 Slot=2   (field_accessor_call_retains_result.ash:11:8)
+    LoadLocal             Target=5 Slot=3   (field_accessor_call_retains_result.ash:11:17)
+    CmpIntGe              Target=6 Left=4 Right=5   (field_accessor_call_retains_result.ash:11:8)
+    JumpIfFalse           CondTemp=6 Target=else_0   (field_accessor_call_retains_result.ash:11:5)
+    LoadLocal             Target=7 Slot=1   (field_accessor_call_retains_result.ash:12:10)
+    StoreLocal            Slot=14 Source=7   (field_accessor_call_retains_result.ash:11:5)
+    Jump                  Target=endif_1   (field_accessor_call_retains_result.ash:11:5)
+  else_0:
+    LoadLocal             Target=8 Slot=4   (field_accessor_call_retains_result.ash:14:15)
+    LoadLocal             Target=9 Slot=2   (field_accessor_call_retains_result.ash:14:23)
+    LoadConstInt          Target=10 Value=1   (field_accessor_call_retains_result.ash:14:31)
+    AddInt                Target=11 Left=9 Right=10   (field_accessor_call_retains_result.ash:14:23)
+    LoadLocal             Target=12 Slot=3   (field_accessor_call_retains_result.ash:14:34)
+    LoadLocal             Target=13 Slot=1   (field_accessor_call_retains_result.ash:14:41)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadEnv               Target=14 Index=3   (field_accessor_call_retains_result.ash:14:69)
+    Borrow                Target=15 SourceTemp=14
+    LoadLocal             Target=16 Slot=4   (field_accessor_call_retains_result.ash:14:76)
+    RcDup                 Target=17 SourceTemp=16 RuntimeManaged=true
+    LoadConstInt          Target=18 Value=0   (field_accessor_call_retains_result.ash:14:69)
+    LoadConstInt          Target=19 Value=1   (field_accessor_call_retains_result.ash:14:69)
+    CallClosure           Target=20 ClosureTemp=15 ArgTemp=17   (field_accessor_call_retains_result.ash:14:69)
+    RcDup                 Target=21 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=21   (field_accessor_call_retains_result.ash:14:69)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    JumpIfFalse           CondTemp=19 Target=call_copy_arena_result_2   (field_accessor_call_retains_result.ash:14:69)
+    Jump                  Target=call_reclaim_owned_result_3   (field_accessor_call_retains_result.ash:14:69)
+  call_copy_arena_result_2:
+    CopyOutArena          DestTemp=22 SrcTemp=21 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=18 Source=22   (field_accessor_call_retains_result.ash:14:69)
+  call_reclaim_owned_result_3:
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    LoadLocal             Target=23 Slot=18   (field_accessor_call_retains_result.ash:14:69)
+    JumpIfFalse           CondTemp=18 Target=rc_handed_over_not_adopted_4   (field_accessor_call_retains_result.ash:14:69)
+    Jump                  Target=rc_handed_over_done_5   (field_accessor_call_retains_result.ash:14:69)
+  rc_handed_over_not_adopted_4:
+    LoadConstInt          Target=24 Value=0   (field_accessor_call_retains_result.ash:14:69)
+    CallKnown             Target=25 FuncLabel=__rcdrop_record_6 EnvTemp=24 ArgTemp=17   (field_accessor_call_retains_result.ash:14:69)
+  rc_handed_over_done_5:
+    TextByteLength        Target=26 TextTemp=23   (field_accessor_call_retains_result.ash:14:47)
+    RcDrop                SourceTemp=23 TypeName=String RuntimeManaged=true
+    AddInt                Target=27 Left=13 Right=26   (field_accessor_call_retains_result.ash:14:41)
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadEnv               Target=28 Index=4   (field_accessor_call_retains_result.ash:14:105)
+    Borrow                Target=29 SourceTemp=28
+    LoadLocal             Target=30 Slot=4   (field_accessor_call_retains_result.ash:14:113)
+    RcDup                 Target=31 SourceTemp=30 RuntimeManaged=true
+    LoadConstInt          Target=32 Value=0   (field_accessor_call_retains_result.ash:14:105)
+    LoadConstInt          Target=33 Value=1   (field_accessor_call_retains_result.ash:14:105)
+    CallClosure           Target=34 ClosureTemp=29 ArgTemp=31   (field_accessor_call_retains_result.ash:14:105)
+    RcDup                 Target=35 SourceTemp=34 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=35   (field_accessor_call_retains_result.ash:14:105)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=21
+    JumpIfFalse           CondTemp=33 Target=call_copy_arena_result_7   (field_accessor_call_retains_result.ash:14:105)
+    Jump                  Target=call_reclaim_owned_result_8   (field_accessor_call_retains_result.ash:14:105)
+  call_copy_arena_result_7:
+    CopyOutArena          DestTemp=36 SrcTemp=35 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=22 Source=36   (field_accessor_call_retains_result.ash:14:105)
+  call_reclaim_owned_result_8:
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=21
+    LoadLocal             Target=37 Slot=22   (field_accessor_call_retains_result.ash:14:105)
+    JumpIfFalse           CondTemp=32 Target=rc_handed_over_not_adopted_9   (field_accessor_call_retains_result.ash:14:105)
+    Jump                  Target=rc_handed_over_done_10   (field_accessor_call_retains_result.ash:14:105)
+  rc_handed_over_not_adopted_9:
+    LoadConstInt          Target=38 Value=0   (field_accessor_call_retains_result.ash:14:105)
+    CallKnown             Target=39 FuncLabel=__rcdrop_record_6 EnvTemp=38 ArgTemp=31   (field_accessor_call_retains_result.ash:14:105)
+  rc_handed_over_done_10:
+    BytesLength           Target=40 BytesTemp=37   (field_accessor_call_retains_result.ash:14:87)
+    RcDrop                SourceTemp=37 TypeName=Bytes RuntimeManaged=true
+    AddInt                Target=41 Left=27 Right=40   (field_accessor_call_retains_result.ash:14:41)
+    LoadLocal             Target=42 Slot=4   (field_accessor_call_retains_result.ash:14:9)
+    LoadLocal             Target=43 Slot=2   (field_accessor_call_retains_result.ash:14:9)
+    LoadLocal             Target=44 Slot=3   (field_accessor_call_retains_result.ash:14:9)
+    LoadLocal             Target=45 Slot=1   (field_accessor_call_retains_result.ash:14:9)
+    StoreLocal            Slot=4 Source=8   (field_accessor_call_retains_result.ash:14:9)
+    StoreLocal            Slot=2 Source=11   (field_accessor_call_retains_result.ash:14:9)
+    StoreLocal            Slot=3 Source=12   (field_accessor_call_retains_result.ash:14:9)
+    StoreLocal            Slot=1 Source=41   (field_accessor_call_retains_result.ash:14:9)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=24
+    LoadConstInt          Target=61 Value=0
+    StoreLocal            Slot=8 Source=61
+    StoreLocal            Slot=9 Source=61
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=24
+    RestoreStackPointer   Slot=13   (field_accessor_call_retains_result.ash:14:9)
+    Jump                  Target=lambda_5_body   (field_accessor_call_retains_result.ash:14:9)
+    LoadConstInt          Target=46 Value=0   (field_accessor_call_retains_result.ash:14:9)
+    StoreLocal            Slot=14 Source=46   (field_accessor_call_retains_result.ash:11:5)
+  endif_1:
+    LoadLocal             Target=47 Slot=14   (field_accessor_call_retains_result.ash:11:5)
+    LoadLocal             Target=57 Slot=4   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=58 Slot=10   (field_accessor_call_retains_result.ash:10:1)
+    JumpIfFalse           CondTemp=58 Target=rc_tco_exit_drop_inactive_19   (field_accessor_call_retains_result.ash:10:1)
+    LoadConstInt          Target=59 Value=0   (field_accessor_call_retains_result.ash:10:1)
+    CallKnown             Target=60 FuncLabel=__rcdrop_record_6 EnvTemp=59 ArgTemp=57   (field_accessor_call_retains_result.ash:10:1)
+  rc_tco_exit_drop_inactive_19:
+    Return                Source=47   (field_accessor_call_retains_result.ash:10:1)
+
+function lambda_4  [ClosureHelper from total]
+  locals=2 temps=10
+    Alloc                 Target=0 SizeBytes=40   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=1 Index=0   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=2 Slot=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=4 Index=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=5 Index=2   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=7 Index=3   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=8 SourceTemp=7
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=8   (field_accessor_call_retains_result.ash:10:1)
+    MakeClosure           Target=9 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=40   (field_accessor_call_retains_result.ash:10:1)
+    Return                Source=9   (field_accessor_call_retains_result.ash:10:1)
+
+function lambda_3  [ClosureHelper from total]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=32   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=1 Slot=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=3 Index=0   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=4 Index=1   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=6 Index=2   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=7   (field_accessor_call_retains_result.ash:10:1)
+    MakeClosure           Target=8 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=32   (field_accessor_call_retains_result.ash:10:1)
+    Return                Source=8   (field_accessor_call_retains_result.ash:10:1)
+
+function lambda_2  [SourceFunction from total]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=24   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=3 Slot=1   (field_accessor_call_retains_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=3   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=4 Index=0   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (field_accessor_call_retains_result.ash:10:1)
+    LoadEnv               Target=6 Index=1   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=7   (field_accessor_call_retains_result.ash:10:1)
+    MakeClosure           Target=8 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=24   (field_accessor_call_retains_result.ash:10:1)
+    Return                Source=8   (field_accessor_call_retains_result.ash:10:1)
+
+function __deepcopy_9  [AdtDeepCopier]
+  locals=2 temps=9
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:16:1)
+    LoadEnv               Target=1 Index=0   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=2 Value=0   (field_accessor_call_retains_result.ash:16:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_9_default   (field_accessor_call_retains_result.ash:16:1)
+  __deepcopy_9_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3 Tagless=true   (field_accessor_call_retains_result.ash:16:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (field_accessor_call_retains_result.ash:16:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (field_accessor_call_retains_result.ash:16:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (field_accessor_call_retains_result.ash:16:1)
+    CopyOutArena          DestTemp=7 SrcTemp=6 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=7   (field_accessor_call_retains_result.ash:16:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=16   (field_accessor_call_retains_result.ash:16:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=8   (field_accessor_call_retains_result.ash:16:1)
+    Return                Source=3   (field_accessor_call_retains_result.ash:16:1)
+  __deepcopy_9_default:
+    Return                Source=0   (field_accessor_call_retains_result.ash:16:1)
+
+function lambda_8  [SourceFunction from makeHolder]
+  locals=5 temps=36
+    LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:17:26)
+    LoadConstInt          Target=1 Value=1000   (field_accessor_call_retains_result.ash:17:30)
+    MulInt                Target=2 Left=0 Right=1   (field_accessor_call_retains_result.ash:17:26)
+    TextFromInt           Target=3 ValueTemp=2   (field_accessor_call_retains_result.ash:17:26)
+    CopyOutArena          DestTemp=4 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
+    LoadLocal             Target=5 Slot=1   (field_accessor_call_retains_result.ash:19:61)
+    TextFromInt           Target=6 ValueTemp=5 RuntimeManaged=true   (field_accessor_call_retains_result.ash:19:42)
+    LoadLocal             Target=7 Slot=1   (field_accessor_call_retains_result.ash:19:79)
+    AllocAdt              Target=8 Tag=0 FieldCount=3 RuntimeManaged=true Tagless=true   (field_accessor_call_retains_result.ash:17:5)
+    SetAdtField           Ptr=8 FieldIndex=0 Source=4 Tagless=true   (field_accessor_call_retains_result.ash:17:5)
+    SetAdtField           Ptr=8 FieldIndex=1 Source=6 Tagless=true   (field_accessor_call_retains_result.ash:17:5)
+    SetAdtField           Ptr=8 FieldIndex=2 Source=7 Tagless=true   (field_accessor_call_retains_result.ash:17:5)
+    StoreLocal            Slot=2 Source=8   (field_accessor_call_retains_result.ash:16:1)
+    IsReferenceCounted    Target=9 SourceTemp=8
+    JumpIfFalse           CondTemp=9 Target=general_rc_result_arena_copy_20   (field_accessor_call_retains_result.ash:16:1)
+    Jump                  Target=general_rc_result_already_owned_21   (field_accessor_call_retains_result.ash:16:1)
+  general_rc_result_arena_copy_20:
+    IsReferenceCounted    Target=10 SourceTemp=8
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_22   (field_accessor_call_retains_result.ash:16:1)
+    RcDup                 Target=11 SourceTemp=8 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=11   (field_accessor_call_retains_result.ash:16:1)
+    Jump                  Target=rc_representation_done_23   (field_accessor_call_retains_result.ash:16:1)
+  rc_representation_copy_22:
+    LoadConstInt          Target=13 Value=0   (field_accessor_call_retains_result.ash:16:1)
+    CallKnown             Target=14 FuncLabel=__rcnorm_7 EnvTemp=13 ArgTemp=8   (field_accessor_call_retains_result.ash:16:1)
+    StoreLocal            Slot=3 Source=14   (field_accessor_call_retains_result.ash:16:1)
+  rc_representation_done_23:
+    LoadLocal             Target=15 Slot=3   (field_accessor_call_retains_result.ash:16:1)
+    StoreLocal            Slot=2 Source=15   (field_accessor_call_retains_result.ash:16:1)
+  general_rc_result_already_owned_21:
+    LoadLocal             Target=16 Slot=2   (field_accessor_call_retains_result.ash:16:1)
+    LoadArgumentOwnership Target=17   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=18 Value=2   (field_accessor_call_retains_result.ash:16:1)
+    ShrInt                Target=19 Left=17 Right=18   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=20 Value=1   (field_accessor_call_retains_result.ash:16:1)
+    AndInt                Target=21 Left=19 Right=20   (field_accessor_call_retains_result.ash:16:1)
+    JumpIfFalse           CondTemp=21 Target=independent_result_not_requested_24   (field_accessor_call_retains_result.ash:16:1)
+    LoadArgumentOwnership Target=22   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=23 Value=-8   (field_accessor_call_retains_result.ash:16:1)
+    AndInt                Target=24 Left=22 Right=23   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=25 Value=2305843009213693952   (field_accessor_call_retains_result.ash:16:1)
+    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=25   (field_accessor_call_retains_result.ash:16:1)
+  independent_result_not_requested_24:
+    LoadArgumentOwnership Target=26   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=27 Value=1   (field_accessor_call_retains_result.ash:16:1)
+    ShrInt                Target=28 Left=26 Right=27   (field_accessor_call_retains_result.ash:16:1)
+    AndInt                Target=29 Left=28 Right=27   (field_accessor_call_retains_result.ash:16:1)
+    JumpIfFalse           CondTemp=29 Target=rc_result_owned_25   (field_accessor_call_retains_result.ash:16:1)
+    Alloc                 Target=30 SizeBytes=8   (field_accessor_call_retains_result.ash:16:1)
+    MakeClosure           Target=31 FuncLabel=__deepcopy_9 EnvPtrTemp=30 EnvSizeBytes=8   (field_accessor_call_retains_result.ash:16:1)
+    StoreMemOffset        BasePtr=30 OffsetBytes=0 Source=31   (field_accessor_call_retains_result.ash:16:1)
+    CallClosure           Target=32 ClosureTemp=31 ArgTemp=16   (field_accessor_call_retains_result.ash:16:1)
+    LoadConstInt          Target=33 Value=0   (field_accessor_call_retains_result.ash:16:1)
+    CallKnown             Target=34 FuncLabel=__rcdrop_record_6 EnvTemp=33 ArgTemp=16   (field_accessor_call_retains_result.ash:16:1)
+    StoreLocal            Slot=4 Source=32   (field_accessor_call_retains_result.ash:16:1)
+    Jump                  Target=rc_result_done_26   (field_accessor_call_retains_result.ash:16:1)
+  rc_result_owned_25:
+    StoreLocal            Slot=4 Source=16   (field_accessor_call_retains_result.ash:16:1)
+  rc_result_done_26:
+    LoadLocal             Target=35 Slot=4   (field_accessor_call_retains_result.ash:16:1)
+    Return                Source=35   (field_accessor_call_retains_result.ash:16:1)
+
+function _start_main  [ProgramEntry]
+  locals=58 temps=110
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (field_accessor_call_retains_result.ash:6:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (field_accessor_call_retains_result.ash:6:1)
+    StoreLocal            Slot=2 Source=1   (field_accessor_call_retains_result.ash:6:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0   (field_accessor_call_retains_result.ash:8:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (field_accessor_call_retains_result.ash:8:1)
+    StoreLocal            Slot=5 Source=3   (field_accessor_call_retains_result.ash:8:1)
+    Alloc                 Target=4 SizeBytes=16   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=5 Slot=2   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=6   (field_accessor_call_retains_result.ash:10:1)
+    LoadLocal             Target=7 Slot=5   (field_accessor_call_retains_result.ash:10:1)
+    Borrow                Target=8 SourceTemp=7
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=8   (field_accessor_call_retains_result.ash:10:1)
+    MakeClosure           Target=9 FuncLabel=lambda_2 EnvPtrTemp=4 EnvSizeBytes=16   (field_accessor_call_retains_result.ash:10:1)
+    StoreLocal            Slot=6 Source=9   (field_accessor_call_retains_result.ash:10:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=10 Value=0   (field_accessor_call_retains_result.ash:16:1)
+    MakeClosureStack      Target=11 FuncLabel=lambda_8 EnvPtrTemp=10 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (field_accessor_call_retains_result.ash:16:1)
+    StoreLocal            Slot=9 Source=11   (field_accessor_call_retains_result.ash:16:1)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=12 Slot=9   (field_accessor_call_retains_result.ash:21:12)
+    Borrow                Target=13 SourceTemp=12
+    LoadConstInt          Target=14 Value=1234   (field_accessor_call_retains_result.ash:21:23)
+    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (field_accessor_call_retains_result.ash:21:12)
+    StoreLocal            Slot=15 Source=15   (field_accessor_call_retains_result.ash:21:12)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    LoadLocal             Target=16 Slot=15   (field_accessor_call_retains_result.ash:21:12)
+    StoreLocal            Slot=16 Source=16   (field_accessor_call_retains_result.ash:21:1)
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadLocal             Target=17 Slot=2   (field_accessor_call_retains_result.ash:23:13)
+    Borrow                Target=18 SourceTemp=17
+    LoadLocal             Target=19 Slot=16   (field_accessor_call_retains_result.ash:23:20)
+    Borrow                Target=20 SourceTemp=19
+    LoadMemOffset         Target=21 BasePtr=18 OffsetBytes=16   (field_accessor_call_retains_result.ash:23:13)
+    LoadConstInt          Target=22 Value=63   (field_accessor_call_retains_result.ash:23:13)
+    ShrInt                Target=23 Left=21 Right=22   (field_accessor_call_retains_result.ash:23:13)
+    CallClosure           Target=24 ClosureTemp=18 ArgTemp=20   (field_accessor_call_retains_result.ash:23:13)
+    StoreLocal            Slot=22 Source=24   (field_accessor_call_retains_result.ash:23:13)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=21
+    JumpIfFalse           CondTemp=23 Target=call_copy_arena_result_27   (field_accessor_call_retains_result.ash:23:13)
+    Jump                  Target=call_reclaim_owned_result_28   (field_accessor_call_retains_result.ash:23:13)
+  call_copy_arena_result_27:
+    CopyOutArena          DestTemp=25 SrcTemp=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=22 Source=25   (field_accessor_call_retains_result.ash:23:13)
+  call_reclaim_owned_result_28:
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=21
+    LoadLocal             Target=26 Slot=22   (field_accessor_call_retains_result.ash:23:13)
+    StoreLocal            Slot=23 Source=26   (field_accessor_call_retains_result.ash:23:1)
+    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
+    SaveArenaState        CursorLocalSlot=26 EndLocalSlot=27
+    LoadLocal             Target=27 Slot=2   (field_accessor_call_retains_result.ash:28:8)
+    Borrow                Target=28 SourceTemp=27
+    SaveArenaState        CursorLocalSlot=28 EndLocalSlot=29
+    LoadLocal             Target=29 Slot=9   (field_accessor_call_retains_result.ash:27:8)
+    Borrow                Target=30 SourceTemp=29
+    LoadConstInt          Target=31 Value=56   (field_accessor_call_retains_result.ash:26:5)
+    CallClosure           Target=32 ClosureTemp=30 ArgTemp=31   (field_accessor_call_retains_result.ash:26:5)
+    StoreLocal            Slot=31 Source=32   (field_accessor_call_retains_result.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=28 EndLocalSlot=29 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=29 PreRestoreEndSlot=30
+    LoadLocal             Target=33 Slot=31   (field_accessor_call_retains_result.ash:26:5)
+    LoadMemOffset         Target=34 BasePtr=28 OffsetBytes=16   (field_accessor_call_retains_result.ash:26:5)
+    LoadConstInt          Target=35 Value=63   (field_accessor_call_retains_result.ash:26:5)
+    ShrInt                Target=36 Left=34 Right=35   (field_accessor_call_retains_result.ash:26:5)
+    CallClosure           Target=37 ClosureTemp=28 ArgTemp=33   (field_accessor_call_retains_result.ash:26:5)
+    StoreLocal            Slot=33 Source=37   (field_accessor_call_retains_result.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=32
+    JumpIfFalse           CondTemp=36 Target=call_copy_arena_result_29   (field_accessor_call_retains_result.ash:26:5)
+    Jump                  Target=call_reclaim_owned_result_30   (field_accessor_call_retains_result.ash:26:5)
+  call_copy_arena_result_29:
+    CopyOutArena          DestTemp=38 SrcTemp=37 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=33 Source=38   (field_accessor_call_retains_result.ash:26:5)
+  call_reclaim_owned_result_30:
+    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=32
+    LoadLocal             Target=39 Slot=33   (field_accessor_call_retains_result.ash:26:5)
+    StoreLocal            Slot=34 Source=39   (field_accessor_call_retains_result.ash:25:1)
+    LoadLocal             Target=40 Slot=23   (field_accessor_call_retains_result.ash:30:16)
+    Borrow                Target=41 SourceTemp=40
+    LoadConstStr          Target=42 StrLabel=str_0   (field_accessor_call_retains_result.ash:30:24)
+    ConcatStr             Target=43 Left=41 Right=42   (field_accessor_call_retains_result.ash:30:16)
+    RcDrop                SourceTemp=26 TypeName=String OwnerSlot=23 RuntimeManaged=true
+    LoadLocal             Target=44 Slot=34   (field_accessor_call_retains_result.ash:30:30)
+    Borrow                Target=45 SourceTemp=44
+    ConcatStr             Target=46 Left=43 Right=45   (field_accessor_call_retains_result.ash:30:16)
+    RcDrop                SourceTemp=39 TypeName=String OwnerSlot=34 RuntimeManaged=true
+    LoadConstStr          Target=47 StrLabel=str_0   (field_accessor_call_retains_result.ash:30:38)
+    ConcatStr             Target=48 Left=46 Right=47   (field_accessor_call_retains_result.ash:30:16)
+    SaveArenaState        CursorLocalSlot=35 EndLocalSlot=36
+    LoadLocal             Target=49 Slot=6   (field_accessor_call_retains_result.ash:30:63)
+    LoadLocal             Target=50 Slot=16   (field_accessor_call_retains_result.ash:30:69)
+    Borrow                Target=51 SourceTemp=50
+    CallClosure           Target=52 ClosureTemp=49 ArgTemp=51   (field_accessor_call_retains_result.ash:30:63)
+    LoadConstInt          Target=53 Value=0   (field_accessor_call_retains_result.ash:30:75)
+    CallClosure           Target=54 ClosureTemp=52 ArgTemp=53   (field_accessor_call_retains_result.ash:30:63)
+    LoadConstInt          Target=55 Value=10   (field_accessor_call_retains_result.ash:30:78)
+    CallClosure           Target=56 ClosureTemp=54 ArgTemp=55   (field_accessor_call_retains_result.ash:30:63)
+    LoadConstInt          Target=57 Value=0   (field_accessor_call_retains_result.ash:30:82)
+    CallClosure           Target=58 ClosureTemp=56 ArgTemp=57   (field_accessor_call_retains_result.ash:30:63)
+    RestoreArenaState     CursorLocalSlot=35 EndLocalSlot=36 PreRestoreEndSlot=37
+    ReclaimArenaChunks    SavedEndSlot=36 PreRestoreEndSlot=37
+    TextFromInt           Target=59 ValueTemp=58   (field_accessor_call_retains_result.ash:30:44)
+    RcDrop                SourceTemp=16 TypeName=Holder OwnerSlot=16
+    ConcatStr             Target=60 Left=48 Right=59   (field_accessor_call_retains_result.ash:30:16)
+    LoadConstStr          Target=61 StrLabel=str_0   (field_accessor_call_retains_result.ash:30:88)
+    ConcatStr             Target=62 Left=60 Right=61   (field_accessor_call_retains_result.ash:30:16)
+    SaveArenaState        CursorLocalSlot=38 EndLocalSlot=39
+    LoadLocal             Target=63 Slot=5   (field_accessor_call_retains_result.ash:32:4)
+    Borrow                Target=64 SourceTemp=63
+    SaveArenaState        CursorLocalSlot=40 EndLocalSlot=41
+    LoadLocal             Target=65 Slot=9   (field_accessor_call_retains_result.ash:31:4)
+    Borrow                Target=66 SourceTemp=65
+    LoadConstInt          Target=67 Value=7   (field_accessor_call_retains_result.ash:30:113)
+    CallClosure           Target=68 ClosureTemp=66 ArgTemp=67   (field_accessor_call_retains_result.ash:30:113)
+    StoreLocal            Slot=43 Source=68   (field_accessor_call_retains_result.ash:30:113)
+    RestoreArenaState     CursorLocalSlot=40 EndLocalSlot=41 PreRestoreEndSlot=42
+    ReclaimArenaChunks    SavedEndSlot=41 PreRestoreEndSlot=42
+    LoadLocal             Target=69 Slot=43   (field_accessor_call_retains_result.ash:30:113)
+    LoadMemOffset         Target=70 BasePtr=64 OffsetBytes=16   (field_accessor_call_retains_result.ash:30:113)
+    LoadConstInt          Target=71 Value=63   (field_accessor_call_retains_result.ash:30:113)
+    ShrInt                Target=72 Left=70 Right=71   (field_accessor_call_retains_result.ash:30:113)
+    CallClosure           Target=73 ClosureTemp=64 ArgTemp=69   (field_accessor_call_retains_result.ash:30:113)
+    StoreLocal            Slot=45 Source=73   (field_accessor_call_retains_result.ash:30:113)
+    RestoreArenaState     CursorLocalSlot=38 EndLocalSlot=39 PreRestoreEndSlot=44
+    JumpIfFalse           CondTemp=72 Target=call_copy_arena_result_31   (field_accessor_call_retains_result.ash:30:113)
+    Jump                  Target=call_reclaim_owned_result_32   (field_accessor_call_retains_result.ash:30:113)
+  call_copy_arena_result_31:
+    CopyOutArena          DestTemp=74 SrcTemp=73 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=45 Source=74   (field_accessor_call_retains_result.ash:30:113)
+  call_reclaim_owned_result_32:
+    ReclaimArenaChunks    SavedEndSlot=39 PreRestoreEndSlot=44
+    LoadLocal             Target=75 Slot=45   (field_accessor_call_retains_result.ash:30:113)
+    BytesLength           Target=76 BytesTemp=75   (field_accessor_call_retains_result.ash:30:113)
+    RcDrop                SourceTemp=75 TypeName=Bytes RuntimeManaged=true
+    TextFromInt           Target=77 ValueTemp=76   (field_accessor_call_retains_result.ash:30:94)
+    ConcatStr             Target=78 Left=62 Right=77   (field_accessor_call_retains_result.ash:30:16)
+    PrintStr              Source=78   (field_accessor_call_retains_result.ash:30:1)
+    AllocAdt              Target=79 Tag=0 FieldCount=0   (field_accessor_call_retains_result.ash:30:1)
+    StoreLocal            Slot=46 Source=79   (field_accessor_call_retains_result.ash:25:1)
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=47
+    CopyOutArena          DestTemp=81 SrcTemp=79 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=47
+    StoreLocal            Slot=48 Source=81   (field_accessor_call_retains_result.ash:23:1)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=49
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=49
+    LoadLocal             Target=83 Slot=48   (field_accessor_call_retains_result.ash:23:1)
+    StoreLocal            Slot=50 Source=83   (field_accessor_call_retains_result.ash:21:1)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=51
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=51
+    LoadLocal             Target=85 Slot=50   (field_accessor_call_retains_result.ash:21:1)
+    StoreLocal            Slot=52 Source=85   (field_accessor_call_retains_result.ash:16:1)
+    LoadLocal             Target=86 Slot=9   (field_accessor_call_retains_result.ash:16:1)
+    CleanupResource       SourceTemp=86 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=53
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=53
+    LoadLocal             Target=87 Slot=52   (field_accessor_call_retains_result.ash:16:1)
+    StoreLocal            Slot=54 Source=87   (field_accessor_call_retains_result.ash:8:1)
+    LoadLocal             Target=88 Slot=5   (field_accessor_call_retains_result.ash:8:1)
+    CleanupResource       SourceTemp=88 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=55
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=55
+    LoadLocal             Target=89 Slot=54   (field_accessor_call_retains_result.ash:8:1)
+    StoreLocal            Slot=56 Source=89   (field_accessor_call_retains_result.ash:6:1)
+    LoadLocal             Target=90 Slot=2   (field_accessor_call_retains_result.ash:6:1)
+    CleanupResource       SourceTemp=90 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=57
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=57
+    LoadLocal             Target=91 Slot=56   (field_accessor_call_retains_result.ash:6:1)
+    LoadLocal             Target=92 Slot=15
+    LoadConstInt          Target=93 Value=0
+    CmpIntNe              Target=94 Left=92 Right=93
+    JumpIfFalse           CondTemp=94 Target=general_rc_owned_absent_33
+    IsReferenceCounted    Target=95 SourceTemp=92
+    JumpIfFalse           CondTemp=95 Target=general_rc_owned_absent_33
+    LoadConstInt          Target=96 Value=0
+    CallKnown             Target=97 FuncLabel=__rcdrop_record_6 EnvTemp=96 ArgTemp=92
+    StoreLocal            Slot=15 Source=93
+  general_rc_owned_absent_33:
+    LoadLocal             Target=98 Slot=31
+    LoadConstInt          Target=99 Value=0
+    CmpIntNe              Target=100 Left=98 Right=99
+    JumpIfFalse           CondTemp=100 Target=general_rc_owned_absent_34
+    IsReferenceCounted    Target=101 SourceTemp=98
+    JumpIfFalse           CondTemp=101 Target=general_rc_owned_absent_34
+    LoadConstInt          Target=102 Value=0
+    CallKnown             Target=103 FuncLabel=__rcdrop_record_6 EnvTemp=102 ArgTemp=98
+    StoreLocal            Slot=31 Source=99
+  general_rc_owned_absent_34:
+    LoadLocal             Target=104 Slot=43
+    LoadConstInt          Target=105 Value=0
+    CmpIntNe              Target=106 Left=104 Right=105
+    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_35
+    IsReferenceCounted    Target=107 SourceTemp=104
+    JumpIfFalse           CondTemp=107 Target=general_rc_owned_absent_35
+    LoadConstInt          Target=108 Value=0
+    CallKnown             Target=109 FuncLabel=__rcdrop_record_6 EnvTemp=108 ArgTemp=104
+    StoreLocal            Slot=43 Source=105
+  general_rc_owned_absent_35:
+    Return                Source=91
+

@@ -179,6 +179,8 @@ export (
     value withStateNormalizableRecordTypes,
     value stateBodyRuntimeManagedByLabel,
     value withStateBodyRuntimeManagedByLabel,
+    value stateTrivialParameterFieldAccessorLabels,
+    value withStateTrivialParameterFieldAccessorLabels,
     value stateDropperLabels,
     value withStateDropperLabels,
     value withStateDropperResult,
@@ -284,6 +286,8 @@ export (
     value statePendingBorrowedOwners,
     value withStatePendingBorrowedOwners,
     value statePendingRuntimeArgumentFlags,
+    value statePendingAccessorResultRetains,
+    value withStatePendingAccessorResultRetains,
     value withStatePendingRuntimeArgumentFlags,
     value stateGenericDeepCopiedListTemps,
     value withStateGenericDeepCopiedListTemps,
@@ -936,6 +940,9 @@ type CoreProgramState =
     // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
     | tupleBinderParameters: List((Int, Int))
     | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
+    // Stage 0's `_isTrivialParameterFieldAccessorByLabel`: the functions whose whole body is a
+    // borrowed field read of their own parameter, of a type with a shallow copy-out.
+    | trivialParameterFieldAccessorLabels: MapTree(Str, Bool)
     // The functions whose compiled result is owned under the contract: each normalizes a result of
     // the contract's types at its return, so a caller that names one takes the result over as it is.
     | generalRcOwnedResultLabels: List(Str)
@@ -1201,6 +1208,10 @@ type CoreOwnerState =
     // finalize pass still decides, with that parameter's slot; the flag is zeroed at finalize
     // when the frame does not admit the parameter to the reference-counted heap.
     | pendingRuntimeArgumentFlags: List((Int, Int))
+    // Stage 0's `_pendingAccessorResultRetains`: the retain of a trivial accessor call's result
+    // whose argument reads a loop parameter not yet placed, with that parameter's slot; finalize
+    // makes it a reference-counted retain when the frame admits the parameter.
+    | pendingAccessorResultRetains: List((Int, Int))
     // Stage 0's `_genericDeepCopiedListTemps`: the result temps of this function's calls whose
     // generic list result was deep-copied out of the call window. Consumed by a later call whose
     // result reach is unknown, such a list is left to that callee's arena result rather than
@@ -2018,6 +2029,14 @@ let withStateBodyRuntimeManagedByLabel value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with bodyRuntimeManagedByLabel = value))
 
+let stateTrivialParameterFieldAccessorLabels (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.trivialParameterFieldAccessorLabels)
+
+let withStateTrivialParameterFieldAccessorLabels value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with trivialParameterFieldAccessorLabels = value))
+
 let stateDropperLabels (state: CoreLoweringState) =
     (let group = state.programState
     in group.dropperLabels)
@@ -2458,6 +2477,14 @@ let statePendingRuntimeArgumentFlags (state: CoreLoweringState) =
 let withStatePendingRuntimeArgumentFlags value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with pendingRuntimeArgumentFlags = value))
+
+let statePendingAccessorResultRetains (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.pendingAccessorResultRetains)
+
+let withStatePendingAccessorResultRetains value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with pendingAccessorResultRetains = value))
 
 let stateGenericDeepCopiedListTemps (state: CoreLoweringState) =
     (let group = state.ownerState

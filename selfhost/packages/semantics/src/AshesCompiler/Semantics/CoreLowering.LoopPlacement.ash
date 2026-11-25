@@ -1405,6 +1405,32 @@ let recursive zeroPendingFlagInstructions (instructions: List(IrInstruction)) (f
             else instruction) :: zeroPendingFlagInstructions(rest)(flags)
         | instruction :: rest -> instruction :: zeroPendingFlagInstructions(rest)(flags)
 
+let recursive upgradeAccessorRetainMarker (dupTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, runtime, flag) } as instruction) :: rest ->
+            if target == dupTemp && !runtime
+            then (instruction with instruction = RcDup(target)(source)(true)(flag)) :: rest
+            else instruction :: upgradeAccessorRetainMarker(dupTemp)(rest)
+        | instruction :: rest -> instruction :: upgradeAccessorRetainMarker(dupTemp)(rest)
+
+let recursive finalizeAccessorRetains (retains: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match retains with
+        | [] -> state
+        | (dupTemp, slot) :: rest ->
+            finalizeAccessorRetains(rest)(managedLists)(managedAdts)(candidates)((if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates)
+            then markRuntimeTemp(dupTemp)(RuntimeNewlyProduced)((state with reversedInstructions = upgradeAccessorRetainMarker(dupTemp)(state.reversedInstructions)))
+            else state))
+
+// Stage 0's `FinalizeAccessorResultRetains`: the identity marker a trivial accessor call over a
+// pending loop parameter emitted becomes a reference-counted retain when the frame placed the
+// parameter on the reference-counted heap, and stays an identity copy when it kept the parameter
+// in the arena, where the zeroed result flag brings the call's copy back.
+let finalizeAccessorResultRetains (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    state
+    |> finalizeAccessorRetains(statePendingAccessorResultRetains(state))(managedLists)(managedAdts)(candidates)
+    |> withStatePendingAccessorResultRetains([])
+
 // Stage 0's `ResolvePendingRuntimeArgumentFlags`: the ownership flag of a call argument that
 // reads a loop parameter the frame did not admit to the reference-counted heap (or a pattern
 // binding extracted from one) is rewritten to zero where it is defined, so the call neither
@@ -1790,6 +1816,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
+                    |> finalizeAccessorResultRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
                     |> finishTcoManagedPlacement(label)(state

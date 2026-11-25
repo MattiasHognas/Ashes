@@ -1492,10 +1492,100 @@ let emitTupleResultPartsRequestWord (context: CoreCallContext) (resultType: Sema
                                 | FreshTemp { state = joinedState, temp = joinedTemp } ->
                                     (emit(OrInt(joinedTemp)(cellTemp + 3)(wordTemp))(joinedState), joinedTemp)
 
-let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) (readsResult: Bool) (resultNormalizedOwned: Bool) unifiedState =
+// Stage 0's `AccessorArgumentRcStatus`: what a trivial accessor call knows about its argument's
+// placement. A pending loop parameter carries its slot, settled at the loop's finalize pass.
+type AccessorArgumentRc =
+    | AccessorArgumentNotRc
+    | AccessorArgumentDefinitelyRc
+    | AccessorArgumentPendingSlot(Int)
+
+let calleeIsTrivialAccessor (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
+    match facts with
+        | Some(CoreCalleeFacts { label = Some(label) }) ->
+            match state
+            |> stateTrivialParameterFieldAccessorLabels
+            |> Ashes.Collection.Map.getStr(label) with
+                | Some(known) -> known
+                | None -> false
+        | _ -> false
+
+// Stage 0's `IsTrivialAccessorCall`: a call that reads the callee's returns bit, applying the first
+// argument of a callee whose whole body is a borrowed field read of that parameter. Only the first
+// application qualifies, where the callee's label names the accessor itself rather than an earlier
+// stage of a curried chain.
+let isTrivialAccessorCall (context: CoreCallContext) (arity: Int) (readsResult: Bool) (state: CoreLoweringState) = readsResult && argumentIndexOf(context.facts)(arity) == 0 && calleeIsTrivialAccessor(context.facts)(state)
+
+// A loop parameter read is reference-counted when the frame has placed it there by now, and
+// pending on the finalize pass otherwise.
+let loopParameterAccessorArgument (argument: Expr) (slot: Int) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(frame) ->
+            if containsInt(slot)(frame.parameterSlots)
+            then
+                if readsEntryPlacedLoopParameter(argument)(state)
+                then AccessorArgumentDefinitelyRc
+                else AccessorArgumentPendingSlot(slot)
+            else AccessorArgumentNotRc
+        | None -> AccessorArgumentNotRc
+
+// Stage 0's `ClassifyAccessorArgumentRc`: a reference-counted argument temp, or a binding that still
+// owns a reference-counted value, is reference-counted; a read of a loop parameter is classified by
+// the frame's placement of it; anything else is not known to be reference-counted.
+let classifyAccessorArgumentRc (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
+    if isRuntimeTemp(argumentTemp)(state)
+    then AccessorArgumentDefinitelyRc
+    else
+        match unspanArgument(argument) with
+            | ExprVar(name) ->
+                match lookupBinding(name)(state.bindings) with
+                    | Some(CoreBinding { location = CoreLocal(slot) }) ->
+                        match runtimeOwnerStateOf(slot)(state) with
+                            | Some(true) -> AccessorArgumentDefinitelyRc
+                            | _ -> loopParameterAccessorArgument(argument)(slot)(state)
+                    | _ -> AccessorArgumentNotRc
+            | _ -> AccessorArgumentNotRc
+
+let accessorArgumentRcOf (context: CoreCallContext) (arity: Int) (readsResult: Bool) (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
+    if isTrivialAccessorCall(context)(arity)(readsResult)(state)
+    then classifyAccessorArgumentRc(argument)(argumentTemp)(state)
+    else AccessorArgumentNotRc
+
+// Stage 0's `ResolveCallResultOwnershipFlag`: a trivial accessor call over a reference-counted
+// argument reads its result as already owned, through a forced flag of one, whatever the callee's
+// returns bit says; the flag of a pending loop parameter is zeroed at finalize when the frame keeps
+// the parameter in the arena, which brings the copy back.
+let resolveCallResultOwnershipFlag (accessorRc: AccessorArgumentRc) (readsResult: Bool) (functionTemp: Int) (state: CoreLoweringState) =
+    match accessorRc with
+        | AccessorArgumentNotRc -> emitResultOwnershipFlag(readsResult)(functionTemp)(state)
+        | AccessorArgumentDefinitelyRc -> emitForcedRetainFlag(state)
+        | AccessorArgumentPendingSlot(slot) ->
+            match emitForcedRetainFlag(state) with
+                | (flagged, flagTemp) -> (withStatePendingRuntimeArgumentFlags((flagTemp, slot) :: statePendingRuntimeArgumentFlags(flagged))(flagged), flagTemp)
+
+// Stage 0's `RetainAccessorCallResult`: the field of a reference-counted parent is a value with its
+// own header, so the call's result is that field retained rather than copied. A pending loop
+// parameter's retain is emitted as an identity marker the finalize pass turns into a retain when
+// the frame places the parameter on the reference-counted heap.
+let retainAccessorCallResult (accessorRc: AccessorArgumentRc) (target: Int) (state: CoreLoweringState) =
+    match accessorRc with
+        | AccessorArgumentNotRc -> (state, target)
+        | AccessorArgumentDefinitelyRc ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = retained } ->
+                    (allocated
+                    |> emit(RcDup(retained)(target)(true)(false))
+                    |> markRuntimeTemp(retained)(RuntimeNewlyProduced), retained)
+        | AccessorArgumentPendingSlot(slot) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = retained } ->
+                    (allocated
+                    |> emit(RcDup(retained)(target)(false)(false))
+                    |> withStatePendingAccessorResultRetains((retained, slot) :: statePendingAccessorResultRetains(allocated)), retained)
+
+let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) (accessorRc: AccessorArgumentRc) (readsResult: Bool) (resultNormalizedOwned: Bool) unifiedState =
     match prepareCallArgument(handOff)(handsFreshArgumentOverUnderAdoption(context)(handOff))(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
         | (preparedState, passedTemp, argumentFlagTemp, handedOver) ->
-            match emitResultOwnershipFlag(readsResult)(functionTemp)(preparedState) with
+            match resolveCallResultOwnershipFlag(accessorRc)(readsResult)(functionTemp)(preparedState) with
                 | (flaggedState, resultFlagTemp) ->
                     match freshTemp(flaggedState) with
                         | FreshTemp { state = targetState, temp = target } ->
@@ -1505,18 +1595,20 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                     | (arenaState, arenaWord) -> emitTupleResultPartsRequestWord(context)(resultType)(arenaWord)(arenaState)
                             else (targetState, argumentFlagTemp) with
                                 | (wordState, wordTemp) ->
-                                    CoreCallStage(
-                                        lowered = wordState
-                                        |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
-                                        |> recordBorrowedCall(handOff.borrowsForPlacement)(target)
-                                        |> success(target)(resolveType(unifiedState)(resultType)),
-                                        consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(handedOver)(consumed),
-                                        resultFlagTemp = resultFlagTemp,
-                                        resultNormalized = false,
-                                        resultDeepCopied = false,
-                                        resultNormalizedOwned = resultNormalizedOwned,
-                                        resultGeneralRc = false
-                                    )
+                                    match wordState
+                                    |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
+                                    |> recordBorrowedCall(handOff.borrowsForPlacement)(target)
+                                    |> retainAccessorCallResult(accessorRc)(target) with
+                                        | (calledState, resultTemp) ->
+                                            CoreCallStage(
+                                                lowered = success(resultTemp)(resolveType(unifiedState)(resultType))(calledState),
+                                                consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(handedOver)(consumed),
+                                                resultFlagTemp = resultFlagTemp,
+                                                resultNormalized = false,
+                                                resultDeepCopied = false,
+                                                resultNormalizedOwned = resultNormalizedOwned,
+                                                resultGeneralRc = false
+                                            )
 
 // A callee whose own scheme leaves a parameter quantified is compiled once for every
 // instantiation, so its body has no layout for that parameter and cannot normalize an
@@ -1671,7 +1763,8 @@ let applyCoreCall (context: CoreCallContext) arity argument (copiedToSpace: Bool
                             handOff
                             |> curryStageOwnerReach(context)(arity)(argument)(resultType)(queried)
                             |> borrowedByReuseSpecialization(context)(arity)(queried)
-                    in emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(placed)(readsResult)(resultNormalizedOwned)(queried)
+                    in
+                        emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(placed)(accessorArgumentRcOf(context)(arity)(readsResult)(argument)(passedTemp)(queried))(readsResult)(resultNormalizedOwned)(queried)
 
 let freshToSpaceSourceOwner (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(argumentTemp)(state) with

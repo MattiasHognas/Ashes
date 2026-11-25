@@ -148,6 +148,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateArenaParameterCopies([])
             |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
+            |> withStatePendingAccessorResultRetains([])
             |> withStateBackEdgeArgumentSlot(None)
             |> withStateAffineAppendContext(None)
             |> withStateAffineAppendReservation(None))
