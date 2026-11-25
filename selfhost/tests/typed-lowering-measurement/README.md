@@ -37,3 +37,23 @@ The typed counter gate requires zero pending traits, zero equality goals and `re
 ## Test-program sweep
 
 The driver also takes a single `.ash` file in place of a manifest; it is stitched with the shipped modules it imports, as `compile <file>` does. `sweep.sh <measure> <typed|legacy> <out>` runs it over every `tests/*.ash` that is not an `expect-compile-error` fixture, one program at a time under a 4 GiB cap, and writes `rows.tsv` (the program name, then the 19 columns above), `failed.txt` (programs whose run did not exit zero with a complete row: stitch or lowering errors), `rejected.txt` (programs the inference rejects, such as the `_fails` diagnostics fixtures; `__TCP_PORT__` is replaced by a number first, as the test runner substitutes a port) and `summary.txt` (programs, replays, pending trait goals, structural equality goals, first-pass deferred operators). The goal details of every program that replayed or deferred an operator are kept in `<out>/<name>.err`. Run it from the repository root with the same driver binary for both modes.
+
+## Step-8 shadow comparison and IR hash
+
+The driver always reports, on stderr, one `shadow rule=<n> agree=<a> differ=<d> unrecorded=<u>` line for each of the eleven order-dependent rules of the step-8 plan (`docs/md/future/SELF_HOSTING.md`, step 8): at each site where the rule decides, the decision it took is compared with the same decision taken on the final type the table records for the site. `agree` counts the sites where both decide alike, `differ` the sites where they do not, and `unrecorded` the sites the table answers nothing for (a node lowering synthesized, or a recorded type the body's instantiation and the settled variables leave open). The comparison changes nothing lowering emits; it runs only when the lowering observes its types, so the compiler never computes it. Sites are counted in the lowering each pass kept; a body lowered again counts its sites once, in the lowering that stays.
+
+| Rule | Site | Current answer | Final-type answer |
+| --- | --- | --- | --- |
+| 1 | an operator over two open operands emitted in its integer form | `Int` | the operand type recorded for the operator |
+| 2 | a trait goal or dictionary left for a later pass, or answered by an earlier pass's proof | `pending`, or the proven type | the operator's recorded operand type or the reference's recorded dictionary of that trait |
+| 3 | `==`/`!=` over two open operands, or a trait method through a generic body's hidden evidence | `evidence` or `no-evidence` | `evidence` when the table records the operator's instance as a dictionary |
+| 4 | a body lowered again because its first lowering closed a scope type | `relower` | `once` |
+| 5 | an internal deep copy | `pass-through` or `copy <type>` | `copy <recorded type>` |
+| 6, 7, 8 | the arena-result request of a call, filed under a deferred self result (6), a sibling's open or pinned result (7) or the result layout (8) | `arena` or `no-arena` | the request judged on the call's recorded result type |
+| 9 | a known callee asked for an arena result because its body was not lowered yet | `arena` | `no-arena` when the callee's result fact is known once every body is lowered, otherwise agreeing |
+| 10 | a body lowered again because a call result resolved | `relower` | `once` |
+| 11 | entry normalization of a parameter that reaches the result | `normalize` or `keep` | the same decision on the parameter type recorded for the lambda |
+
+`--shadow-details` also prints every site that does not agree as `shadow-site<TAB>rule<TAB>source:start-end:node=<id><TAB>current<TAB>final`. `--ir-hash` lowers the program again exactly as the compile command does (`lowerCoreNumberedProgramWithRegionsAndReuse` with reuse on) and prints `ir_hash=<hash> ir_lines=<lines>` for its lowered IR text, so two sweeps compare program by program with one diff of their `ir.tsv`.
+
+`sweep.sh` passes all three options and writes, beside `rows.tsv`: `shadow.tsv` (program, rule, agree, differ, unrecorded), `shadow-sites.tsv` (program, rule, site, current, final) and `ir.tsv` (program, hash line); `summary.txt` gains one total line per rule with the number of programs that have a differing site.

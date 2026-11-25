@@ -26,6 +26,7 @@ import AshesCompiler.Semantics.PatternBindingOwnership
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1360,6 +1361,49 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
                         | FreshTemp { state = wordState, temp = wordTemp } ->
                             (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
 
+// Step-8 shadow comparison, rules 6, 7 and 8: whether the call asks for an arena result, against
+// the same request judged on the call's recorded result type. The decision is filed under the rule
+// that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
+// self result its consumer names (7), or the result layout itself (8).
+let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let requestText =
+            given (asks: Bool) ->
+                if asks
+                then "arena"
+                else "no-arena"
+        in
+            let current = (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
+            in
+                let rule =
+                    if selfResultDeferred(context)(state)
+                    then 6
+                    else
+                        if siblingResultOpen(context)(resultType)(state)
+                        then 7
+                        else 8
+                in
+                    observeShadow(rule)(requestText(current))(match shadowSiteType(state) with
+                        | Some(recorded) ->
+                            state
+                            |> requestsArenaResult(recorded)
+                            |> requestText
+                            |> Some
+                        | None -> None)(state)
+    else state
+
+// Step-8 shadow comparison, rule 9: a known callee asked for an arena result because its body was
+// not lowered yet. Whether its result fact is known once every body is lowered is settled after
+// the program's lowering.
+let shadowUnsettledCallee (context: CoreCallContext) (state: CoreLoweringState) =
+    match context.facts with
+        | Some(_facts) ->
+            if shadowing(state)
+            then observeShadowPending(9)("arena")(context.facts)(state)
+            else state
+        | None -> state
+
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
 // last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
@@ -1368,7 +1412,7 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
 // arena copy whatever its bit says, so the bit could no longer select between adopting the result
 // and copying it out, and stage 0 reads the bit only of a call whose result it sees resolved,
 // which it never asks for in the arena.
-let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
         let recorded =
@@ -1381,8 +1425,18 @@ let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (a
             else emitRequestWord(argumentFlagTemp)(recorded)
     else
         if requestsArenaResultFromUnknownCallee(context)(readsResult)(resultType)(state)
-        then emitRequestWord(argumentFlagTemp)(state)
+        then
+            state
+            |> shadowUnsettledCallee(context)
+            |> emitRequestWord(argumentFlagTemp)
         else (state, argumentFlagTemp)
+
+// The request with the step-8 shadow comparison recorded first; the comparison changes nothing the
+// call emits.
+let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> shadowArenaRequest(context)(resultType)
+    |> arenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)
 
 // Stage 0's `_borrowedArgumentCalls`: a call that only borrows its argument, recorded by the
 // function it is emitted into (the program entry outside every lifted function) and its result.

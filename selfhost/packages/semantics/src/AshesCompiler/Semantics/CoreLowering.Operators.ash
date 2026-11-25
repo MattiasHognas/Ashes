@@ -19,6 +19,9 @@ import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteInstance
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteOperandText
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowGoalTypeText
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.Emit
@@ -40,6 +43,7 @@ export (
     value traitGoalKey,
     value pinProvenTraitGoal,
     value deferTraitGoal,
+    value shadowPendingGoal,
     value deferTraitGoalWithMethods,
     value dictionaryGoalCandidates,
     value observeDeferredOperator,
@@ -1087,6 +1091,45 @@ let bindGoalAnswer operand answer state =
             |> activeOperandForBinding(binding))(state)
         | None -> (state, operand)
 
+// Step-8 shadow comparison, rule 2: a goal left open for a later pass, or answered by an earlier
+// pass's proof, against the type the table answers the goal with.
+let shadowPendingGoal (key: Str) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(2)("pending")(shadowGoalTypeText(key)(state))(state)
+    else state
+
+let shadowPinnedGoal (key: Str) (pinned: (CoreLoweringState, SemanticType)) =
+    match pinned with
+        | (state, pinnedType) ->
+            if shadowing(state)
+            then
+                (observeShadow(2)(pinnedType
+                |> resolveType(state)
+                |> Ashes.Trait.Show.show)(shadowGoalTypeText(key)(state))(state), pinnedType)
+            else pinned
+
+// Step-8 shadow comparison, rule 3: whether an operator dispatched through the evidence the body
+// carries, against how the table records the operator's instance is reached.
+let shadowEvidenceDispatch (throughEvidence: Bool) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(3)(if throughEvidence
+        then "evidence"
+        else "no-evidence")(match shadowSiteInstance(state) with
+            | Some("evidence") -> Some("evidence")
+            | Some(_direct) -> Some("no-evidence")
+            | None -> None)(state)
+    else state
+
+// Step-8 shadow comparison, rule 1: an operator emitted in its speculative integer form, against
+// the operand type the table records for it.
+let shadowDeferredOperator (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        observeShadow(1)("Int")(shadowSiteOperandText(state))(state)
+    else state
+
 let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
     match (freeTypeVariables(operandType), traitGoalKey(traitName)(methodName)(state)) with
         | ([], _key) -> (state, operandType)
@@ -1095,11 +1138,15 @@ let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: Semantic
             let proofs = stateProvenTraitGoals(state)
             in
                 match Ashes.Collection.Map.getStr(key)(proofs) with
-                    | Some(SharedTraitGoalProof(proven)) -> bindGoalAnswer(operandType)(Some(proven))(state)
+                    | Some(SharedTraitGoalProof(proven)) ->
+                        state
+                        |> bindGoalAnswer(operandType)(Some(proven))
+                        |> shadowPinnedGoal(key)
                     | Some(OrderedTraitGoalProofs(proof :: remaining)) ->
                         state
                         |> withStateProvenTraitGoals(Ashes.Collection.Map.setStr(key)(OrderedTraitGoalProofs(remaining))(proofs))
                         |> bindGoalAnswer(operandType)(proof)
+                        |> shadowPinnedGoal(key)
                     | _ -> (state, operandType)
 
 // Whether a plan's evidence is a hidden parameter of a generic body this body does not carry.
@@ -1110,6 +1157,12 @@ let traitPlanLacksActiveEvidence (plan: TraitEvidencePlan) (methodName: Str) (st
         | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArgument :: [] }) ->
             activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) == None
         | _plan -> false
+
+// Rule 3 at a trait method dispatched through a plan that is a generic body's hidden parameter.
+let shadowPlanEvidence (plan: TraitEvidencePlan) (methodName: Str) (state: CoreLoweringState) =
+    match plan with
+        | TraitEvidenceParameter(_constraint) -> shadowEvidenceDispatch(!traitPlanLacksActiveEvidence(plan)(methodName)(state))(state)
+        | _plan -> state
 
 // The site to record when no evidence answers a goal. A pass lowering without proofs defers an
 // operand inference may still resolve; with proofs pinned, an operand still open is ambiguous to
@@ -1128,6 +1181,7 @@ let deferTraitGoalWithMethods candidates (key: Str) (operandType: SemanticType) 
         state
         |> withStatePendingTraitGoals((key, operandType, candidates) :: statePendingTraitGoals(state))
         |> observePendingGoal(false)(key)(operandType)
+        |> shadowPendingGoal(key)
     in
         match resultType with
             | SemString -> lowerString("")(recorded)
@@ -1193,12 +1247,14 @@ let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: S
             |> stateTraitEnvironment
             |> resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [pinnedType])) with
                 | TraitEvidenceResolution { plan = Some(plan) } ->
-                    match (traitPlanLacksActiveEvidence(plan)(methodName)(pinnedState), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState)) with
-                        | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
-                        | _resolvable ->
-                            match buildTraitMethodClosure(plan)(methodName)(lower)(pinnedState) with
-                                | LoweredCoreValue { state = closureState, temp = closureTemp, semanticType = closureType, error = None } -> emitSelectedUnaryMethod(plan)(closureTemp)(closureType)(operandTemp)(resultType)(closureState)
-                                | failed -> failed
+                    let shadowed = shadowPlanEvidence(plan)(methodName)(pinnedState)
+                    in
+                        match (traitPlanLacksActiveEvidence(plan)(methodName)(shadowed), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(shadowed)) with
+                            | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(shadowed)
+                            | _resolvable ->
+                                match buildTraitMethodClosure(plan)(methodName)(lower)(shadowed) with
+                                    | LoweredCoreValue { state = closureState, temp = closureTemp, semanticType = closureType, error = None } -> emitSelectedUnaryMethod(plan)(closureTemp)(closureType)(operandTemp)(resultType)(closureState)
+                                    | failed -> failed
                 | TraitEvidenceResolution { plan = None } ->
                     match unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState) with
                         | Some(key) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(pinnedState)
@@ -1315,6 +1371,7 @@ let recordEqualityGoal (methodName: Str) (operandType: SemanticType) (state: Cor
             state
             |> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))
             |> observePendingGoal(true)(key)(operandType)
+            |> shadowPendingGoal(key)
         | None -> state
 
 let emitDeferredCoreEquality (methodName: Str) kind binary =
@@ -1386,6 +1443,13 @@ let activeEvidenceCoversOperator operator (operandType: SemanticType) (state: Co
         | CoreEqualOperator -> hasActiveTraitEvidence("Eq")(operandType)(state)
         | CoreNotEqualOperator -> hasActiveTraitEvidence("Eq")(operandType)(state)
         | _ -> false
+
+// Rule 3 at an `==` or `!=` over two open operands; the arithmetic operators join their operands
+// through the evidence elsewhere.
+let shadowEqualityEvidence operator (throughEvidence: Bool) (state: CoreLoweringState) =
+    match equalityGoalMethod(operator) with
+        | Some(_method) -> shadowEvidenceDispatch(throughEvidence)(state)
+        | None -> state
 
 let resolveCoreBinaryOwnTypes (binary: LoweredCoreBinary) =
     match binary with
@@ -1701,6 +1765,7 @@ let emitPreparedCoreBinary operator lower binary =
                     if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
                     then
                         binary
+                        |> withCoreBinaryState(shadowEqualityEvidence(operator)(true)(state))
                         |> unifyEqualityOperands(operator)
                         |> resolveCoreBinaryOwnTypes
                         |> emitResolvedCoreBinary(operator)(lower)
@@ -1708,7 +1773,7 @@ let emitPreparedCoreBinary operator lower binary =
                         match pinProvenEqualityGoal(operator)(SemVariable(leftId))(state) with
                             | Some(pinnedState) ->
                                 binary
-                                |> withCoreBinaryState(pinnedState)
+                                |> withCoreBinaryState(shadowEqualityEvidence(operator)(false)(pinnedState))
                                 |> unifyEqualityOperands(operator)
                                 |> resolvedCoreBinary
                                 |> emitResolvedCoreBinary(operator)(lower)
@@ -1718,7 +1783,8 @@ let emitPreparedCoreBinary operator lower binary =
                                         binary
                                         |> withCoreBinaryState(recordedState
                                         |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(SemVariable(leftId)) :: stateUnresolvedCallResults(recordedState))
-                                        |> observeLoweringEvent(0))
+                                        |> observeLoweringEvent(0)
+                                        |> shadowEqualityEvidence(operator)(false))
                                         |> unifyEqualityOperands(operator)
                                         |> resolvedCoreBinary
                                         |> emitResolvedCoreBinary(operator)(lower)
@@ -1726,7 +1792,9 @@ let emitPreparedCoreBinary operator lower binary =
                                         binary
                                         |> withCoreBinaryState(state
                                         |> observeLoweringEvent(1)
-                                        |> observeDeferredOperator(operator)(SemVariable(leftId)))
+                                        |> observeDeferredOperator(operator)(SemVariable(leftId))
+                                        |> shadowDeferredOperator
+                                        |> shadowEqualityEvidence(operator)(false))
                                         |> emitDeferred
                 | (_emitter, resolvedLeft, resolvedRight) ->
                     match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with

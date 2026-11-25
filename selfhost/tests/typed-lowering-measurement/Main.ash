@@ -14,6 +14,12 @@ import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types.SemanticType
 import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
+import AshesCompiler.Semantics.CoreLowering.LoweringState.ShadowSite
+import AshesCompiler.Semantics.StitchedSources.stitchedSourceRegions
+import AshesCompiler.Semantics.CoreLowering.Model.CoreLoweringResult
+import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrText
+import AshesCompiler.Frontend.Token.TextSpan
 let isAshSourceName name = Ashes.Text.length(name) > 4 && Ashes.Text.substring(name)(Ashes.Text.length(name) - 4)(4) == ".ash"
 
 let recursive readShippedModules root names loaded =
@@ -154,7 +160,81 @@ let reportTraversal regions table (measurement: CoreLoweringMeasurement) =
                                 | keys -> Ashes.IO.writeErrorLine("structural equality keys: " + Ashes.Text.join(" ")(keys))
                         in reportSites(regions)(table)(measurement.goalDetails))
 
-let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProject) =
+// What the driver reports besides the counter row: goal sites (`--goal-details`), every step-8
+// shadow site (`--shadow-details`) and the hash of the program's lowered IR (`--ir-hash`).
+type DriverOptions =
+    | goalDetails: Bool
+    | shadowDetails: Bool
+    | irHash: Bool
+
+let recursive countShadowSites (rule: Int) (sites: List(ShadowSite)) (differ: Int) (unrecorded: Int) =
+    match sites with
+        | [] -> (differ, unrecorded)
+        | ShadowSite { entry = entry, final = final } :: rest ->
+            if entry != rule
+            then countShadowSites(rule)(rest)(differ)(unrecorded)
+            else
+                match final with
+                    | Some(_answer) -> countShadowSites(rule)(rest)(differ + 1)(unrecorded)
+                    | None -> countShadowSites(rule)(rest)(differ)(unrecorded + 1)
+
+// One line per order-dependent rule of the step-8 plan: sites where the rule decided as the rule
+// over the final type would, sites where it decided otherwise, and sites the table answers nothing
+// for (a node lowering synthesized, or a type the recorded instantiation leaves open).
+let recursive reportShadowCounts (rule: Int) (agree: List(Int)) (sites: List(ShadowSite)) =
+    match agree with
+        | [] -> Unit
+        | agreeing :: rest ->
+            match countShadowSites(rule)(sites)(0)(0) with
+                | (differ, unrecorded) ->
+                    let _ = Ashes.IO.writeErrorLine("shadow rule=" + Ashes.Text.fromInt(rule) + " agree=" + Ashes.Text.fromInt(agreeing) + " differ=" + Ashes.Text.fromInt(differ) + " unrecorded=" + Ashes.Text.fromInt(unrecorded))
+                    in reportShadowCounts(rule + 1)(rest)(sites)
+
+let spanText (span: Maybe(TextSpan)) =
+    match span with
+        | Some(TextSpan { start = start, end = end }) -> Ashes.Text.fromInt(start) + "-" + Ashes.Text.fromInt(end)
+        | None -> "-"
+
+let recursive reportShadowSites regions (sites: List(ShadowSite)) =
+    match sites with
+        | [] -> Unit
+        | ShadowSite { entry = entry, region = region, node = node, span = span, current = current, final = final } :: rest ->
+            let finalText =
+                match final with
+                    | Some(answer) -> answer
+                    | None -> "unrecorded"
+            in
+                let nodeText =
+                    match node with
+                        | Some(identity) -> Ashes.Text.fromInt(identity)
+                        | None -> "-"
+                in
+                    let _ = Ashes.IO.writeErrorLine("shadow-site\t" + Ashes.Text.fromInt(entry) + "\t" + regionPath(regions)(region) + ":" + spanText(span) + ":node=" + nodeText + "\t" + current + "\t" + finalText)
+                    in reportShadowSites(regions)(rest)
+
+let recursive hashLines (lines: List(Str)) (hash: Int) (count: Int) =
+    match lines with
+        | [] -> (hash, count)
+        | line :: rest -> hashLines(rest)(hash * 1000003 + Ashes.Trait.Hash.hash(line))(count + 1)
+
+// The lowered IR the compile command produces for the program, as one hash and a line count, so two
+// sweeps compare program by program with one diff.
+let reportIrHash path source (stitched: StitchedSyntaxProject) (identified: IdentifiedStitchedProject) nodeTypes =
+    match nodeTypes |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program)) with
+        | CoreLoweringResult { program = Some(lowered), error = None } ->
+            match hashLines(formatIr(lowered)(LoweredIr)(None))(17)(0) with
+                | (hash, count) -> Ashes.IO.writeErrorLine("ir_hash=" + Ashes.Text.fromInt(hash) + " ir_lines=" + Ashes.Text.fromInt(count))
+        | CoreLoweringResult { error = error } -> Ashes.IO.writeErrorLine("ir_hash=error " + Ashes.Trait.Show.show(error))
+
+let firstPassShadowAgree (measurement: CoreLoweringMeasurement) =
+    (let first = measurement.first
+    in first.shadowAgree)
+
+let firstPassShadowSites (measurement: CoreLoweringMeasurement) =
+    (let first = measurement.first
+    in first.shadowSites)
+
+let measureStitched (options: DriverOptions) path source mode stitchMillis (stitched: StitchedSyntaxProject) =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch complete")
     in
         let _ = Ashes.IO.writeErrorLine("inference start")
@@ -178,7 +258,7 @@ let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProj
                                         let _ = Ashes.IO.writeErrorLine("first lowering and optional replay start")
                                         in
                                             let regions =
-                                                if details
+                                                if options.goalDetails
                                                 then
                                                     stitched
                                                     |> stitchedRegionOfName
@@ -204,9 +284,27 @@ let measureStitched details path mode stitchMillis (stitched: StitchedSyntaxProj
                                                                 else None
                                                             in
                                                                 let _ = reportTraversal(stitched.moduleRegions)(recordedTable)(measured)
-                                                                in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
+                                                                in
+                                                                    let _ =
+                                                                        measured
+                                                                        |> firstPassShadowSites
+                                                                        |> reportShadowCounts(1)(firstPassShadowAgree(measured))
+                                                                    in
+                                                                        let _ =
+                                                                            if options.shadowDetails
+                                                                            then
+                                                                                measured
+                                                                                |> firstPassShadowSites
+                                                                                |> reportShadowSites(stitched.moduleRegions)
+                                                                            else Unit
+                                                                        in
+                                                                            let _ =
+                                                                                if options.irHash
+                                                                                then reportIrHash(path)(source)(stitched)(identified)(nodeTypes)
+                                                                                else Unit
+                                                                            in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
 
-let run details path mode =
+let run options path mode =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
     in
         let started = clock(Unit)
@@ -221,10 +319,10 @@ let run details path mode =
                             match projectStitchParseDiagnostics(error) with
                                 | Some(diagnostics) -> Ashes.IO.panic("parse-error: " + Ashes.Trait.Show.show(diagnostics))
                                 | None -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
-                        | Ok(stitched) -> measureStitched(details)(path)(mode)(clock(Unit) - started)(stitched))
+                        | Ok(stitched) -> measureStitched(options)(path)("")(mode)(clock(Unit) - started)(stitched))
 
 // A single `.ash` file is stitched with the shipped modules it imports, as `compile <file>` does.
-let runFile details path mode =
+let runFile options path mode =
     (let _ = Ashes.IO.writeErrorLine("project load and stitch start")
     in
         let started = clock(Unit)
@@ -238,16 +336,27 @@ let runFile details path mode =
                         |> loadShipped
                         |> stitchWithShippedModules(Ashes.Text.substring(base)(0)(Ashes.Text.length(base) - 4))(path)(source) with
                             | Error(error) -> Ashes.IO.panic("stitch-error: " + Ashes.Trait.Show.show(error))
-                            | Ok(stitched) -> measureStitched(details)(path)(mode)(clock(Unit) - started)(stitched))
+                            | Ok(stitched) -> measureStitched(options)(path)(source)(mode)(clock(Unit) - started)(stitched))
 
-let runPath details path mode =
+let runPath options path mode =
     if isAshSourceName(path)
-    then runFile(details)(path)(mode)
-    else run(details)(path)(mode)
+    then runFile(options)(path)(mode)
+    else run(options)(path)(mode)
+
+let usage = "usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] (the stitched-program lowering the legacy mode measured is gone)"
+
+let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
+    match arguments with
+        | [] -> Some(options)
+        | "typed" :: rest -> parseOptions(rest)(options)
+        | "--goal-details" :: rest -> parseOptions(rest)((options with goalDetails = true))
+        | "--shadow-details" :: rest -> parseOptions(rest)((options with shadowDetails = true))
+        | "--ir-hash" :: rest -> parseOptions(rest)((options with irHash = true))
+        | _other -> None
 
 match Ashes.IO.args with
-    | path :: [] -> runPath(false)(path)("typed")
-    | path :: "--goal-details" :: [] -> runPath(true)(path)("typed")
-    | path :: "typed" :: [] -> runPath(false)(path)("typed")
-    | path :: "typed" :: "--goal-details" :: [] -> runPath(true)(path)("typed")
-    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] (the stitched-program lowering the legacy mode measured is gone)")
+    | path :: flags ->
+        match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false)) with
+            | Some(options) -> runPath(options)(path)("typed")
+            | None -> Ashes.IO.panic(usage)
+    | [] -> Ashes.IO.panic(usage)

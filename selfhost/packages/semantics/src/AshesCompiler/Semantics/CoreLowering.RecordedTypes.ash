@@ -51,6 +51,11 @@ export (
     value withRawOperatorDeclarationSchemes,
     value recordedSettledType,
     value recordedSettledTypeAt,
+    value shadowSiteType,
+    value shadowSiteTypeText,
+    value shadowSiteInstance,
+    value shadowSiteOperandText,
+    value shadowGoalTypeText,
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
     value recordedNestedOperatorGenericScheme,
@@ -558,6 +563,83 @@ let recordedSettledTypeAt (node: Int) (state: CoreLoweringState) =
                 | Some(recorded) -> recordedSettledType(recorded)(state)
                 | None -> None
         | None -> None
+
+// The step-8 shadow comparison's final type for the site being lowered: the type recorded at its
+// node, closed by the body's instantiation and the variables the program's uses settle. None at a
+// node lowering synthesized, or where that leaves a variable.
+let shadowSiteType (state: CoreLoweringState) =
+    match state.currentNode with
+        | Some(node) -> recordedSettledTypeAt(node)(state)
+        | None -> None
+
+let shadowSiteTypeText (state: CoreLoweringState) =
+    match shadowSiteType(state) with
+        | Some(settled) ->
+            settled
+            |> Ashes.Trait.Show.show
+            |> Some
+        | None -> None
+
+// How the table records the operator at the site being lowered is reached: "evidence" through a
+// dictionary the body carries, "direct" through a primitive or a declared implementation.
+let shadowSiteInstance (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { instance = DictionaryInstance }) -> Some("evidence")
+                | Some(_operator) -> Some("direct")
+                | None -> None
+        | _ -> None
+
+let settledText (recorded: SemanticType) (state: CoreLoweringState) =
+    match recordedSettledType(recorded)(state) with
+        | Some(settled) ->
+            settled
+            |> Ashes.Trait.Show.show
+            |> Some
+        | None -> None
+
+// The operand type the table records for the operator at the site being lowered, closed as
+// shadowSiteType closes a type.
+let shadowSiteOperandText (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { operandType = operandType }) -> settledText(operandType)(state)
+                | None -> None
+        | _ -> None
+
+let recursive firstSettledOfTrait (traitName: Str) (dictionaries: List((Str, Maybe(SemanticType)))) =
+    match dictionaries with
+        | [] -> None
+        | (name, Some(settled)) :: rest ->
+            if name == traitName
+            then
+                settled
+                |> Ashes.Trait.Show.show
+                |> Some
+            else firstSettledOfTrait(traitName)(rest)
+        | _open :: rest -> firstSettledOfTrait(traitName)(rest)
+
+// The type the table answers a trait goal at the site being lowered with: the operand of the
+// operator recorded there for that trait, or the first closed dictionary of that trait the
+// reference there was recorded to pass. `key` is the goal key, `start:end:Trait:method`.
+let shadowGoalTypeText (key: Str) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode, Ashes.Text.split(key)(":")) with
+        | (Some(table), Some(node), _start :: _end :: traitName :: _method) ->
+            match nodeOperatorAt(node)(table) with
+                | Some(NodeOperator { traitName = recordedTrait, operandType = operandType }) ->
+                    if recordedTrait == traitName
+                    then settledText(operandType)(state)
+                    else
+                        state
+                        |> recordedSettledDictionariesAt(node)
+                        |> firstSettledOfTrait(traitName)
+                | None ->
+                    state
+                    |> recordedSettledDictionariesAt(node)
+                    |> firstSettledOfTrait(traitName)
+        | _ -> None
 
 // The name and scheme the standalone inference gave the top-level binding whose value is the node
 // with this identity, as lowering writes it. The scheme keeps the inference's quantified variable
