@@ -40,8 +40,46 @@ public static class CompilePhaseTiming
         Report(name, Stopwatch.GetElapsedTime(start));
     }
 
+    private static bool CollectBeforeReport { get; } =
+        string.Equals(Environment.GetEnvironmentVariable("ASHES_TIMING"), "live", StringComparison.Ordinal);
+
     private static void Report(string name, TimeSpan elapsed)
     {
-        Console.Error.WriteLine($"timing: {name} {elapsed.TotalMilliseconds:F0} ms");
+        GCMemoryInfo heap = GC.GetGCMemoryInfo();
+        // With ASHES_TIMING=live each report first runs a full collection, so the live size is what
+        // the phase leaves reachable; otherwise it is the heap as the last collection left it.
+#pragma warning disable S1215
+        long liveAfterCollection = GC.GetTotalMemory(forceFullCollection: CollectBeforeReport);
+#pragma warning restore S1215
+        using Process process = Process.GetCurrentProcess();
+        const double MiB = 1024.0 * 1024.0;
+        Console.Error.WriteLine(
+            $"timing: {name} {elapsed.TotalMilliseconds:F0} ms"
+            + $" live={liveAfterCollection / MiB:F0}MiB"
+            + $" heap={heap.HeapSizeBytes / MiB:F0}MiB"
+            + $" committed={heap.TotalCommittedBytes / MiB:F0}MiB"
+            + $" rss={process.WorkingSet64 / MiB:F0}MiB"
+            + $" peakRss={PeakResidentKiB() / 1024.0:F0}MiB");
+    }
+
+    // The process's high-water resident set (VmHWM, in KiB) from /proc/self/status, or -1 off Linux.
+    private static long PeakResidentKiB()
+    {
+        const string StatusPath = "/proc/self/status";
+        if (!File.Exists(StatusPath))
+        {
+            return -1;
+        }
+
+        foreach (string line in File.ReadLines(StatusPath))
+        {
+            if (line.StartsWith("VmHWM:", StringComparison.Ordinal))
+            {
+                string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                return long.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+
+        return -1;
     }
 }
