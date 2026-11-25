@@ -1047,19 +1047,20 @@ let recursive anyArmLeavesPost (opArms: List((Str, Str, List(Pattern), Expr))) =
                 | Some(_argument) -> anyArmLeavesPost(rest)
 
 // The binding the handled body's value takes over the return arm, with the expression lowered
-// under it. Under a handle whose arms leave posts, a return arm that names the value binds it
-// directly, so an arm handing the value on as its result is a `let` returning its own binding and
-// keeps the value's reference: matched against a binding of its own, the result would borrow a
-// value the binding releases, with no copy behind it while posts are live. Every other return arm
-// (another pattern, a nullary constructor's name, a handle without posts) is matched against a
-// binding of its own.
+// under it. A return arm that names the value binds it directly, so an arm handing the value on as
+// its result (`return(r) -> r`) is a `let` returning its own binding and keeps the value's
+// reference: matched against a binding of its own, the result would borrow a value the binding
+// releases. That holds with posts live, where no copy follows, and for a body whose value is
+// reference-counted and owned (a call to a constrained function's concrete copy, whose facts say
+// so), which the binding adopts and releases at the arm's exit. Every other return arm (another
+// pattern, a nullary constructor's name) is matched against a binding of its own.
 let recursive returnArmBinding (leavesPost: Bool) (returnPat: Pattern) (returnExpr: Expr) (state: CoreLoweringState) =
     match returnPat with
         | PatternAt(_span, inner) -> returnArmBinding(leavesPost)(inner)(returnExpr)(state)
         | PatternVar(name) ->
-            match (leavesPost, constructorLayout(name)(state)) with
-                | (true, None) -> (name, returnExpr)
-                | _ -> ("__body_res", ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))
+            match constructorLayout(name)(state) with
+                | None -> (name, returnExpr)
+                | Some(_layout) -> ("__body_res", ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))
         | _ -> ("__body_res", ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))
 
 // The return arm binds the handled body's value as a `let` binding scoped over the arm, bracketed
