@@ -108,8 +108,8 @@ awk -v cases="$project/parity-cases.txt" '
 
 # Export the original measurement runner; only its standalone command-line dispatch is omitted.
 awk '
-    !exported && /^let / { print "export (value run,)"; exported = 1 }
-    /^let run details path mode =$/ { runner++ }
+    !exported && /^let / { print "export (value runWithFlags,)"; exported = 1 }
+    /^let runWithFlags \(path: Str\) \(flags: List\(Str\)\) =$/ { runner++ }
     /^match Ashes.IO.args with$/ { entry++ }
     !entry { print }
     END { if (!exported || runner != 1 || entry != 1) exit 1 }
@@ -126,9 +126,8 @@ match Ashes.IO.args with
     | "backend" :: root :: [] -> let _ = BackendSuite.runAll(root) in Unit
     | "backend" :: root :: name :: [] -> let _ = BackendSuite.runNamed(root)(name) in Unit
     | "parity" :: root :: output :: [] -> let _ = ParitySuite.run(root)(output) in Unit
-    | "measure" :: path :: mode :: [] when mode == "typed" || mode == "legacy" -> let _ = MeasurementSuite.run(false)(path)(mode) in Unit
-    | "measure" :: path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> let _ = MeasurementSuite.run(true)(path)(mode) in Unit
-    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory> | measure <project/ashes.json> <legacy|typed> [--goal-details]")
+    | "measure" :: path :: flags -> let _ = MeasurementSuite.runWithFlags(path)(flags) in Unit
+    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory> | measure <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--single-lowering]")
 ASH
 mkdir "$project/actual"
 trap - EXIT
