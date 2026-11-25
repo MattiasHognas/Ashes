@@ -42,20 +42,22 @@ let recursive anyLineContains (fragment: Str) (lines: List(Str)) =
         | line :: rest -> Ashes.Text.contains(line)(fragment) || anyLineContains(fragment)(rest)
 
 let expectContains (fragment: Str) (lines: List(Str)) =
-    lines
-    |> anyLineContains(fragment)
-    |> test.assertEqual(true)
+    if anyLineContains(fragment)(lines)
+    then Unit
+    else test.fail("expected `" + fragment + "` in the lowered program")
 
 // A record whose only field is a function stores the closure word in a tagless cell, and a
-// pattern binding of that field is called through the closure calling convention.
+// pattern binding of that field is called through the closure calling convention. The closure owns
+// the entry-normalized string parameter it captures, so it and the record are reference-counted and
+// the closure's fourth word holds the capture dropper (temp 3), as stage 0 lowers it.
 let expectFunctionTypedRecordFieldLowers unit =
     "type Box =\n    | reader: Int -> Str\n\nlet box (s: Str) =\n    Box(reader = given (u: Int) -> s)\n\nmatch box(\"abc\") with\n    | Box { reader = reader } -> reader(0)"
     |> dumpSource
     |> (given (lines) ->
         Unit
         |> (given (_) -> expectContains("MakeClosure           Target=2 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8")(lines))
-        |> (given (_) -> expectContains("AllocAdt              Target=3 Tag=0 FieldCount=1 Tagless=true")(lines))
-        |> (given (_) -> expectContains("SetAdtField           Ptr=3 FieldIndex=0 Source=2 Tagless=true")(lines))
+        |> (given (_) -> expectContains("AllocAdt              Target=4 Tag=0 FieldCount=1 RuntimeManaged=true Tagless=true")(lines))
+        |> (given (_) -> expectContains("SetAdtField           Ptr=4 FieldIndex=0 Source=2 Tagless=true")(lines))
         |> (given (_) -> expectContains("GetAdtField")(lines))
         |> (given (_) -> expectContains("CallClosure")(lines)))
 

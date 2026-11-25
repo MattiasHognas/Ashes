@@ -107,20 +107,18 @@ let expectCallArgumentDefinedBeforeTheCall unit =
 // spine walk, beside the walk of the function's own arena-result boundary.
 let boundTailProducerSource = "let recursive mapText (values: List(Str)) =\n    match values with\n        | [] -> []\n        | head :: tail ->\n            let mappedTail = mapText(tail)\n            in head :: mappedTail\n\nlet recursive total values =\n    match values with\n        | [] -> 0\n        | head :: tail -> Ashes.Text.byteLength(head) + total(tail)\n\nAshes.IO.print(Ashes.Text.fromInt(total(mapText([\"a\", \"b\", \"c\"]))))\n"
 
-let recursive countContaining (fragment: Str) (lines: List(Str)) =
-    match lines with
-        | [] -> 0
-        | line :: rest ->
-            if Ashes.Text.contains(line)(fragment)
-            then 1 + countContaining(fragment)(rest)
-            else countContaining(fragment)(rest)
-
+// Each inline spine walk ends at one `rcdrop_list_end_N` label; the jumps to it vary with how many
+// exits reach the walk, so the walks are counted by their end labels.
 let expectBoundTailReleasedAtScopeExit unit =
     boundTailProducerSource
     |> loweredLines
     |> functionLines("SourceFunction from mapText")
-    |> countContaining("Target=rcdrop_list_end_")
-    |> test.assertEqual(2)
+    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.startsWith(line)("  rcdrop_list_end_"))
+    |> Ashes.Collection.List.length
+    |> (given (walks: Int) ->
+        if walks == 2
+        then Unit
+        else test.fail("expectBoundTailReleasedAtScopeExit: expected 2 inline spine walks in mapText, got " + Ashes.Text.fromInt(walks)))
 
 let runDeferredCallCopyOutTests unit =
     Unit

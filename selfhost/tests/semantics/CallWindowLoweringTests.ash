@@ -231,13 +231,15 @@ let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
 
 // The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
 // member of the enclosing recursive group, so nothing forces the spine onto the
-// reference-counted heap and the cell keeps the plain arena placement.
+// reference-counted heap and the cell keeps the plain arena placement. Its tail duplicate is a
+// parameter marker whose owned slot is zeroed ahead of the cell (temps 10 and 11), so the cell is
+// temp 12.
 let expectPlainConsTailStaysInTheArena unit =
     "let recursive prepend (value: Int) (rest: List(Int)) (extra: Int) =\n    if extra == 0\n    then value :: rest\n    else prepend(value)(rest)(extra - 1)\n\nmatch prepend(1)([2, 3])(0) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
     |> dumpSource
     |> liftedFunctionLines
-    |> expectInstruction("Alloc                 Target=10 SizeBytes=16")
-    |> expectNoInstructionText("Alloc                 Target=10 SizeBytes=16 RuntimeManaged")
+    |> expectInstruction("Alloc                 Target=12 SizeBytes=16")
+    |> expectNoInstructionText("Alloc                 Target=12 SizeBytes=16 RuntimeManaged")
     |> (given (_) -> Unit)
 
 // A cons onto the loop's own recursive call whose head is a record pattern owner read off the list

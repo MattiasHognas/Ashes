@@ -33,6 +33,22 @@ let loweredDump source =
             |> (given (text) -> test.fail("program lowering failed: " + text))
         | _ -> test.fail("program lowering produced no program")
 
+// The lowering a parity fixture takes, with the program's source beside its syntax. A call routed to
+// a constrained function's concrete copy is only routed there when the source is given.
+let loweredDumpWithSource source =
+    match source
+    |> parsedProgram
+    |> lowerCoreProgramWithSource("concrete_copy_call.ash")(source) with
+        | CoreLoweringResult { program = Some(program), error = None } ->
+            None
+            |> formatIr(program)(LoweredIr)
+            |> Ashes.Text.join("\n")
+        | CoreLoweringResult { error = Some(error) } ->
+            error
+            |> Ashes.Trait.Show.show
+            |> (given (text) -> test.fail("program lowering failed: " + text))
+        | _ -> test.fail("program lowering produced no program")
+
 let loweringErrorFor source =
     match source
     |> parsedProgram
@@ -380,7 +396,7 @@ let expectComparedBindingGetsNoDuplicate unit =
 let expectConcreteCopyResultIsReleasedByTheCaller unit =
     "let recursive setAssociation key value entries =\n    match entries with\n        | [] -> [(key, value)]\n        | (k, v) :: tail ->\n            if k == key\n            then (key, value) :: tail\n            else (k, v) :: setAssociation(key)(value)(tail)\n\nlet recursive count (xs: List((Int, Int))) =\n    match xs with\n        | [] -> 0\n        | _ :: rest -> 1 + count(rest)\n\nlet probe (n: Int) = count(setAssociation(n)(n + 1)([(1, 2), (3, 4)]))\n\nprobe(5)"
     |> withStandardTraits
-    |> loweredDump
+    |> loweredDumpWithSource
     |> functionSectionFrom("[SourceFunction from probe]")
     |> Ashes.Text.contains("TypeName=List RuntimeManaged=true")
     |> test.assertEqual(true)
