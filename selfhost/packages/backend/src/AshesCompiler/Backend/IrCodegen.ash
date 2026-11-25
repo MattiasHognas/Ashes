@@ -1407,13 +1407,16 @@ let codegenInstructionKind cx builder kind state =
                                                     |> buildRet(builder)
                                                 in (tempEnv, true)
                         // `Ashes.IO.exit(code)` — terminates the process immediately with the
-                        // caller-chosen code, unlike `Return`'s always-`0` normal exit.
+                        // caller-chosen code, unlike `Return`'s always-`0` normal exit, after the leak check's report
+                        // as stage 0's `EmitControlledExit` writes it: a program ending this way (the CLI) reports too.
                                         | ExitProcess(source) ->
-                                            let _ =
-                                                tempEnv
-                                                |> lookupTemp(cx)(source)
-                                                |> emitLinuxProcessExitWithCode(builder)(i64)
-                                            in (tempEnv, true)
+                                            let _ = emitLeakCheckReport(context)(function_)(builder)(i64)(i8)(externals.rcRegion)
+                                            in
+                                                let _ =
+                                                    tempEnv
+                                                    |> lookupTemp(cx)(source)
+                                                    |> emitLinuxProcessExitWithCode(builder)(i64)
+                                                in (tempEnv, true)
                         // `Ashes.IO.write`/`writeBytes` — a raw `write` syscall to stdout with no
                         // trailing newline. `CoreBuiltinLowering.ash`'s `emitCoreBuiltin` lowers
                         // both `CoreWrite` and `CoreWriteBytes` to this same instruction: a `Bytes`
