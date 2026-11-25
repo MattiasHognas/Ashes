@@ -233,6 +233,27 @@ let recursive collectsCallArgumentRetain (temp: Int) (retains: List((Int, Int, S
         | [] -> false
         | (retained, _slot, _semanticType) :: rest -> retained == temp || collectsCallArgumentRetain(temp)(rest)
 
+// Stage 0's `KeepEscapingArenaCellTailRetainOwned` for a loop parameter's list read as an escaping
+// arena cell's tail when no call argument frame collects its retain (the cell is the function's
+// result, as `(cell :: toks, notes)` at a loop's exit): stage 0 retains a parameter placed on the
+// reference-counted heap outright and keeps that retain in an owned slot, released once the
+// function's result holds references of its own. Here the retain is the parameter's marker, which
+// the loop's placement turns into a real retain only for a parameter placed on the
+// reference-counted heap; the slot's release tests the representation, so a marker left an
+// identity releases nothing.
+let keepArenaCellParameterRetainOwned (arenaCell: Bool) (source: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if arenaCell && temp != source && generalRcEnabled(state) && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state)) && !containsUnresolvedLayout(semanticType)(state) && (match resolveType(state)(semanticType) with
+                | SemList(_element) -> true
+                | _ -> false)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                        lowered with state = allocated |> emit(StoreLocal(ownedSlot)(temp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(semanticType))
+            else lowered
+        | _ -> lowered
+
 // Stage 0's `DeferArenaCopyOfUnresolvedParameter`: the retain marker of a loop parameter read whole
 // into an arena tuple, and not collected for a release after a call, is recorded so the loop's
 // finalize pass replaces it with an arena copy: an arena tuple never releases what it holds. Stage 0
@@ -1247,6 +1268,7 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                                             | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))
                                     |> retainLoopParameterChild(tailExpression)(preparedTemp)
                                     |> recordArenaCellParameterRetain(!managed)(tailExpression)(preparedTemp)
+                                    |> keepArenaCellParameterRetainOwned(!managed)(preparedTemp)
                                     |> keepEscapingArenaCellFreshHeadOwned(transfers && !managed)(headTemp)(headType)
                         else tail with state = preparedState, temp = preparedTemp
         | _ -> tail
