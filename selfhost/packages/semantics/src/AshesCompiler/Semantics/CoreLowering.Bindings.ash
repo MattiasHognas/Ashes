@@ -1135,9 +1135,10 @@ let copyTaskClosure (retains: Bool) survivors (outer: CoreLoweringState) (value:
         | _ -> value
 
 // Stage 0's `Closure` runtime representation as the closure's creation site asked for it: a heap
-// closure, never a stack one, placed on the reference-counted heap with its environment. The lambda
-// takes the one-shot request: its body never sees it, and it is cleared behind the closure.
-let runtimeClosureRequested (stackAllocate: Bool) (outer: CoreLoweringState) = stateRuntimeClosureRequest(outer) && !stackAllocate
+// closure, never a stack one, placed on the reference-counted heap with its environment.
+let runtimeClosureRequested (stackAllocate: Bool) (outer: CoreLoweringState) =
+    match consumerRequestOf(outer) with
+        | ConsumerRequest { runtimeClosure = runtimeClosure } -> runtimeClosure && !stackAllocate
 
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
@@ -1171,7 +1172,6 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         in
                                             finishedBody
                                             |> restoreOuterFrame(typedOuter)
-                                            |> takeRuntimeClosureRequest
                                             |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
                                             |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                             |> markCapturedResourcesMoved(survivors)

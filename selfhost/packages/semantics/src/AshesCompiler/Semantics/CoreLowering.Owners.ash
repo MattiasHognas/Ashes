@@ -339,6 +339,16 @@ let argumentCellRequestForwards (expression: Expr) =
         | ExprCons(_head, _tail) -> true
         | _ -> false
 
+// The closure representation reaches the closure literal it was asked of, through its spans and
+// the arms of a choice between two literals.
+let closureRequestForwards (expression: Expr) =
+    match expression with
+        | ExprAt(_span, _inner) -> true
+        | ExprNode(_node, _inner) -> true
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | ExprIf(_condition, _thenBranch, _elseBranch) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -352,6 +362,7 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         runtimeRecord = aggregateRequestForwards(expression) && request.runtimeRecord,
         runtimeList = aggregateRequestForwards(expression) && request.runtimeList,
         runtimeTuple = aggregateRequestForwards(expression) && request.runtimeTuple,
+        runtimeClosure = closureRequestForwards(expression) && request.runtimeClosure,
         transferSlot = if transferForwards(expression)
         then request.transferSlot
         else None,

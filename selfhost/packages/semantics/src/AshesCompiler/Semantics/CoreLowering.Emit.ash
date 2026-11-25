@@ -718,7 +718,6 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 specializationFreshInputs = None,
                 stackAllocateConstructor = false,
                 scrutineeTuple = false,
-                runtimeClosureRequest = false,
                 linearSpecializationAccumulators = [],
                 routedSpecializationAccumulators = [],
                 routedSpecializationCallees = [],

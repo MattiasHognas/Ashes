@@ -449,9 +449,6 @@ export (
     value withStateStackAllocateConstructor,
     value stateScrutineeTuple,
     value withStateScrutineeTuple,
-    value stateRuntimeClosureRequest,
-    value withStateRuntimeClosureRequest,
-    value takeRuntimeClosureRequest,
     value stateLinearSpecializationAccumulators,
     value withStateLinearSpecializationAccumulators,
     value stateRoutedSpecializationAccumulators,
@@ -489,6 +486,9 @@ type ConsumerRequest =
     | runtimeRecord: Bool
     | runtimeList: Bool
     | runtimeTuple: Bool
+    // Stage 0's `LoweredValueRuntimeRepresentation.Closure`: a closure literal placed on the
+    // reference-counted heap with an environment that owns its captures.
+    | runtimeClosure: Bool
     | transferSlot: Maybe(Int)
     | tailPosition: Bool
     | transfersRuntimeManagedChildren: Bool
@@ -553,6 +553,7 @@ let emptyConsumerRequest =
         runtimeRecord = false,
         runtimeList = false,
         runtimeTuple = false,
+        runtimeClosure = false,
         transferSlot = None,
         tailPosition = false,
         transfersRuntimeManagedChildren = false,
@@ -1381,11 +1382,6 @@ type CoreReuseState =
     // A one-shot mark from `lowerMatch` that the tuple literal about to be lowered is the match's
     // scrutinee, which no consumer keeps: `lowerTuple` takes it and clears it.
     | scrutineeTuple: Bool
-    // Stage 0's `LoweredValueRuntimeRepresentation.Closure` request: a one-shot mark from a
-    // constructor argument that is a closure literal owning its captures (or a choice between such
-    // literals), placed on the reference-counted heap. An `if` hands it to each branch and takes it
-    // from its condition; `lowerLambda` takes it, so the lambda's body never sees it.
-    | runtimeClosureRequest: Bool
     // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
     // to a single-parameter specialization candidate, deep-copied once at loop entry so the
     // specialization may rewrite them in place. The only route by which a call whose accumulator
@@ -3314,19 +3310,6 @@ let stateScrutineeTuple (state: CoreLoweringState) =
 let withStateScrutineeTuple value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with scrutineeTuple = value))
-
-let stateRuntimeClosureRequest (state: CoreLoweringState) =
-    (let group = state.reuseState
-    in group.runtimeClosureRequest)
-
-let withStateRuntimeClosureRequest value (state: CoreLoweringState) =
-    (let group = state.reuseState
-    in state with reuseState = (group with runtimeClosureRequest = value))
-
-let takeRuntimeClosureRequest (state: CoreLoweringState) =
-    if stateRuntimeClosureRequest(state)
-    then withStateRuntimeClosureRequest(false)(state)
-    else state
 
 let withStateParallelWorkerFunctions value (state: CoreLoweringState) =
     (let group = state.programState
