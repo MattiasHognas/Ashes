@@ -1,6 +1,6 @@
 // The first genuinely IR-driven slice of the self-hosted backend: walks a REAL `IrFunction`
 // produced by `AshesCompiler.Semantics` (via `AshesCompiler.Frontend.Parser.parseProgram` +
-// `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource`, the same pipeline
+// `AshesCompiler.Semantics.CoreLowering.Raw.lowerCoreProgramWithSource`, the same pipeline
 // `selfhost/tests/ir-program-parity` already trusts against stage 0) and drives
 // `AshesCompiler.Backend.Llvm` from its actual instructions — not a human hand-simulating what
 // codegen should produce, which is all every earlier test in this arc ever did.

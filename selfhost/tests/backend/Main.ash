@@ -20,6 +20,7 @@ import AshesCompiler.Semantics.ModuleReferenceRewriting.rewriteStitchedModuleRef
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
@@ -1911,7 +1912,7 @@ let buildRcTriReleaseModule name context =
 // The first genuinely IR-DRIVEN tests in this arc: every module builder above hand-encodes the
 // LLVM calls a human decided represent some IR shape. This one instead runs real source through
 // the REAL self-hosted `AshesCompiler.Frontend.Parser.parseProgram` +
-// `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource` pipeline (the same one
+// `AshesCompiler.Semantics.CoreLowering.Raw.lowerCoreProgramWithSource` pipeline (the same one
 // `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR text output for both
 // fixtures used below) and hands the resulting REAL `IrFunction` to
 // `AshesCompiler.Backend.IrCodegen.codegenEntryFunction`. If the shape `IrProgram`/`IrFunction`

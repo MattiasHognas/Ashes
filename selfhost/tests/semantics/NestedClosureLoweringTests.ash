@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import LoweredIrFixtures
 import AshesCompiler.Semantics.Types

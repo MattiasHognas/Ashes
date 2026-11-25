@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoroutineSocketFrame.socketStaysInTask
 import AshesCompiler.Semantics.CoreLowering.CoroutineHelpers.helperRewrite
 import AshesCompiler.Semantics.NodeIdentity.foldExpressionNodes

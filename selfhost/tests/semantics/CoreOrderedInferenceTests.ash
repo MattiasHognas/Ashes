@@ -8,6 +8,7 @@ import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
