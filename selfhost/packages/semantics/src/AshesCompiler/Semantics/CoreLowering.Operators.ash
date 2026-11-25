@@ -1138,7 +1138,7 @@ let shadowDeferredOperator (state: CoreLoweringState) =
         observeShadow(1)("Int")(shadowSiteOperandText(state))(state)
     else state
 
-let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+let pinProvenTraitGoalFromProofs (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
     match (freeTypeVariables(operandType), traitGoalKey(traitName)(methodName)(state)) with
         | ([], _key) -> (state, operandType)
         | (_variables, None) -> (state, operandType)
@@ -1156,6 +1156,13 @@ let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: Semantic
                         |> bindGoalAnswer(operandType)(proof)
                         |> shadowPinnedGoal(key)
                     | _ -> (state, operandType)
+
+// An earlier pass's proof for a goal still open at the site. Lowered from the type table there is
+// no earlier pass: the operand is the type the table answers it with, or the goal is refused.
+let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(_table) -> (state, operandType)
+        | None -> pinProvenTraitGoalFromProofs(traitName)(methodName)(operandType)(state)
 
 // Whether a plan's evidence is a hidden parameter of a generic body this body does not carry.
 // `resolveTraitEvidence` answers with that shape for an operand type inference has not settled
@@ -1184,7 +1191,7 @@ let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: Semant
 // The value lowered at a deferred site: the goal joins the pass's record, and the site gets a
 // constant of the method's own result type. A deferring pass exists to resolve types, and its
 // instructions are discarded, so the constant is never run.
-let deferTraitGoalUnshadowed candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+let deferTraitGoalForReplay candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
     (let recorded =
         state
         |> withStatePendingTraitGoals((key, operandType, candidates) :: statePendingTraitGoals(state))
@@ -1194,6 +1201,24 @@ let deferTraitGoalUnshadowed candidates (key: Str) (operandType: SemanticType) (
             | SemString -> lowerString("")(recorded)
             | _ ->
                 lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(recorded))
+
+// The trait a goal key names: `start:end:Trait:method`.
+let goalKeyTrait (key: Str) =
+    match Ashes.Text.split(key)(":") with
+        | _start :: _end :: traitName :: _method -> traitName
+        | _ -> key
+
+// A goal left open at its site. Without a table it is deferred for a later pass, as above. Lowered
+// from the type table it is refused: the type checker settles every requirement, and with no replay
+// to answer it the deferred constant would reach the program.
+let deferTraitGoalUnshadowed candidates (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(_table) ->
+            operandType
+            |> resolveType(state)
+            |> CoreUnrecordedTraitGoal(goalKeyTrait(key))
+            |> failure(state)
+        | None -> deferTraitGoalForReplay(candidates)(key)(operandType)(resultType)(state)
 
 // As deferTraitGoalUnshadowed, recording the goal for the step-8 shadow comparison at the node in
 // effect (an operator's or a trait method call's).

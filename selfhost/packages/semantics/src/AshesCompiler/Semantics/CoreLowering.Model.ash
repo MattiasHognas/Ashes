@@ -95,6 +95,9 @@ type CoreLoweringError =
     // An operator over two operands still open where the type table, which lowering reads, records no
     // type for them: the trait it maps to.
     | CoreUnrecordedOperatorType(Str)
+    // A trait goal or dictionary whose type is still open where the type table records none to answer
+    // it: the trait and the open type.
+    | CoreUnrecordedTraitGoal(Str, SemanticType)
     | UnsupportedCoreTraitDispatch(Str, SemanticType)
     | UnsupportedCoreImplementationHead(Str)
     | UnsupportedCoreDerivingExpansion(Str)
