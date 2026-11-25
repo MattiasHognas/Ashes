@@ -715,6 +715,7 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
             match (generalCopyPlanOf(named)(state), argumentCopyPlanOf(named)(state)) with
                 | (Some(NormalizerArgumentCopy(normalized)), _plan) -> NormalizerArgumentCopy(normalized)
                 | (_general, Some(ConstructorArgumentCopy(constructorPlan))) -> ConstructorArgumentCopy(constructorPlan)
+                | (_general, Some(SwitchArgumentCopy(plans))) -> SwitchArgumentCopy(plans)
                 | _ ->
                     state
                     |> shallowAdtCopySizeBytes(name)
