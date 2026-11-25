@@ -2356,14 +2356,31 @@ let replayProgramWithProofs items trailingBody environment seed firstState first
                                     |> Some, emitProgramWithProofs(replayItems)(trailingBody)(environment)(retainedProofs)(seed))
                 else (None, emitProgramWithProofs(replayItems)(trailingBody)(environment)(proofs)(seed))
 
+// A program lowered from the type table leaves no goal for a second pass to answer: every site's type
+// is recorded. A goal left anyway is refused at its site rather than replayed: a pending trait goal
+// as the evidence it lacks, a speculative equality at the type it settled to.
+let refuseTypedGoals (equalityGoals: List((Str, SemanticType))) (first: LoweredCoreValue) =
+    match refuseUnansweredGoals(first) with
+        | LoweredCoreValue { state = state, error = None } as lowered ->
+            match equalityGoals with
+                | [] -> lowered
+                | (_key, goalType) :: _rest ->
+                    goalType
+                    |> MissingCoreTraitEvidence("Eq")
+                    |> failure(state)
+        | refused -> refused
+
 let lowerScheduledProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
                 | ([], []) -> first
                 | (pending, equalityGoals) ->
-                    match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
-                        | (_retained, emitted) -> emitted
+                    match stateNodeTypes(seed) with
+                        | Some(_table) -> refuseTypedGoals(equalityGoals)(first)
+                        | None ->
+                            match replayProgramWithProofs(items)(trailingBody)(environment)(seed)(firstState)(firstError)(pending)(equalityGoals) with
+                                | (_retained, emitted) -> emitted
 
 let lowerProgramPasses items trailing environment seed =
     match scheduleStrictProgram(stateNodeTypes(seed))(items)(trailing) with
