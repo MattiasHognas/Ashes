@@ -2002,6 +2002,15 @@ let lowerBodyNamingEscapingCapture (name: Str) (body: Expr) lowerBody (expressio
 // call reading the binding scrutinized where the result is decided may hand back a view of it
 // (`unconsText(text)`'s tail), and the result reaches that view through a `let` body, a branch, or
 // an arm. The name test does not follow shadowing, so a rebinding still counts.
+// Stage 0's `LetBindsCallOfOwner`: a `let` binding a call the owner is handed
+// (`let parts = Ashes.Text.unconsText(s)`), read by its body: the binding may name the owner's bytes,
+// and whatever the body takes out of it (a later match of `parts`) reaches the result as a call's
+// destructured result does.
+let letBindsCallOfOwner (name: Str) (bound: Str) (value: Expr) (body: Expr) =
+    match unspanArgument(value) with
+        | ExprCall(_callee, _argument, _isPipe, _layout) -> exprMentionsName(name)(value) && exprMentionsName(bound)(body)
+        | _ -> false
+
 let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
     if depth > 16
     then false
@@ -2009,6 +2018,7 @@ let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
         match body with
             | ExprAt(_span, inner) -> resultMayViewCallArgument(name)(depth)(inner)
             | ExprNode(_node, inner) -> resultMayViewCallArgument(name)(depth)(inner)
+            | ExprLet(bound, value, nested, [], _annotation, _requirements) -> letBindsCallOfOwner(name)(bound)(value)(nested) || resultMayViewCallArgument(name)(depth + 1)(nested)
             | ExprLet(_bound, _value, nested, _parameters, _annotation, _requirements) -> resultMayViewCallArgument(name)(depth + 1)(nested)
             | ExprIf(_condition, thenBranch, elseBranch) -> resultMayViewCallArgument(name)(depth + 1)(thenBranch) || resultMayViewCallArgument(name)(depth + 1)(elseBranch)
             | ExprMatch(scrutinee, cases, _position) -> scrutineeCallReads(name)(scrutinee) || anyArmMayViewCallArgument(name)(depth + 1)(cases)

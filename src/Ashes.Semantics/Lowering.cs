@@ -6678,6 +6678,15 @@ public sealed partial class Lowering
             _ => false,
         };
 
+    // A `let` binding a call the owner is handed (`let parts = Ashes.Text.unconsText(s)`), read by its
+    // body: the binding may name the owner's bytes, and whatever the body takes out of it (a later
+    // match of `parts`) reaches the result as a call's destructured result does.
+    private bool LetBindsCallOfOwner(Expr.Let let, string ownerName)
+        => Environment.GetEnvironmentVariable("GRC_NO_LETBOUNDVIEW") is null
+            && let.Value is Expr.Call
+            && FreeVars(let.Value, new HashSet<string>(StringComparer.Ordinal)).Contains(ownerName)
+            && FreeVars(let.Body, new HashSet<string>(StringComparer.Ordinal)).Contains(let.Name);
+
     // Whether this body can return something a callee read out of the binding's own bytes. A callee
     // is free to hand an argument's bytes back inside its result rather than copy them — a string
     // split, a byte range — so a result destructured from a call the binding was handed may name the
@@ -6693,7 +6702,8 @@ public sealed partial class Lowering
         switch (body)
         {
             case Expr.Let let:
-                return ResultMayViewCallArgument(let.Body, ownerName, depth + 1);
+                return LetBindsCallOfOwner(let, ownerName)
+                    || ResultMayViewCallArgument(let.Body, ownerName, depth + 1);
             case Expr.If conditional:
                 return ResultMayViewCallArgument(conditional.Then, ownerName, depth + 1)
                     || ResultMayViewCallArgument(conditional.Else, ownerName, depth + 1);
