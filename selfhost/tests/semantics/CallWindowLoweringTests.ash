@@ -194,8 +194,7 @@ let expectLoopExitSelfCallResultOwned unit =
     loopExitSelfCallProgram
     |> dumpSource
     |> functionLines("[SourceFunction from collectSpine]")
-    |> Ashes.Collection.List.filter(given (line: Str) ->
-        Ashes.Text.contains(line)("general_rc_owned_absent_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.startsWith(line)("  general_rc_owned_absent_"))
     |> Ashes.Collection.List.length
     |> test.assertEqual(2)
 

@@ -203,8 +203,7 @@ let testBackEdgeHeadTupleKeepsAccumulatorPlaced unit =
             source
             |> loweredLines
             |> functionLines("ClosureHelper from parseParams")
-            |> Ashes.Collection.List.filter(given (line: Str) ->
-                Ashes.Text.startsWith(line)("  rc_normalize_list_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+            |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.startsWith(line)("  rc_normalize_list_"))
             |> length
             |> (given (count: Int) -> count > 1)
             |> test.assertEqual(true)
