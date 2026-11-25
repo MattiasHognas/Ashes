@@ -571,6 +571,30 @@ let testBackEdgeRetainsLetAliasOfIterationOwner unit =
     |> (given (lines: List(Str)) -> borrowsRetainedNext(lines)(0))
     |> test.assertEqual(1)
 
+let unchangedFieldUpdateSourcePath = "tests/loop_result_record_update_releases_unchanged_field_retains.ash"
+
+// How many owned slots are stored straight from an identity duplicate on the line before them.
+let recursive identityDuplicatesStoredNext (lines: List(Str)) (count: Int) =
+    match lines with
+        | first :: second :: rest ->
+            if Ashes.Text.contains(first)("RcDup ") && !Ashes.Text.contains(first)("RuntimeManaged=true") && Ashes.Text.contains(second)("StoreLocal ") && lineOperand("Source")(second) == lineOperand("Target")(first)
+            then identityDuplicatesStoredNext(second :: rest)(count + 1)
+            else identityDuplicatesStoredNext(second :: rest)(count)
+        | _ -> count
+
+// `fn with calls = target :: fn.calls` in a loop that hands `fn` on unchanged: `fn` is not placed,
+// so the cell's duplicate of `fn.calls` stays an identity, and its owned slot holds zero rather
+// than the list, which a release by its representation would free under the caller.
+let testUnplacedParameterTailSlotStaysZero unit =
+    match Ashes.IO.File.readText(unchangedFieldUpdateSourcePath) with
+        | Error(message) -> test.fail("could not read " + unchangedFieldUpdateSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from retarget")
+            |> (given (lines: List(Str)) -> identityDuplicatesStoredNext(lines)(0))
+            |> test.assertEqual(0)
+
 let loopExitFieldSource = "type State =\n    | refs: List(Str)\n\nlet recursive scanMatch (tokens: List(Str)) (state: State) =\n    match tokens with\n        | [] -> state.refs\n        | text :: rest -> scanMatch(rest)(State(refs = text :: state.refs))\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\ncount(scanMatch([\"a\"])(State(refs = [])))(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
 
 // A loop's exit returning a heap field of its reference-counted record parameter returns the
@@ -600,6 +624,7 @@ let runOwnedAggregateReleaseTests unit =
     |> testLoopExitFieldResultThroughIfIsReferenceCounted
     |> testLoopExitFieldResultIsReferenceCounted
     |> testBackEdgeRetainsLetAliasOfIterationOwner
+    |> testUnplacedParameterTailSlotStaysZero
     |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
     |> testSuccessorJoinArmOfLetOwnerIsDemoted
     |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
