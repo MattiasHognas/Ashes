@@ -189,21 +189,26 @@ let testEscapingTupleRetainsOwnedChildren unit =
             |> lineAfter("RcDup                 Target=13")
             |> test.assertEqual("    RcDrop                SourceTemp=3 TypeName=String OwnerSlot=7 RuntimeManaged=true")))
 
+let callerAliasSourcePath = "tests/element_specialization_caller_alias_not_owner.ash"
+
+// `parseParams((parameter, Some(parameter + "!")) :: reversed)(rest)`: the tuple at the head of the
+// accumulator's successor cell holds a pattern owner's read inside the back-edge argument, so it
+// stays on the reference-counted heap with its cell, and the accumulator keeps its placement: the
+// loop entry normalizes it (more than the one list walk the arena tuple left).
+let testBackEdgeHeadTupleKeepsAccumulatorPlaced unit =
+    match Ashes.IO.File.readText(callerAliasSourcePath) with
+        | Error(message) -> test.fail("could not read " + callerAliasSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from parseParams")
+            |> Ashes.Collection.List.filter(given (line: Str) ->
+                Ashes.Text.startsWith(line)("  rc_normalize_list_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+            |> length
+            |> (given (count: Int) -> count > 1)
+            |> test.assertEqual(true)
+
 // An escaping list literal of two owned strings is a runtime list whose cells retain their heads.
-let patternPartsTupleSource = "type Item =\n    | ItemLet(Str, Str)\n\nlet recursive prepareGroup (bindings: List((Str, Str))) (total: Int) =\n    match bindings with\n        | [] -> total\n        | (name, value) :: rest -> prepareGroup(rest)(total + Ashes.Text.byteLength(name) + Ashes.Text.byteLength(value))\n\nlet recursive lowerItems (items: List(Item)) (total: Int) =\n    match items with\n        | [] -> total\n        | ItemLet(name, value) :: rest ->\n            total\n            |> prepareGroup([(name, value)])\n            |> lowerItems(rest)\n\nAshes.IO.print(Ashes.Text.fromInt(lowerItems([ItemLet(\"a\" + Ashes.Text.fromInt(1))(\"b\"), ItemLet(\"c\")(\"d\")])(0)))"
-
-// A tuple of a loop's pattern parts in a list literal passed to a call (`prepareGroup([(name, value)])`)
-// stays in the arena, as stage 0's `HoldsReferenceCountedElement` leaves it: an unplaced pattern
-// owner's read is not reference-counted there, and the call's frame releases the owner duplicates the
-// tuple holds. Placed on the heap inside the arena list cell, the tuple was never released. The one
-// reference-counted allocation left is the parameter's entry normalization.
-let testPatternPartsTupleStaysInArena unit =
-    patternPartsTupleSource
-    |> loweredLines
-    |> functionLines("ClosureHelper from lowerItems")
-    |> countContainingBoth("Alloc ")("RuntimeManaged=true")
-    |> test.assertEqual(1)
-
 let testEscapingListLiteralRetainsOwnedChildren unit =
     aggregateSource
     |> loweredLines
@@ -666,7 +671,7 @@ let runOwnedAggregateReleaseTests unit =
     |> testLambdaReturningRecordAllocatesRuntimeManaged
     |> testOwnedRecordLetReleasedByItsOwner
     |> testEscapingTupleRetainsOwnedChildren
-    |> testPatternPartsTupleStaysInArena
+    |> testBackEdgeHeadTupleKeepsAccumulatorPlaced
     |> testEscapingListLiteralRetainsOwnedChildren
     |> testEscapingConsRetainsHeadAndTail
     |> testMentionsNameRespectsShadowing
