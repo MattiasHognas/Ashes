@@ -1,6 +1,6 @@
 # Typed lowering measurement
 
-Run from the repository root. The driver reads shipped modules from `lib/Ashes` and takes a project manifest (or a single `.ash` file) and a mode, `typed` (the default, as in the compiler) or `legacy` (the stitched-program lowering `ASHES_TYPED_LOWERING=0` selects). Both modes load and stitch the project, number its syntax and run inference. Legacy lowering receives the original stitched program and closed top-level declaration schemes for arithmetic specialization. Typed lowering receives the identified program and its recorded node types. Run each mode in a separate process with the same driver binary and input.
+Run from the repository root. The driver reads shipped modules from `lib/Ashes` and takes a project manifest (or a single `.ash` file), optionally the mode `typed` (the only one: the compiler lowers from the table, and the stitched-program lowering a `legacy` mode measured is gone), and optionally `--goal-details`. It loads and stitches the project, numbers its syntax, runs inference and lowers the identified program with its recorded node types.
 
 Build with a current stage-0 compiler in the coordinator’s shared build slot. Set `S0` to its absolute path and `OUT` to a fresh absolute directory. The example measures the self-hosted CLI.
 
@@ -13,14 +13,12 @@ systemd-run --user --scope -q -p MemoryMax=24G -p MemorySwapMax=0 timeout 5400 \
     "$S0" compile --project selfhost/tests/typed-lowering-measurement/ashes.json \
     --debug -O0 -o "$OUT/measure" >"$OUT/build.log" 2>&1
 systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 timeout 3600 \
-    "$OUT/measure" selfhost/packages/cli/ashes.json legacy >"$OUT/legacy.tsv" 2>"$OUT/legacy.err"
-systemd-run --user --scope -q -p MemoryMax=12G -p MemorySwapMax=0 timeout 3600 \
     "$OUT/measure" selfhost/packages/cli/ashes.json typed >"$OUT/typed.tsv" 2>"$OUT/typed.err"
 ```
 
 Progress markers on stderr bracket project loading and stitching, inference, and lowering. If discovery requests replay, the driver reports the transition before replay begins. Progress writes are excluded from the reported timing intervals. The final stderr summary gives the number of traversals (one discovery, optionally one retained discovery and one replay emission) and the body re-lowering counters for each. As in the TSV, each counter describes the lowering state kept by its traversal.
 
-Add `--goal-details` after the mode to capture lexical evidence when a site is deferred. The report on stderr includes the stitched source region, the start and end offsets in the goal key, trait and method, numbered node ID where available, original and settled operand types, and the active trait-method bindings at that occurrence. Structural equality keys also appear on stderr without this option. Detailed collection adds work inside lowering, so use the same option for both modes when comparing times.
+Add `--goal-details` after the mode to capture lexical evidence when a site is deferred. The report on stderr includes the stitched source region, the start and end offsets in the goal key, trait and method, numbered node ID where available, original and settled operand types, and the active trait-method bindings at that occurrence. Structural equality keys also appear on stderr without this option. Detailed collection adds work inside lowering, so use the same option for runs whose times are compared.
 The details also name, as `deferred-operator goal` lines, every `+`, `-`, `*`, `==` and `!=` the first pass emitted in its speculative integer form because both operands were still open, whether or not a replay follows; a site with no span is keyed `unspanned:<trait>:<method>`. Their number equals `first_deferred_operators` minus the deferred ordered comparisons, which appear as trait goals. A body lowered again can name a site once per lowering. In `typed` mode each detail line ends with what the table recorded for the site's node: `recorded_operator=<trait>(<operand type>) <primitive|declared|dictionary>` and `recorded_type=`. `recorded_operator=none` means the site was lowered at a node lowering synthesized, under the identity of the node around it; an operand type that is a bare variable means a generic body lowered without an instantiation that closes it.
 The traversal report also prints `concrete_copy_calls` counts for the first and emission passes on stderr. A recorded call passed the source-copy proof using its node facts. An inferred call entered the existing speculative inference path. The counts describe the state retained by each pass, including cache hits, and exclude discarded attempts and the optional retained-only traversal.
 

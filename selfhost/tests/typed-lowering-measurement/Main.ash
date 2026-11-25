@@ -247,6 +247,6 @@ let runPath details path mode =
 match Ashes.IO.args with
     | path :: [] -> runPath(false)(path)("typed")
     | path :: "--goal-details" :: [] -> runPath(true)(path)("typed")
-    | path :: mode :: [] when mode == "typed" || mode == "legacy" -> runPath(false)(path)(mode)
-    | path :: mode :: "--goal-details" :: [] when mode == "typed" || mode == "legacy" -> runPath(true)(path)(mode)
-    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json | file.ash> [legacy|typed] [--goal-details]")
+    | path :: "typed" :: [] -> runPath(false)(path)("typed")
+    | path :: "typed" :: "--goal-details" :: [] -> runPath(true)(path)("typed")
+    | _ -> Ashes.IO.panic("usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] (the stitched-program lowering the legacy mode measured is gone)")

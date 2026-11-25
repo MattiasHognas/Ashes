@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the measurement driver in one mode over every test program, one at a time, and writes one
 # TSV row per program that lowered (with its name in front) plus the programs that did not.
-# Usage: sweep.sh <measure binary> <typed|legacy> <out dir> [test dir]
+# Usage: sweep.sh <measure binary> typed <out dir> [test dir]
 set -u
 measure=$1
 mode=$2
