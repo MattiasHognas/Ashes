@@ -4,6 +4,7 @@ import Ashes.Collection.List.append
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.DecisionSnapshot
 import AshesCompiler.Semantics.ExplainReport

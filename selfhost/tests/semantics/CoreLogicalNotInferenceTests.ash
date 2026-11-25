@@ -3,6 +3,8 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Measurement
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText

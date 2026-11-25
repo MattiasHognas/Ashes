@@ -1,5 +1,6 @@
 import Ashes.Collection.List.reverse as reverseList
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Measurement
 import AshesCompiler.Semantics.CoreLowering.LoweringState.ObservedPendingGoal
 import AshesCompiler.Semantics.StitchedSources.stitchedRegionOfName
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText

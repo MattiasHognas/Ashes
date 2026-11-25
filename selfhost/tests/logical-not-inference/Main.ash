@@ -2,6 +2,7 @@ import CoreLogicalNotInferenceTests
 import CoreOrderedInferenceTests
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Raw
 import AshesCompiler.Semantics.CoreLowering.Model
 let report result =
     match result with
