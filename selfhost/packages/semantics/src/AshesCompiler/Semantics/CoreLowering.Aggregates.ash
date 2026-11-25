@@ -1675,6 +1675,16 @@ let reserveArmCellHeadSlot (request: ConsumerRequest) (tailExpression: Expr) (lo
             else lowered
         | _ -> lowered
 
+// The tail an arena cell stored, the most recent store first.
+let recursive storedCellTail (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePtr, 8, source) } :: rest ->
+            if basePtr == cell
+            then Some(source)
+            else storedCellTail(cell)(rest)
+        | _instruction :: rest -> storedCellTail(cell)(rest)
+
 // Whether `temp` is a runtime retain: in a loop whose parameter's placement is known while the
 // body is lowered, a pattern owner's duplicate is a real retain from the start rather than a marker
 // the finalize promotes.
@@ -1702,25 +1712,31 @@ let recursive tempStoredInSlot (temp: Int) (instructions: List(IrInstruction)) =
 // known while the body is lowered, it is a real retain from the start). It goes to an owned slot
 // registered and zeroed at the cons, which `settleCellMarkerSlots` fills once the loop's retains
 // are final and the duplicate is a runtime retain, as a constructor's arena cell does with a marker.
-let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (lowered: LoweredCoreValue) =
-    match (lowered, ownedTail, duplicatedTail) with
-        | (LoweredCoreValue { state = state, temp = cellTemp, error = None }, LoweredCoreValue { temp = original }, LoweredCoreValue { temp = marker, semanticType = tailType }) ->
-            if generalRcEnabled(state) && request.tailPosition && request.callArgument == false && request.lateCopiedCellParts == false && request.recordFieldCell == false && (match request.transferSlot with
-                | Some(_slot) -> false
-                | None -> true) && (match stateTcoLoop(state) with
-                | Some(_loop) -> true
-                | None -> false) && !lowersBackEdgeArgument(state) && original != marker && (match unspanArgument(tailExpression) with
-                | ExprVar(_name) -> true
-                | _ -> false) && (match definitionOfTemp(cellTemp)(state.reversedInstructions) with
-                | Some(Alloc(_cell, 16, false)) -> true
-                | _ -> false) && !isRuntimeTemp(cellTemp)(state) && (isPromotableCellMarker(marker)(state) || runtimeRetainOfCell(marker)(state.reversedInstructions)) && !tempStoredInSlot(marker)(state.reversedInstructions) && isBorrowedRetainableParameterType(tailType)(state) && !containsUnresolvedLayout(tailType)(state)
-            then
-                match freshLocal(state) with
-                    | FreshLocal { state = allocated, local = ownedSlot } ->
-                        match freshTemp(allocated) with
-                            | FreshTemp { state = withTemp, temp = zeroTemp } ->
-                                lowered with state = withTemp |> emit(LoadConstInt(zeroTemp)(0)) |> emit(StoreLocal(ownedSlot)(zeroTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(withTemp)(tailType)) |> (given (registered: CoreLoweringState) -> withStateCellMarkerSlots((ownedSlot, marker, zeroTemp) :: stateCellMarkerSlots(registered))(registered))
-            else lowered
+// The duplicate is read from the cell's own tail store: the retain a transferring cell takes of its
+// tail (`retainConsTail`) is made after the cell's parts are duplicated, so it is the stored value,
+// not the duplicated tail.
+let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None } ->
+            match storedCellTail(cellTemp)(state.reversedInstructions) with
+                | None -> lowered
+                | Some(marker) ->
+                    if generalRcEnabled(state) && request.tailPosition && request.callArgument == false && request.lateCopiedCellParts == false && request.recordFieldCell == false && (match request.transferSlot with
+                        | Some(_slot) -> false
+                        | None -> true) && (match stateTcoLoop(state) with
+                        | Some(_loop) -> true
+                        | None -> false) && !lowersBackEdgeArgument(state) && (match unspanArgument(tailExpression) with
+                        | ExprVar(_name) -> true
+                        | _ -> false) && (match definitionOfTemp(cellTemp)(state.reversedInstructions) with
+                        | Some(Alloc(_cell, 16, false)) -> true
+                        | _ -> false) && !isRuntimeTemp(cellTemp)(state) && (isPromotableCellMarker(marker)(state) || runtimeRetainOfCell(marker)(state.reversedInstructions)) && !tempStoredInSlot(marker)(state.reversedInstructions) && isBorrowedRetainableParameterType(listType)(state) && !containsUnresolvedLayout(listType)(state)
+                    then
+                        match freshLocal(state) with
+                            | FreshLocal { state = allocated, local = ownedSlot } ->
+                                match freshTemp(allocated) with
+                                    | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                                        lowered with state = withTemp |> emit(LoadConstInt(zeroTemp)(0)) |> emit(StoreLocal(ownedSlot)(zeroTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(withTemp)(listType)) |> (given (registered: CoreLoweringState) -> withStateCellMarkerSlots((ownedSlot, marker, zeroTemp) :: stateCellMarkerSlots(registered))(registered))
+                    else lowered
         | _ -> lowered
 
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
@@ -1740,7 +1756,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
                                     |> reserveArmCellHeadSlot(cellRequest)(tailExpression)
-                                    |> keepArmCellTailMarkerOwned(request)(tailExpression)(ownedTail)(duplicatedTail)
+                                    |> keepArmCellTailMarkerOwned(request)(tailExpression)
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
