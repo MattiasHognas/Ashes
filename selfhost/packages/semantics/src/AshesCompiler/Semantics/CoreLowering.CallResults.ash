@@ -1755,7 +1755,13 @@ let ownedResultBeforeReleasePlanOf (semanticType: SemanticType) (state: CoreLowe
             if tupleElementsOwnable(elements)(false)(state)
             then argumentCopyPlanOf(semanticType)(state)
             else None
-        | _ -> ownedResultPlanOf(semanticType)(state)
+        | resolved ->
+            match ownedResultPlanOf(resolved)(state) with
+                | Some(plan) -> Some(plan)
+                | None ->
+                    if isGeneralRcValueType(resolved)(state)
+                    then generalCopyPlanOf(resolved)(state)
+                    else None
 
 // Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
 // result may still name would be released spine-only, stranding every part the result did not
@@ -2556,7 +2562,8 @@ let isPassthroughScalarJoinTuple (semanticType: SemanticType) (state: CoreLoweri
 // The copy a mixed join's arms are normalized with: stage 0's `CanNormalizeIntoOwnedRuntimeValue`,
 // and a tuple every element of which normalizes (an arena arm is copied into an owned tuple that
 // retains each reference-counted element it keeps), and stage 0's `IsGeneralRcValueType`: a tuple of the
-// contract's types is copied as the contract copies it.
+// contract's types is copied as the contract copies it, and so is any other value of them (a
+// `Result` over a recursive type, which no inline copy expresses, goes through its normalizer).
 let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemTuple(elements) ->
@@ -2569,7 +2576,13 @@ let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringSta
                     if isPassthroughScalarJoinTuple(semanticType)(state)
                     then argumentCopyPlanOf(semanticType)(state)
                     else None
-        | _ -> ownedResultPlanOf(semanticType)(state)
+        | resolved ->
+            match ownedResultPlanOf(resolved)(state) with
+                | Some(plan) -> Some(plan)
+                | None ->
+                    if isGeneralRcValueType(resolved)(state)
+                    then generalCopyPlanOf(resolved)(state)
+                    else None
 
 // The element copy of a list result whose arms may cons onto the function's own recursive
 // result, when its elements are ones the runtime manages (stage 0's `ConsesOntoOwnedSelfResult`).
