@@ -92,6 +92,9 @@ type CoreLoweringError =
     | ResourceUseAfterMove(Str)
     | ResourceDoubleClose(Str)
     | MissingCoreTraitEvidence(Str, SemanticType)
+    // An operator over two operands still open where the type table, which lowering reads, records no
+    // type for them: the trait it maps to.
+    | CoreUnrecordedOperatorType(Str)
     | UnsupportedCoreTraitDispatch(Str, SemanticType)
     | UnsupportedCoreImplementationHead(Str)
     | UnsupportedCoreDerivingExpansion(Str)
