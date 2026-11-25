@@ -183,6 +183,21 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
     |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
+// A loop's non-tail self call lowered after the loop's last back edge (`collectSpine`'s call arm,
+// after the wrapper arm's back edge) keeps its result of the contract's types in an owned slot the
+// function releases, as stage 0's `LowerGeneralRcCallResult` does: an arena request the callee
+// does not honor would leave its reference-counted result unreleased.
+let loopExitSelfCallProgram = "type Node =\n    | NodeName(Str)\n    | NodeAt(Int, Node)\n    | NodeCall(Node, Node)\n\ntype Spine =\n    | root: Node\n    | arguments: List(Node)\n\nlet recursive collectSpine (expression: Node) =\n    match expression with\n        | NodeAt(_span, inner) -> collectSpine(inner)\n        | NodeCall(function, argument) ->\n            match collectSpine(function) with\n                | Spine { root = root, arguments = arguments } -> Spine(root = root, arguments = argument :: arguments)\n        | root -> Spine(root = root, arguments = [])\n\nmatch collectSpine(NodeAt(1)(NodeCall(NodeName(\"f\"))(NodeName(\"x\")))) with\n    | Spine { arguments = [] } -> Ashes.IO.print(\"none\")\n    | _ -> Ashes.IO.print(\"some\")"
+
+let expectLoopExitSelfCallResultOwned unit =
+    loopExitSelfCallProgram
+    |> dumpSource
+    |> functionLines("[SourceFunction from collectSpine]")
+    |> Ashes.Collection.List.filter(given (line: Str) ->
+        Ashes.Text.contains(line)("general_rc_owned_absent_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+    |> Ashes.Collection.List.length
+    |> test.assertEqual(2)
+
 let constructorRecursiveProducerProgram = "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
 
 // A producer whose cons tail is its own saturated self call (`bang(head) :: stamp(tail)`) is
@@ -429,6 +444,7 @@ let runCallWindowLoweringTests unit =
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
+    |> expectLoopExitSelfCallResultOwned
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
     |> expectProducerPublishesClosedSpineBeforeExitRelease
     |> expectInlinePatternFieldNeverRetained

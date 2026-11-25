@@ -613,15 +613,16 @@ let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (s
 // on. Applied right after the spine closes, before any ownership step reads the body's type.
 // The result's layout is read as the function's own return reads it, its phantoms as `Never`, so a
 // self call agrees with the return on whether the result is one of the contract's types.
-let recursive markOwnedDeferredSelfCalls (label: Str) (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+// Only a call lowered after the last of `backEdges` back edges is marked: no back edge runs after it.
+let recursive markOwnedDeferredSelfCalls (label: Str) (backEdges: Int) (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
         | [] -> []
         | copyOut :: rest ->
             (let layout = resolvePhantomResultLayout(label)(copyOut.deferredType)(state)
             in
-                if copyOut.deferredSelfCall && isGeneralRcValueType(layout)(state)
+                if copyOut.deferredSelfCall && copyOut.deferredBackEdgesBefore >= backEdges && isGeneralRcValueType(layout)(state)
                 then copyOut with deferredOwned = true, deferredType = layout
-                else copyOut) :: markOwnedDeferredSelfCalls(label)(rest)(state)
+                else copyOut) :: markOwnedDeferredSelfCalls(label)(backEdges)(rest)(state)
 
 let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
@@ -637,8 +638,11 @@ let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut))
 // body's end: each deferred self call whose result is then of the contract's types registers its
 // result slot as an owned slot there, before the function's result releases its owned slots, and
 // its deferred block becomes the owned-result block. A loop's owned slots are released at its
-// back edges as well, which are already lowered, so a loop keeps the deferred copy-out; a loop with no
-// back edge (a non-tail recursion lowered under a loop scaffold) adopts them like any other body.
+// back edges as well, which are already lowered, so a loop keeps the deferred copy-out of a call a
+// back edge follows; a call lowered after the loop's last back edge (in an exit arm, after the
+// back edges of the arms before it) is never followed by one, and a loop with no back edge (a
+// non-tail recursion lowered under a loop scaffold) has none, so their results are adopted like any
+// other body's, as stage 0 adopts them.
 // A loop whose exit already made the result its own and released the owned slots (a curried
 // stage's loop body) releases the adopted results right away, the result holding its own
 // references.
@@ -650,9 +654,9 @@ let recursive adoptedDeferredSlots (pending: List(CorePendingCallCopyOut)) (stat
             then (stateActiveFunctionOrigin(state), copyOut.deferredResultSlot, copyOut.deferredType) :: adoptedDeferredSlots(rest)(state)
             else adoptedDeferredSlots(rest)(state)
 
-let adoptMarkedDeferredSelfCalls (label: Str) (resultFinished: Bool) (state: CoreLoweringState) =
+let adoptMarkedDeferredSelfCalls (label: Str) (backEdges: Int) (resultFinished: Bool) (state: CoreLoweringState) =
     (let marked =
-        markOwnedDeferredSelfCalls(label)(statePendingCallCopyOuts(state))(state)
+        markOwnedDeferredSelfCalls(label)(backEdges)(statePendingCallCopyOuts(state))(state)
     in
         if resultFinished
         then
@@ -666,10 +670,9 @@ let adoptMarkedDeferredSelfCalls (label: Str) (resultFinished: Bool) (state: Cor
 
 let adoptDeferredSelfCallResults (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), statePendingTcoResets(state)) with
-        | (None, _) -> adoptMarkedDeferredSelfCalls(label)(false)(state)
-        | (Some(_frame), []) ->
-            adoptMarkedDeferredSelfCalls(label)(isGeneralRcFinishedResult(bodyTemp)(state))(state)
-        | (Some(_frame), _resets) -> state
+        | (None, _) -> adoptMarkedDeferredSelfCalls(label)(0)(false)(state)
+        | (Some(_frame), resets) ->
+            adoptMarkedDeferredSelfCalls(label)(length(resets))(isGeneralRcFinishedResult(bodyTemp)(state))(state)
 
 let unifySelfCallResults (lowered: LoweredCoreValue) =
     match lowered with
