@@ -91,6 +91,15 @@ let unplacedPatternOwnerElement (element: Expr) (temp: Int) (state: CoreLowering
 // `(name, value)` of pattern parts in a list literal passed to a call), an unplaced pattern owner's
 // read does not count either: stage 0 keeps that tuple in the arena and the call's frame releases
 // the owner duplicates it holds. A successor's or a spine head's tuple is placed by its request.
+// Inside a loop's back-edge argument the call frame records no owner duplicates
+// (`recordCallArgumentTupleOwnerDuplicates`), so a tuple there keeps counting them: left in the
+// arena, the tuple at the head of an accumulator's successor cell (`(parameter, Some(...)) ::
+// reversed`) took the accumulator's placement with it, and its retains had no release either.
+let outsideBackEdgeArgument (state: CoreLoweringState) =
+    match stateBackEdgeArgumentSlot(state) with
+        | Some(_slot) -> false
+        | None -> true
+
 let recursive holdsReferenceCountedElement (scrutinee: Bool) (placedOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && (placedOnly == false || unplacedPatternOwnerElement(element)(temp)(state) == false) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false && (scrutinee == false || readsDemotedLoopList(element)(state) == false) || holdsReferenceCountedElement(scrutinee)(placedOnly)(restElements)(restTemps)(restTypes)(state)
@@ -760,7 +769,7 @@ let finishTupleLowering (successor: Bool) (scrutinee: Bool) elements (runtimeTup
             // in the arena its caller takes it as.
             match arenaCellFields(semanticTypes)(runtimeTuple)(freshTemps)(loweredState) with
                 | (state, loweredTemps) ->
-                    match (freshTemp(state), holdsReferenceCountedElement(scrutinee)(successor == false && scrutinee == false)(elements)(loweredTemps)(semanticTypes)(state)) with
+                    match (freshTemp(state), holdsReferenceCountedElement(scrutinee)(successor == false && scrutinee == false && outsideBackEdgeArgument(state))(elements)(loweredTemps)(semanticTypes)(state)) with
                         | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
                             if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                             then
