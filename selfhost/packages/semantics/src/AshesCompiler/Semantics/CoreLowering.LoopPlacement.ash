@@ -1268,9 +1268,11 @@ let recursive storeMarkerIntoSlot (slot: Int) (marker: Int) (zeroTemp: Int) (ins
             else instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
         | instruction :: rest -> instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
 
-// Stage 0's `SettleHandedOverMarkerSlots` for arena cells: once the pattern owners are placed, a
-// marker handed to an owned slot that became a real retain is stored into it; one that stayed an
-// identity took no reference.
+// Stage 0's `SettleHandedOverMarkerSlots` for arena cells, run once the loop's retains are final
+// (behind the promotion of its parameter retains and its withdrawals, as stage 0 runs it last in
+// `LowerLambdaCoreFinalizeTcoOwnership`): a marker handed to an owned slot that is a real retain
+// by then is stored into it; one that stayed an identity, or was withdrawn to a borrow, took no
+// reference, and its slot stays zero.
 let recursive settleCellMarkerSlots (slots: List((Int, Int, Int))) (state: CoreLoweringState) =
     match slots with
         | [] -> withStateCellMarkerSlots([])(state)
@@ -1385,8 +1387,6 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
     |> (given (placed: List(PatternOwnerSite)) ->
         state
         |> promotePatternOwnerSites(placed)
-        |> (given (promoted: CoreLoweringState) ->
-            settleCellMarkerSlots(stateCellMarkerSlots(promoted))(promoted))
         |> splicePatternOwnerDups(placed)
         |> retainUnplacedAggregateMarkersOf(statePatternOwnerSites(state))(placed)
         |> (given (finalized: CoreLoweringState) -> withStatePatternOwnerSites([])(finalized)))
@@ -2020,6 +2020,8 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> withdrawLetCellTailDuplicatesOf(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
                     |> patternOwnerSiteSlots)(frame.parameterSlots)(managedAdts)
+                    |> (given (withdrawn: CoreLoweringState) ->
+                        settleCellMarkerSlots(stateCellMarkerSlots(withdrawn))(withdrawn))
                     |> finishTcoManagedPlacement(label)(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
                     |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
