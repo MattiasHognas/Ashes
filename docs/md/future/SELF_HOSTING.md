@@ -285,7 +285,8 @@ Order of work. Each step lands separately and is useful if the later ones are de
    type already binds its parameter first. Replacing those entry decisions with rules over the
    final type is step 8 work.
 
-   **Complete, 2026-11-25.** Lowering from the table was made the default of `compile` and `run`
+   **Switched, 2026-11-25; removal blocked on the two items below.** Lowering from the table was
+   made the default of `compile` and `run`
    (the only commands of the stage-1 CLI that lower) at `329ae3d2`, with `ASHES_TYPED_LOWERING=0`
    kept for one round as the comparison. That round (`0e72ed89`): behaviour with the default 1,065
    same, 188 leak-only, no non-leak row; stage 2 built by the typed stage 1 in 14:40 at 10.5 GiB
@@ -325,6 +326,15 @@ Order of work. Each step lands separately and is useful if the later ones are de
    reached only where the table has no answer, which the corpus and the compiler no longer hit.
    Replacing the plan by the recorded schemes, and the integer form by an error, are the next
    deletions once the tests are migrated.
+
+   The removal of discovery, replay, pending and proven goals, deferred operators and the
+   per-binding plan is blocked on: (1) the selfhost tests that lower raw programs moving to the
+   typed entry points, and (2) the rejected-program wording coming from the inference. Among the
+   raw users are the lowered-IR parity fixtures against stage 0 (258 under
+   `selfhost/parity/semantics/lowered-ir`, driven by `LoweredIrFixtures`, `ir-program-parity`,
+   `semantics-diagnostic-parity` and the backend raw fixtures); typed IR differs from stage 0's by
+   design, so they cannot move to the typed path and go with step 9, which makes step 9 a
+   precondition of the removal as well.
 
    Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
    a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
