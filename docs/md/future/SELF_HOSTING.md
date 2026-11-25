@@ -26,7 +26,7 @@ starts.
 | # | Task | Done when | State |
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
-| 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | In progress on `selfhost/round12`: the leak and use-after-free fixes are merged; round 12 validates them with a rebuilt stage 0. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). The stage-1 half of the matched-tail rule does not fire yet |
+| 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | In progress on `selfhost/round12`: merged and measured (round 12); repairs for what broke are being validated. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
 | 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | Not started |
 | 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
 | 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
@@ -46,19 +46,22 @@ starts.
 
 ## Where the compiler stands
 
-Measured at round 8, the state PR #1161 merged.
+Measured at round 12 on `selfhost/round12`: main plus the leak and use-after-free fixes, with a rebuilt stage 0.
 
 | Measure | Value |
 | --- | --- |
-| Stage 1 built by stage 0 | about 29 min, 19–20 GiB |
-| Stage-1 behaviour against stage 0 (1,270 programs) | 1,067 same, 188 differ only in live cells at exit, 0 other |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 620 s, 17.4 GiB |
-| Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 856 s, 13.5 GiB |
-| Stage 3 built by stage 2 | 475 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 37–48 GiB |
-| Semantics suite | 96 of 98 groups (whole-program IR parity 32 of 95 differing) |
+| Stage 1 built by stage 0 | 27 min, 20 GiB |
+| Stage-1 behaviour against stage 0 (1,288 programs) | 1,166 same, 122 differ only in live cells at exit, 0 other |
+| The same under `ASHES_RC_POISON=1` | 1,160 same, 121 live cells only, 7 wrong output or crash (below) |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 601 s, 18.4 GiB |
+| Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
+| Stage 3 built by stage 2 | 631 s, byte-identical to stage 2 (475 s before the leak fixes) |
+| Stage 3 memory, resident plus swap | 40.3 GiB (42.2 GiB before the leak fixes) |
+| Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident |
+| The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
+| Semantics suite | not yet rerun on this branch (97 of 98 groups at round 8; whole-program IR parity 32 of 95 differing) |
 | Backend suite | 495 of 497 (one live-cell count case, twice) |
-| C# lowered-IR parity tests | 208 of 208 |
+| C# tests | 3,092 of 3,093 (one memory-plateau test, below) |
 
 - Typed lowering is the only lowering the shipped compiler reaches, with no switch and no fallback.
   The raw lowering survives as a test-only path in `CoreLowering.Raw` until step 9.
@@ -67,14 +70,11 @@ Measured at round 8, the state PR #1161 merged.
 
 ## Known open defects
 
-Wrong output, found by the behaviour check under `ASHES_RC_POISON=1`. The Fix column is as of
-round 8; step 2 brings the fixes onto main.
+Wrong output, found by the behaviour check under `ASHES_RC_POISON=1` in round 12.
 
 | Defect | Stage | Fix |
 | --- | --- | --- |
-| A view of a let-bound call result (`uncons`, `unconsText`, `subView`, `fromText`) escaping in a record, tuple or closure reads freed memory | 0 and 1 | On `fix/r12-leak-generic-call`; `fromText` still fails on stage 1 |
-| A view matched later, or passed as a loop successor, reads freed memory | 1 | On `fix/s1-view-backing-uaf` |
-| A coroutine's captured value returned through its task result is released at frame teardown | 0 | `93754484` |
+| A view of a let-bound call result escaping in a record, tuple or closure read freed memory | 0 and 1 | Fixed for `uncons`, `unconsText` and `subView`; `fromText` still fails on stage 1 (`byte_views_of_let_bound_call_results_in_every_position`) |
 | `arena_record_result_owned_field_moves_into_copy`, `arena_record_result_read_before_return_moves_field` print 45 for 55 | 1 | Not written |
 | `rc_escaping_view_backing_released` prints garbage | 1 | Not written |
 | `mixed_tuple_join_taken_apart_into_constructor` segfaults | 1 | Not written |
@@ -83,15 +83,13 @@ round 8; step 2 brings the fixes onto main.
 
 Leaks, as known:
 
-- Five C# memory-plateau tests in `LinuxBackendCoverageTests` fail on main; they belong to step 5.
-- Test corpus at round 8: 97 programs leave more live cells under stage 1 than under stage 0,
-  7.1 million cells in total; with the leak fixes, 36 programs and about 22,600 cells.
-- Stage 0 leaks too: a stage-0-built compiler has 221.7 million live reference-counted cells when it
-  finishes compiling the compiler. Six leaks present in both compilers are known; five have fixes.
-- Stage 1's code generation holds about twice the memory of stage 0's on the same input (2.55 GB
-  against 1.2 GB on the frontend test project).
-- There is no live-cell count yet for a stage-1-built compiler compiling the compiler; step 2
-  produces it.
+- One C# memory-plateau test still fails (`loop_rebuilding_list_of_lists_onto_matched_inner_lists`: a constructor-spine rebuild over a tuple scrutinee leaks the list of lists in stage 0).
+- Test corpus: 25 programs leave more live cells under stage 1 than under stage 0, about 97,000
+  cells in total, nearly all in three constrained-loop tests that wait on the matched-tail rule;
+  97 programs leave fewer.
+- The leak fixes so far cleared the test corpus but not the compiler's own footprint: stage 3's peak
+  moved from 42.2 to 40.3 GiB. Step 5 starts from a breakdown of the 368.0 million cells by type
+  and allocation site.
 
 ## Type inference before lowering
 
