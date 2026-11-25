@@ -1,13 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8651)
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9348)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:10214)
-  resolved requirement=Ashes.Trait.Ord(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:2928)
-
 function lambda_0  [SourceFunction from textOf]
   locals=2 temps=2
     LoadLocal             Target=0 Slot=1   (field_accessor_call_retains_result.ash:6:31)
