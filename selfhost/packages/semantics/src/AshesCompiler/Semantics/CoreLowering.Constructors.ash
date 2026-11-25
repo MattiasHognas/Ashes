@@ -89,24 +89,16 @@ let isTupleType (semanticType: SemanticType) =
         | SemTuple(_elements) -> true
         | _ -> false
 
-// A field whose resolved type is a function: stage 0 asks a closure child for its runtime
-// representation only there (a type-parameter field takes it through the escaping-capture rule).
-let resolvedFunctionField (fieldType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(fieldType) with
-        | SemFunction(_parameter, _result, _row) -> true
-        | _ -> false
-
 // The request one constructor argument is lowered under, stage 0's
 // `LowerRuntimeManagedConstructorArgument` with `LowerConstructorArguments`' child
 // representations: the parent's flags minus the ADT and record ones, the ADT flag again when the
 // runtime cell was asked for as an ADT, the record flag for any runtime cell, and — for a runtime
 // cell — a runtime string for a fresh string producer in a string or type-parameter field, a
 // runtime list for a fresh list construction in a list or type-parameter field, and a runtime
-// tuple for a tuple literal in a tuple or type-parameter field, and a runtime closure for a closure
-// literal owning its captures in a function field; the transfer is forwarded.
+// tuple for a tuple literal in a tuple or type-parameter field; the transfer is forwarded.
 let constructorArgumentRequest (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match request with
-        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers, recordFieldCells = fieldCells, callArgument = callArgument } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, runtimeClosure = runtimeManaged && resolvedFunctionField(fieldType)(state) && isRuntimeRcOwningClosureExpression(argument)(state), transfersRuntimeManagedChildren = transfers, recordFieldCell = fieldCells && isConsValue(argument), callArgument = callArgument && !runtimeManaged
+        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers, recordFieldCells = fieldCells, callArgument = callArgument } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers, recordFieldCell = fieldCells && isConsValue(argument), callArgument = callArgument && !runtimeManaged
 
 let emitListNormalizingCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with

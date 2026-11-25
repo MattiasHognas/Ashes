@@ -774,22 +774,6 @@ let expectRoutedSpecializationResultIsNotNormalized unit =
     |> loopLines("[ClosureHelper from build]")
     |> (given (lines) -> check("a routed call's result is not normalized into an owned slot")(countContaining("__reuse")(lines) == 0 || countContaining("general_rc_result_normalize")(lines) == 0))
 
-let owningClosureRecordSource = "type Box =\n    | reader: Int -> Str\n\nlet box (s: Str) =\n    Box(reader = given (u: Int) -> s)\n\nlet k =\n    match box(Ashes.Text.fromInt(5) + \"x\") with\n        | Box { reader = reader } -> Ashes.Text.byteLength(reader(0))\n\nAshes.IO.print(Ashes.Text.fromInt(k))"
-
-// A record returned with a closure over the entry-normalized string parameter owns that closure,
-// and the closure owns the parameter: the environment and the closure are allocated on the
-// reference-counted heap, the closure's fourth word holds the dropper releasing the parameter,
-// and the record cell is reference-counted too.
-let expectOwningClosureRecordIsRuntimeManaged unit =
-    owningClosureRecordSource
-    |> loopFunctionLines("[SourceFunction from box]")
-    |> (given (lines) ->
-        Unit
-        |> (given (_) -> check("the closure is allocated on the reference-counted heap")(countContainingBoth("MakeClosure")("RuntimeManaged=true")(lines) == 1))
-        |> (given (_) -> check("its environment is allocated on the reference-counted heap")(countContainingBoth("Alloc ")("RuntimeManaged=true")(lines) > 0))
-        |> (given (_) -> check("its fourth word holds the capture dropper")(countContainingBoth("LoadFuncAddr")("__rc_cdrop_")(lines) == 1 && countContainingBoth("StoreMemOffset")("OffsetBytes=24")(lines) == 1))
-        |> (given (_) -> check("the record cell is reference-counted")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 1)))
-
 let letBoundStringArmTupleSource = "type Tok =\n    | kind: Int\n    | text: Str\n\nlet readNext (position: Int) =\n    (let text = Ashes.Text.fromInt(position)\n    in\n        if position < 1000\n        then (Tok(kind = 1, text = text), None)\n        else (Tok(kind = 2, text = text), Some(position)))\n\nlet recursive scan (count: Int) (position: Int) (kinds: Int) (bytes: Int) =\n    if position >= count\n    then Ashes.Text.fromInt(kinds) + \"|\" + Ashes.Text.fromInt(bytes)\n    else\n        match readNext(position) with\n            | (Tok { kind = kind, text = text }, _note) -> scan(count)(position + 1)(kinds + kind)(bytes + Ashes.Text.byteLength(text))\n\n0\n|> scan(100)(0)(0)\n|> Ashes.IO.print"
 
 // A record built in an `if` arm from a `let`-bound string, inside a tuple the function returns,
@@ -893,5 +877,4 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectRoutedSpecializationResultIsNotNormalized(Unit))
-    |> (given (_) -> expectOwningClosureRecordIsRuntimeManaged(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))

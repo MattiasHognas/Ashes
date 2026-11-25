@@ -25,7 +25,6 @@ export (
     value patternFactRequiresProtection,
     value lookupPatternBindingFact,
     value patternBinderKey,
-    value freeNames,
 )
 
 // One way an arm uses a pattern binding, stage 0's `PatternBindingOwnershipUse` flags.

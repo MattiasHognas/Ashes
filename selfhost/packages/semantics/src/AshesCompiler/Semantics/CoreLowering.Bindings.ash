@@ -1134,12 +1134,6 @@ let copyTaskClosure (retains: Bool) survivors (outer: CoreLoweringState) (value:
                     value with state = emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), temp = copyTemp
         | _ -> value
 
-// Stage 0's `Closure` runtime representation as the closure's creation site asked for it: a heap
-// closure, never a stack one, placed on the reference-counted heap with its environment.
-let runtimeClosureRequested (stackAllocate: Bool) (outer: CoreLoweringState) =
-    match consumerRequestOf(outer) with
-        | ConsumerRequest { runtimeClosure = runtimeClosure } -> runtimeClosure && !stackAllocate
-
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
@@ -1175,8 +1169,8 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                             |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
                                             |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                             |> markCapturedResourcesMoved(survivors)
-                                            |> allocateEnvironmentIn(runtimeClosureRequested(stackAllocate)(typedOuter))(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
-                                            |> emitPrunedClosureIn(runtimeClosureRequested(stackAllocate)(typedOuter))(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                            |> allocateEnvironment(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
+                                            |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
                                             |> registerTaskFrameDropper(label)(retains)(coroutineResultReachType(body)(bodyType)(finishedBody))(capturesReachingResult(prunedInstructions))(survivors)(body)(typedOuter)(finishedBody)
                                             |> copyTaskClosure(retains)(survivors)(typedOuter)
 
