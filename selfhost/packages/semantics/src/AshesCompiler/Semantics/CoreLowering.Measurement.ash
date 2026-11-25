@@ -113,8 +113,9 @@ let measuredSeed (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str)
 
 // As lowerCoreProgramWithSourceAndReuse with reuse on, or, given recorded node types, as
 // lowerCoreNumberedProgramWithSourceAndReuse, timing the discovery pass and the replay pass with
-// `clock` and counting what each kept; the lowered program itself is not built.
-let measureCoreProgramLoweringObserved regionOfName replayStarting schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+// `clock` and counting what each kept; the lowered program itself is not built. `single` keeps the
+// first lowering of every body (measureStitchedLoweringOnce).
+let measureCoreProgramLoweringObservedOnce (single: Bool) regionOfName replayStarting schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -125,6 +126,7 @@ let measureCoreProgramLoweringObserved regionOfName replayStarting schemes clock
                 match program
                 |> measuredSeed(nodeTypes)(filePath)(source)
                 |> withRawOperatorDeclarationSchemes(schemes)
+                |> withSingleLoweringMeasurement(single)
                 |> (given (seed) ->
                     match regionOfName with
                         | None -> seed
@@ -133,8 +135,15 @@ let measureCoreProgramLoweringObserved regionOfName replayStarting schemes clock
                     | CoreProgramPassMeasurement { first = first, replay = Some(replayed), firstMillis = firstMillis, replayMillis = replayMillis, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, equalityGoalKeys = equalityGoalKeys, retainedRelowerings = retained, goalDetails = details } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = replayMillis, replayed = true, pendingGoals = pendingGoals, equalityGoals = equalityGoals, pendingGoalKeys = pendingGoalKeys, equalityGoalKeys = equalityGoalKeys, retainedRelowerings = retained, goalDetails = details, first = passCountsOf(first), replay = passCountsOf(replayed))
                     | CoreProgramPassMeasurement { first = first, firstMillis = firstMillis, goalDetails = details } -> CoreLoweringMeasurement(firstMillis = firstMillis, replayMillis = 0, replayed = false, pendingGoals = 0, equalityGoals = 0, pendingGoalKeys = [], equalityGoalKeys = [], retainedRelowerings = None, goalDetails = details, first = passCountsOf(first), replay = noPassCounts)
 
+let measureCoreProgramLoweringObserved regionOfName replayStarting schemes clock (nodeTypes: Maybe(NodeTypeTable)) (filePath: Str) (source: Str) (program: ProgramSyntax) = measureCoreProgramLoweringObservedOnce(false)(regionOfName)(replayStarting)(schemes)(clock)(nodeTypes)(filePath)(source)(program)
+
 let measureCoreProgramLoweringWithSchemes schemes clock nodeTypes path source program =
     measureCoreProgramLoweringObserved(None)(given (_) -> Unit)(schemes)(clock)(nodeTypes)(path)(source)(program)
+
+// As measureStitchedLowering under the type table with every body lowered once: the first
+// lowering of a body that asks to be lowered again is kept. Its time against the ordinary lowering's
+// is what re-lowering (step-8 rules 4 and 10) costs; the lowered program is not meant to be used.
+let measureStitchedLoweringOnce regionOfName replayStarting clock table path program = measureCoreProgramLoweringObservedOnce(true)(regionOfName)(replayStarting)(Ashes.Collection.Map.empty)(clock)(Some(table))(path)("")(program)
 
 let measureStitchedLowering useNodeTypes regionOfName replayStarting clock table path program =
     if useNodeTypes
