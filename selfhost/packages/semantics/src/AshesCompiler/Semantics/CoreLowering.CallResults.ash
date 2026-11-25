@@ -664,7 +664,10 @@ let deferCallCopyOut (selfCall: Bool) cursorSlot endSlot preRestoreSlot (resultT
                                 deferredType = semanticType,
                                 deferredSelfCall = selfCall,
                                 deferredOwned = false,
-                                deferredLetReleaseSlots = []
+                                deferredLetReleaseSlots = [],
+                                deferredBackEdgesBefore = stored
+                                |> statePendingTcoResets
+                                |> length
                             )
                         in
                             (stored
