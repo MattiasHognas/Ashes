@@ -597,6 +597,12 @@ internal static class PerceusLifetimePlacement
                 return AddViewAlias(aliases, viewAliases, viewLoad.Target);
             case IrInst.LoadLocal load when LoadSeesAliasStore(aliasStores, load.Slot, index, block):
                 return aliases.Add(load.Target);
+            // A cell or arena record holding a view holds the backing's bytes: what is read back out
+            // of it is a view too.
+            case IrInst.StoreMemOffset viewCellStore when viewAliases.Contains(viewCellStore.Source):
+                return AddViewAlias(aliases, viewAliases, viewCellStore.BasePtr);
+            case IrInst.SetAdtField viewFieldStore when viewAliases.Contains(viewFieldStore.Source) && arenaAdtCells.Contains(viewFieldStore.Ptr):
+                return AddViewAlias(aliases, viewAliases, viewFieldStore.Ptr);
             case IrInst.StoreMemOffset cellStore when aliases.Contains(cellStore.Source):
                 return aliases.Add(cellStore.BasePtr);
             case IrInst.SetAdtField fieldStore when aliases.Contains(fieldStore.Source) && arenaAdtCells.Contains(fieldStore.Ptr):
