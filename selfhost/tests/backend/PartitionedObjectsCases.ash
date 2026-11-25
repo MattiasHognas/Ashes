@@ -432,9 +432,91 @@ let testPartitionChildFailure unit =
                             then partitionFail("a partition child process was left unreaped")
                             else expectNoPartitionDirectory("child failure"))
 
+// The default build: with no setting the plan is sized from the program alone, so a program of
+// fewer than two partitions' worth of lifted functions is one partition and takes the single-module
+// path exactly as `ASHES_LLVM_JOBS=1` does, and a larger one is partitioned exactly as
+// `ASHES_LLVM_JOBS=auto` partitions it. The default process count, which depends on the machine,
+// changes only how many partitions are built at once: the object equals the one built one partition
+// after another in this process (`ASHES_LLVM_PROCESSES=1`).
+let recursive identityFunctions (index: Int) (count: Int) (acc: List(IrFunction)) =
+    if index >= count
+    then Ashes.Collection.List.reverse(acc)
+    else identityFunctions(index + 1)(count)(partitionLifted("part_identity_" + Ashes.Text.fromInt(index))([LoadLocal(0)(1), Return(0)])(1) :: acc)
+
+// The entry prints `first(7) + last(7)` over `count` identity functions.
+let identityProgram (count: Int) =
+    partitionProgram(partitionEntry([
+        LoadConstInt(0)(0),
+        LoadConstInt(1)(7),
+        CallKnown(2)("part_identity_0")(0)(1)(-1)(false),
+        CallKnown(3)("part_identity_" + Ashes.Text.fromInt(count - 1))(0)(1)(-1)(false),
+        AddInt(4)(2)(3),
+        PrintInt(4),
+        LoadConstInt(5)(0),
+        Return(5)
+    ])(0)(6))(identityFunctions(0)(count)([]))([])
+
+let defaultPartitionedObject (program: IrProgram) (partitions: Int) (processes: Int) =
+    (let _ = partitionScratchRootReady(Unit)
+    in
+        match emitPartitionedObjectWith(processes)(partitionScratchRoot)(false)(partitionEntryName)(partitionTriple)(partitionTargetMachine)([])(partitions)(program) with
+            | Error(message) -> partitionFail("default build: " + message)
+            | Ok(merged) -> merged)
+
+let testDefaultBuild unit =
+    (let small = partitionedHandBuiltProgram(Unit)
+    in
+        let large = identityProgram(2 * objectPartitionFunctionsPerPartition + 8)
+        in
+            let plan = requestedObjectPartitions(None)(large)
+            in
+                Unit
+                |> (given (_) ->
+                    small
+                    |> requestedObjectPartitions(None)
+                    |> expectPlan("default for four functions")(requestedObjectPartitions(Some("1"))(small)))
+                |> (given (_) ->
+                    small
+                    |> requestedObjectPartitions(None)
+                    |> expectPlan("default for four functions is one module")(1))
+                |> (given (_) ->
+                    expectPlan("default above the threshold")(requestedObjectPartitions(Some("auto"))(large))(plan))
+                |> (given (_) -> expectPlan("default above the threshold is partitioned")(2)(plan))
+                |> (given (_) ->
+                    16
+                    |> partitionProcessesFor(None)(1)
+                    |> expectPlan("processes on one processor")(1))
+                |> (given (_) ->
+                    16
+                    |> partitionProcessesFor(None)(2)
+                    |> expectPlan("processes on two processors")(2))
+                |> (given (_) ->
+                    16
+                    |> partitionProcessesFor(None)(64)
+                    |> expectPlan("processes on many processors")(defaultPartitionProcesses))
+                |> (given (_) ->
+                    3
+                    |> partitionProcessesFor(None)(64)
+                    |> expectPlan("processes for three partitions")(3))
+                |> (given (_) ->
+                    16
+                    |> partitionProcessesFor(Some("12"))(2)
+                    |> expectPlan("processes requested")(12))
+                |> (given (_) ->
+                    16
+                    |> partitionProcessesFor(Some("many"))(64)
+                    |> expectPlan("processes not a number")(1))
+                |> (given (_) ->
+                    if Ashes.Byte.compare(plan
+                    |> partitionProcessesFor(None)(onlineProcessorCount(Unit))
+                    |> defaultPartitionedObject(large)(plan))(defaultPartitionedObject(large)(plan)(1)) != 0
+                    then partitionFail("the default build differs from the build in one process")
+                    else expectNoPartitionDirectory("default build")))
+
 let runPartitionedObjectsCases unit =
     unit
     |> testObjectPartitionPlan
+    |> testDefaultBuild
     |> testPartitionedHandBuiltProgram
     |> testPartitionedClosureNormalizer
     |> testPartitionedMessageConstants

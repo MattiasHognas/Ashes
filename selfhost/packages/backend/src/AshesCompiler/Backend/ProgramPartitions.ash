@@ -11,6 +11,8 @@ export (
     value clampObjectPartitions,
     value sizedObjectPartitions,
     value requestedObjectPartitions,
+    value defaultPartitionProcesses,
+    value partitionProcessesFor,
     value assignObjectPartitions,
     value partitionOfLabel,
 )
@@ -37,18 +39,46 @@ let sizedObjectPartitions (functionsPerPartition: Int) (program: IrProgram) =
     match program with
         | IrProgram { functions = functions } -> clampObjectPartitions(countFunctions(functions)(0) / functionsPerPartition)
 
-// The partition count a build asks for with stage 0's `ASHES_LLVM_JOBS`: unset, empty or not a
-// number is the single-module build (1); `auto` sizes the plan from the program; a number is that
-// many partitions, clamped. Unlike stage 0, which partitions a large program by default, partitioned
-// code generation is opt-in here.
+// The partition count a build asks for with stage 0's `ASHES_LLVM_JOBS`, the same rule as stage 0's
+// `ResolveParallelObjectPartitions`: a number is that many partitions, clamped, so `1` is the
+// single-module build; unset, empty, `auto` or anything else sizes the plan from the program, one
+// partition per `objectPartitionFunctionsPerPartition` lifted functions. A program below twice that
+// is one partition and takes the single-module path, which is every test-sized program. The answer
+// depends on the setting and the program alone, never on the machine.
 let requestedObjectPartitions (setting: Maybe(Str)) (program: IrProgram) =
     match setting with
-        | None -> 1
-        | Some("auto") -> sizedObjectPartitions(objectPartitionFunctionsPerPartition)(program)
         | Some(text) ->
             match Ashes.Text.parseInt(text) with
                 | Ok(count) -> clampObjectPartitions(count)
-                | Error(_) -> 1
+                | Error(_) -> sizedObjectPartitions(objectPartitionFunctionsPerPartition)(program)
+        | None -> sizedObjectPartitions(objectPartitionFunctionsPerPartition)(program)
+
+// How many partitions are optimized and emitted at once with partitions on, in child processes.
+// Unset, it is `defaultPartitionProcesses`, at most the number of online processors; a number of
+// one or more is that many; anything else is 1. Either way it is at most the partition count, and 1
+// builds the partitions one after another in the compiling process. A child shares the parent's
+// memory copy-on-write and makes only its own module and LLVM working set private, about 0.5-1 GiB
+// for a sixteenth of the compiler, so 6 keeps the self-compile near 23 GiB at worst. Only the
+// concurrency depends on the machine: the objects, and so the image, do not.
+let defaultPartitionProcesses = 6
+
+let atMost (limit: Int) (value: Int) =
+    if value > limit
+    then limit
+    else value
+
+let partitionProcessesFor (setting: Maybe(Str)) (onlineProcessors: Int) (partitions: Int) =
+    (let requested =
+        match setting with
+            | Some(text) ->
+                match Ashes.Text.parseInt(text) with
+                    | Ok(count) when count >= 1 -> count
+                    | _ -> 1
+            | None ->
+                if onlineProcessors < 1
+                then 1
+                else atMost(onlineProcessors)(defaultPartitionProcesses)
+    in atMost(partitions)(requested))
 
 let recursive instructionCount (instructions: List(IrInstruction)) (count: Int) =
     match instructions with
