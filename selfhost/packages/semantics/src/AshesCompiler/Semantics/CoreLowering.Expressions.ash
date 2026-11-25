@@ -2942,13 +2942,18 @@ let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweri
 // (`TrackOwnedValue` from the pattern binding sites, runtimeManaged false), so its read is not a
 // reference-counted temp when `CanBuildRuntimeManagedCell` asks, and `binder :: addUse(...)` over a
 // part of the walked list keeps the ordinary recursion. A copy of the read onto the heap counts.
+// The cell it builds is an arena cell, as stage 0's is (its `LowerConsCell` asks the same
+// representation question): a reference-counted cell there would own the recursive call's result
+// that the function's owned call-result slot also releases. The arena cell holds the head's
+// duplicate in the arm cell head slot, released behind the join's copy (`reserveArmCellHeadSlot`).
 let unplacedPatternOwnerHead (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
     isPatternOwnerRead(headExpression)(state) && !containsInt(headTemp)(statePatternOwnerCopyTemps(state)) && !isProducerCellHeadType(resolveType(state)(headType))
 
 let finishConsTmc (request: ConsumerRequest) (transfers: Bool) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (headExpression: Expr) (tailExpression: Expr) lower head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false || unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) -> finishConsTail((request with runtimeList = false))(transfers)(lower)(headExpression)(tailExpression)(head)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
         | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } ->
             match duplicatePatternOwnerTemp(headExpression)(headTemp)(headState) with
                 | (duplicatedState, duplicatedHead) ->
