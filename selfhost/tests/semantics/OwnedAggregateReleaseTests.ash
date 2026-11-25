@@ -208,6 +208,32 @@ let testBackEdgeHeadTupleKeepsAccumulatorPlaced unit =
             |> (given (count: Int) -> count > 1)
             |> test.assertEqual(true)
 
+let nestedCallTupleSourcePath = "tests/loop_head_binders_in_argument_tuple.ash"
+
+// `lowerItems(rest)(prepareGroup([(name, value)])(total))`: the tuple of pattern parts is in the
+// argument of a call nested in the back-edge argument, whose frame is that call's own. The tuple
+// stays in the arena (the one reference-counted allocation left is the parameter's entry
+// normalization) and the two owner duplicates it holds are released right after the call's
+// window, as stage 0 does.
+let testNestedCallTupleInBackEdgeArgumentReleasesOwners unit =
+    match Ashes.IO.File.readText(nestedCallTupleSourcePath) with
+        | Error(message) -> test.fail("could not read " + nestedCallTupleSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from lowerItems")
+            |> (given (lines: List(Str)) ->
+                Unit
+                |> (given (_) ->
+                    lines
+                    |> countContainingBoth("Alloc ")("RuntimeManaged=true")
+                    |> test.assertEqual(1))
+                |> (given (_) ->
+                    lines
+                    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.contains(line)("TypeName=String RuntimeManaged=true") && Ashes.Text.contains(line)("RcDrop ") && !Ashes.Text.contains(line)("OwnerSlot="))
+                    |> length
+                    |> test.assertEqual(2)))
+
 // An escaping list literal of two owned strings is a runtime list whose cells retain their heads.
 let testEscapingListLiteralRetainsOwnedChildren unit =
     aggregateSource
@@ -672,6 +698,7 @@ let runOwnedAggregateReleaseTests unit =
     |> testOwnedRecordLetReleasedByItsOwner
     |> testEscapingTupleRetainsOwnedChildren
     |> testBackEdgeHeadTupleKeepsAccumulatorPlaced
+    |> testNestedCallTupleInBackEdgeArgumentReleasesOwners
     |> testEscapingListLiteralRetainsOwnedChildren
     |> testEscapingConsRetainsHeadAndTail
     |> testMentionsNameRespectsShadowing

@@ -114,7 +114,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrame = NoCallArgumentFrame))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) ->
             withStateRecursiveGroupNames(bindingNames(selfBindings))(current))

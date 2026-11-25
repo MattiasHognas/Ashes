@@ -704,7 +704,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 callArgumentRecordRetains = [],
                 collectingCallArgumentRetains = false,
                 callArgumentLabelStart = 0,
-                callArgumentFrameActive = false
+                callArgumentFrame = NoCallArgumentFrame
             ),
             reuseState = CoreReuseState(
                 reuseTransferredNames = [],
