@@ -30,7 +30,6 @@ import AshesCompiler.Semantics.CoreLowering.CallResults
 import AshesCompiler.Semantics.CoreLowering.Matches
 import AshesCompiler.Semantics.CoreLowering.RecursiveGroups
 export (
-    value keepLoopResultFieldCellHeadDuplicateOwned,
     value recordArenaCellTransferRetain,
     value neutralizeElementDuplicate,
     value isPromotableCellMarker,
@@ -1608,53 +1607,44 @@ let recordCallArgumentCellOwnerDuplicates (request: ConsumerRequest) (ownedHead:
                 cell with state = state |> recordCallArgumentCellOwnerPart(ownedHead)(duplicatedHead) |> recordCallArgumentCellOwnerPart(ownedTail)(duplicatedTail)
         | _ -> cell
 
-// The temp a cell's construction stored at an offset, the most recent store first.
-let recursive cellWordSource (cell: Int) (offset: Int) (instructions: List(IrInstruction)) =
+// The head an arena cell stored, the most recent store first.
+let recursive storedCellHead (cell: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> None
-        | IrInstruction { instruction = StoreMemOffset(basePtr, storedOffset, source) } :: rest ->
-            if basePtr == cell && storedOffset == offset
+        | IrInstruction { instruction = StoreMemOffset(basePtr, 0, source) } :: rest ->
+            if basePtr == cell
             then Some(source)
-            else cellWordSource(cell)(offset)(rest)
-        | _instruction :: rest -> cellWordSource(cell)(offset)(rest)
+            else storedCellHead(cell)(rest)
+        | _instruction :: rest -> storedCellHead(cell)(rest)
 
-// Stage 0's `KeepLoopResultFieldCellHeadDuplicateOwned`: an arena cons cell built as a constructor
-// argument at a loop function's result (`Spine(root = root, arguments = argument :: arguments)`
-// over a part of the loop parameter) holds the pattern-owner duplicate of its head; the return
-// normalizes the result into a copy that retains the head itself and the arena cell releases
-// nothing, so the duplicate goes to an owned slot released behind the result. The duplicate is a
-// marker or already a real retain, as when the head's pattern owner is runtime-managed
-// (`fn with calls = target :: fn.calls`, `target` matched out of a list parameter).
-let keepLoopResultFieldCellHeadDuplicateOwned (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
-    match (lowered, unspanArgument(argument)) with
-        | (LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None }, ExprCons(headExpression, _tail)) ->
-            match (cellWordSource(cellTemp)(0)(state.reversedInstructions), unspanArgument(headExpression), resolveType(state)(listType)) with
-                | (Some(headTemp), ExprVar(name), SemList(headType)) ->
-                    if !runtimeManaged && (request.tailPosition || request.consTailPosition) && generalRcEnabled(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot, patternOwnerBinding(name)(state)) with
-                        | (Some(_frame), None, None, Some(_fact)) -> true
-                        | _ -> false) && (match (definitionOfTemp(headTemp)(state.reversedInstructions), definitionOfTemp(cellTemp)(state.reversedInstructions)) with
-                        | (Some(RcDup(_target, _source, _runtimeManagedRetain, _mayBeEmpty)), Some(Alloc(_cell, 16, false))) -> true
-                        | _ -> false)
-                    then
-                        match freshLocal(state) with
-                            | FreshLocal { state = allocated, local = ownedSlot } ->
-                                lowered with state = allocated |> emit(StoreLocal(ownedSlot)(headTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(headType))
-                    else lowered
-                | _ -> lowered
-        | _ -> lowered
-
-// Stage 0's producer-result cell in `KeepLoopResultFieldCellHeadDuplicateOwned`: an arena cell that
-// is the function's result itself, consed onto a recursive producer call, is read by nothing
-// between its construction and the copy that places the producer's result on the
-// reference-counted heap with a reference of its own to the head, so the pattern-owner duplicate
-// the cell took of its head goes to an owned slot released behind the result, as a constructor
-// field cell's does.
-let keepProducerResultCellHeadDuplicateOwned (request: ConsumerRequest) headExpression tailExpression (lowered: LoweredCoreValue) =
+// Stage 0's `RecordArmCellHeadSlot`: an arm's own arena cell over the function's recursive call,
+// holding a duplicate of its pattern-owned head, gets an owned slot registered and zeroed right
+// behind the cell's stores, before any exit of the function is emitted; the join writes the
+// duplicate into it behind its copy of that arm's cell (`armCellHeadSlotOf` finds the slot by the
+// two instructions this emits). A slot no join writes stays zero and releases nothing.
+let reserveArmCellHeadSlot (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
     match lowered with
-        | LoweredCoreValue { state = state, error = None } ->
-            if recursiveProducerResult(tailExpression)(state)
+        | LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None } ->
+            if generalRcEnabled(state) && request.callArgument == false && (match request.transferSlot with
+                | Some(_slot) -> false
+                | None -> true) && !lowersBackEdgeArgument(state) && (recursiveProducerResult(tailExpression)(state) || isConsChainOntoSelfCall(ExprCons(ExprVar("_"))(tailExpression))(state)) && (match definitionOfTemp(cellTemp)(state.reversedInstructions) with
+                | Some(Alloc(_cell, 16, false)) -> true
+                | _ -> false) && (match storedCellHead(cellTemp)(state.reversedInstructions) with
+                | Some(head) ->
+                    match definitionOfTemp(head)(state.reversedInstructions) with
+                        | Some(RcDup(_target, _source, _runtimeManaged, _mayBeEmpty)) -> true
+                        | _ -> false
+                | None -> false)
             then
-                keepLoopResultFieldCellHeadDuplicateOwned(request)(false)(ExprCons(headExpression)(tailExpression))(lowered)
+                match (resolveType(state)(listType), freshLocal(state)) with
+                    | (SemList(element), FreshLocal { state = allocated, local = ownedSlot }) ->
+                        if containsUnresolvedLayout(element)(allocated)
+                        then lowered
+                        else
+                            match freshTemp(allocated) with
+                                | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                                    lowered with state = withTemp |> emit(LoadConstInt(zeroTemp)(0)) |> emit(StoreLocal(ownedSlot)(zeroTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(allocated)(element))
+                    | _ -> lowered
             else lowered
         | _ -> lowered
 
@@ -1674,10 +1664,10 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     duplicatedTail
                                     |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
+                                    |> reserveArmCellHeadSlot(cellRequest)(tailExpression)
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
-                                    |> keepProducerResultCellHeadDuplicateOwned(cellRequest)(headExpression)(tailExpression)
                                     |> keepArgumentExitCellOwned(request)(tailExpression)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.

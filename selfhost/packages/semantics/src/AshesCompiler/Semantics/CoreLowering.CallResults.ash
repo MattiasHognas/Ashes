@@ -2346,6 +2346,57 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
+// The slot `reserveArmCellHeadSlot` registered for the arm cell `cell`: the zero store right behind
+// the cell's tail store, most recent instruction first.
+let armCellHeadSlotAt (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | IrInstruction { instruction = StoreLocal(slot, zeroTemp) } :: IrInstruction { instruction = LoadConstInt(loaded, 0) } :: IrInstruction { instruction = StoreMemOffset(basePtr, 8, _tail) } :: _rest ->
+            if loaded == zeroTemp && basePtr == cell
+            then Some(slot)
+            else None
+        | _ -> None
+
+let recursive armCellHeadSlotOf (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | _instruction :: rest ->
+            match armCellHeadSlotAt(cell)(instructions) with
+                | Some(slot) -> Some(slot)
+                | None -> armCellHeadSlotOf(cell)(rest)
+
+let recursive armCellStoredHead (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePtr, 0, source) } :: rest ->
+            if basePtr == cell
+            then Some(source)
+            else armCellStoredHead(cell)(rest)
+        | _instruction :: rest -> armCellStoredHead(cell)(rest)
+
+// Stage 0's `WriteArmCellHeadSlot`: right behind the join's copy of an arm's own arena cell, the
+// cell's head duplicate goes into the slot registered at the cons. A duplicate still a pattern
+// owner's marker is written as zero and handed to the cell marker slots, which store it once the
+// loop's finalize promotes it to a real retain; an identity marker retained nothing and leaves the
+// slot zero.
+let writeArmCellHeadSlot (arm: MatchArmResult) (original: CoreLoweringState) (state: CoreLoweringState) =
+    if arm.armConsesOntoSelfResult
+    then
+        match (armCellHeadSlotOf(arm.armStoreTemp)(original.reversedInstructions), armCellStoredHead(arm.armStoreTemp)(original.reversedInstructions)) with
+            | (Some(slot), Some(head)) ->
+                match definitionOfTemp(head)(original.reversedInstructions) with
+                    | Some(RcDup(_target, _source, true, _mayBeEmpty)) ->
+                        emit(StoreLocal(slot)(head))(state)
+                    | Some(RcDup(_target, _source, false, _mayBeEmpty)) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                                withTemp
+                                |> emit(LoadConstInt(zeroTemp)(0))
+                                |> emit(StoreLocal(slot)(zeroTemp))
+                                |> (given (stored: CoreLoweringState) -> withStateCellMarkerSlots((slot, head, zeroTemp) :: stateCellMarkerSlots(stored))(stored))
+                    | _ -> state
+            | _ -> state
+    else state
+
 // An arm consing arena cells onto the function's own recursive result copies them and takes that
 // owned result over as their tail (stage 0's `NormalizeJoinArmStoreMovingTail`).
 let emitJoinArmNormalization (consedElementPlan: Maybe(ArgumentCopyPlan)) (ownedSlot: Int) (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
@@ -2365,7 +2416,9 @@ let normalizeJoinArmStore (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan
         match emitJoinArmNormalization(consedElementPlan)(consChainTailOwnedSlot(arm.armStoreTemp)(state))(arm)(plan)(emptied) with
             | (copied, normalizedTemp) ->
                 let buffered =
-                    emit(StoreLocal(slot)(normalizedTemp))(copied)
+                    copied
+                    |> writeArmCellHeadSlot(arm)(state)
+                    |> emit(StoreLocal(slot)(normalizedTemp))
                 in
                     let index = joinArmStoreIndex(slot)(arm.armStoreTemp)(state.reversedInstructions)
                     in
