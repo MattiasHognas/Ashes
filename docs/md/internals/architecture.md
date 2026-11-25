@@ -2925,7 +2925,7 @@ Dictionary closures and tuples use ordinary lexical ownership scopes. Their owne
 normal call-result normalization, so a returned closure or aggregate must preserve any evidence it
 captures. Dictionary construction cannot consume reuse tokens belonging to the source arguments.
 The supported ordinary operator evidence path currently covers `Eq`, `Ord`, and `Not`; the
-[self-hosting deferred work table](../future/SELF_HOSTING.md#known-gaps-deferred-during-step-f)
+[archived self-hosting known-gaps table](https://github.com/MattiasHognas/Ashes/blob/main/docs/selfhost-archive/2026-11-25/SELF_HOSTING.superseded.md#known-gaps-deferred-on-the-way-to-the-fixpoint)
 records the remaining operator dispatch and runtime validation limits.
 
 The self-hosted concrete-copy registry retains original source and logical schemes for constrained
