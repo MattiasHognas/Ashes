@@ -1372,7 +1372,7 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                         | Some(ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans))) ->
                             releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(construction)(state)
                         | _plan -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
-                | None -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
+                | None -> releaseVariantLiteralChildren(cellTemp)(named)(literal)(construction)(state)
         | (SemTuple(elements), ExprTuple(expressions)) ->
             if length(elements) == length(expressions)
             then releaseLiteralTupleElements(cellTemp)(0)(elements)(expressions)(construction)(state)
@@ -1387,6 +1387,16 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                     |> (given (headReleased: CoreLoweringState) ->
                         emitSourceChildRelease(tailTemp)(SemList(element))(Some(tail))(constructionWordOf(construction)(8)(headReleased))(headReleased))
         | _ -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
+// Stage 0's `TryEmitRuntimeManagedTcoLiteralChildrenRelease` for a constructor of a type with more
+// than one (`Some(span)`): the literal names its constructor, so the references the cell holds are
+// that constructor's owned fields, released one by one as a single constructor's are.
+and releaseVariantLiteralChildren (cellTemp: Int) (named: SemanticType) (literal: Expr) (construction: Maybe(Int)) (state: CoreLoweringState) =
+    match constructorApplicationOf(literal)([])(state) with
+        | Some((CoreConstructorLayout { name = constructorName, tagless = tagless }, arguments)) ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { children = children } ->
+                    releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedConstructorChildren(constructorName)(children))(arguments)(construction)(state)
+        | None -> emitGuardedSourceChildDrop(cellTemp)(named)(state)
 and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (arguments: List(Expr)) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match children with
         | [] -> state

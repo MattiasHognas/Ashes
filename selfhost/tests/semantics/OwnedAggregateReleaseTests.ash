@@ -506,6 +506,22 @@ let testRetainedSuccessorFieldLeavesIterationOwnersReleased unit =
                     |> countContaining("TypeName=CaptureResolution RuntimeManaged=true")
                     |> test.assertEqual(3)))
 
+let sharedSpanSuccessorSourcePath = "tests/loop_literal_successor_borrows_binding_matched_from_shared_list.ash"
+
+// The record successor's `Some(span)` is an arena cell of a two-constructor type that retained
+// `span`: once the back edge has copied the successor, that retain is released through the `Some`
+// constructor's own field, as stage 0's literal children release does for any constructor.
+let testVariantLiteralChildReleasedAtBackEdge unit =
+    match Ashes.IO.File.readText(sharedSpanSuccessorSourcePath) with
+        | Error(message) -> test.fail("could not read " + sharedSpanSuccessorSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from lowerItems")
+            |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.contains(line)("TypeName=Span RuntimeManaged=true") && !Ashes.Text.contains(line)("OwnerSlot="))
+            |> length
+            |> test.assertEqual(1)
+
 let tableLookupSourcePath = "tests/loop_table_lookup_arm_outer_table_stays_arena.ash"
 
 // The label arm's `nextInts` join becomes the known-table parameter, which stays in the arena: its
@@ -642,6 +658,7 @@ let runOwnedAggregateReleaseTests unit =
     |> testUnplacedParameterTailSlotStaysZero
     |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
     |> testSuccessorJoinArmOfLetOwnerIsDemoted
+    |> testVariantLiteralChildReleasedAtBackEdge
     |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
     |> testLetCellCopiedAtExitWithdrawsTailDuplicate
     |> testNestedConstructorRetainsLiveOwnerFieldOnce
