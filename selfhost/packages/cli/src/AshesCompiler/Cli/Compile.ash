@@ -859,7 +859,9 @@ let emitAndLinkPrepared outputPath prepared =
                         | Ok(_) ->
                             match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
                                 | Error(message) -> Error(message)
-                                | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                                | Ok(executableBytes) ->
+                                    let _ = reportDiagnosticPhase("linked")
+                                    in writeExecutable(outputPath)(executableBytes)
 
 // How many partitions are optimized and emitted at once, in child processes, with partitions
 // requested: `ASHES_LLVM_PROCESSES`, else 6, at most the partition count. 1 builds them one after
@@ -908,7 +910,9 @@ let emitAndLinkPartitioned outputPath prepared =
                                 | Ok(_) ->
                                     match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
                                         | Error(message) -> Error(message)
-                                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                                        | Ok(executableBytes) ->
+                                            let _ = reportDiagnosticPhase("linked")
+                                            in writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
