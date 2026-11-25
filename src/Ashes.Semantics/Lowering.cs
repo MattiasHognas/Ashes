@@ -18859,7 +18859,7 @@ public sealed partial class Lowering
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         RecordCallArgumentCellOwnerDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
-        KeepResultCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
+        KeepResultCellDuplicatesOwned(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }

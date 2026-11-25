@@ -32,6 +32,49 @@ public sealed partial class Lowering
 
     private readonly List<PendingArmCellHeadWrite> _pendingArmCellHeadWrites = [];
 
+    // The duplicates an arena result cell took of its pattern-owned head and tail.
+    private void KeepResultCellDuplicatesOwned(Expr.Cons cons, int cellTemp, (int Temp, TypeRef Type) head, (int Temp, TypeRef Type) tail)
+    {
+        KeepResultCellHeadDuplicateOwned(cons, cellTemp, head.Temp, head.Type);
+        KeepArmCellTailMarkerOwned(cons, cellTemp, tail.Temp, tail.Type);
+    }
+
+    private static bool ArmCellTailMarkerSlotRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARMCELLTAILMARKERSLOT") is null;
+
+    // A loop's result cell built in tail position over a tail matched out of a reference-counted loop
+    // parameter (`(key, value) :: tail`): the cell takes the pattern owner's duplicate of the tail,
+    // still a marker while the cell is built, and the copy that normalizes the result holds a
+    // reference of its own to whatever it keeps of that tail, so once the owner is placed the
+    // duplicate is a retain the arena cell holds with nothing to release it. As a constructor's arena
+    // cell does with such a marker (`HandArenaCellMarkerToOwnedSlot`), the duplicate goes to an owned
+    // slot registered and zeroed at the cons, which takes it once the loop's finalize promotes it.
+    private void KeepArmCellTailMarkerOwned(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef tailType)
+    {
+        if (duplicateTemp < 0
+            || !ArmCellTailMarkerSlotRuleEnabled
+            || !GeneralRcEnabled
+            || _tcoCtx is not { InTailPosition: true }
+            || StripOrSelf(cons.Tail) is not Expr.Var
+            || _backEdgeArgumentPosition is not null
+            || _tcoArgumentDestination is not null
+            || _callArgumentRetainFrame is not null
+            || IsBackEdgeCopiedCell(cons)
+            || _backEdgeLateCopiedCells.Contains(cons)
+            || _backEdgeRecordFieldCells.Contains(cons)
+            || _constructorFieldArgument is not null
+            || IsRuntimeManagedResultTemp(cellTemp)
+            || DefinitionOf(cellTemp) is not IrInst.Alloc { RuntimeManaged: false }
+            || !IsArenaCellPatternOwnerMarker(duplicateTemp)
+            || !IsBorrowedRetainableParameterType(Prune(tailType))
+            || ContainsUnresolvedLayoutType(Prune(tailType), []))
+        {
+            return;
+        }
+
+        HandArenaCellMarkerToOwnedSlot(duplicateTemp, Prune(tailType));
+    }
+
     // The duplicate a result cell took of its head: a constructor field cell's goes to its owned slot
     // at once, an arm's own cell's to the slot its join writes.
     private void KeepResultCellHeadDuplicateOwned(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
