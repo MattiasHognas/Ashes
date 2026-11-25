@@ -399,14 +399,18 @@ let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop:
     then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
     else None
 
-// A single-constructor ADT loop parameter admitted to runtime-managed placement, stage 0's
+// An ADT loop parameter admitted to runtime-managed placement, stage 0's
 // `IsRcEligibleScalarTupleOrAdtType`: a copy ADT (every field a scalar, `CanCopyOutAdt`) or a
 // tuple of scalars copies its cell whole at entry and at every back edge and releases as one
 // `RcDrop` under the type's name (`Tuple` for a tuple); a record with owned children
 // (`CanRuntimeManageTcoAdt`) and a tuple whose elements a runtime-managed parent owns
 // (`CanRuntimeManageOwnedTupleType`) copy their children with the cell and release them through
 // the cell's structural walk; a parameter of the contract's own types is normalized by its helper
-// (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
+// (`tcoGeneralRcParameterPlacement`). A variant whose constructors own their children
+// (`CanRuntimeManageTcoAdt` holds for `Maybe((Str, Str))`, the result of an uncons) is copied
+// constructor by constructor: a successor viewing a string a back edge releases is copied out of
+// the view before the release, as stage 0's normalization does. Answers the resolved type and
+// that name.
 let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
     match layouts with
         | _layout :: [] ->
@@ -419,7 +423,16 @@ let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstr
                             | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
                             | _ -> None
                     else None
-        | _ -> None
+        | _first :: _second :: _rest ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild } ->
+                    if ownedChild || tcoOwnedChild
+                    then
+                        match inlineAdtCopyPlanOf(named)(state) with
+                            | Some(SwitchArgumentCopy(_plans)) -> Some((named, name))
+                            | _ -> None
+                    else None
+        | [] -> None
 
 let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
     match names with
