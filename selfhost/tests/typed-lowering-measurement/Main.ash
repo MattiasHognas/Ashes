@@ -218,12 +218,22 @@ let recursive hashLines (lines: List(Str)) (hash: Int) (count: Int) =
         | [] -> (hash, count)
         | line :: rest -> hashLines(rest)(hash * 1000003 + Ashes.Trait.Hash.hash(line))(count + 1)
 
+// An IR line with the entry file's path as given on the command line replaced by its base name: the
+// IR names the file each location is in, and the hash should not depend on where the program was
+// copied to. The IR text itself is left as it is; only what is hashed is normalized.
+let withEntryBaseName (path: Str) (line: Str) =
+    path
+    |> Ashes.Text.split(line)
+    |> Ashes.Text.join(Ashes.IO.Path.basename(Ashes.IO.Path.Unix)(path))
+
 // The lowered IR the compile command produces for the program, as one hash and a line count, so two
 // sweeps compare program by program with one diff.
 let reportIrHash path source (stitched: StitchedSyntaxProject) (identified: IdentifiedStitchedProject) nodeTypes =
     match nodeTypes |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program)) with
         | CoreLoweringResult { program = Some(lowered), error = None } ->
-            match hashLines(formatIr(lowered)(LoweredIr)(None))(17)(0) with
+            match hashLines(None
+            |> formatIr(lowered)(LoweredIr)
+            |> Ashes.Collection.List.map(withEntryBaseName(path)))(17)(0) with
                 | (hash, count) -> Ashes.IO.writeErrorLine("ir_hash=" + Ashes.Text.fromInt(hash) + " ir_lines=" + Ashes.Text.fromInt(count))
         | CoreLoweringResult { error = error } -> Ashes.IO.writeErrorLine("ir_hash=error " + Ashes.Trait.Show.show(error))
 
