@@ -204,7 +204,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrame = NoCallArgumentFrame))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> withStateEnclosingBindings(state.bindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)

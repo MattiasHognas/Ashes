@@ -46,6 +46,7 @@ export (
     type CoreTcoReset(..),
     type CorePendingCallCopyOut(..),
     type CoreSettleKind(..),
+    type CoreCallArgumentFrame(..),
     type CoreTakenOverSettle(..),
     type CoreSpecializationCandidate(..),
     type CoreTopLevelFunctionReference(..),
@@ -380,6 +381,8 @@ export (
     value withCallArgumentRetainFrame,
     value stateCallArgumentLabelStart,
     value stateCallArgumentFrameActive,
+    value stateCallArgumentFrame,
+    value stateCallArgumentFrameUnderBackEdge,
     value stateTcoParameterRetainSites,
     value withStateTcoParameterRetainSites,
     value stateArenaParameterCopies,
@@ -775,6 +778,16 @@ type CorePendingCallCopyOut =
 
 // What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
 // result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
+// The call-argument frame of the call being lowered: none outside a call; an ordinary call's; or
+// that of a call nested in a loop's back-edge argument (`lowerItems(rest)(prepareGroup([...])(total))`),
+// whose argument's tuple owner duplicates the call releases as any call's, where the self-call's own
+// argument records none.
+type CoreCallArgumentFrame =
+    | NoCallArgumentFrame
+    | OrdinaryCallArgumentFrame
+    | BackEdgeNestedCallArgumentFrame
+    deriving {Eq}
+
 type CoreSettleKind =
     | ListRecordKind(SemanticType)
     | OwnFieldKind(Bool, List((Int, Bool, List((Int, SemanticType)))))
@@ -1349,7 +1362,7 @@ type CoreTcoState =
     | callArgumentRecordRetains: List((Int, Int, SemanticType))
     | collectingCallArgumentRetains: Bool
     | callArgumentLabelStart: Int
-    | callArgumentFrameActive: Bool
+    | callArgumentFrame: CoreCallArgumentFrame
 
 type CoreReuseState =
     | reuseTransferredNames: List(Str)
@@ -2978,9 +2991,13 @@ let stateCallArgumentLabelStart (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.callArgumentLabelStart)
 
-let stateCallArgumentFrameActive (state: CoreLoweringState) =
+let stateCallArgumentFrame (state: CoreLoweringState) =
     (let group = state.tcoState
-    in group.callArgumentFrameActive)
+    in group.callArgumentFrame)
+
+let stateCallArgumentFrameActive (state: CoreLoweringState) = stateCallArgumentFrame(state) != NoCallArgumentFrame
+
+let stateCallArgumentFrameUnderBackEdge (state: CoreLoweringState) = stateCallArgumentFrame(state) == BackEdgeNestedCallArgumentFrame
 
 let stateTcoParameterRetainSites (state: CoreLoweringState) =
     (let group = state.tcoState
