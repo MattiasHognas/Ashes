@@ -71,6 +71,13 @@ let isFreshNullaryConstructor (element: Expr) (state: CoreLoweringState) =
         | ExprVar(name) -> isNullaryConstructorPatternName(name)(state)
         | _ -> false
 
+// A read of a pattern owner needing a protective reference, or that read's identity duplicate, not
+// copied onto the heap: stage 0 tracks such an owner with no runtime representation until the
+// loop's finalize places it (`TrackOwnedValue` from the pattern binding sites, runtimeManaged
+// false), so the element is not `RuntimeRc` when `HoldsReferenceCountedElement` asks.
+let unplacedPatternOwnerElement (element: Expr) (temp: Int) (state: CoreLoweringState) =
+    isPatternOwnerRead(element)(state) && !containsInt(temp)(statePatternOwnerCopyTemps(state))
+
 // Stage 0's `HoldsReferenceCountedElement`. A tuple's store takes a reference to a
 // reference-counted element, and an arena tuple can release nothing, so that reference would
 // outlive the tuple. On the reference-counted heap the tuple owns the element and whoever matches
@@ -79,10 +86,14 @@ let isFreshNullaryConstructor (element: Expr) (state: CoreLoweringState) =
 // arena, in the tuple literal a match is on, which no consumer keeps: stage 0 does not
 // read such a parameter as reference-counted (`IsRuntimeManagedTcoParamSlot`), and the tuple
 // takes no reference of it, so on the reference-counted heap it would release, as a counted
-// list, a list that may be the arena cells the loop's own back edge built.
-let recursive holdsReferenceCountedElement (scrutinee: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+// list, a list that may be the arena cells the loop's own back edge built. With `placedOnly` (a
+// tuple that is neither a loop successor nor a match scrutinee, and was not asked for on the heap:
+// `(name, value)` of pattern parts in a list literal passed to a call), an unplaced pattern owner's
+// read does not count either: stage 0 keeps that tuple in the arena and the call's frame releases
+// the owner duplicates it holds. A successor's or a spine head's tuple is placed by its request.
+let recursive holdsReferenceCountedElement (scrutinee: Bool) (placedOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false && (scrutinee == false || readsDemotedLoopList(element)(state) == false) || holdsReferenceCountedElement(scrutinee)(restElements)(restTemps)(restTypes)(state)
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && (placedOnly == false || unplacedPatternOwnerElement(element)(temp)(state) == false) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false && (scrutinee == false || readsDemotedLoopList(element)(state) == false) || holdsReferenceCountedElement(scrutinee)(placedOnly)(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
 let recursive withoutTransferRetain (retained: Int) (retains: List((Int, Int, SemanticType))) =
@@ -722,7 +733,7 @@ let finishTupleLowering (successor: Bool) (scrutinee: Bool) elements (runtimeTup
             // in the arena its caller takes it as.
             match arenaCellFields(semanticTypes)(runtimeTuple)(freshTemps)(loweredState) with
                 | (state, loweredTemps) ->
-                    match (freshTemp(state), holdsReferenceCountedElement(scrutinee)(elements)(loweredTemps)(semanticTypes)(state)) with
+                    match (freshTemp(state), holdsReferenceCountedElement(scrutinee)(successor == false && scrutinee == false)(elements)(loweredTemps)(semanticTypes)(state)) with
                         | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
                             if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                             then
