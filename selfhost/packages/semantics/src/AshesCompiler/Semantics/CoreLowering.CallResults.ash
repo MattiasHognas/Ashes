@@ -2038,11 +2038,11 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> withCallResultType(applied)
                                 |> noteTakenOverCallResult(context))
 
-let restoreCallArgumentLabelStart (start: Int) (active: Bool) (lowered: LoweredCoreValue) =
+let restoreCallArgumentLabelStart (start: Int) (frame: CoreCallArgumentFrame) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state } ->
             let group = state.tcoState
-            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrameActive = active))
+            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrame = frame))
 
 // Stage 0's `NoteDiscardedResultArgument`: a lambda ignoring its parameter applied to a call.
 let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState) =
@@ -2074,19 +2074,26 @@ let takeDiscardedResultSite (state: CoreLoweringState) =
                 else (false, state)
             | None -> (false, state))
 
+// The frame a call opens: one nested in a loop's back-edge argument says so, as stage 0's
+// `CallArgumentRetainFrame` is opened there like anywhere else.
+let openedCallArgumentFrame (state: CoreLoweringState) =
+    match stateBackEdgeArgumentSlot(state) with
+        | Some(_slot) -> BackEdgeNestedCallArgumentFrame
+        | None -> OrdinaryCallArgumentFrame
+
 // A call opens its own frame of argument retains; the enclosing call's is restored after it.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> noteDiscardedResultArgument(spine)
     |> takeDiscardedResultSite with
         | (resultDiscarded, noted) ->
-            let framed = noted with tcoState = (noted.tcoState with callArgumentFrameActive = true)
+            let framed = noted with tcoState = (noted.tcoState with callArgumentFrame = openedCallArgumentFrame(noted))
             in
                 framed
                 |> withCallArgumentRetainFrame([])(false)
                 |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
                 |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrameActive(state))
+                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrame(state))
 
 let failedIfPlan state error =
     CoreIfPlan(
