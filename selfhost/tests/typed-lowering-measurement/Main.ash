@@ -370,9 +370,14 @@ let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
         | "--single-lowering" :: rest -> parseOptions(rest)((options with singleLowering = true))
         | _other -> None
 
+// The driver run on a project manifest or a single file, with the options that follow the path on
+// its command line (an optional `typed`, then the report options). The shared native test build
+// calls it with the same arguments.
+let runWithFlags (path: Str) (flags: List(Str)) =
+    match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false, singleLowering = false)) with
+        | Some(options) -> runPath(options)(path)("typed")
+        | None -> Ashes.IO.panic(usage)
+
 match Ashes.IO.args with
-    | path :: flags ->
-        match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false, singleLowering = false)) with
-            | Some(options) -> runPath(options)(path)("typed")
-            | None -> Ashes.IO.panic(usage)
+    | path :: flags -> runWithFlags(path)(flags)
     | [] -> Ashes.IO.panic(usage)
