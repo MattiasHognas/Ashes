@@ -2164,7 +2164,7 @@ let isStringLoopParameter (name: Str) (state: CoreLoweringState) =
 // but the reference is the parameter's.
 let armBorrowsLoopParameterOf (body: Expr) (state: CoreLoweringState) =
     match tailForwardedVariable(body) with
-        | Some(name) -> loopParameterIsRuntimeManaged(name)(state) || isStringLoopParameter(name)(state)
+        | Some(name) -> loopParameterPlacedUnblocked(name)(state) || isStringLoopParameter(name)(state)
         | None -> false
 
 // Stage 0's `ConstructsFreshCell`: an arm that builds its value itself (a cons, a literal, a
@@ -2240,7 +2240,7 @@ let armPatternRootIsPlaced (body: Expr) (state: CoreLoweringState) =
     match (tailForwardedVariable(body), stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(name), Some(frame), Some(loop)) ->
             match patternBindingRootSlot(name)(frame)(state) with
-                | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state) || rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
+                | Some(rootSlot) -> loopParameterPlacedUnblocked(name)(state) || rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
                 | None -> false
         | _ -> false
 

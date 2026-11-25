@@ -65,6 +65,7 @@ export (
     value loopParameterReadSlot,
     value patternBindingRootSlot,
     value loopParameterIsRuntimeManaged,
+    value loopParameterPlacedUnblocked,
     value argumentRootSlotOf,
     value isBorrowedRetainableParameterType,
     value rootPlacedAtBackEdge,
@@ -686,6 +687,29 @@ let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
                     match patternBindingRootSlot(name)(frame)(state) with
                         | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state)
                         | None -> false
+        | _ -> false
+
+// Stage 0's `IsRuntimeManagedTcoParamSlot` as a join arm reads it (`BranchJoinsRuntimeManagedResult`):
+// a list parameter, or a pattern binding taken out of one, is on the reference-counted heap only
+// when no sibling keeps the list in the arena, which stage 0's placement has already decided by
+// then (`FindBlockingSiblingForCandidate`) and stage 1's finalize decides later.
+let loopParameterPlacedUnblocked (name: Str) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) ->
+            match match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) -> Some(slot)
+                | None -> patternBindingRootSlot(name)(frame)(state) with
+                | Some(slot) ->
+                    if loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+                    then
+                        match slotResolvedType(slot)(state.bindings)(state) with
+                            | Some(resolved) ->
+                                match resolveType(state)(resolved) with
+                                    | SemList(_element) -> listSlotUnblocked(slot)(frame)(loop)(state)
+                                    | _ -> true
+                            | None -> true
+                    else false
+                | None -> false
         | _ -> false
 
 // Stage 0's `TryGetRuntimeManagedCallArgument` inside a TCO frame: an argument that reads a loop
