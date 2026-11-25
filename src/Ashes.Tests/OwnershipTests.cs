@@ -2767,6 +2767,42 @@ public sealed class OwnershipTests
         return (bool)method.Invoke(lowering, [expression])!;
     }
 
+    [Test]
+    [Arguments("Continue(S(perm2))(r)")]
+    [Arguments("S(perm2)")]
+    public void Let_bound_arena_cell_copied_by_every_read_withdraws_its_tail_duplicate(string exitValue)
+    {
+        IrProgram ir = LowerProgram(
+            $$"""
+            type State =
+                | S(List(Int))
+
+            type Step =
+                | Continue(State, Int)
+
+            let recursive advance (r: Int) (state: State) =
+                match state with
+                    | S(perm) ->
+                        let perm2 = 0 :: perm
+                        in
+                            if r == 0
+                            then {{exitValue}}
+                            else advance(r - 1)(S(perm2))
+
+            Ashes.IO.print("x")
+            """);
+
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: false }));
+        List<IrInst> instructions = loop.Instructions;
+        int cellIndex = instructions.FindIndex(inst => inst is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: false });
+        int cellTemp = ((IrInst.Alloc)instructions[cellIndex]).Target;
+        int tailSource = instructions.OfType<IrInst.StoreMemOffset>()
+            .Single(store => store.BasePtr == cellTemp && store.OffsetBytes == 8).Source;
+        instructions.OfType<IrInst.RcDup>().Single(duplicate => duplicate.Target == tailSource).RuntimeManaged.ShouldBeFalse(
+            "the copies of the let-bound arena cell retain the matched list themselves");
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)

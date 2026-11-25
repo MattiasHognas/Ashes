@@ -60,16 +60,26 @@ public sealed partial class Lowering
         StateMachineResult transformResult,
         IReadOnlyList<int> captureTemps,
         IReadOnlyDictionary<int, LoweredTempOwnershipFact> enclosingTempFacts,
-        List<IrInst> bodyInstructions)
+        List<IrInst> bodyInstructions,
+        TypeRef resultType,
+        HashSet<int> capturesSharedWithResult)
     {
         var slots = new List<CoroutineFrameSlot>();
         for (int i = 0; i < captureTemps.Count; i++)
         {
-            slots.Add(DescribeCoroutineFrameSlot(
+            CoroutineFrameSlot described = DescribeCoroutineFrameSlot(
                 TaskStructLayout.HeaderSize + i * 8,
                 CoroutineFrameSlotKind.Capture,
                 i,
-                enclosingTempFacts.GetValueOrDefault(captureTemps[i])));
+                enclosingTempFacts.GetValueOrDefault(captureTemps[i]));
+            slots.Add(CaptureSharedWithResult(described, i, resultType, capturesSharedWithResult)
+                ? described with
+                {
+                    Ownership = CoroutineFrameSlotOwnership.NotOwned,
+                    DropKind = OrdinaryHeapChildDropKind.None,
+                    Reason = CoroutineFrameSlotReason.SharedWithTaskResult,
+                }
+                : described);
         }
 
         foreach ((int temp, int offset) in transformResult.SavedTempOffsets.OrderBy(pair => pair.Value))
@@ -99,6 +109,46 @@ public sealed partial class Lowering
         }
 
         return slots;
+    }
+
+    /// <summary>
+    /// True when the frame's reference to a capture can be what the task's result holds. Teardown
+    /// runs when the task completes, before the awaiter reads the result, so releasing that word
+    /// would free a value the result still points into: the frame keeps the reference instead,
+    /// which leaks it rather than corrupt the result. The capture is shared when the result value
+    /// can be read from it (<see cref="CoroutineCapturesReachingResult"/>) and the result's type
+    /// can hold a part of the capture's type.
+    /// </summary>
+    private bool CaptureSharedWithResult(
+        CoroutineFrameSlot slot,
+        int captureIndex,
+        TypeRef resultType,
+        HashSet<int> capturesSharedWithResult) =>
+        slot.Ownership == CoroutineFrameSlotOwnership.FrameOwnedRuntimeRc
+        && capturesSharedWithResult.Contains(captureIndex)
+        && (slot.Type is null || ResultTypeMayHoldPartOf(Prune(resultType), slot.Type));
+
+    /// <summary>
+    /// The capture indices the coroutine body's returned value can have been read from: every
+    /// <c>LoadEnv</c> a value-flow walk back from a <c>Return</c> reaches, through slot stores, cell
+    /// fields and the operands of any instruction that can carry a pointer, over the linear body.
+    /// </summary>
+    private HashSet<int> CoroutineCapturesReachingResult()
+    {
+        var reachedTemps = new HashSet<int>();
+        LocalSlotsReachingTemps(
+            _inst.OfType<IrInst.Return>().Select(instruction => instruction.Source).ToList(),
+            visitedTemps: reachedTemps);
+        var captures = new HashSet<int>();
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is IrInst.LoadEnv load && reachedTemps.Contains(load.Target))
+            {
+                captures.Add(load.Index);
+            }
+        }
+
+        return captures;
     }
 
     /// <summary>

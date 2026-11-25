@@ -548,6 +548,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 moveNullaryConstructors = [],
                 liveHandlerFunctions = Ashes.Collection.Map.empty,
                 parallelWorkerFunctions = Ashes.Collection.Map.empty,
+                coroutineFunctions = Ashes.Collection.Map.empty,
                 entryRunsUnderLiveHandlerPost = false,
                 anyRunsUnderLiveHandlerPost = false,
                 patternOwnerSites = [],
@@ -612,6 +613,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 activeFunctionOrigin = None,
                 underLiveHandlerPost = false,
                 mayRunAsParallelWorker = false,
+                mayRunInsideCoroutine = false,
                 handlerArmOwnResult = false,
                 pendingClosureNormalizers = [],
                 resourceStates = [],
@@ -704,7 +706,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 callArgumentRecordRetains = [],
                 collectingCallArgumentRetains = false,
                 callArgumentLabelStart = 0,
-                callArgumentFrameActive = false
+                callArgumentFrame = NoCallArgumentFrame
             ),
             reuseState = CoreReuseState(
                 reuseTransferredNames = [],
@@ -718,8 +720,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 specializationFreshInputs = None,
                 stackAllocateConstructor = false,
                 scrutineeTuple = false,
+                runtimeClosureRequest = false,
                 linearSpecializationAccumulators = [],
                 routedSpecializationAccumulators = [],
+                routedSpecializationCallees = [],
                 specializingReuseLabel = None,
                 fullyReusingCallees = [],
                 concreteRegistry = emptyCoreConcreteRegistry(Unit),
@@ -1183,10 +1187,28 @@ let functionMayRunAsParallelWorker (origin: IrFunctionOrigin) (state: CoreLoweri
                 | None -> stateMayRunAsParallelWorker(state)
         | None -> stateMayRunAsParallelWorker(state)
 
+// A top-level function takes its own coroutine answer; any other function keeps the answer of the
+// function it is lowered inside.
+let functionMayRunInsideCoroutine (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match origin.sourceOrigin with
+        | Some(SourceFunctionOrigin { functionSourceName = name }) ->
+            match state
+            |> stateTopLevelNames
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(_) ->
+                    match state
+                    |> stateCoroutineFunctions
+                    |> Ashes.Collection.Map.getStr(name) with
+                        | Some(_) -> true
+                        | None -> false
+                | None -> stateMayRunInsideCoroutine(state)
+        | None -> stateMayRunInsideCoroutine(state)
+
 let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) =
     state
     |> withStateUnderLiveHandlerPost(functionUnderLiveHandlerPost(origin)(state))
     |> withStateMayRunAsParallelWorker(functionMayRunAsParallelWorker(origin)(state))
+    |> withStateMayRunInsideCoroutine(functionMayRunInsideCoroutine(origin)(state))
     |> withStatePendingSourceFunction(None)
     |> withStatePendingStackClosure(false)
     |> withStateActiveFunctionOrigin(Some(origin))

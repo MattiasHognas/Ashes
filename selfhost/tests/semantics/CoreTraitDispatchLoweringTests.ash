@@ -355,6 +355,36 @@ let expectAShadowingParameterIsNotRoutedToACopy unit =
     |> occurrences("[SourceFunction from member]")
     |> test.assertEqual(1)
 
+// The function section of `dump` whose header names `origin`, up to the next function.
+let functionSectionFrom (origin: Str) (dump: Str) =
+    match "\nfunction "
+    |> Ashes.Text.split(dump)
+    |> Ashes.Collection.List.filter(given (section) -> Ashes.Text.contains(section)(origin)) with
+        | section :: _ -> section
+        | [] -> test.fail("no function " + origin + " in the lowered program")
+
+// A derived comparison borrows both operands (stage 0's `MarkComparisonOperandBorrowed`): a
+// let-bound call result compared twice gets no duplicate before its first comparison, which
+// nothing would release; its owner releases it once after the last use.
+let expectComparedBindingGetsNoDuplicate unit =
+    "type Kind =\n    | Ident\n    | If\n    | Keyword\n    deriving {Eq}\n\ntype Token =\n    | kind: Kind\n    | position: Int\n\nlet kindOf (token: Token) = token.kind\n\nlet flag (condition: Bool) (weight: Int) =\n    if condition\n    then weight\n    else 0\n\nlet score (token: Token) =\n    (let kind = kindOf(token)\n    in flag(kind == Keyword)(2) + flag(kind != If)(1))\n\nscore(Token(kind = Keyword, position = 1))"
+    |> loweredDump
+    |> functionSectionFrom("[SourceFunction from score]")
+    |> occurrences("RcDup")
+    |> test.assertEqual(0)
+
+// A call routed to a concrete copy is a known callee like a call to the binding it copies: the
+// list the copy returns is reference-counted, so the caller releases it with its own release
+// once the call it was handed to returns, where an unknown callee's result would be taken as an
+// arena value nothing releases.
+let expectConcreteCopyResultIsReleasedByTheCaller unit =
+    "let recursive setAssociation key value entries =\n    match entries with\n        | [] -> [(key, value)]\n        | (k, v) :: tail ->\n            if k == key\n            then (key, value) :: tail\n            else (k, v) :: setAssociation(key)(value)(tail)\n\nlet recursive count (xs: List((Int, Int))) =\n    match xs with\n        | [] -> 0\n        | _ :: rest -> 1 + count(rest)\n\nlet probe (n: Int) = count(setAssociation(n)(n + 1)([(1, 2), (3, 4)]))\n\nprobe(5)"
+    |> withStandardTraits
+    |> loweredDump
+    |> functionSectionFrom("[SourceFunction from probe]")
+    |> Ashes.Text.contains("TypeName=List RuntimeManaged=true")
+    |> test.assertEqual(true)
+
 let runCoreTraitDispatchLoweringTests unit =
     Unit
     |> expectDerivedEqualityDispatchesThroughOneHelper
@@ -378,4 +408,6 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectInclusiveComparisonsTestTwoTags
     |> expectConcreteCallInAFunctionBodyRoutesToACopy
     |> expectAShadowingParameterIsNotRoutedToACopy
+    |> expectComparedBindingGetsNoDuplicate
+    |> expectConcreteCopyResultIsReleasedByTheCaller
     |> (given (_) -> Ashes.IO.print("all self-hosted core trait dispatch lowering tests passed"))

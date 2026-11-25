@@ -14,6 +14,7 @@ import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
+import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
@@ -224,6 +225,18 @@ let withReconcilableFreshStringJoinRequest (join: Expr) (request: ConsumerReques
     then request with runtimeString = true
     else request
 
+// Stage 0 hands an `if`'s closure representation to both branches and never to its condition:
+// the one-shot mark is taken at the `if` and set again before each branch.
+let closureRequestInThenBranch (requested: Bool) (plan: CoreIfPlan) =
+    if requested
+    then plan with state = withStateRuntimeClosureRequest(true)(plan.state)
+    else plan
+
+let closureRequestInElseBranch (requested: Bool) (loweredThen: CoreIfThen) =
+    if requested
+    then loweredThen with state = withStateRuntimeClosureRequest(true)(loweredThen.state)
+    else loweredThen
+
 let lowerIf condition thenBranch elseBranch lower state =
     (let request =
         state
@@ -232,14 +245,19 @@ let lowerIf condition thenBranch elseBranch lower state =
         |> (given (branch: ConsumerRequest) ->
             withReconcilableFreshStringJoinRequest(ExprIf(condition)(thenBranch)(elseBranch))(branch)(state))
     in
-        let normalizeStaticStrings = ifBranchesNormalizeStaticStrings(thenBranch)(elseBranch)(request)(state)
+        let closureRequested = stateRuntimeClosureRequest(state)
         in
-            state
-            |> clearConsumerRequest
-            |> lower(condition)
-            |> prepareIfPlan
-            |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
-            |> finishIfElseBranch(isArenaSuccessorJoin(state))(elseBranch)(request)(normalizeStaticStrings)(lower))
+            let normalizeStaticStrings = ifBranchesNormalizeStaticStrings(thenBranch)(elseBranch)(request)(state)
+            in
+                state
+                |> clearConsumerRequest
+                |> takeRuntimeClosureRequest
+                |> lower(condition)
+                |> prepareIfPlan
+                |> closureRequestInThenBranch(closureRequested)
+                |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
+                |> closureRequestInElseBranch(closureRequested)
+                |> finishIfElseBranch(isArenaSuccessorJoin(state))(elseBranch)(request)(normalizeStaticStrings)(lower))
 
 let patternName pattern =
     match pattern with
@@ -1261,6 +1279,21 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
                 | None -> (state, temp)
         | _ -> (state, temp)
 
+// Stage 0's `TransferOwnerBindingResult` for an arm of a join that becomes a loop parameter left
+// in the arena (inside the value of the `let` the arena successor join ends): an arm returning a
+// `let` binding bound before the match, which still owns its reference-counted value, takes a
+// reference of its own, so the arm is a reference-counted one and the successor join demotes it
+// into the arena (`demoteArenaSuccessorJoinArms`) before the binding's release.
+let retainsSuccessorJoinLetOwner (body: Expr) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match (stateArenaSuccessorJoin(state), tailForwardedVariable(body)) with
+        | (Some(_span), Some(name)) ->
+            match state.bindings
+            |> armBindings(length(state.bindings) - length(outerBindings))
+            |> armBindingSlotOf(name) with
+                | Some(_slot) -> false
+                | None -> true
+        | _ -> false
+
 // Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
 // owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
 // loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
@@ -1278,7 +1311,10 @@ let transferArmResult (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyT
                         then (retained, retainedTemp)
                         else
                             match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
-                                | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
+                                | (transferred, resultTemp) ->
+                                    if resultTemp == temp && retainsSuccessorJoinLetOwner(body)(outerBindings)(transferred)
+                                    then transferBranchLetOwnerResult(body)(temp)(bodyType)(transferred)
+                                    else (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
 
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
@@ -1966,6 +2002,15 @@ let lowerBodyNamingEscapingCapture (name: Str) (body: Expr) lowerBody (expressio
 // call reading the binding scrutinized where the result is decided may hand back a view of it
 // (`unconsText(text)`'s tail), and the result reaches that view through a `let` body, a branch, or
 // an arm. The name test does not follow shadowing, so a rebinding still counts.
+// Stage 0's `LetBindsCallOfOwner`: a `let` binding a call the owner is handed
+// (`let parts = Ashes.Text.unconsText(s)`), read by its body: the binding may name the owner's bytes,
+// and whatever the body takes out of it (a later match of `parts`) reaches the result as a call's
+// destructured result does.
+let letBindsCallOfOwner (name: Str) (bound: Str) (value: Expr) (body: Expr) =
+    match unspanArgument(value) with
+        | ExprCall(_callee, _argument, _isPipe, _layout) -> exprMentionsName(name)(value) && exprMentionsName(bound)(body)
+        | _ -> false
+
 let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
     if depth > 16
     then false
@@ -1973,6 +2018,7 @@ let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
         match body with
             | ExprAt(_span, inner) -> resultMayViewCallArgument(name)(depth)(inner)
             | ExprNode(_node, inner) -> resultMayViewCallArgument(name)(depth)(inner)
+            | ExprLet(bound, value, nested, [], _annotation, _requirements) -> letBindsCallOfOwner(name)(bound)(value)(nested) || resultMayViewCallArgument(name)(depth + 1)(nested)
             | ExprLet(_bound, _value, nested, _parameters, _annotation, _requirements) -> resultMayViewCallArgument(name)(depth + 1)(nested)
             | ExprIf(_condition, thenBranch, elseBranch) -> resultMayViewCallArgument(name)(depth + 1)(thenBranch) || resultMayViewCallArgument(name)(depth + 1)(elseBranch)
             | ExprMatch(scrutinee, cases, _position) -> scrutineeCallReads(name)(scrutinee) || anyArmMayViewCallArgument(name)(depth + 1)(cases)
@@ -2011,16 +2057,26 @@ and anyConstructorCarriesTextBytes (visited: List(Str)) (layouts: List(CoreConst
             match layoutFieldTypes(layout)(state) with
                 | (fieldTypes, _resultType) -> anyTypeCarriesTextBytes(visited)(fieldTypes)(state) || anyConstructorCarriesTextBytes(visited)(rest)(state)
 
+// Stage 0's `CapturesScopeViews`: a closure the scope returns may capture a view of the backing
+// (`given (u) -> tail`, the tail of an uncons of the backing), stored in its environment as the view
+// it is, so the backing is kept alive for it.
+let capturesScopeViews (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_argument, _result, _row) -> true
+        | _ -> false
+
 // Stage 0's `MarkOwnerViewedByResult` and `MaterializeScopeResultViews`: a `let` owning a
 // reference-counted string or bytes value whose result may name its bytes materializes the result
 // before the binding is released. A result the arena deep copy reproduces is copied into the
 // arena; one of the contract's types is copied onto the reference-counted heap when it is still in
-// the arena and taken as it is when it is already reference-counted, holding no view; for anything
+// the arena and retained when it is already reference-counted, holding no view, and the scope's
+// result is then a value just produced, owned by whoever takes it (stage 0's
+// `NormalizeViewingResultBeforeBackings`); for anything
 // else the binding is kept alive rather than released, a leak being the safe side of a
 // view left pointing into freed memory. Returns the state, the result temp, and whether the
 // binding's release is withheld.
 let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !typeCarriesTextBytes([])(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isRuntimeTemp(resultTemp)(state)
     then (state, resultTemp, false)
     else
         if canNormalizeResultIntoArena(resultType)(state)
@@ -2032,10 +2088,120 @@ let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType)
             then
                 match generalCopyPlanOf(resultType)(state) with
                     | Some(plan) ->
-                        match emitOwnedResultOrCopy(resultTemp)(plan)(state) with
-                            | (copied, normalizedTemp) -> (copied, normalizedTemp, false)
+                        match emitGuardedDeepCopy(resultTemp)(plan)(state) with
+                            | (copied, normalizedTemp) -> (markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)(copied), normalizedTemp, false)
                     | None -> (state, resultTemp, true)
             else (state, resultTemp, true)
+
+// The instructions a `let` body emitted, oldest first, and the instructions before the store of
+// the binding's slot, newest first.
+let recursive splitAtSlotStore (slot: Int) (instructions: List(IrInstruction)) (body: List(IrInstructionKind)) =
+    match instructions with
+        | [] -> (body, [])
+        | IrInstruction { instruction = kind } :: rest ->
+            match kind with
+                | StoreLocal(stored, _source) ->
+                    if stored == slot
+                    then (body, rest)
+                    else splitAtSlotStore(slot)(rest)(kind :: body)
+                | _ -> splitAtSlotStore(slot)(rest)(kind :: body)
+
+let recursive instructionsMentionSlot (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(_target, read) } :: rest ->
+            if read == slot
+            then true
+            else instructionsMentionSlot(slot)(rest)
+        | IrInstruction { instruction = StoreLocal(stored, _source) } :: rest ->
+            if stored == slot
+            then true
+            else instructionsMentionSlot(slot)(rest)
+        | _ :: rest -> instructionsMentionSlot(slot)(rest)
+
+// Whether every use of `temp` in the body takes a reference or a reference-counted copy of its
+// own: a representation test, a retain, a copy onto the reference-counted heap, or a borrow or
+// a slot of the body whose reads all do the same. A temp that is the body's result, or flows into
+// anything else (a cell, a call, a slot read outside the body), carries the value on unretained.
+let recursive tempReadsTakeOwnReference (temp: Int) (resultTemp: Int) (depth: Int) (body: List(IrInstructionKind)) (outside: List(IrInstruction)) =
+    if temp == resultTemp
+    then false
+    else usesTakeOwnReference(temp)(resultTemp)(depth)(body)(body)(outside)
+and usesTakeOwnReference (temp: Int) (resultTemp: Int) (depth: Int) (remaining: List(IrInstructionKind)) (body: List(IrInstructionKind)) (outside: List(IrInstruction)) =
+    match remaining with
+        | [] -> true
+        | kind :: rest ->
+            if containsInt(temp)(getUsedTemps(kind)) == false || useTakesOwnReference(resultTemp)(depth)(kind)(body)(outside)
+            then usesTakeOwnReference(temp)(resultTemp)(depth)(rest)(body)(outside)
+            else false
+and useTakesOwnReference (resultTemp: Int) (depth: Int) (kind: IrInstructionKind) (body: List(IrInstructionKind)) (outside: List(IrInstruction)) =
+    match kind with
+        | IsReferenceCounted(_target, _source) -> true
+        | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) -> true
+        | CopyOutList(_target, _source, _headCopy, runtimeManaged, purpose) ->
+            match purpose with
+                | RcNormalization -> runtimeManaged
+                | _ -> false
+        | Borrow(target, _source) ->
+            if depth > 0
+            then tempReadsTakeOwnReference(target)(resultTemp)(depth - 1)(body)(outside)
+            else false
+        | StoreLocal(slot, _source) ->
+            if depth > 0 && instructionsMentionSlot(slot)(outside) == false
+            then slotReadsTakeOwnReference(slot)(resultTemp)(depth - 1)(body)(outside)(body)(false)
+            else false
+        | _ -> false
+and slotReadsTakeOwnReference (slot: Int) (resultTemp: Int) (depth: Int) (body: List(IrInstructionKind)) (outside: List(IrInstruction)) (remaining: List(IrInstructionKind)) (found: Bool) =
+    match remaining with
+        | [] -> found
+        | LoadLocal(target, read) :: rest ->
+            if read != slot
+            then slotReadsTakeOwnReference(slot)(resultTemp)(depth)(body)(outside)(rest)(found)
+            else
+                if tempReadsTakeOwnReference(target)(resultTemp)(depth)(body)(outside)
+                then slotReadsTakeOwnReference(slot)(resultTemp)(depth)(body)(outside)(rest)(true)
+                else false
+        | _kind :: rest -> slotReadsTakeOwnReference(slot)(resultTemp)(depth)(body)(outside)(rest)(found)
+
+// Stage 0 pins a call's result type at the call, so a `let` of a call whose result is copied onto
+// the reference-counted heap binds a newly produced value and adopts it (`TrackLetOwnership`).
+// This lowering may learn such a call's type only once the whole body is lowered (a self call's
+// result, which the `let` generalizes and the cons types through an instance): the copy-out is
+// resolved after the body, before the reload the binding stores, and the binding was not adopted.
+// Every reader then saw an unowned value; when each of them took a reference or a copy of its own
+// and none carried the value out unretained, the scope's exit holds a placeholder the splice
+// turns into the release of the binding's copy once the copy-out resolves to a copy onto the
+// reference-counted heap, as stage 0's binding releases it (`IsUnplacedLetBoundTail`: the binding
+// keeps its own reference either way).
+let bodyReadsTakeOwnReference (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
+    match splitAtSlotStore(ownerSlot)(state.reversedInstructions)([]) with
+        | (body, outside) -> slotReadsTakeOwnReference(ownerSlot)(bodyTemp)(4)(body)(outside)(body)(false)
+
+let recursive pendingReloadUnowned (temp: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> false
+        | copyOut :: rest -> copyOut.deferredReloadTemp == temp && copyOut.deferredOwned == false || pendingReloadUnowned(temp)(rest)
+
+let recursive withLetReleaseSlot (temp: Int) (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> []
+        | copyOut :: rest ->
+            if copyOut.deferredReloadTemp == temp
+            then (copyOut with deferredLetReleaseSlots = slot :: copyOut.deferredLetReleaseSlots) :: rest
+            else copyOut :: withLetReleaseSlot(temp)(slot)(rest)
+
+let releasesDeferredLetCopy (valueTemp: Int) (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
+    runtimeOwnerStateOf(ownerSlot)(state) == None && pendingReloadUnowned(valueTemp)(statePendingCallCopyOuts(state)) && bodyReadsTakeOwnReference(ownerSlot)(bodyTemp)(state)
+
+let emitDeferredLetReleasePlaceholder (valueTemp: Int) (ownerSlot: Int) (bodyTemp: Int) (state: CoreLoweringState) =
+    if releasesDeferredLetCopy(valueTemp)(ownerSlot)(bodyTemp)(state)
+    then
+        state
+        |> withStatePendingCallCopyOuts(state
+        |> statePendingCallCopyOuts
+        |> withLetReleaseSlot(valueTemp)(ownerSlot))
+        |> emit(TcoResetPending(letCopyReleaseBase + ownerSlot)([])([ownerSlot]))
+    else state
 
 // The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
 // every analysis of the body still reads `body`.
@@ -2061,7 +2227,9 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                             |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBodyNamingEscapingCapture(name)(body)(lowerBody))(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType)(bodyState) with
+                                    match bodyState
+                                    |> emitDeferredLetReleasePlaceholder(loweredValue.temp)(ownerSlot)(bodyTemp)
+                                    |> materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType) with
                                         | (viewState, resultTemp, keepsOwner) ->
                                             match (if keepsOwner
                                             then retireRuntimeOwner(ownerSlot)(viewState)

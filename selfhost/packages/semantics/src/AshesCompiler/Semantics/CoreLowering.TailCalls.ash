@@ -1130,41 +1130,6 @@ let recursive callResultsReaching (slot: Int) (ordinal: Int) (reaches: List(Mayb
             else callResultsReaching(slot)(ordinal + 1)(rest)
         | None :: rest -> callResultsReaching(slot)(ordinal + 1)(rest)
 
-let recursive negatedFlags (flags: List(Bool)) =
-    match flags with
-        | [] -> []
-        | flag :: rest -> !flag :: negatedFlags(rest)
-
-// Per successor of a back edge that is no call's result, the slots its value can have been read
-// from, and none for a call's result.
-let plainSuccessorReaches (temps: List(Int)) (state: CoreLoweringState) =
-    (let flags =
-        state
-        |> callDefinitionFlags(temps)
-        |> negatedFlags
-    in
-        match flaggedTemps(temps)(flags) with
-            | [] -> reachesByOrdinal(flags)([])
-            | plainTemps ->
-                state.reversedInstructions
-                |> localSlotsReachingEachTemp(plainTemps)
-                |> reachesByOrdinal(flags))
-
-let recursive ownedDropPlainSuccessorsWith (drops: List((Int, Str))) (reaches: List(Maybe(List(Int)))) =
-    match drops with
-        | [] -> []
-        | (slot, _typeName) :: rest -> (slot, callResultsReaching(slot)(0)(reaches)) :: ownedDropPlainSuccessorsWith(rest)(reaches)
-
-// Per owned drop, the ordinals of the successors that are no call's result and whose value can
-// have been read from its slot.
-let ownedDropPlainSuccessorsOf (drops: List((Int, Str))) (temps: List(Int)) (state: CoreLoweringState) =
-    match drops with
-        | [] -> []
-        | _ ->
-            state
-            |> plainSuccessorReaches(temps)
-            |> ownedDropPlainSuccessorsWith(drops)
-
 let recursive ownedDropFactsOf (drops: List((Int, Str))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (known: Maybe(List(Maybe(List(Int))))) (state: CoreLoweringState) =
     match drops with
         | [] -> []
@@ -1255,8 +1220,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                                 argumentTransferRetained = transferRetainedFlags(temps)(state),
                                 transferredRootDrops = rootDrops,
                                 lateCopiedCellHeads = stateLateCopiedCellHeads(state),
-                                ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(None)(state),
-                                ownedDropPlainSuccessors = ownedDropPlainSuccessorsOf(drops)(temps)(state)
+                                ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(None)(state)
                             ))
                         |> (given (reset: CoreTcoReset) ->
                             state

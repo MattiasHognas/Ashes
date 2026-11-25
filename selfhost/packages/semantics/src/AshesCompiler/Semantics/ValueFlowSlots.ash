@@ -13,6 +13,7 @@ export (
     value localSlotsReachingTempsStopping,
     value localSlotsReachingTempsWithAliases,
     value localSlotsReachingEachTemp,
+    value tempsReachingTemps,
 )
 
 type ValueFlowIndex =
@@ -258,3 +259,14 @@ let localSlotsReachingEachTemp (temps: List(Int)) (reversedInstructions: List(Ir
             index.slotStores
             |> Ashes.Collection.Map.toList
             |> slotsReachingEach(temps)(index))
+
+// Every temp a value-flow walk back from the temps reaches over the instructions (most recent
+// first): the values the temps can have been built from or read out of.
+let tempsReachingTemps (temps: List(Int)) (reversedInstructions: List(IrInstruction)) =
+    (let indexed = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
+    in
+        let index =
+            indexed with slotStores = forgetSlotStores(arenaDemotedSlots(reversedInstructions)([]))(indexed.slotStores)
+        in
+            match walkValueFlow(temps)(Ashes.Collection.Map.empty)(index)([])([]) with
+                | (_slots, visited) -> visited)

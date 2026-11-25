@@ -752,6 +752,124 @@ let expectRoutedCallsAtTwoValueTypesLower unit =
     |> loopFunctionLines("[ClosureHelper from mark]")
     |> (given (lines) -> check("the second loop's calls reach the specialization")(countContaining("__reuse")(lines) > 0))
 
+let choiceVariantAccumulatorSource = "type Tree =\n    | Leaf\n    | Node(Tree, Str, Tree)\n\nlet recursive insert (k: Str) t =\n    match t with\n        | Leaf -> Node(Leaf, k, Leaf)\n        | Node(l, x, r) ->\n            if k < x\n            then Node(insert(k)(l), x, r)\n            else Node(l, x, insert(k)(r))\n\nlet put (k: Str) t = insert(k)(t)\n\nlet recursive build i n m =\n    if i >= n\n    then m\n    else\n        let m2 =\n            if i - i / 2 * 2 == 0\n            then put(\"a\")(m)\n            else put(\"b\")(m)\n        in build(i + 1)(n)(m2)\n\nlet recursive size t =\n    match t with\n        | Leaf -> 0\n        | Node(l, _x, r) -> size(l) + 1 + size(r)\n\nAshes.IO.print(Ashes.Text.fromInt(size(build(0)(4)(Leaf))))"
+
+// A variant of the contract's types whose successor is a choice between two calls consuming it is
+// placed on the reference-counted heap whatever its self-call shape: the list-only choice shape
+// does not keep a named parameter in the arena, so the back edge releases the old root under its
+// active flag.
+let expectChoiceShapedVariantParameterIsRuntimeManaged unit =
+    choiceVariantAccumulatorSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) -> check("the back edge releases the variant's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
+
+let letBoundMatchMapAccumulatorSource = "type Choice =\n    | Even\n    | Odd(Int)\n\nlet recursive build i n m =\n    if i >= n\n    then m\n    else\n        let tag =\n            if i - i / 2 * 2 == 0\n            then Even\n            else Odd(i)\n        in\n            let m2 =\n                match tag with\n                    | Even -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i))(i)(m)\n                    | Odd(k) -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(k))(i + 7)(m)\n            in build(i + 1)(n)(m2)\n\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(build(0)(4)(Ashes.Collection.Map.empty))))"
+
+// A map's tree threaded through a loop that returns it is a changing generic variant of the
+// contract's types: it is placed on the reference-counted heap ahead of the specialization scan,
+// so neither call is routed to the in-place specialization and the back edge releases the old
+// root under its active flag.
+let expectGenericVariantLoopParameterIsRuntimeManaged unit =
+    letBoundMatchMapAccumulatorSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the back edge releases the map's old root under the active flag")(countContaining("rc_tco_drop_inactive")(lines) > 0))
+        |> (given (_) -> check("no call is routed to the in-place specialization")(countContaining("__reuse")(lines) == 0)))
+
+let tupleResultMapArmsSource = "let recursive build i n m =\n    if i >= n\n    then (m, i)\n    else\n        let m2 =\n            if i - i / 2 * 2 == 0\n            then Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i - i / 10 * 10))(i)(m)\n            else Ashes.Collection.Map.setStr(Ashes.Text.fromInt(i - i / 10 * 10))(i + 7)(m)\n        in build(i + 1)(n)(m2)\n\nmatch build(0)(4)(Ashes.Collection.Map.empty) with\n    | (built, count) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(built) * 1000 + count))"
+
+// A call routed to the map's in-place specialization from an arm of the loop body hands its result
+// on as the rewritten accumulator: when either arm's call is routed there, no call result in the
+// loop is normalized into an owned call-result slot.
+let expectRoutedSpecializationResultIsNotNormalized unit =
+    tupleResultMapArmsSource
+    |> loopLines("[ClosureHelper from build]")
+    |> (given (lines) -> check("a routed call's result is not normalized into an owned slot")(countContaining("__reuse")(lines) == 0 || countContaining("general_rc_result_normalize")(lines) == 0))
+
+let owningClosureRecordSource = "type Box =\n    | reader: Int -> Str\n\nlet box (s: Str) =\n    Box(reader = given (u: Int) -> s)\n\nlet k =\n    match box(Ashes.Text.fromInt(5) + \"x\") with\n        | Box { reader = reader } -> Ashes.Text.byteLength(reader(0))\n\nAshes.IO.print(Ashes.Text.fromInt(k))"
+
+// A record returned with a closure over the entry-normalized string parameter owns that closure,
+// and the closure owns the parameter: the environment and the closure are allocated on the
+// reference-counted heap, the closure's fourth word holds the dropper releasing the parameter,
+// and the record cell is reference-counted too.
+let expectOwningClosureRecordIsRuntimeManaged unit =
+    owningClosureRecordSource
+    |> loopFunctionLines("[SourceFunction from box]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the closure is allocated on the reference-counted heap")(countContainingBoth("MakeClosure")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("its environment is allocated on the reference-counted heap")(countContainingBoth("Alloc ")("RuntimeManaged=true")(lines) > 0))
+        |> (given (_) -> check("its fourth word holds the capture dropper")(countContainingBoth("LoadFuncAddr")("__rc_cdrop_")(lines) == 1 && countContainingBoth("StoreMemOffset")("OffsetBytes=24")(lines) == 1))
+        |> (given (_) -> check("the record cell is reference-counted")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 1)))
+
+let letBoundStringArmTupleSource = "type Tok =\n    | kind: Int\n    | text: Str\n\nlet readNext (position: Int) =\n    (let text = Ashes.Text.fromInt(position)\n    in\n        if position < 1000\n        then (Tok(kind = 1, text = text), None)\n        else (Tok(kind = 2, text = text), Some(position)))\n\nlet recursive scan (count: Int) (position: Int) (kinds: Int) (bytes: Int) =\n    if position >= count\n    then Ashes.Text.fromInt(kinds) + \"|\" + Ashes.Text.fromInt(bytes)\n    else\n        match readNext(position) with\n            | (Tok { kind = kind, text = text }, _note) -> scan(count)(position + 1)(kinds + kind)(bytes + Ashes.Text.byteLength(text))\n\n0\n|> scan(100)(0)(0)\n|> Ashes.IO.print"
+
+// A record built in an `if` arm from a `let`-bound string, inside a tuple the function returns,
+// stays in the arena: a let-bound name is no borrowed string a reference-counted parent copies
+// (stage 0's `Binding.Scheme`), so neither arm copies the string out or allocates the record on
+// the reference-counted heap.
+let expectLetBoundStringKeepsArmRecordInArena unit =
+    letBoundStringArmTupleSource
+    |> loopFunctionLines("[SourceFunction from readNext]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("no arm allocates the record on the reference-counted heap")(countContainingBoth("AllocAdt")("RuntimeManaged=true")(lines) == 0))
+        |> (given (_) -> check("no arm copies the let-bound string out")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0)))
+
+let coroutineCalleeSource = "let echo (s: Str) = async(s)\n\nlet recursive fill (n: Int) (acc: Str) =\n    if n == 0\n    then acc\n    else fill(n - 1)(acc + \"abcdefgh\")\n\nlet compute =\n    async(let recursive loop (n: Int) (total: Int) =\n        if n == 0\n        then total\n        else\n            match await echo(n\n            |> Ashes.Text.fromInt\n            |> fill(2)) with\n                | Error(_message) -> -1\n                | Ok(kept) -> loop(n - 1)(total + Ashes.Text.byteLength(kept))\n    in loop(10)(0))\n\nmatch Ashes.Task.run(compute) with\n    | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// A function an `async` body calls may run inside a coroutine, so it places nothing on the
+// reference-counted heap (stage 0's `AllowsAsyncIndependentRcPlacement`): `fill`'s concatenation
+// and its result stay in the arena.
+let expectCoroutineCalleeKeepsValuesInArena unit =
+    coroutineCalleeSource
+    |> loopFunctionLines("[ClosureHelper from fill]")
+    |> (given (lines) -> check("a function called from an async body places nothing on the reference-counted heap")(countContaining("RuntimeManaged=true")(lines) == 0))
+
+// The async loop reads no callee's returns bit, so the callee's result is copied to the arena at
+// its call boundary rather than onto the reference-counted heap.
+let expectCoroutineCallResultCopiedToArena unit =
+    coroutineCalleeSource
+    |> loopFunctionLines("[ClosureHelper from $async_helper")
+    |> (given (lines) -> check("the async loop copies a call result to the arena")(countContainingBoth("CopyOutArena")("RcNormalization")(lines) == 0))
+
+let frameRetainedCaptureSource = "let build (n: Int) = Ashes.Text.fromInt(n) + \"-tail\"\n\nlet measure (n: Int) =\n    (let text = build(n)\n    in\n        async(match await Ashes.Task.sleep(0) with\n            | Ok(_u) -> Ashes.Text.byteLength(text)\n            | Error(_e) -> -1))\n\nmatch Ashes.Task.run(measure(7)) with\n    | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// A task frame takes its own reference to a captured reference-counted string (stage 0's
+// `RetainCoroutineCapture`) and its frame dropper releases it: the task is built from the arena
+// closure, with no reference-counted copy of it, and names the dropper.
+let expectTaskFrameRetainsCapture unit =
+    frameRetainedCaptureSource
+    |> loopFunctionLines("[SourceFunction from measure]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the captured string is retained for the frame")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the task is built from the arena closure")(countContaining("CopyOutClosure")(lines) == 0))
+        |> (given (_) -> check("the task names its frame dropper")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 1)))
+
+let frameCaptureResultSource (result: Str) = "let build (n: Int) = Ashes.Text.fromInt(n) + \"-tail\"\n\nlet measure (n: Int) =\n    (let text = build(n)\n    in\n        async(match await Ashes.Task.sleep(0) with\n            | Ok(_u) -> " + result + "\n            | Error(_e) -> \"err\"))\n\nmatch Ashes.Task.run(measure(7)) with\n    | Ok(t) -> Ashes.IO.print(t)\n    | Error(_e) -> Ashes.IO.print(\"err\")"
+
+// The frame releases a retained capture at teardown unless the task's result can share it (stage
+// 0's `CaptureSharedWithResult`): a string built from the capture holds nothing of it, so the task
+// names a frame dropper; the capture returned as it is keeps the frame's reference, and the frame
+// releases nothing.
+let expectFrameKeepsOnlyACaptureTheResultShares unit =
+    Unit
+    |> (given (_) ->
+        "text + \"!\""
+        |> frameCaptureResultSource
+        |> loopFunctionLines("[SourceFunction from measure]")
+        |> (given (lines) -> check("a capture the result is built from is released by the frame")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 1)))
+    |> (given (_) ->
+        "text"
+        |> frameCaptureResultSource
+        |> loopFunctionLines("[SourceFunction from measure]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("a capture the result returns is still retained for the frame")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+            |> (given (_) -> check("a capture the result returns is not released by the frame")(countContainingBoth("CreateTask")("_frame_drop")(lines) == 0))))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -781,4 +899,13 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectSelfCallOnMatchedTailIsNotHandedOver(Unit))
     |> (given (_) -> expectTupleResultPartsPrecedeExitRelease(Unit))
     |> (given (_) -> expectRoutedCallsAtTwoValueTypesLower(Unit))
+    |> (given (_) -> expectCoroutineCalleeKeepsValuesInArena(Unit))
+    |> (given (_) -> expectCoroutineCallResultCopiedToArena(Unit))
+    |> (given (_) -> expectTaskFrameRetainsCapture(Unit))
+    |> (given (_) -> expectFrameKeepsOnlyACaptureTheResultShares(Unit))
+    |> (given (_) -> expectLetBoundStringKeepsArmRecordInArena(Unit))
+    |> (given (_) -> expectChoiceShapedVariantParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectGenericVariantLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectRoutedSpecializationResultIsNotNormalized(Unit))
+    |> (given (_) -> expectOwningClosureRecordIsRuntimeManaged(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))

@@ -190,6 +190,51 @@ let testEscapingTupleRetainsOwnedChildren unit =
             |> lineAfter("RcDup                 Target=13")
             |> test.assertEqual("    RcDrop                SourceTemp=3 TypeName=String OwnerSlot=7 RuntimeManaged=true")))
 
+let callerAliasSourcePath = "tests/element_specialization_caller_alias_not_owner.ash"
+
+// `parseParams((parameter, Some(parameter + "!")) :: reversed)(rest)`: the tuple at the head of the
+// accumulator's successor cell holds a pattern owner's read inside the back-edge argument, so it
+// stays on the reference-counted heap with its cell, and the accumulator keeps its placement: the
+// loop entry normalizes it (more than the one list walk the arena tuple left).
+let testBackEdgeHeadTupleKeepsAccumulatorPlaced unit =
+    match Ashes.IO.File.readText(callerAliasSourcePath) with
+        | Error(message) -> test.fail("could not read " + callerAliasSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from parseParams")
+            |> Ashes.Collection.List.filter(given (line: Str) ->
+                Ashes.Text.startsWith(line)("  rc_normalize_list_") && Ashes.Text.endsWith(Ashes.Text.trim(line))(":"))
+            |> length
+            |> (given (count: Int) -> count > 1)
+            |> test.assertEqual(true)
+
+let nestedCallTupleSourcePath = "tests/loop_head_binders_in_argument_tuple.ash"
+
+// `lowerItems(rest)(prepareGroup([(name, value)])(total))`: the tuple of pattern parts is in the
+// argument of a call nested in the back-edge argument, whose frame is that call's own. The tuple
+// stays in the arena (the one reference-counted allocation left is the parameter's entry
+// normalization) and the two owner duplicates it holds are released right after the call's
+// window, as stage 0 does.
+let testNestedCallTupleInBackEdgeArgumentReleasesOwners unit =
+    match Ashes.IO.File.readText(nestedCallTupleSourcePath) with
+        | Error(message) -> test.fail("could not read " + nestedCallTupleSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from lowerItems")
+            |> (given (lines: List(Str)) ->
+                Unit
+                |> (given (_) ->
+                    lines
+                    |> countContainingBoth("Alloc ")("RuntimeManaged=true")
+                    |> test.assertEqual(1))
+                |> (given (_) ->
+                    lines
+                    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.contains(line)("TypeName=String RuntimeManaged=true") && Ashes.Text.contains(line)("RcDrop ") && !Ashes.Text.contains(line)("OwnerSlot="))
+                    |> length
+                    |> test.assertEqual(2)))
+
 // An escaping list literal of two owned strings is a runtime list whose cells retain their heads.
 let testEscapingListLiteralRetainsOwnedChildren unit =
     aggregateSource
@@ -437,12 +482,224 @@ let testEntryReleasesTrailingPipeFreshArgument unit =
     |> countContaining("general_rc_owned_absent_")
     |> test.assertEqual(3)
 
+let nestedConstructorFieldSource = "type State =\n    | S(List(Int))\n\ntype Step =\n    | Done\n    | Continue(State, Int)\n\nlet recursive setAt i value values =\n    match values with\n        | [] -> []\n        | head :: tail ->\n            if i == 0\n            then value :: tail\n            else head :: setAt(i - 1)(value)(tail)\n\nlet advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = setAt(r)(r)(perm)\n            in Continue(S(perm2))(r)\n\nmatch advance(1)(S([1, 2, 3])) with\n    | Done -> Ashes.IO.print(\"done\")\n    | Continue(_next, r) -> Ashes.IO.print(Ashes.Text.fromInt(r))"
+
+// A reference-counted constructor nested in another stores a `let`-bound list that owns its
+// reference-counted value: the cell takes one retain of the binding's read and no reference or
+// copy under a representation test besides, so the only list copy-out left in the function is
+// the call's own conditional one.
+let testNestedConstructorRetainsLiveOwnerFieldOnce unit =
+    nestedConstructorFieldSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> (given (lines: List(Str)) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> countContainingBoth("CopyOutList")("HeadCopy=Inline")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countContainingBoth("RcDup")("MayBeEmpty=true")
+            |> test.assertEqual(1)))
+
+let letCellExitSource = "type State =\n    | S(List(Int))\n\nlet recursive advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = 0 :: perm\n            in\n                if r == 0\n                then S(perm2)\n                else advance(r - 1)(S(perm2))\n\nmatch advance(0)(S([1, 2])) with\n    | S(xs) -> Ashes.IO.print(\"s\")"
+
+// A loop's exit wraps a `let`-bound arena cell over a matched list in a constructor the return
+// copies onto the reference-counted heap: the copy retains the list itself, so the duplicate the
+// cell took of its tail is withdrawn and only the pattern owner's own duplicate stays a retain.
+let testLetCellCopiedAtExitWithdrawsTailDuplicate unit =
+    letCellExitSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> countContainingBoth("RcDup")("MayBeEmpty=true")
+    |> test.assertEqual(1)
+
+let agreementCellSourcePath = "tests/loop_exit_agreement_cell_release_when_the_result_holds_the_label.ash"
+
+// The agreement loop's back edges hand the matched label on in a `Some` cell that retains it for
+// itself, so the iteration's owners of the label and of the matched resolution are released at
+// every back edge as at the exit: a retained field names no owner's value unretained.
+let testRetainedSuccessorFieldLeavesIterationOwnersReleased unit =
+    match Ashes.IO.File.readText(agreementCellSourcePath) with
+        | Error(message) -> test.fail("could not read " + agreementCellSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from resolveGroup")
+            |> (given (lines: List(Str)) ->
+                Unit
+                |> (given (_) ->
+                    lines
+                    |> countContaining("TypeName=String OwnerSlot=")
+                    |> test.assertEqual(6))
+                |> (given (_) ->
+                    lines
+                    |> countContaining("TypeName=CaptureResolution RuntimeManaged=true")
+                    |> test.assertEqual(3)))
+
+let sharedSpanSuccessorSourcePath = "tests/loop_literal_successor_borrows_binding_matched_from_shared_list.ash"
+
+// The record successor's `Some(span)` is an arena cell of a two-constructor type that retained
+// `span`: once the back edge has copied the successor, that retain is released through the `Some`
+// constructor's own field, as stage 0's literal children release does for any constructor.
+let testVariantLiteralChildReleasedAtBackEdge unit =
+    match Ashes.IO.File.readText(sharedSpanSuccessorSourcePath) with
+        | Error(message) -> test.fail("could not read " + sharedSpanSuccessorSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from lowerItems")
+            |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.contains(line)("TypeName=Span RuntimeManaged=true") && !Ashes.Text.contains(line)("OwnerSlot="))
+            |> length
+            |> test.assertEqual(1)
+
+let tableLookupSourcePath = "tests/loop_table_lookup_arm_outer_table_stays_arena.ash"
+
+// The label arm's `nextInts` join becomes the known-table parameter, which stays in the arena: its
+// lookup arm returns `fallback`, a `let` owner bound before the match, so the arm takes a reference
+// of its own and the join copies it into the arena (an `rc_arena_demote_done` block), the
+// reference released after the copy, rather than handing the parameter the owner's own cells.
+let testSuccessorJoinArmOfLetOwnerIsDemoted unit =
+    match Ashes.IO.File.readText(tableLookupSourcePath) with
+        | Error(message) -> test.fail("could not read " + tableLookupSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from reduceLoop")
+            |> countContaining("Target=rc_arena_demote_done_")
+            |> test.assertEqual(1)
+
+let letCellBackEdgeSource = "type State =\n    | S(List(Int))\n\nlet recursive advance r state =\n    match state with\n        | S(perm) ->\n            let perm2 = 0 :: perm\n            in\n                if r == 0\n                then 0\n                else advance(r - 1)(S(perm2))\n\nadvance(2)(S([1, 2]))\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The back edge copies the arena successor `S(perm2)` onto the reference-counted heap with
+// references of its own to its fields, as stage 0 builds the successor there directly, so the
+// duplicate the let-bound cell took of its matched tail is withdrawn and only the pattern owner's
+// own duplicate stays a retain.
+let testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate unit =
+    letCellBackEdgeSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from advance")
+    |> countContainingBoth("RcDup")("MayBeEmpty=true")
+    |> test.assertEqual(1)
+
+let letAliasBackEdgeSource = "let recursive build (n: Int) (acc: List(Int)) =\n    if n == 0\n    then acc\n    else build(n - 1)(n :: acc)\n\nlet recursive walk (n: Int) (known: List(Int)) (total: Int) =\n    if n == 0\n    then total + Ashes.Collection.List.length(known)\n    else\n        let fresh = build(3)([])\n        in\n            let next = fresh\n            in walk(n - 1)(next)(total + Ashes.Collection.List.length(known))\n\nwalk(5)([])(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The temp after `key=` in one whitespace-separated token of an IR line, when it carries it.
+let recursive tokenOperand (key: Str) (tokens: List(Str)) =
+    match tokens with
+        | [] -> ""
+        | token :: rest ->
+            if Ashes.Text.startsWith(token)(key + "=")
+            then Ashes.Text.drop(token)(Ashes.Text.length(key) + 1)
+            else tokenOperand(key)(rest)
+
+let lineOperand (key: Str) (line: Str) =
+    " "
+    |> Ashes.Text.split(line)
+    |> tokenOperand(key)
+
+// How many retains take a reference to the borrow on the line before them.
+let recursive borrowsRetainedNext (lines: List(Str)) (count: Int) =
+    match lines with
+        | first :: second :: rest ->
+            if Ashes.Text.contains(first)("Borrow ") && Ashes.Text.contains(second)("RcDup ") && lineOperand("SourceTemp")(second) == lineOperand("Target")(first)
+            then borrowsRetainedNext(second :: rest)(count + 1)
+            else borrowsRetainedNext(second :: rest)(count)
+        | _ -> count
+
+// A back edge handing the arena parameter `known` a `let` alias of an iteration owner
+// (`let next = fresh in walk(n - 1)(next)`) retains the alias's read, as stage 0's
+// DuplicateRuntimeManagedOwnedValueForTransfer does, so the successor keeps its own reference
+// when the back edge releases `fresh`.
+let testBackEdgeRetainsLetAliasOfIterationOwner unit =
+    letAliasBackEdgeSource
+    |> loweredLines
+    |> functionLines("ClosureHelper from walk")
+    |> (given (lines: List(Str)) -> borrowsRetainedNext(lines)(0))
+    |> test.assertEqual(1)
+
+let unchangedFieldUpdateSourcePath = "tests/loop_result_record_update_releases_unchanged_field_retains.ash"
+
+// How many owned slots are stored straight from an identity duplicate on the line before them.
+let recursive identityDuplicatesStoredNext (lines: List(Str)) (count: Int) =
+    match lines with
+        | first :: second :: rest ->
+            if Ashes.Text.contains(first)("RcDup ") && !Ashes.Text.contains(first)("RuntimeManaged=true") && Ashes.Text.contains(second)("StoreLocal ") && lineOperand("Source")(second) == lineOperand("Target")(first)
+            then identityDuplicatesStoredNext(second :: rest)(count + 1)
+            else identityDuplicatesStoredNext(second :: rest)(count)
+        | _ -> count
+
+// `fn with calls = target :: fn.calls` in a loop that hands `fn` on unchanged: `fn` is not placed,
+// so the cell's duplicate of `fn.calls` stays an identity, and its owned slot holds zero rather
+// than the list, which a release by its representation would free under the caller.
+let testUnplacedParameterTailSlotStaysZero unit =
+    match Ashes.IO.File.readText(unchangedFieldUpdateSourcePath) with
+        | Error(message) -> test.fail("could not read " + unchangedFieldUpdateSourcePath + ": " + message)
+        | Ok(source) ->
+            source
+            |> loweredLines
+            |> functionLines("ClosureHelper from retarget")
+            |> (given (lines: List(Str)) -> identityDuplicatesStoredNext(lines)(0))
+            |> test.assertEqual(0)
+
+let loopExitFieldSource = "type State =\n    | refs: List(Str)\n\nlet recursive scanMatch (tokens: List(Str)) (state: State) =\n    match tokens with\n        | [] -> state.refs\n        | text :: rest -> scanMatch(rest)(State(refs = text :: state.refs))\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\ncount(scanMatch([\"a\"])(State(refs = [])))(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// A loop's exit returning a heap field of its reference-counted record parameter returns the
+// retain the arm took, promoted once the parameter is placed, so the loop's result is
+// reference-counted and owned and its closure carries `ReturnsRuntimeManaged`, as stage 0's.
+let testLoopExitFieldResultIsReferenceCounted unit =
+    loopExitFieldSource
+    |> loweredLines
+    |> functionLines("SourceFunction from scanMatch")
+    |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
+    |> test.assertEqual(1)
+
+let loopExitFieldIfSource = "type State =\n    | refs: List(Str)\n\nlet recursive scanIf (tokens: List(Str)) (state: State) =\n    if Ashes.Collection.List.length(tokens) == 0\n    then state.refs\n    else\n        match tokens with\n            | [] -> []\n            | text :: rest -> scanIf(rest)(State(refs = text :: state.refs))\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\ncount(scanIf([\"a\"])(State(refs = [])))(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print"
+
+// The same exit from an `if` branch beside a nil arm: the branch's value is normalized with a
+// reference of its own while its retain still looks unowned, so the retain stays an identity and
+// the join of the normalized value and nil is the loop's owned reference-counted result.
+let testLoopExitFieldResultThroughIfIsReferenceCounted unit =
+    loopExitFieldIfSource
+    |> loweredLines
+    |> functionLines("SourceFunction from scanIf")
+    |> countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")
+    |> test.assertEqual(1)
+
+let lastOfSource = "let recursive lastOf list =\n    match list with\n        | last :: [] -> last\n        | _ :: rest -> lastOf(rest)\n        | [] -> \"\"\n\nAshes.IO.print(lastOf([\"a\", \"b\" + Ashes.Text.fromInt(1)]))"
+
+// A loop exit arm returning a head bound under a nested pattern (`| last :: [] -> last`) beside a
+// literal arm: the arm's duplicate of the pattern owner is only normalized by the join (a reference
+// or a reference-counted copy), so it stays an identity and the normalization's reference is the
+// result's. Promoted as well, it made two references for one result. Four real retains remain: the
+// parameter's entry normalization, the owner's protective retain, the join's and the back edge's.
+let testExitArmPatternOwnerNormalizedOnce unit =
+    lastOfSource
+    |> loweredLines
+    |> functionLines("SourceFunction from lastOf")
+    |> countContainingBoth("RcDup")("RuntimeManaged=true")
+    |> test.assertEqual(4)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
+    |> testExitArmPatternOwnerNormalizedOnce
+    |> testLoopExitFieldResultThroughIfIsReferenceCounted
+    |> testLoopExitFieldResultIsReferenceCounted
+    |> testBackEdgeRetainsLetAliasOfIterationOwner
+    |> testUnplacedParameterTailSlotStaysZero
+    |> testBackEdgeCopiedSuccessorWithdrawsLetCellTailDuplicate
+    |> testSuccessorJoinArmOfLetOwnerIsDemoted
+    |> testVariantLiteralChildReleasedAtBackEdge
+    |> testRetainedSuccessorFieldLeavesIterationOwnersReleased
+    |> testLetCellCopiedAtExitWithdrawsTailDuplicate
+    |> testNestedConstructorRetainsLiveOwnerFieldOnce
     |> testOwnedListLetWalksSpineInline
     |> testLambdaReturningRecordAllocatesRuntimeManaged
     |> testOwnedRecordLetReleasedByItsOwner
     |> testEscapingTupleRetainsOwnedChildren
+    |> testBackEdgeHeadTupleKeepsAccumulatorPlaced
+    |> testNestedCallTupleInBackEdgeArgumentReleasesOwners
     |> testEscapingListLiteralRetainsOwnedChildren
     |> testEscapingConsRetainsHeadAndTail
     |> testMentionsNameRespectsShadowing

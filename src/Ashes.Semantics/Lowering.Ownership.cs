@@ -4825,6 +4825,9 @@ public sealed partial class Lowering
         return false;
     }
 
+    private static bool CapturesScopeViews(TypeRef resultType)
+        => Environment.GetEnvironmentVariable("GRC_NO_CLOSUREVIEWKEEP") is null && resultType is TypeRef.TFun;
+
     // Materializes the scope result's views against a backing that is still alive. Only the results
     // the arena deep copy reproduces completely can be copied; for anything else (a result of a
     // self-recursive type, a coroutine body) the backing is kept instead of released, because a
@@ -4832,12 +4835,15 @@ public sealed partial class Lowering
     // backing then lives as long as the program: a leak is the safe side of a result this pass
     // cannot copy. A reference-counted value of the contract's types never holds a view: its string
     // and bytes children were retained or copied onto the reference-counted heap when it was built.
+    // A closure the scope returns may capture a view of the backing
+    // (`given (u) -> tail`, the tail of an uncons of the backing): a capture is stored in the closure's
+    // environment as the value it is, a view staying a view, so the backing is kept alive for it.
     private int MaterializeScopeResultViews(TypeRef? resultType, int resultTemp)
     {
         if (resultType is null
             || resultTemp < 0
             || !ScopeReleasesViewedValue()
-            || !TypeCarriesTextBytes(resultType, [])
+            || !(TypeCarriesTextBytes(resultType, []) || CapturesScopeViews(Prune(resultType)))
             || (IsGeneralRcValueType(resultType) && IsRuntimeManagedResultTemp(resultTemp)))
         {
             return resultTemp;

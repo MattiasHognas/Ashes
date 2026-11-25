@@ -48,6 +48,7 @@ export (
     value unknownArmResult,
     value transferBranchOwnerResult,
     value transferIfBranchResult,
+    value transferBranchLetOwnerResult,
     value joinArmStoreIndex,
     value shiftPatternOwnerSites,
     value normalizeMixedJoinArmsAs,
@@ -350,6 +351,18 @@ let specializationSelfReuseCall (context: CoreCallContext) (state: CoreLoweringS
         | Some(_label) -> true
         | None -> false)
 
+// Stage 0's `LowerReuseSpecializedCall`: a call routed to a reuse specialization from outside it
+// applies the specialization's closure with no window of its own, and a result of the contract's
+// types records no ownership (`RecordReuseSpecializationResultOwnership` returns early for one):
+// the result is the accumulator rewritten in place or cells built in the persistent to-space.
+let routedSpecializationCall (context: CoreCallContext) (state: CoreLoweringState) =
+    !context.selfCallee && (match context.calleeName with
+        | Some(name) ->
+            state
+            |> stateRoutedSpecializationCallees
+            |> containsName(name)
+        | None -> false)
+
 // Stage 0's `ResolveHandedOverReleaseGuard`. A result a reset reclaims holds no reference to any
 // argument, so copying it out severs everything. A callee whose compiled body is verified to return a
 // reference-counted result owns every part of it — its construction paths copied or retained whatever
@@ -650,7 +663,11 @@ let deferCallCopyOut (selfCall: Bool) cursorSlot endSlot preRestoreSlot (resultT
                                 deferredReloadTemp = reloadTemp,
                                 deferredType = semanticType,
                                 deferredSelfCall = selfCall,
-                                deferredOwned = false
+                                deferredOwned = false,
+                                deferredLetReleaseSlots = [],
+                                deferredBackEdgesBefore = stored
+                                |> statePendingTcoResets
+                                |> length
                             )
                         in
                             (stored
@@ -1402,7 +1419,7 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
     |> cancelArenaResultRequest(temp)
     |> lowerGeneralRcCallResultOwned(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
 
-let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
+let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp, resultNormalizedOwned = normalizedOwned } ->
@@ -1469,6 +1486,21 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                     allocated
                                     |> success(temp)(semanticType)
                                     |> closedCallStage(stage)(false)(false)
+
+// A call routed to a reuse specialization whose result is of the contract's types leaves its window
+// open, as stage 0 opens none, and hands its result on as a reuse result the enclosing resets
+// keep; every other call closes its window by its result's contract.
+let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } } ->
+            if routedSpecializationCall(context)(state) && isGeneralRcValueType(semanticType)(state)
+            then
+                state
+                |> markReuseResultTemp(temp)
+                |> success(temp)(semanticType)
+                |> closedCallStage(stage)(false)(false)
+            else closeContractCallWindow(context)(cursorSlot)(endSlot)(stage)
+        | _ -> closeContractCallWindow(context)(cursorSlot)(endSlot)(stage)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a
@@ -1651,6 +1683,8 @@ let appliedLambdaLabelOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprLambda(_parameter, _body, _annotation) -> Some("lambda_" + Ashes.Text.fromInt(state.nextLambdaId))
         | _ -> None
 
+let requestsCallArgument (request: ConsumerRequest) = request.callArgument
+
 let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (resultDiscarded: Bool) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
@@ -1666,7 +1700,10 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             appliedLambdaLabel = appliedLambdaLabelOf(spine)(state),
             siteSpan = state.currentSpan,
             resultDiscarded = resultDiscarded,
-            arguments = spine.arguments
+            arguments = spine.arguments,
+            resultIsCallArgument = state
+            |> consumerRequestOf
+            |> requestsCallArgument
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
@@ -1721,7 +1758,13 @@ let ownedResultBeforeReleasePlanOf (semanticType: SemanticType) (state: CoreLowe
             if tupleElementsOwnable(elements)(false)(state)
             then argumentCopyPlanOf(semanticType)(state)
             else None
-        | _ -> ownedResultPlanOf(semanticType)(state)
+        | resolved ->
+            match ownedResultPlanOf(resolved)(state) with
+                | Some(plan) -> Some(plan)
+                | None ->
+                    if isGeneralRcValueType(resolved)(state)
+                    then generalCopyPlanOf(resolved)(state)
+                    else None
 
 // Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
 // result may still name would be released spine-only, stranding every part the result did not
@@ -2006,11 +2049,11 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> withCallResultType(applied)
                                 |> noteTakenOverCallResult(context))
 
-let restoreCallArgumentLabelStart (start: Int) (active: Bool) (lowered: LoweredCoreValue) =
+let restoreCallArgumentLabelStart (start: Int) (frame: CoreCallArgumentFrame) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state } ->
             let group = state.tcoState
-            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrameActive = active))
+            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrame = frame))
 
 // Stage 0's `NoteDiscardedResultArgument`: a lambda ignoring its parameter applied to a call.
 let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState) =
@@ -2042,19 +2085,26 @@ let takeDiscardedResultSite (state: CoreLoweringState) =
                 else (false, state)
             | None -> (false, state))
 
+// The frame a call opens: one nested in a loop's back-edge argument says so, as stage 0's
+// `CallArgumentRetainFrame` is opened there like anywhere else.
+let openedCallArgumentFrame (state: CoreLoweringState) =
+    match stateBackEdgeArgumentSlot(state) with
+        | Some(_slot) -> BackEdgeNestedCallArgumentFrame
+        | None -> OrdinaryCallArgumentFrame
+
 // A call opens its own frame of argument retains; the enclosing call's is restored after it.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> noteDiscardedResultArgument(spine)
     |> takeDiscardedResultSite with
         | (resultDiscarded, noted) ->
-            let framed = noted with tcoState = (noted.tcoState with callArgumentFrameActive = true)
+            let framed = noted with tcoState = (noted.tcoState with callArgumentFrame = openedCallArgumentFrame(noted))
             in
                 framed
                 |> withCallArgumentRetainFrame([])(false)
                 |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
                 |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrameActive(state))
+                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrame(state))
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -2135,7 +2185,7 @@ let isStringLoopParameter (name: Str) (state: CoreLoweringState) =
 // but the reference is the parameter's.
 let armBorrowsLoopParameterOf (body: Expr) (state: CoreLoweringState) =
     match tailForwardedVariable(body) with
-        | Some(name) -> loopParameterIsRuntimeManaged(name)(state) || isStringLoopParameter(name)(state)
+        | Some(name) -> loopParameterPlacedUnblocked(name)(state) || isStringLoopParameter(name)(state)
         | None -> false
 
 // Stage 0's `ConstructsFreshCell`: an arm that builds its value itself (a cons, a literal, a
@@ -2211,7 +2261,7 @@ let armPatternRootIsPlaced (body: Expr) (state: CoreLoweringState) =
     match (tailForwardedVariable(body), stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(name), Some(frame), Some(loop)) ->
             match patternBindingRootSlot(name)(frame)(state) with
-                | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state) || rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
+                | Some(rootSlot) -> loopParameterPlacedUnblocked(name)(state) || rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
                 | None -> false
         | _ -> false
 
@@ -2317,6 +2367,79 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
+// The slot `reserveArmCellHeadSlot` registered for the arm cell `cell`: the zero store right behind
+// the cell's tail store, most recent instruction first.
+let armCellHeadSlotAt (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | IrInstruction { instruction = StoreLocal(slot, zeroTemp) } :: IrInstruction { instruction = LoadConstInt(loaded, 0) } :: IrInstruction { instruction = StoreMemOffset(basePtr, 8, _tail) } :: _rest ->
+            if loaded == zeroTemp && basePtr == cell
+            then Some(slot)
+            else None
+        | _ -> None
+
+let recursive armCellHeadSlotOf (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | _instruction :: rest ->
+            match armCellHeadSlotAt(cell)(instructions) with
+                | Some(slot) -> Some(slot)
+                | None -> armCellHeadSlotOf(cell)(rest)
+
+let recursive armCellStoredHead (cell: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePtr, 0, source) } :: rest ->
+            if basePtr == cell
+            then Some(source)
+            else armCellStoredHead(cell)(rest)
+        | _instruction :: rest -> armCellStoredHead(cell)(rest)
+
+// The write of an arm cell's head duplicate, run only when the cell was copied: a cell that is
+// reference-counted at run time is shared by the join's copy as it is and keeps its head's
+// duplicate (stage 0's guard in `WriteArmCellHeadSlot`).
+let emitWhenArmCellCopied (cell: Int) write (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+            match freshLabel("arm_cell_head_copied")(tested) with
+                | FreshLabel { state = writeLabelled, label = writeLabel } ->
+                    match freshLabel("arm_cell_head_shared")(writeLabelled) with
+                        | FreshLabel { state = labelled, label = doneLabel } ->
+                            labelled
+                            |> emit(IsReferenceCounted(referenceCountedTemp)(cell))
+                            |> emit(JumpIfFalse(referenceCountedTemp)(writeLabel))
+                            |> emit(Jump(doneLabel))
+                            |> emit(Label(writeLabel))
+                            |> write
+                            |> emit(Label(doneLabel))
+
+// Stage 0's `WriteArmCellHeadSlot`: right behind the join's copy of an arm's own arena cell, the
+// cell's head duplicate goes into the slot registered at the cons. A duplicate still a pattern
+// owner's marker is written as zero and handed to the cell marker slots, which store it once the
+// loop's finalize promotes it to a real retain; an identity marker retained nothing and leaves the
+// slot zero.
+let writeArmCellHeadSlot (arm: MatchArmResult) (original: CoreLoweringState) (state: CoreLoweringState) =
+    if arm.armConsesOntoSelfResult
+    then
+        match (armCellHeadSlotOf(arm.armStoreTemp)(original.reversedInstructions), armCellStoredHead(arm.armStoreTemp)(original.reversedInstructions)) with
+            | (Some(slot), Some(head)) ->
+                match definitionOfTemp(head)(original.reversedInstructions) with
+                    | Some(RcDup(_target, _source, true, _mayBeEmpty)) ->
+                        emitWhenArmCellCopied(arm.armStoreTemp)(head
+                        |> StoreLocal(slot)
+                        |> emit)(state)
+                    | Some(RcDup(_target, _source, false, _mayBeEmpty)) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                                withTemp
+                                |> emitWhenArmCellCopied(arm.armStoreTemp)(given (guarded: CoreLoweringState) ->
+                                    guarded
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> emit(StoreLocal(slot)(zeroTemp)))
+                                |> (given (stored: CoreLoweringState) -> withStateCellMarkerSlots((slot, head, zeroTemp) :: stateCellMarkerSlots(stored))(stored))
+                    | _ -> state
+            | _ -> state
+    else state
+
 // An arm consing arena cells onto the function's own recursive result copies them and takes that
 // owned result over as their tail (stage 0's `NormalizeJoinArmStoreMovingTail`).
 let emitJoinArmNormalization (consedElementPlan: Maybe(ArgumentCopyPlan)) (ownedSlot: Int) (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
@@ -2336,7 +2459,9 @@ let normalizeJoinArmStore (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan
         match emitJoinArmNormalization(consedElementPlan)(consChainTailOwnedSlot(arm.armStoreTemp)(state))(arm)(plan)(emptied) with
             | (copied, normalizedTemp) ->
                 let buffered =
-                    emit(StoreLocal(slot)(normalizedTemp))(copied)
+                    copied
+                    |> writeArmCellHeadSlot(arm)(state)
+                    |> emit(StoreLocal(slot)(normalizedTemp))
                 in
                     let index = joinArmStoreIndex(slot)(arm.armStoreTemp)(state.reversedInstructions)
                     in
@@ -2447,7 +2572,8 @@ let isPassthroughScalarJoinTuple (semanticType: SemanticType) (state: CoreLoweri
 // The copy a mixed join's arms are normalized with: stage 0's `CanNormalizeIntoOwnedRuntimeValue`,
 // and a tuple every element of which normalizes (an arena arm is copied into an owned tuple that
 // retains each reference-counted element it keeps), and stage 0's `IsGeneralRcValueType`: a tuple of the
-// contract's types is copied as the contract copies it.
+// contract's types is copied as the contract copies it, and so is any other value of them (a
+// `Result` over a recursive type, which no inline copy expresses, goes through its normalizer).
 let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemTuple(elements) ->
@@ -2460,7 +2586,13 @@ let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringSta
                     if isPassthroughScalarJoinTuple(semanticType)(state)
                     then argumentCopyPlanOf(semanticType)(state)
                     else None
-        | _ -> ownedResultPlanOf(semanticType)(state)
+        | resolved ->
+            match ownedResultPlanOf(resolved)(state) with
+                | Some(plan) -> Some(plan)
+                | None ->
+                    if isGeneralRcValueType(resolved)(state)
+                    then generalCopyPlanOf(resolved)(state)
+                    else None
 
 // The element copy of a list result whose arms may cons onto the function's own recursive
 // result, when its elements are ones the runtime manages (stage 0's `ConsesOntoOwnedSelfResult`).

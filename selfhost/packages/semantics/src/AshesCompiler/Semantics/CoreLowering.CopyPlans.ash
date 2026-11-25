@@ -22,6 +22,7 @@ export (
     type ArgumentCopyPlan(..),
     value restoreOuterFrame,
     value emitClosure,
+    value emitClosureIn,
     value prepareLambdaBodyState,
     value freshTempRun,
     value listHeadCopyKindOf,
@@ -162,7 +163,7 @@ let restoreOuterFrame outer bodyState =
                 |> withStateOwnFieldPendingParameters(stateOwnFieldPendingParameters(bodyState)))
             |> carryTypeObservation(bodyState)
 
-let emitClosure label environmentTemp captureTotal stackAllocate state =
+let emitClosureIn (runtimeManaged: Bool) label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = closureTemp } ->
             let byteCount = captureTotal * 8
@@ -184,8 +185,10 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
                                 then
                                     emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
                                 else
-                                    emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
+                                    emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(runtimeManaged)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
                             in (closureState, closureTemp)
+
+let emitClosure label environmentTemp captureTotal stackAllocate state = emitClosureIn(false)(label)(environmentTemp)(captureTotal)(stackAllocate)(state)
 
 let prepareLambdaBodyState parameter parameterType captures lambdaId origin (state: CoreLoweringState) =
     (let functionBindings =
@@ -195,12 +198,13 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             location = CoreLocal(1),
             ownedRead = false,
             patternFact = None,
-            closedScheme = false
+            closedScheme = false,
+            letBound = false
         ) :: capturedScope(captures)(0)
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrame = NoCallArgumentFrame))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> withStateEnclosingBindings(state.bindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
