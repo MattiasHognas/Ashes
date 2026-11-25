@@ -1648,13 +1648,33 @@ let reserveArmCellHeadSlot (request: ConsumerRequest) (tailExpression: Expr) (lo
             else lowered
         | _ -> lowered
 
+// Whether `temp` is a runtime retain: in a loop whose parameter's placement is known while the
+// body is lowered, a pattern owner's duplicate is a real retain from the start rather than a marker
+// the finalize promotes.
+let recursive runtimeRetainOfCell (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else runtimeRetainOfCell(temp)(rest)
+        | _instruction :: rest -> runtimeRetainOfCell(temp)(rest)
+
+// Whether a slot already took `temp` (`keepArenaCellTailRetainOwned` stores a retain it owns).
+let recursive tempStoredInSlot (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreLocal(_slot, source) } :: rest -> source == temp || tempStoredInSlot(temp)(rest)
+        | _instruction :: rest -> tempStoredInSlot(temp)(rest)
+
 // Stage 0's `KeepArmCellTailMarkerOwned`: a loop's result cell built in tail position over a tail
 // matched out of a loop parameter (`(key, value) :: tail`) takes the pattern owner's duplicate of
 // the tail, still a marker while the cell is built; the copy that normalizes the result holds a
 // reference of its own to whatever it keeps of that tail, so once promoted the duplicate is a
-// retain the arena cell holds with nothing to release it. It goes to an owned slot registered and
-// zeroed at the cons, which `settleCellMarkerSlots` fills once the marker is promoted, as a
-// constructor's arena cell does with such a marker.
+// retain the arena cell holds with nothing to release it (in a loop whose parameter placement is
+// known while the body is lowered, it is a real retain from the start). It goes to an owned slot
+// registered and zeroed at the cons, which `settleCellMarkerSlots` fills once the loop's retains
+// are final and the duplicate is a runtime retain, as a constructor's arena cell does with a marker.
 let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (lowered: LoweredCoreValue) =
     match (lowered, ownedTail, duplicatedTail) with
         | (LoweredCoreValue { state = state, temp = cellTemp, error = None }, LoweredCoreValue { temp = original }, LoweredCoreValue { temp = marker, semanticType = tailType }) ->
@@ -1666,7 +1686,7 @@ let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr)
                 | ExprVar(_name) -> true
                 | _ -> false) && (match definitionOfTemp(cellTemp)(state.reversedInstructions) with
                 | Some(Alloc(_cell, 16, false)) -> true
-                | _ -> false) && !isRuntimeTemp(cellTemp)(state) && isPromotableCellMarker(marker)(state) && isBorrowedRetainableParameterType(tailType)(state) && !containsUnresolvedLayout(tailType)(state)
+                | _ -> false) && !isRuntimeTemp(cellTemp)(state) && (isPromotableCellMarker(marker)(state) || runtimeRetainOfCell(marker)(state.reversedInstructions)) && !tempStoredInSlot(marker)(state.reversedInstructions) && isBorrowedRetainableParameterType(tailType)(state) && !containsUnresolvedLayout(tailType)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = ownedSlot } ->
