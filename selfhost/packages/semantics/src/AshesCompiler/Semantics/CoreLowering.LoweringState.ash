@@ -59,6 +59,8 @@ export (
     value observeShadow,
     value observeShadowPending,
     value observeShadowUnrecorded,
+    value withSingleLoweringMeasurement,
+    value stateSingleLowering,
     value withPendingGoalObservation,
     value observePendingGoal,
     value observeDeferredOperatorGoal,
@@ -896,6 +898,10 @@ type CoreTypeObservation =
     // decided as the rule over the final type would, and every other site.
     | shadowAgree: List(Int)
     | shadowSites: List(ShadowSite)
+    // A measurement of the re-lowering cost: no body is lowered a second time, whatever its first
+    // lowering left open, so the time of a lowering without rules 4 and 10 can be set against the
+    // ordinary one. The lowered program is not meant to be used.
+    | singleLowering: Bool
 
 type CoreTraitGoalAnswer =
     | ProvenOperandType(SemanticType)
@@ -1464,7 +1470,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = []))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -3382,6 +3388,21 @@ let observeShadow (entry: Int) (current: Str) (final: Maybe(Str)) (state: CoreLo
                 if final == Some(current)
                 then state with programState = (group with typeObservation = Some((observation with shadowAgree = incrementAt(entry - 1)(observation.shadowAgree))))
                 else recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = final, reason = shadowUnrecordedReason(state), calleeFacts = None))(state))
+
+// Whether this lowering measures the cost of re-lowering by lowering every body once.
+let stateSingleLowering (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(CoreTypeObservation { singleLowering = single }) -> single
+            | None -> false)
+
+let withSingleLoweringMeasurement (single: Bool) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with singleLowering = single))))
 
 // A decision of rule 9 whose final answer is known only once every body is lowered.
 let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = "settled after lowering", calleeFacts = facts))(state)

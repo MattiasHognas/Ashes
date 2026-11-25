@@ -1123,6 +1123,13 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
                     result with state = withStateProvenTraitGoals(stateProvenTraitGoals(first))(resumed)
                 else result with state = resumed
 
+// The second lowering a body asks for, or, in a measurement of what re-lowering costs (the
+// driver's single-lowering run), its first lowering kept as it is.
+let keepFirstWhenMeasuring (entered: CoreLoweringState) (first: LoweredCoreValue) (again: Unit -> LoweredCoreValue) =
+    if stateSingleLowering(entered)
+    then first
+    else again(Unit)
+
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
 // open at every self call, so those calls ask for an arena result. Only the requirement-closed
@@ -1177,11 +1184,13 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)(4)(entered)
+                        then
+                            keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)(4)(entered))
                         else
                             if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
                             then
-                                firstState |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)(10)(entered)
+                                keepFirstWhenMeasuring(entered)(first)(given (_) ->
+                                    firstState |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)(10)(entered))
                             else first
 
 // A recursive member nested in a body that is being lowered again takes fresh type variables for
@@ -1198,7 +1207,8 @@ let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState ->
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)(4)(entered)
+                        then
+                            keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)(4)(entered))
                         else first
     else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered)
 

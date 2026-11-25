@@ -436,6 +436,67 @@ Order of work. Each step lands separately and is useful if the later ones are de
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
 
+   **Scope, decided by the user on 2026-11-25.** This pull request (closing after round 8) takes
+   entries 1, 2, 3 and 5 below: `d0a78675` (1, an operator over open operands refused under typed
+   lowering), `80dc9a77` (2, an open goal or dictionary refused at its site; no proof pins),
+   `1f46e580` (3, evidence dispatch from the recorded operator instance) and `4176b44c` (5, a deep
+   copy of an open-typed value made at its recorded type). Entries 4 and 6 to 11 follow the leak
+   pull request: they change the same ownership decisions (arena-result requests, re-lowering,
+   entry normalization) the leak fixes change, so they are taken up after it, in the order planned
+   below: 8 and 9, then 6 and 7 with 10, then 11, and 4 after 11 (4 closes scope types at entry,
+   which is the lambda-parameter read that switched rule 11 on). The shadow-count measurement stays
+   in the driver (`ea730801`, `864d0ad3`; `--shadow-details`, `--ir-hash`) as the tool for that work.
+
+   Shadow counts at `ea730801` for the deferred entries (agree / differ / unrecorded; on the corpus
+   also the number of programs with a differing site). A site is counted in the lowering each pass
+   keeps. The unrecorded column is large for 6, 8 and 11 and is not yet broken down (the reasons
+   came with `864d0ad3`), so the differ counts are a lower bound, not exact:
+
+   | Entry | Corpus, 1,149 programs | Whole compiler |
+   | --- | --- | --- |
+   | 4 | 0 / 8,644 / 0, 801 programs | 0 / 2,287 / 0 |
+   | 6 | 8 / 461 / 2,469, 210 programs | 214 / 1,039 / 31 |
+   | 7 | 0 / 71 / 3, 37 programs | 0 / 1,833 / 50 |
+   | 8 | 27,418 / 546 / 4,865, 203 programs | 44,203 / 146 / 153 |
+   | 9 | 36 / 231 / 0, 228 programs | 109 / 22 / 0 |
+   | 10 | 0 / 493 / 0, 243 programs | 0 / 370 / 0 |
+   | 11 | 31,738 / 6 / 9,370, 5 programs | 26,895 / 8 / 2,542 |
+
+   The entries taken here measured: 1 and 2 zero sites on both; 3 254 / 0 / 83 on the corpus and
+   58 / 0 / 8 on the compiler (no differing site: the recorded instance agrees wherever an
+   operator is recorded; the unrecorded sites are trait-method calls, which the table records no
+   operator for); 5 23 / 0 / 27 on the corpus and 244 / 14 / 0 on the compiler (the compiler's 14,
+   below, are what `4176b44c` changes in the compiler's own IR).
+
+   Re-lowering cost. The typed lowering of the compiler is one pass of 224 s (inference 80.8 s)
+   with 2,657 body re-lowerings, the sum of entries 4 and 10. The driver counts re-lowerings but
+   has no timer inside lowering: reading the clock there puts the `TimeRead` capability on every
+   lowering function's row, which the inference rejects. So the driver gained `--single-lowering`
+   (this batch), which keeps the first lowering of every body that asks to be lowered again; its
+   `first_ms` on the compiler against the ordinary run's is the time re-lowering costs, an upper
+   bound on what a single lowering from final types (entries 4, 10 and 11 together) saves. The
+   number comes from the next driver build; until then the share is unmeasured.
+
+   Entry 5 in the compiler. The 14 differing sites (driver at `ea730801` with `--goal-details
+   --shadow-details` on the CLI project; the site's file is right only with the module regions,
+   which the driver now always passes under `--shadow-details`) are 12 deep copies passed through
+   with their type open where the table records `Str`, and two copies made at a partly open type
+   (`List(a)` in `ProjectSourceEnumeration`, `Json(a, b, c, d)` in `ProjectLockFile`) where the
+   table records the closed one. `4176b44c` changes only the 12. Their spans point at small helpers
+   with an unannotated parameter (`appendModuleSegment` in `ImportResolution` and `ImportHeader`,
+   `appendNamePart` in `ModuleReferenceRewriting`, `copyOptionalText` in `ImportHeader`,
+   `prependLockedDependency` and the lock-file string readers in `ProjectLockFile`,
+   `uniquePaths` and the path filters in `ProjectSourceEnumeration`, the module loader in
+   `ProjectCompilationPlanning`, one in `CoreLowering.Owners`; read from the spans, not from node
+   identities), where the copy is lowered before
+   the expression that settles the parameter (the other branch's `+`) or the helper stays generic
+   and every use passes text. The kept lowering left those copies out, so the compiler handed the
+   caller's string over instead of the independent copy the source asks for; binding at the copy
+   makes the copy the source writes, at the type every use of the helper has, and costs one string
+   copy per call. The two partly open copies keep their current form. The corpus test
+   `deep_copy_in_generic_helper_settled_at_one_type` covers both shapes.
+
+
    Plan, written 2026-11-25 before any code. Each rule below names (i) what it decides, (ii) the
    rule over the final type that replaces it, (iii) whether stage 0 has the same dependence on
    lowering order, and so whether the replacement changes generated code and what parity is at

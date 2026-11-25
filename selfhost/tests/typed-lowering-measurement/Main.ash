@@ -166,6 +166,7 @@ type DriverOptions =
     | goalDetails: Bool
     | shadowDetails: Bool
     | irHash: Bool
+    | singleLowering: Bool
 
 let recursive countShadowSites (rule: Int) (sites: List(ShadowSite)) (differ: Int) (unrecorded: Int) =
     match sites with
@@ -258,7 +259,7 @@ let measureStitched (options: DriverOptions) path source mode stitchMillis (stit
                                         let _ = Ashes.IO.writeErrorLine("first lowering and optional replay start")
                                         in
                                             let regions =
-                                                if options.goalDetails
+                                                if options.goalDetails || options.shadowDetails
                                                 then
                                                     stitched
                                                     |> stitchedRegionOfName
@@ -271,7 +272,11 @@ let measureStitched (options: DriverOptions) path source mode stitchMillis (stit
                                                     else stitched.program
                                                 in
                                                     let measured =
-                                                        measureStitchedLowering(mode == "typed")(regions)(given (_) -> Ashes.IO.writeErrorLine("first lowering complete, replay starting"))(clock)(nodeTypes)(path)(program)
+                                                        if options.singleLowering
+                                                        then
+                                                            measureStitchedLoweringOnce(regions)(given (_) -> Unit)(clock)(nodeTypes)(path)(program)
+                                                        else
+                                                            measureStitchedLowering(mode == "typed")(regions)(given (_) -> Ashes.IO.writeErrorLine("first lowering complete, replay starting"))(clock)(nodeTypes)(path)(program)
                                                     in
                                                         let _ =
                                                             Ashes.IO.writeErrorLine(if measured.replayed
@@ -343,7 +348,7 @@ let runPath options path mode =
     then runFile(options)(path)(mode)
     else run(options)(path)(mode)
 
-let usage = "usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] (the stitched-program lowering the legacy mode measured is gone)"
+let usage = "usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--single-lowering] (the stitched-program lowering the legacy mode measured is gone)"
 
 let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
     match arguments with
@@ -352,11 +357,12 @@ let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
         | "--goal-details" :: rest -> parseOptions(rest)((options with goalDetails = true))
         | "--shadow-details" :: rest -> parseOptions(rest)((options with shadowDetails = true))
         | "--ir-hash" :: rest -> parseOptions(rest)((options with irHash = true))
+        | "--single-lowering" :: rest -> parseOptions(rest)((options with singleLowering = true))
         | _other -> None
 
 match Ashes.IO.args with
     | path :: flags ->
-        match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false)) with
+        match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false, singleLowering = false)) with
             | Some(options) -> runPath(options)(path)("typed")
             | None -> Ashes.IO.panic(usage)
     | [] -> Ashes.IO.panic(usage)
