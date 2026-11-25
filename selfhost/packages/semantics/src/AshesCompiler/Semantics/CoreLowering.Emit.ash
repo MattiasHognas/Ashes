@@ -554,6 +554,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 cellMarkerSlots = [],
                 tupleBinderParameters = [],
                 bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
+                trivialParameterFieldAccessorLabels = Ashes.Collection.Map.empty,
                 generalRcOwnedResultLabels = [],
                 discardedResultSpans = [],
                 tupleResultPartLabels = Ashes.Collection.Map.empty,
@@ -659,6 +660,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 resolvingCallsAgain = false,
                 runtimeOwnerAliases = [],
                 pendingRuntimeArgumentFlags = [],
+                pendingAccessorResultRetains = [],
                 genericDeepCopiedListTemps = [],
                 ownedReferenceJoins = [],
                 retainedArmJoins = []

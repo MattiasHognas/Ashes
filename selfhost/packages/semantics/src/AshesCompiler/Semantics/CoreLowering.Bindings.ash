@@ -959,6 +959,33 @@ let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (fi
                     in value with state = withCompletedTaskFrameDropper(Some(dropper.label))((state with functions = dropper :: state.functions))
     else value
 
+// Stage 0's `IsTrivialParameterFieldAccessorBody`: the function's whole instruction stream is a
+// borrowed field read of its own parameter: the parameter's load, an optional borrow of it, and
+// the field read producing the body's value. Nothing else may appear: a call, an allocation or any
+// other step before the read means the result cannot be taken as that field's own value.
+let isTrivialParameterFieldAccessorBody (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | IrInstruction { instruction = GetAdtField(target, pointer, _index, _tagless) } :: IrInstruction { instruction = LoadLocal(loaded, 1) } :: [] -> target == bodyTemp && pointer == loaded
+        | IrInstruction { instruction = GetAdtField(target, pointer, _index, _tagless) } :: IrInstruction { instruction = Borrow(borrowed, source) } :: IrInstruction { instruction = LoadLocal(loaded, 1) } :: [] -> target == bodyTemp && pointer == borrowed && source == loaded
+        | _ -> false
+
+// Stage 0's `RecordTrivialParameterFieldAccessorLabel`: such a function, of a type with a shallow
+// copy-out (a string, `Bytes`, or a copy-type ADT), is remembered by label, so a call site whose
+// argument is reference-counted retains the result instead of copying it
+// (`retainTrivialAccessorCallResult`). A list field is left out: its empty value is no cell a
+// plain retain may touch.
+let recordTrivialParameterFieldAccessor (label: Str) (bodyTemp: Int) bodyType (instructionsState: CoreLoweringState) (state: CoreLoweringState) =
+    if isTrivialParameterFieldAccessorBody(bodyTemp)(instructionsState.reversedInstructions)
+    then
+        match scopeCopyOutOf(bodyType)(instructionsState) with
+            | Some(ShallowScopeCopyOut(_size)) ->
+                state
+                |> stateTrivialParameterFieldAccessorLabels
+                |> Ashes.Collection.Map.setStr(label)(true)
+                |> (given (labels) -> withStateTrivialParameterFieldAccessorLabels(labels)(state))
+            | _ -> state
+    else state
+
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
@@ -990,6 +1017,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         finishedBody
                                         |> restoreOuterFrame(typedOuter)
                                         |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                        |> recordTrivialParameterFieldAccessor(label)(bodyTemp)(bodyType)(loweredBody)
                                         |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                         |> markCapturedResourcesMoved(survivors)
                                         |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)

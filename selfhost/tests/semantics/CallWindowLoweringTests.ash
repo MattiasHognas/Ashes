@@ -391,12 +391,59 @@ let expectPatternTransfersUseTheirLexicalBinding unit =
                 | _firstTail :: _secondTail :: [] -> Unit
                 | _ -> test.fail("expected one nullable retain per transferred list tail")
 
+// The value of an instruction's `Target=` operand, the second word of its line.
+let callTargetOf (line: Str) =
+    match line
+    |> Ashes.Text.trim
+    |> Ashes.Text.split(" ")
+    |> Ashes.Collection.List.filter(given (word: Str) -> word != "") with
+        | "CallClosure" :: target :: _rest ->
+            match Ashes.Text.split(target)("=") with
+                | "Target" :: value :: [] -> Some(value)
+                | _ -> None
+        | _ -> None
+
+// How many closure calls have their result retained as a reference-counted value by the very next
+// instruction.
+let recursive retainedCallResultCount (lines: List(Str)) =
+    match lines with
+        | first :: second :: rest ->
+            match callTargetOf(first) with
+                | Some(target) ->
+                    (if Ashes.Text.startsWith(Ashes.Text.trim(second))("RcDup") && Ashes.Text.contains(second)("SourceTemp=" + target + " RuntimeManaged=true")
+                    then 1
+                    else 0) + retainedCallResultCount(second :: rest)
+                | None -> retainedCallResultCount(second :: rest)
+        | _ -> 0
+
+// A loop applying a function whose whole body reads a `Str` or `Bytes` field of its parameter to
+// the loop's reference-counted record parameter: the call's result flag is forced to one and the
+// field is retained right after the call instead of being copied out of the arena, as stage 0 does
+// for both accessors.
+let expectFieldAccessorCallRetainsResult unit =
+    (let expected =
+        "field_accessor_call_retains_result"
+        |> stageZeroFixtureLines
+        |> withoutLocations
+        |> retainedCallResultCount
+    in
+        let actual =
+            "field_accessor_call_retains_result"
+            |> loweredFixtureLines
+            |> withoutLocations
+            |> retainedCallResultCount
+        in
+            if expected == 2 && actual == expected
+            then Unit
+            else test.fail("expected " + Ashes.Text.fromInt(expected) + " retained accessor call results as stage 0 has, found " + Ashes.Text.fromInt(actual)))
+
 let runCallWindowLoweringTests unit =
     Unit
     |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
     |> expectUnknownResultPlacementReadsReturnsBit
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
     |> (given (_) -> expectLoopResultPartDuplicateMatchesStageZero(Unit))
+    |> (given (_) -> expectFieldAccessorCallRetainsResult(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
     |> expectFreshArgumentHandedOverUnderAcceptsBit
