@@ -83,6 +83,7 @@ export (
     value checkValueBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
+    value seedRecursiveBinding,
     value inferExpressionFrom,
     value inferExpressionFromLocated,
     value inferTopLevelExpressionLocated,
@@ -286,6 +287,8 @@ type TypeInferenceError =
     // A call chain passing more arguments than its root takes: the root callee when it is a name,
     // the arguments it takes, the arguments passed, and the type the extra argument was applied to.
     | CallChainArityMismatch(Maybe(Str), Int, Int, SemanticType)
+    // The operands of `+` whose types differ, left then right, as stage 0 words them.
+    | AddOperandMismatch(SemanticType, SemanticType)
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     // An error with the span of the innermost located expression it was raised in. Only the
@@ -2805,6 +2808,17 @@ let callArityFailure function argument (calleeType: SemanticType) (failure: Type
 // A failed call as stage 0 words it at the call site: an argument that does not fit its
 // parameter, with the parameter's side first, or a callee that is no function. A failure of the
 // capability row or of a constructor's argument keeps the error it has.
+// A call whose callee's type is still a variable fails the occurs check when the argument mentions
+// that variable (`x(x)`, a recursive binding applied to a list of its own argument); stage 0 words
+// it in the argument's context.
+let calleeOccursFailure function (failure: TypeInferenceResult) =
+    match failure with
+        | TypeInferenceResult { error = Some(InferenceUnificationError(InfiniteType(variable, semanticType))) } ->
+            failure with error = Some(function
+            |> callRootName
+            |> CallArgumentMismatch(InfiniteType(variable)(semanticType))(callChainLength(function) + 1))
+        | _ -> failure
+
 let callSiteFailure function argument functionType argumentType argumentSubstitution (environment: TypeEnvironment) (failure: TypeInferenceResult) =
     if environment.programInferenceRules && callSiteWorded(function)(environment)
     then
@@ -2826,7 +2840,7 @@ let callSiteFailure function argument functionType argumentType argumentSubstitu
                             |> callRootName
                             |> CallArgumentMismatch(mismatch)(callChainLength(function) + 1))
                         | UnificationResult { error = None } -> failure
-            | SemVariable(_id) -> failure
+            | SemVariable(_id) -> calleeOccursFailure(function)(failure)
             | SemNever -> failure
             | calleeType -> callArityFailure(function)(argument)(calleeType)(failure)
     else failure
@@ -2880,6 +2894,17 @@ let mergeUnificationIn (environment: TypeEnvironment) currentSubstitution result
                 supply,
                 InferenceUnificationError(error)
             )
+
+// Operands of `+` of two different types, under the program rules, as stage 0 words them: by the
+// operator and the two operand types, not as a bare mismatch. Any other result is returned as it is.
+let addOperandFailure (traitName: Str) (left: SemanticType) (right: SemanticType) (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceUnificationError(TypeMismatch(_expected, _actual))) } ->
+            if traitName == "Add" && environment.programInferenceRules
+            then
+                result with error = Some(AddOperandMismatch(left)(right))
+            else result
+        | _ -> result
 
 let branchMismatch armIndex (result: TypeInferenceResult) =
     match result with
@@ -3236,6 +3261,69 @@ let seedRecursiveSignature annotation recursiveType (environment: TypeEnvironmen
                     supply
                 )
             else inferenceSuccess(recursiveType)(substitution)(supply)
+
+// The parameter annotations of a binding's curried lambda chain, outermost first; empty when the
+// value is not a lambda.
+let recursive lambdaParameterAnnotations (value: Expr) (reversed: List(Maybe(TypeExpr))) =
+    match value with
+        | ExprAt(_span, inner) -> lambdaParameterAnnotations(inner)(reversed)
+        | ExprNode(_node, inner) -> lambdaParameterAnnotations(inner)(reversed)
+        | ExprLambda(_parameter, body, annotation) -> lambdaParameterAnnotations(body)(annotation :: reversed)
+        | _ -> reverse(reversed)
+
+let recursive anyAnnotated (annotations: List(Maybe(TypeExpr))) =
+    match annotations with
+        | [] -> false
+        | Some(_annotation) :: _rest -> true
+        | None :: rest -> anyAnnotated(rest)
+
+// The type a curried lambda chain has with its written parameter annotations in place: each
+// parameter its annotation or a fresh variable, each arrow a fresh row, the final result fresh.
+let recursive annotatedChainType (annotations: List(Maybe(TypeExpr))) (environment: TypeEnvironment) substitution supply =
+    match annotations with
+        | [] ->
+            match freshTypeVariable(supply) with
+                | (resultType, nextSupply) -> inferenceSuccess(resultType)(substitution)(nextSupply)
+        | annotation :: rest ->
+            match freshTypeVariable(supply) with
+                | (parameterType, parameterSupply) ->
+                    let checked =
+                        match annotation with
+                            | Some(typeExpression) -> checkInferenceAnnotation(typeExpression)(parameterType)(environment)(substitution)(parameterSupply)
+                            | None -> inferenceSuccess(parameterType)(substitution)(parameterSupply)
+                    in
+                        match checked with
+                            | TypeInferenceResult { substitution = checkedSubstitution, supply = checkedSupply, error = None } ->
+                                match annotatedChainType(rest)(environment)(checkedSubstitution)(checkedSupply) with
+                                    | TypeInferenceResult { semanticType = resultType, substitution = resultSubstitution, supply = resultSupply, error = None } ->
+                                        match freshTypeVariable(resultSupply) with
+                                            | (rowType, rowSupply) ->
+                                                inferenceSuccess(SemFunction(applySubstitution(resultSubstitution)(parameterType))(resultType)(Some(rowType)))(resultSubstitution)(rowSupply)
+                                    | failure -> failure
+                            | failure -> failure
+
+// A recursive binding's written signature, or, without one, its parameter annotations (each other
+// parameter a fresh variable), types the uses of the binding inside its own value: a self call is
+// checked against what was written, at the call, as stage 0 checks it. A binding with neither is
+// left to its body.
+let seedRecursiveBinding annotation (value: Expr) recursiveType (environment: TypeEnvironment) substitution supply =
+    match annotation with
+        | Some(_typeExpression) -> seedRecursiveSignature(annotation)(recursiveType)(environment)(substitution)(supply)
+        | None ->
+            let annotations = lambdaParameterAnnotations(value)([])
+            in
+                if environment.programInferenceRules && anyAnnotated(annotations)
+                then
+                    match annotatedChainType(annotations)(environment)(substitution)(supply) with
+                        | TypeInferenceResult { semanticType = chainType, substitution = chainSubstitution, supply = chainSupply, error = None } ->
+                            mergeUnificationIn(environment)(
+                                chainSubstitution,
+                                unifyIn(environment)(applySubstitution(chainSubstitution)(recursiveType))(chainType),
+                                chainSupply,
+                                recursiveType
+                            )
+                        | failure -> failure
+                else inferenceSuccess(recursiveType)(substitution)(supply)
 
 let inferenceEnvironmentSchemes environment =
     match environment with
@@ -5303,7 +5391,9 @@ and inferBinaryTrait traitName returnsBool left right environment substitution s
                             applySubstitution(rightSubstitution)(rightType)
                         )
                     in
-                        match mergeUnificationIn(environment)(rightSubstitution)(unification)(rightSupply)(leftType) with
+                        match leftType
+                        |> mergeUnificationIn(environment)(rightSubstitution)(unification)(rightSupply)
+                        |> addOperandFailure(traitName)(applySubstitution(rightSubstitution)(leftType))(applySubstitution(rightSubstitution)(rightType))(environment) with
                             | TypeInferenceResult { semanticType = unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
                                 let resultType =
                                     if returnsBool
@@ -5638,7 +5728,7 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                     )
         | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
 and inferSeededRecursiveValue annotation recursiveType value recursiveEnvironment environment substitution supply ambientRow =
-    match seedRecursiveSignature(annotation)(recursiveType)(environment)(substitution)(supply) with
+    match seedRecursiveBinding(annotation)(value)(recursiveType)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> inferWith(value)(recursiveEnvironment)(seededSubstitution)(seededSupply)(ambientRow)
         | failure -> failure
 // A shipped trait's method is bound under the trait's own name (`Hash.hash`); a reference that

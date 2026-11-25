@@ -375,8 +375,6 @@ let loweringErrorTextAt (recorded: Maybe(IrSourceLocation)) (error: CoreLowering
             in locationPrefix(location) + codePrefix(code) + message
         | None -> Ashes.Trait.Show.show(error)
 
-let loweringErrorText (error: CoreLoweringError) = loweringErrorTextAt(None)(error)
-
 let loweredStitchedResult (lowering: CoreLoweringResult) =
     match lowering with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, (valuePlacements, joinRepresentations)))
@@ -394,37 +392,9 @@ let builtinInferenceEnvironment unit =
     |> emptyTypeEnvironmentForPackage
     |> withIntrinsicBuiltinSignatures
 
-// A lowering error stage 0 words, as the command line prints it; None when lowering accepts the
-// program or rejects it with an error that keeps its structural form. An error lowering does not
-// locate (an operator's operands of two types) is printed at `fallbackPrefix`, the location the
-// inference rejected the program at, which is where stage 0 reports it.
-let wordedLoweringError (fallbackPrefix: Str) (lowering: CoreLoweringResult) =
-    match lowering with
-        | CoreLoweringResult { error = Some(error) } ->
-            match (loweringErrorDiagnostic(error), loweringErrorLocation(error)) with
-                | (Some(DiagnosticEntry { message = message, code = code }), None) -> Some(fallbackPrefix + codePrefix(code) + message)
-                | (Some(_diagnostic), Some(_location)) ->
-                    error
-                    |> loweringErrorText
-                    |> Some
-                | (None, _) -> None
-        | _ -> None
-
-// The compile error of a program the inference rejects. A bare unification error lacks the call,
-// argument or operator stage 0 words its message after, so lowering is asked for its own
-// diagnostic of the program, which has that site; every other error is the inference's own,
-// worded as stage 0 words it.
-let rejectedProgramText reuseEnabled inputPath source (stitched: StitchedSyntaxProject) builtins (result: ProgramInferenceResult) (error: ProgramInferenceError) =
-    (let inferenceText = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
-    in
-        if inferenceErrorWantsCallSiteWording(stitched.definitionPlacements)(error)
-        then
-            match stitched.program
-            |> lowerValidatedCoreProgramWithRegionsAndReuse(reuseEnabled)(stitchedSourceRegions(stitched)(inputPath)(source))
-            |> wordedLoweringError(inferenceErrorLocationPrefix(inputPath)(source)(result)) with
-                | Some(text) -> text
-                | None -> inferenceText
-        else inferenceText)
+// The compile error of a program the inference rejects, worded from the inference's own error as
+// stage 0 words it.
+let rejectedProgramText (stitched: StitchedSyntaxProject) builtins inputPath source (result: ProgramInferenceResult) (_error: ProgramInferenceError) = inferenceErrorText(stitched)(builtins)(inputPath)(source)(result)
 
 // The standalone type inference is the type checker: it runs on every stitched program before
 // lowering, and a program it rejects is not lowered further. An accepted program is lowered from the
@@ -437,7 +407,7 @@ let lowerChecked reuseEnabled inputPath source (stitched: StitchedSyntaxProject)
             match inferIdentifiedStitchedProjectFrom(builtins)(stitched)(identified) with
                 | ProgramInferenceResult { error = Some(error) } as result ->
                     error
-                    |> rejectedProgramText(reuseEnabled)(inputPath)(source)(stitched)(builtins)(result)
+                    |> rejectedProgramText(stitched)(builtins)(inputPath)(source)(result)
                     |> Error
                 | ProgramInferenceResult { nodeTypes = nodeTypes, error = None } ->
                     nodeTypes
