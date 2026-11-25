@@ -18,6 +18,7 @@ import Ashes.Number.UInt
 import Ashes.Text
 import Ashes.Collection.Map
 import Ashes.Collection.List.reverse as reverseList
+import AshesCompiler.Backend.PartitionDiagnostics.reportPartitionPhase
 export (
     value mergeElfRelocatableObjects,
     value parseElfMergeInput,
@@ -693,46 +694,49 @@ let relaEntryPiece (offset: Int) (info: Int) (addend: Int) =
 
 // Each entry of one input relocation section with its offset rebased by the target section's
 // offset, its symbol index remapped, and a section-symbol reference's addend grown by that section's
-// offset. The relocation type, the low 32 bits of `r_info`, is kept as it is.
-let recursive rewriteRelocationEntries (placed: ElfMergePlacedInput) (target: ElfMergeOutputSection) (entriesOffset: Int) (targetOffset: Int) (index: Int) (count: Int) (acc: List(Bytes)) =
+// offset. The relocation type, the low 32 bits of `r_info`, is kept as it is. The loop takes the
+// object's bytes and the input's two symbol maps as plain parameters, read once per section: a
+// helper returning a field of the input record hands back a copy of it, which per entry would copy
+// the whole object.
+let recursive rewriteRelocationEntries (bytes: Bytes) (symbolIndices: MapTree(Int, Int)) (sectionSymbolAddends: MapTree(Int, Int)) (targetName: Str) (entriesOffset: Int) (targetOffset: Int) (index: Int) (count: Int) (acc: List(Bytes)) =
     if index >= count
     then
         acc
         |> reverseList
         |> Ok
     else
-        let bytes = placedBytes(placed)
+        let entry = entriesOffset + index * mergeRelaSize
         in
-            let entry = entriesOffset + index * mergeRelaSize
+            let info = readMergeU64(bytes)(entry + 8)
             in
-                let info = readMergeU64(bytes)(entry + 8)
+                let symbolIndex = info >> 32
                 in
-                    let symbolIndex = info >> 32
-                    in
-                        match Ashes.Collection.Map.getInt(symbolIndex)(placed.placedSymbolIndices) with
-                            | None -> Error("ELF relocation in '" + target.outputSectionName + "' references symbol " + Ashes.Text.fromInt(symbolIndex) + ", which the merge dropped.")
-                            | Some(mappedSymbol) ->
-                                (let extraAddend =
-                                    match Ashes.Collection.Map.getInt(symbolIndex)(placed.placedSectionSymbolAddends) with
-                                        | Some(offset) -> offset
-                                        | None -> 0
-                                in rewriteRelocationEntries(placed)(target)(entriesOffset)(targetOffset)(index + 1)(count)(relaEntryPiece(readMergeU64(bytes)(entry) + targetOffset)(mappedSymbol << 32 | info & low32BitsMask)(readMergeU64(bytes)(entry + 16) + extraAddend) :: acc))
+                    match Ashes.Collection.Map.getInt(symbolIndex)(symbolIndices) with
+                        | None -> Error("ELF relocation in '" + targetName + "' references symbol " + Ashes.Text.fromInt(symbolIndex) + ", which the merge dropped.")
+                        | Some(mappedSymbol) ->
+                            (let extraAddend =
+                                match Ashes.Collection.Map.getInt(symbolIndex)(sectionSymbolAddends) with
+                                    | Some(offset) -> offset
+                                    | None -> 0
+                            in rewriteRelocationEntries(bytes)(symbolIndices)(sectionSymbolAddends)(targetName)(entriesOffset)(targetOffset)(index + 1)(count)(relaEntryPiece(readMergeU64(bytes)(entry) + targetOffset)(mappedSymbol << 32 | info & low32BitsMask)(readMergeU64(bytes)(entry + 16) + extraAddend) :: acc))
 
 let appendSectionRelocations (placed: ElfMergePlacedInput) (header: ElfMergeSectionHeader) (layout: ElfMergeLayout) =
-    match Ashes.Collection.Map.getInt(header.mergeHeaderInfo)(placed.placedSectionTargets) with
-        | None -> Error("ELF relocation section '" + header.mergeHeaderName + "' targets a section the merge drops.")
-        | Some((targetIndex, targetOffset)) ->
-            let target = lookupOutputSection(layout)(targetIndex)
-            in
-                let count = header.mergeHeaderSize / mergeRelaSize
-                in
-                    match rewriteRelocationEntries(placed)(target)(header.mergeHeaderOffset)(targetOffset)(0)(count)([]) with
-                        | Error(message) -> Error(message)
-                        | Ok([]) -> Ok(layout)
-                        | Ok(entries) ->
-                            (target with outputSectionRelocations = joinMergePieces(entries) :: target.outputSectionRelocations, outputSectionRelocationBytes = target.outputSectionRelocationBytes + count * mergeRelaSize)
-                            |> storeOutputSection(layout)
-                            |> Ok
+    match placed with
+        | ElfMergePlacedInput { placedInput = ElfMergeInput { mergeInputBytes = bytes }, placedSectionTargets = targets, placedSymbolIndices = symbolIndices, placedSectionSymbolAddends = sectionSymbolAddends } ->
+            match Ashes.Collection.Map.getInt(header.mergeHeaderInfo)(targets) with
+                | None -> Error("ELF relocation section '" + header.mergeHeaderName + "' targets a section the merge drops.")
+                | Some((targetIndex, targetOffset)) ->
+                    let target = lookupOutputSection(layout)(targetIndex)
+                    in
+                        let count = header.mergeHeaderSize / mergeRelaSize
+                        in
+                            match rewriteRelocationEntries(bytes)(symbolIndices)(sectionSymbolAddends)(target.outputSectionName)(header.mergeHeaderOffset)(targetOffset)(0)(count)([]) with
+                                | Error(message) -> Error(message)
+                                | Ok([]) -> Ok(layout)
+                                | Ok(entries) ->
+                                    (target with outputSectionRelocations = joinMergePieces(entries) :: target.outputSectionRelocations, outputSectionRelocationBytes = target.outputSectionRelocationBytes + count * mergeRelaSize)
+                                    |> storeOutputSection(layout)
+                                    |> Ok
 
 let recursive collectInputRelocations (placed: ElfMergePlacedInput) (sections: List(ElfMergeSectionHeader)) (layout: ElfMergeLayout) =
     match sections with
@@ -1005,20 +1009,29 @@ let mergeElfRelocatableObjects (objects: List(Bytes)) =
             match parseAndPlaceInputs(objects)(-1)(emptyMergeLayout)([]) with
                 | Error(message) -> Error(message)
                 | Ok((layout, placedInputs)) ->
-                    let sectionCount = layout.layoutSectionCount
+                    let _ = reportPartitionPhase("partition merge parsed and placed")
                     in
-                        match collectAllLocals(placedInputs)(sectionSymbols(1)(sectionCount)([]))(sectionCount)([]) with
-                            | Error(message) -> Error(message)
-                            | Ok((withLocals, locals, localCount)) ->
-                                match collectAllGlobals(withLocals)(localCount)(ElfMergeGlobals(globalSlots = Ashes.Collection.Map.empty, globalSymbols = Ashes.Collection.Map.empty, globalCount = 0))([]) with
-                                    | Error(message) -> Error(message)
-                                    | Ok((withGlobals, globals)) ->
-                                        match collectAllRelocations(withGlobals)(layout) with
+                        let sectionCount = layout.layoutSectionCount
+                        in
+                            match collectAllLocals(placedInputs)(sectionSymbols(1)(sectionCount)([]))(sectionCount)([]) with
+                                | Error(message) -> Error(message)
+                                | Ok((withLocals, locals, localCount)) ->
+                                    let _ = reportPartitionPhase("partition merge locals")
+                                    in
+                                        match collectAllGlobals(withLocals)(localCount)(ElfMergeGlobals(globalSlots = Ashes.Collection.Map.empty, globalSymbols = Ashes.Collection.Map.empty, globalCount = 0))([]) with
                                             | Error(message) -> Error(message)
-                                            | Ok(relocated) ->
-                                                match withGlobals with
-                                                    | [] -> Error("No ELF objects were given to merge.")
-                                                    | firstPlaced :: _ ->
-                                                        globals
-                                                        |> writeMergedObject(firstPlaced.placedInput)(relocated)(locals)(localCount)
-                                                        |> Ok
+                                            | Ok((withGlobals, globals)) ->
+                                                let _ = reportPartitionPhase("partition merge globals")
+                                                in
+                                                    match collectAllRelocations(withGlobals)(layout) with
+                                                        | Error(message) -> Error(message)
+                                                        | Ok(relocated) ->
+                                                            let _ = reportPartitionPhase("partition merge relocations")
+                                                            in
+                                                                match withGlobals with
+                                                                    | [] -> Error("No ELF objects were given to merge.")
+                                                                    | firstPlaced :: _ ->
+                                                                        let written = writeMergedObject(firstPlaced.placedInput)(relocated)(locals)(localCount)(globals)
+                                                                        in
+                                                                            let _ = reportPartitionPhase("partition merge written")
+                                                                            in Ok(written)
