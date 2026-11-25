@@ -1084,7 +1084,8 @@ let shadowDictionaryGoal (key: Str) (root: Int) (state: CoreLoweringState) =
     else state
 
 // The value a call lowers to while any of its dictionaries waits on a type: every open requirement
-// joins the pass's record and the call stands as a constant of its own result type.
+// joins the pass's record and the call stands as a constant of its own result type. Lowered from the
+// type table the first open requirement is refused (deferTraitGoalUnshadowed).
 let recursive deferConstrainedGoals (root: Int) (goals: List((Str, SemanticType, List((Str, SemanticType))))) (resultType: SemanticType) (state: CoreLoweringState) =
     match goals with
         | [] ->
@@ -1094,11 +1095,17 @@ let recursive deferConstrainedGoals (root: Int) (goals: List((Str, SemanticType,
             |> shadowDictionaryGoal(key)(root)
             |> deferTraitGoalUnshadowed(candidates)(key)(goalType)(resultType)
         | (key, goalType, candidates) :: rest ->
-            state
-            |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
-            |> observePendingGoal(false)(key)(goalType)
-            |> shadowDictionaryGoal(key)(root)
-            |> deferConstrainedGoals(root)(rest)(resultType)
+            match stateNodeTypes(state) with
+                | Some(_table) ->
+                    state
+                    |> shadowDictionaryGoal(key)(root)
+                    |> deferTraitGoalUnshadowed(candidates)(key)(goalType)(resultType)
+                | None ->
+                    state
+                    |> withStatePendingTraitGoals((key, goalType, candidates) :: statePendingTraitGoals(state))
+                    |> observePendingGoal(false)(key)(goalType)
+                    |> shadowDictionaryGoal(key)(root)
+                    |> deferConstrainedGoals(root)(rest)(resultType)
 
 // A requirement whose type argument is still open takes the type the standalone inference recorded
 // for the same trait's dictionary at the reference, the first unused one of that trait in the
