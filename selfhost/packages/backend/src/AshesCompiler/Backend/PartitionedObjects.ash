@@ -234,47 +234,49 @@ let partitionErrorPath (directory: Str) (index: Int) = directory + "/partition" 
 // steps are the in-process path's in the same order. It reads only the partition's LLVM handles and
 // builds a few strings: it never walks or releases the parent's Ashes heap, so the child keeps
 // sharing those pages copy-on-write and only its own module's pages become private.
-let runPartitionChild (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
+let runPartitionChild (parentId: Int) (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
     match job with
         | PartitionJob { partitionJobIndex = index, partitionJobContext = context, partitionJobModule = module_, partitionJobMachine = machine } ->
-            let _ = reportPartitionPhase(partitionText(index) + " child started")
+            let _ = endWithParent(parentId)
             in
-                let outcome =
-                    match verifyModule(module_)(verifierReturnStatusAction) with
-                        | (true, report) ->
-                            report
-                            |> verificationText(index)
-                            |> Error
-                        | (false, _) ->
-                            let _ = reportPartitionPhase(partitionText(index) + " child verified")
-                            in
-                                let _ = runPartitionPasses(machine)(module_)
-                                in
-                                    let _ = reportPartitionPhase(partitionText(index) + " child optimized")
-                                    in
-                                        let paths =
-                                            if index == 0
-                                            then payloadPaths
-                                            else []
-                                        in
-                                            match linkPartitionPayloads(context)(module_)(triple)(paths) with
-                                                | Error(message) -> Error(partitionText(index) + ": " + message)
-                                                | Ok(_) ->
-                                                    let _ = reportPartitionPhase(partitionText(index) + " child payloads linked")
-                                                    in
-                                                        match targetMachineEmitToFile(machine)(module_)(partitionObjectPath(directory)(index))(objectFileType) with
-                                                            | (true, _) -> Error(partitionText(index) + ": LLVM could not emit the object file.")
-                                                            | (false, _) -> Ok(Unit)
+                let _ = reportPartitionPhase(partitionText(index) + " child started")
                 in
-                    let _ =
-                        match outcome with
-                            | Ok(_) ->
-                                Ashes.IO.File.writeText(partitionDonePath(directory)(index))("")
-                            | Error(message) ->
-                                Ashes.IO.File.writeText(partitionErrorPath(directory)(index))(message)
+                    let outcome =
+                        match verifyModule(module_)(verifierReturnStatusAction) with
+                            | (true, report) ->
+                                report
+                                |> verificationText(index)
+                                |> Error
+                            | (false, _) ->
+                                let _ = reportPartitionPhase(partitionText(index) + " child verified")
+                                in
+                                    let _ = runPartitionPasses(machine)(module_)
+                                    in
+                                        let _ = reportPartitionPhase(partitionText(index) + " child optimized")
+                                        in
+                                            let paths =
+                                                if index == 0
+                                                then payloadPaths
+                                                else []
+                                            in
+                                                match linkPartitionPayloads(context)(module_)(triple)(paths) with
+                                                    | Error(message) -> Error(partitionText(index) + ": " + message)
+                                                    | Ok(_) ->
+                                                        let _ = reportPartitionPhase(partitionText(index) + " child payloads linked")
+                                                        in
+                                                            match targetMachineEmitToFile(machine)(module_)(partitionObjectPath(directory)(index))(objectFileType) with
+                                                                | (true, _) -> Error(partitionText(index) + ": LLVM could not emit the object file.")
+                                                                | (false, _) -> Ok(Unit)
                     in
-                        let _ = reportPartitionPhase(partitionText(index) + " child emitted")
-                        in exitChildProcess(0)
+                        let _ =
+                            match outcome with
+                                | Ok(_) ->
+                                    Ashes.IO.File.writeText(partitionDonePath(directory)(index))("")
+                                | Error(message) ->
+                                    Ashes.IO.File.writeText(partitionErrorPath(directory)(index))(message)
+                        in
+                            let _ = reportPartitionPhase(partitionText(index) + " child emitted")
+                            in exitChildProcess(0)
 
 // A started partition child: its process id and the partition, whose handles the parent disposes
 // once the child is reaped.
@@ -288,17 +290,19 @@ let partitionIndexOf (job: PartitionJob) =
 
 // Forks the child for `job`: the child runs `runPartitionChild` and never returns.
 let startPartitionChild (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
-    (let processId = forkProcess(Unit)
+    (let parentId = currentProcessId(Unit)
     in
-        if processId == 0
-        then
-            let _ = runPartitionChild(directory)(triple)(payloadPaths)(job)
-            in Error("a partition child process returned")
-        else
-            if processId < 0
+        let processId = forkProcess(Unit)
+        in
+            if processId == 0
             then
-                Error(partitionText(partitionIndexOf(job)) + ": the child process could not be started.")
-            else Ok(PartitionChild(childProcessId = processId, childJob = job)))
+                let _ = runPartitionChild(parentId)(directory)(triple)(payloadPaths)(job)
+                in Error("a partition child process returned")
+            else
+                if processId < 0
+                then
+                    Error(partitionText(partitionIndexOf(job)) + ": the child process could not be started.")
+                else Ok(PartitionChild(childProcessId = processId, childJob = job)))
 
 let recursive runningCount (running: List(PartitionChild)) (count: Int) =
     match running with
@@ -408,28 +412,37 @@ let recursive collectChildObjects (directory: Str) (jobs: List(PartitionJob)) (a
 // process, at most `processes` at once, partition 0 with the payloads linked in. Each child works
 // on the same module the in-process path would, with the same target machine, pass pipeline and
 // payload step, so the objects are the in-process path's byte for byte and are merged in the same
-// order. Every child is reaped and the temporary directory under `tempRoot` removed before this
-// returns, whatever the outcome.
+// order. The children write under `<tempRoot>/ashes-partitions-<pid>`; where that directory cannot
+// be created (a missing or read-only root), the partitions are built in this process instead,
+// which gives the same objects. Every child is reaped and the directory removed before this
+// returns, whatever the outcome; a watchdog process removes it when the compile is interrupted or
+// terminated first, and the children end with the compile (`endWithParent`).
 let emitPartitionModulesInProcesses (processes: Int) (tempRoot: Str) (triple: Str) resolveMachine (payloadPaths: List(Str)) (partitions: List(PartitionModule)) =
-    match preparePartitionJobs(triple)(resolveMachine)(partitions)([]) with
-        | Error(message) -> Error(message)
-        | Ok(jobs) ->
-            let directory = partitionWorkDirectory(tempRoot)
-            in
-                match Ashes.IO.Directory.createAll(directory) with
-                    | Error(message) -> Error("Could not create the partition directory " + directory + ": " + message)
-                    | Ok(_) ->
-                        let objects =
-                            match drivePartitionChildren(directory)(processes)(triple)(payloadPaths)(jobs)([])(None) with
-                                | Some(message) -> Error(message)
-                                | None ->
-                                    let _ = reportPartitionPhase("partition children done")
-                                    in collectChildObjects(directory)(jobs)([])
+    (let directory = partitionWorkDirectory(tempRoot)
+    in
+        match Ashes.IO.Directory.createAll(directory) with
+            | Error(message) ->
+                let _ = reportPartitionPhase("partition directory " + directory + " unavailable, building in process: " + message)
+                in emitPartitionModules(triple)(resolveMachine)(payloadPaths)(partitions)
+            | Ok(_) ->
+                let watchdog = startDirectoryWatchdog(directory)
+                in
+                    let objects =
+                        match preparePartitionJobs(triple)(resolveMachine)(partitions)([]) with
+                            | Error(message) -> Error(message)
+                            | Ok(jobs) ->
+                                match drivePartitionChildren(directory)(processes)(triple)(payloadPaths)(jobs)([])(None) with
+                                    | Some(message) -> Error(message)
+                                    | None ->
+                                        let _ = reportPartitionPhase("partition children done")
+                                        in collectChildObjects(directory)(jobs)([])
+                    in
+                        let _ = reportPartitionPhase("partition objects read")
                         in
-                            let _ = reportPartitionPhase("partition objects read")
+                            let _ = Ashes.IO.Directory.removeTree(directory)
                             in
-                                let _ = Ashes.IO.Directory.removeTree(directory)
-                                in objects
+                                let _ = stopDirectoryWatchdog(watchdog)
+                                in objects)
 
 let mergePartitionObjects (objects: Result(Str, List(Bytes))) =
     match objects with

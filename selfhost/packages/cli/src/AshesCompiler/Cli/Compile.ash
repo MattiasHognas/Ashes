@@ -53,6 +53,8 @@ import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Backend.LinkNames
 import AshesCompiler.Backend.ProgramPartitions.requestedObjectPartitions
+import AshesCompiler.Backend.ProgramPartitions.partitionProcessesFor
+import AshesCompiler.Backend.PartitionProcesses.onlineProcessorCount
 import AshesCompiler.Backend.PartitionedObjects
 import AshesCompiler.Frontend.ImportHeader.parseImportHeader
 import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
@@ -683,8 +685,8 @@ let recursive resolveRuntimePayloadPaths (fileNames: List(Str)) (acc: List(Str))
 // A fresh host target machine for each partition of a partitioned build.
 let partitionTargetMachine unit = resolveHostTargetMachine(linuxX64Triple)
 
-// The partition count setting, stage 0's `ASHES_LLVM_JOBS` (`requestedObjectPartitions`); unset,
-// the program is built as one module.
+// The partition count setting, stage 0's `ASHES_LLVM_JOBS` (`requestedObjectPartitions`); unset
+// or empty, the plan is sized from the program, and `1` builds it as one module.
 let objectPartitionsSetting unit =
     match Ashes.IO.Environment.get("ASHES_LLVM_JOBS") with
         | Ok(Some(value)) when value != "" -> Some(value)
@@ -723,8 +725,10 @@ let preparedPartitionedEmission (partitions: Int) optimized =
                                     | None -> None
                             in Ok(PartitionedBuild((modules, payloadPaths, externalLibraries(optimized), linkNames))))
 
-// The program prepared as one module, or with `ASHES_LLVM_JOBS` asking for more than one
-// partition, as partition modules.
+// The program prepared as one module when its plan is one partition (`ASHES_LLVM_JOBS=1`, or a
+// program below two partitions' worth of functions), otherwise as partition modules. The plan
+// depends on the program and the setting alone; the machine decides only how many partitions are
+// built at once.
 let preparedBuild optimized =
     (let partitions =
         requestedObjectPartitions(objectPartitionsSetting(Unit))(optimized)
@@ -800,25 +804,17 @@ let emitAndLinkPrepared outputPath prepared =
                                     let _ = reportDiagnosticPhase("linked")
                                     in writeExecutable(outputPath)(executableBytes)
 
-// How many partitions are optimized and emitted at once, in child processes, with partitions
-// requested: `ASHES_LLVM_PROCESSES`, else 6, at most the partition count. 1 builds them one after
-// another in this process. A child shares the parent's memory copy-on-write and makes only its own
-// module and LLVM working set private, about 0.5-1 GiB for a sixteenth of the compiler, so 6 keeps
-// the self-compile near 23 GiB at worst. The image does not depend on the count.
-let defaultPartitionProcesses = 6
-
+// How many partitions are optimized and emitted at once, in child processes:
+// `ASHES_LLVM_PROCESSES` when set, else the backend's default capped by the online processors, at
+// most the partition count (`partitionProcessesFor`). 1 builds them one after another in this
+// process. The image does not depend on the count.
 let partitionProcessesRequested (partitions: Int) =
-    (let requested =
+    (let setting =
         match Ashes.IO.Environment.get("ASHES_LLVM_PROCESSES") with
-            | Ok(Some(value)) when value != "" ->
-                match Ashes.Text.parseInt(value) with
-                    | Ok(count) when count >= 1 -> count
-                    | _ -> 1
-            | _ -> defaultPartitionProcesses
+            | Ok(Some(value)) when value != "" -> Some(value)
+            | _ -> None
     in
-        if requested > partitions
-        then partitions
-        else requested)
+        partitionProcessesFor(setting)(onlineProcessorCount(Unit))(partitions))
 
 // The directory the partition child processes write their objects under.
 let partitionTemporaryRoot unit =

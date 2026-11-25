@@ -251,12 +251,13 @@ unaffected.
 The compiler runs with the server garbage collector, which keeps collection pauses off the
 single-threaded lowering and optimizer phases at the cost of a somewhat larger heap.
 
-A large Linux program (1024 lifted functions or more) is optimized and turned into object code
+A large program (2048 lifted functions or more) is optimized and turned into object code
 in parallel partitions that are merged into one relocatable object before linking; see
 [Parallel code generation](../internals/architecture.md#parallel-code-generation). Set
 `ASHES_LLVM_JOBS` to the number of partitions to use, or to `1` to keep a single module. The
 partition count is derived from the program's size by default, so the same source produces the
-same executable on every machine.
+same executable on every machine. A `--debug` build always uses a single module; `-O0` through
+`-O3` partition alike.
 
 ---
 
