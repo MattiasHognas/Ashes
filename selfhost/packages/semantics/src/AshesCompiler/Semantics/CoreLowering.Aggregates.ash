@@ -250,8 +250,10 @@ let recursive collectsCallArgumentRetain (temp: Int) (retains: List((Int, Int, S
 // reference-counted heap outright and keeps that retain in an owned slot, released once the
 // function's result holds references of its own. Here the retain is the parameter's marker, which
 // the loop's placement turns into a real retain only for a parameter placed on the
-// reference-counted heap; the slot's release tests the representation, so a marker left an
-// identity releases nothing.
+// reference-counted heap. Inside a loop the slot holds zero until `settleCellMarkerSlots` sees the
+// promotion: a marker left an identity took no reference, and a list read out of a parameter the
+// loop did not place (`fn.calls` of a record handed on unchanged) may still be reference-counted,
+// so releasing it by its representation released a reference the cell never took.
 let keepArenaCellParameterRetainOwned (arenaCell: Bool) (source: Int) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
@@ -259,8 +261,12 @@ let keepArenaCellParameterRetainOwned (arenaCell: Bool) (source: Int) (lowered: 
                 | SemList(_element) -> true
                 | _ -> false)
             then
-                match freshLocal(state) with
-                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                match (freshLocal(state), stateTcoLoopFrame(state)) with
+                    | (FreshLocal { state = allocated, local = ownedSlot }, Some(_frame)) ->
+                        match freshTemp(allocated) with
+                            | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                                lowered with state = withTemp |> emit(LoadConstInt(zeroTemp)(0)) |> emit(StoreLocal(ownedSlot)(zeroTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(withTemp)(semanticType)) |> (given (registered: CoreLoweringState) -> withStateCellMarkerSlots((ownedSlot, temp, zeroTemp) :: stateCellMarkerSlots(registered))(registered))
+                    | (FreshLocal { state = allocated, local = ownedSlot }, None) ->
                         lowered with state = allocated |> emit(StoreLocal(ownedSlot)(temp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(semanticType))
             else lowered
         | _ -> lowered
