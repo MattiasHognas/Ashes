@@ -285,7 +285,7 @@ Order of work. Each step lands separately and is useful if the later ones are de
    type already binds its parameter first. Replacing those entry decisions with rules over the
    final type is step 8 work.
 
-   **Switched, 2026-11-25; removal blocked on the two items below.** Lowering from the table was
+   **Switched, 2026-11-25.** Lowering from the table was
    made the default of `compile` and `run`
    (the only commands of the stage-1 CLI that lower) at `329ae3d2`, with `ASHES_TYPED_LOWERING=0`
    kept for one round as the comparison. That round (`0e72ed89`): behaviour with the default 1,065
@@ -312,29 +312,59 @@ Order of work. Each step lands separately and is useful if the later ones are de
 
    Then removed: the stitched-program lowering of the compile command, with `ASHES_TYPED_LOWERING`
    and `ASHES_SKIP_INFERENCE_CHECK` (`e0df21b6`); the measurement driver's legacy mode (`ae13c17e`);
-   and the replay under typed lowering, where a goal left is now refused at its site
-   (`70e0151b`). What stays, and why: the raw (un-numbered) lowering with its discovery and replay
-   passes, pending and proven goals, deferred operators and the per-binding plan is still the path
-   of the selfhost test suites (about forty files lower raw programs through `lowerCoreProgram*`
-   and `lowerCoreExpression*`) and of the diagnostic wording of a program the inference rejects
-   with a bare unification error (`rejectedProgramText`). That machinery, and the raw operator
-   schemes (`rawOperatorSchemesWithNestedLets`, which also carry the deferred-evaluation marks raw
-   tests read), go when those tests lower from the table and the wording comes from the inference;
-   the lowered-IR parity fixtures against stage 0 go with step 9.
+   the replay under typed lowering, where a goal left is now refused at its site (`70e0151b`); and
+   the compile command's last raw lowering, the wording of a program the inference rejects
+   (`a0ecd410`), which now comes from the inference alone (below).
+
+   **Exit condition, decided 2026-11-25: the shipped compiler reaches only the typed lowering, with
+   no switch and no fallback.** The raw (un-numbered) lowering stays as a test-only path until
+   step 9: the 258 lowered-IR parity fixtures against stage 0 (`selfhost/parity/semantics/lowered-ir`,
+   driven by `LoweredIrFixtures`, `ir-program-parity`, `semantics-diagnostic-parity` and the backend
+   raw fixtures) need it, because typed IR differs from stage 0's by design, and the program-level
+   and expression-level selfhost tests are not migrated now. Its discovery and replay passes,
+   pending and proven goals, deferred operators and per-binding plan are deleted with it in step 9.
    Under typed lowering the per-binding plan and the speculative operator form still run: the
    former decides which bindings are constrained bodies (with the table rules above), the latter is
-   reached only where the table has no answer, which the corpus and the compiler no longer hit.
-   Replacing the plan by the recorded schemes, and the integer form by an error, are the next
-   deletions once the tests are migrated.
+   reached only where the table has no answer, which the corpus and the compiler no longer hit;
+   both are step 8.
 
-   The removal of discovery, replay, pending and proven goals, deferred operators and the
-   per-binding plan is blocked on: (1) the selfhost tests that lower raw programs moving to the
-   typed entry points, and (2) the rejected-program wording coming from the inference. Among the
-   raw users are the lowered-IR parity fixtures against stage 0 (258 under
-   `selfhost/parity/semantics/lowered-ir`, driven by `LoweredIrFixtures`, `ir-program-parity`,
-   `semantics-diagnostic-parity` and the backend raw fixtures); typed IR differs from stage 0's by
-   design, so they cannot move to the typed path and go with step 9, which makes step 9 a
-   precondition of the removal as well.
+   The test-only status is structural for the entry points. The raw entry points live in their own
+   module, `CoreLowering.Raw`, and the measured lowering in `CoreLowering.Measurement`; `CoreLowering`
+   exports only the numbered entry points (`lowerCoreNumberedProgram*`,
+   `lowerNumberedProgramWithRegionsAndReuse`, `lowerNumberedProgramWithSourceAndReuse`) and
+   `withSourceRegions`. The compile command imports `CoreLowering` and neither of the other two, and
+   the semantics package root (`Package.ash`) imports only `CoreLowering`, so the command line's
+   module closure contains no raw entry point: calling one needs an import of `CoreLowering.Raw`,
+   which no module under `selfhost/packages` has (only test projects import it). What
+   stays by convention: the machinery the raw entry points reach is shared with the typed path in
+   the same modules (`lowerProgramPasses` takes the discovery and replay branch when the state has
+   no node table, and the deferred-operator, goal and plan code sits beside the typed readers in
+   `CoreLowering.Program`, `.Operators`, `.Expressions` and `.RecordedTypes`), so it is linked into
+   the compiler but unreachable from its entry points; splitting it out is the step 9 deletion.
+
+   Rejected-program wording (`a0ecd410`). The inference now carries the site stage 0 words a bare
+   unification error after: `+` over two operand types raises `AddOperandMismatch`, worded as stage
+   0's operator diagnostic; a recursive binding's parameter annotations seed its type before the
+   body (`seedRecursiveBinding`), so a self call is checked at the call; an occurs check at a call
+   whose callee is still a variable is a call argument mismatch; and a call diagnostic names a
+   renamed callee by its source name. `inferenceErrorWantsCallSiteWording` and the lowering
+   fallback are gone. Checked with a stage-0-built driver that infers each of the 131
+   `expect-compile-error` tests and prints the inference's text: 106 contain their expected
+   message, 13 are not rejected by the inference (lowering's own checks), 11 fail at stitching, and
+   one differs only because the driver does not substitute `__TCP_PORT__`. Against the command line
+   before the change (which asked lowering for six of them), the printed line changes for one test:
+   `polymorphism_rec_poly_rejected` is reported at the binding (`3:5 Occurs check failed (recursive
+   type).`) where stage 0 reports the self call (`3:18 ... Context: in argument #1 of call to
+   'f'.`), because an unannotated recursive lambda's parameter is still its own variable when the
+   body's self call is checked; seeding it would change the inference of every recursive lambda,
+   so it is left with step 8's measurement. The other five (`float_mixed_operands_is_error`,
+   `recursive_self_call_annotated_parameter_mismatch`, `polymorphism_occurs_check_rejects_self_apply`,
+   `annotated_binding_mismatch_names_written_type_first`,
+   `recursive_awaiting_helper_rejects_wrong_declared_result`) print what stage 0 prints, and no
+   message moved for the rest. Of the diagnostics parity backlog none changes: its open rows are
+   stage 0's follow-on diagnostics (`float_mixed_operands_is_error` among them: stage 0 prints a
+   bare mismatch line first and then the operator line, which stage 1 printed before and prints
+   now), stage-0 defects and missing spans, none of which went through the lowering fallback.
 
    Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
    a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
@@ -405,9 +435,147 @@ Order of work. Each step lands separately and is useful if the later ones are de
      (`checkDerivedTree`).
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
+
+   Plan, written 2026-11-25 before any code. Each rule below names (i) what it decides, (ii) the
+   rule over the final type that replaces it, (iii) whether stage 0 has the same dependence on
+   lowering order, and so whether the replacement changes generated code and what parity is at
+   risk, and (iv) the measurement that shows the replacement safe. The rules run under typed
+   lowering only; the raw path keeps them until step 9 deletes it.
+
+   The measurement for every rule is a shadow count before the switch: at the rule's site the
+   measurement driver (`CoreLowering.Measurement`, `--goal-details`) computes the final-type
+   decision from the table beside the current one and reports each site where they differ, with
+   its node. Swept over the corpus (`sweep.sh`) and run on the whole compiler, zero differing
+   sites means the replacement is IR-identical; otherwise the differing programs are the ones
+   whose IR changes, and each is checked with a per-function diff of the lowered IR
+   (`--emit-ir lowered`, flag off and on), the behaviour check with `ASHES_RC_LEAKCHECK=1`, and a
+   lifetime regression in `tests/` that pins the new placement. Rules that cannot change generated
+   code go first; the rules shared with stage 0 last, each in its own commit and probe.
+
+   Unreachable under typed lowering (measured: zero on the 1,148-program corpus and the compiler,
+   2026-11-24), so replacing them by a refusal is IR-identical by construction:
+   1. `emitDeferredCoreAdd` and `emitDeferredCoreEquality`. (i) `+`, `==` and `!=` over two open
+      operands emit the integer form, recorded for rewriting once the type is final. (ii) The
+      operand type is the recorded one, closed by the instantiation and the settled variables;
+      still open, the site is an error ("no recorded operand type"), never the integer form.
+      (iii) Stage 0 has no speculative form: it unifies the operands and resolves the instance at
+      the site (`RecordMappedBinaryTrait`), so no stage-0 behaviour is at risk. (iv) The
+      `first_deferred_operators` counter is already zero; the shadow count is the same counter.
+   2. `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal` and
+      `pinProvenEqualityGoal`. (i) A trait goal or dictionary whose operand is open is deferred to
+      the replay, which pins what the first pass proved. (ii) The dictionary is the recorded one;
+      a goal left is refused at its site, which `refuseTypedGoals` (`70e0151b`) already does after
+      the pass, moved to the site. (iii) Stage 0 has no replay; it resolves or rejects at the site.
+      (iv) `pending_traits` and `equality_goals` are zero; the refusal is never reached.
+
+   Expected IR-identical (to be shown by the shadow count):
+   3. `activeEvidenceCoversOperator` and `traitPlanLacksActiveEvidence`. (i) An open operand
+      dispatches through a generic body's own evidence only when that body carries it. (ii) The
+      table records how each operator's instance is reached (primitive, declared implementation,
+      dictionary), so the dispatch reads that record. (iii) Stage 0 decides the same way at the site
+      from the evidence in scope (`TryLowerActiveTraitMethod`), on types its own inference has
+      settled by then; differences would be sites where stage 0's open type and the recorded
+      final type disagree, which the operand join (`activeArithmeticJoin`) already closed for the
+      measured cases. (iv) Shadow count of sites where the recorded instance kind differs from the
+      dispatch taken; expected zero.
+   4. `bodyEncounteredRequirementClosedScope`. (i) A body applying a mapped operator whose scope
+      types it closed is lowered again against the closed scope. (ii) The scope types are the
+      recorded ones from the start, so the first lowering is the closed one and nothing is lowered
+      again. (iii) Stage 1 only (stage 0 lowers once); the second lowering is meant to produce what
+      a lowering with closed types produces, so the output should not change. (iv) Re-lowerings
+      counted by cause in the driver; shadow comparison of the first lowering under recorded scope
+      types against the re-lowered body, expected identical.
+   5. `lowerInternalDeepCopy`. (i) A copy of a value whose type is still a variable passes through
+      and asks for the body to be lowered again. (ii) The copy reads the value's recorded type and
+      emits the copy for it directly. (iii) Stage 0 emits its deep copy on the type it has at the
+      site (`InternalDeepCopy`); stage 1's re-lowering exists to reach the same final copy, so the
+      output should not change. (iv) As 4.
+
+   Change generated code by design (stage 1's version of stage 0's own order dependence, or
+   following from it); each needs the per-program check and a lifetime regression:
+   6. `selfResultDeferred`. (i) A self call whose callee is listed as deferring its result asks
+      for an arena result and records no unresolved call result. (ii) The self call's result
+      layout is the recorded result type of the binding; it asks for an arena result only when
+      that final layout does (the rule of 8). (iii) Stage 0 sees the self call's result open because
+      a recursive binding is monomorphic until generalized, and takes an arena result; replacing it
+      changes IR where the final layout needs no arena (fewer copies, results handed over). Parity
+      at risk: lowered-IR fixtures with recursive bindings (retired with step 9) and ownership.
+      (iv) Shadow count of self calls whose arena request differs; per-program check.
+   7. `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer` and
+      `keepFirstSelfResultDeferral` (four rules, one change). (i) A call to a group member whose
+      arrow was open when the body began asks for an arena result, also when lowered again; one
+      the group's first lowering settled uses that result and keeps the request; a deferred self
+      call whose consumer names a resolved type asks for none; a body lowered again keeps the self
+      calls its first lowering deferred. (ii) One rule for all four: the call's result layout is the
+      member's recorded result type, and the arena request follows that layout. (iii) As 6, for the
+      group's sibling calls; stage 0 has the same dependence through its group lowering order.
+      Taking these results from the table changed ownership placement in 21 swept programs
+      (measured in step 7), so this is the largest IR change of the step. (iv) Shadow count per
+      rule, then the 21 programs and whatever else the count names through the per-program check.
+   8. `requestsArenaResult` and `containsUnresolvedLayout`. (i) A call whose result layout is still
+      open asks for an arena result and joins the body's unresolved call results. (ii) The layout
+      is the call's recorded result type closed by its instantiation; a result still open after
+      that (a genuinely generic result) keeps the arena request. (iii) Stage 0 has the same rule
+      (`RequestsArenaResult`, `ContainsUnresolvedLayoutType`) on its live types, so the
+      replacement changes IR where stage 0's type was open at the call and the final one is
+      closed. (iv) Shadow count of calls whose request differs; per-program check.
+   9. `calleeResultUnsettled` (in `requestsArenaResultFromUnknownCallee`). (i) A callee whose body
+      has not been lowered yet is asked for an arena result. (ii) The callee's result fact comes
+      from a summary computed over the declarations and their recorded types before any body is
+      lowered, not from whether its body was lowered first; whether the existing result-reach
+      summaries can carry it, or a new pass is needed, is the first thing to settle. (iii) Stage 0
+      has the same rule (`CalleeResultUnsettled`), keyed on body order, not types; replacing it
+      changes IR for forward and recursive calls whose callee normalizes its result. (iv) Shadow
+      count of calls whose request differs; per-program check; leak check on every changed
+      program, since this rule guards an unreleased hand-over.
+   10. `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls` and
+       `anyCallResultResolved`. (i) A body whose unresolved call results resolved is lowered again.
+       (ii) With 6 to 9 reading final types, no call result is unresolved at the end of a body, and
+       the body is lowered once. (iii) Stage 1 only; the IR change is the sum of 6 to 9's, nothing
+       of its own. (iv) The re-lowering counter reaches zero; done with 7.
+   11. `normalizesAlwaysReturnedParameter` (entry argument normalization) and the arena result
+       boundary of a function whose parameter reaches its result. (i) Taken only when the
+       parameter's type is known at entry. (ii) Taken when the parameter's recorded type needs it,
+       with the release of the normalized copy on every exit. (iii) Stage 0 has the same rule
+       (`EmitRuntimeManagedTcoArgumentNormalization`) on the type at entry; binding parameters
+       from the table before the body switched it on in eleven programs that then leaked (step 7),
+       so the release has to come first. (iv) The eleven programs leak-free with the rule on, then
+       the shadow count over the corpus; per-program check.
+
+   Order: 1 and 2 (delete), 3, 4, 5 (shadow count, then switch), then 8 and 9, 6 and 7 with 10, and
+   11 last. The per-binding plan (`constrainedBindingPlan`) is not one of these rules; replacing it
+   by the recorded schemes follows 3, because the plan decides which bodies carry the evidence 3
+   reads.
 9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
    compiler; stage 1 stops mirroring its internals.
 
+   Raw-only code, deleted with the fixtures (the test-only path kept by the 2026-11-25 decision):
+   - `CoreLowering.Raw` (all of it): `validateRawBindingEvidence`, `lowerValidatedCoreProgram`,
+     `lowerCoreProgram`, `lowerValidatedCoreProgramWithSourceAndContext`,
+     `lowerCoreProgramWithSourceAndContext`, `lowerProgramWithRegionsAndSchemes`,
+     `lowerProgramWithRegionsAndReuse`, `lowerProgramWithSourceAndReuse`,
+     `lowerValidatedCoreProgramWithSchemesAndReuse`, `lowerValidatedCoreProgramWithRegionsAndReuse`,
+     `lowerCoreProgramWithRegionsAndReuse`, `lowerCoreProgramWithSourceAndReuse`,
+     `lowerCoreProgramWithSource`, `lowerValidatedCoreProgramWithEnvironment`,
+     `lowerCoreProgramWithEnvironment`, `lowerCoreExpression`, `lowerCoreExpressionWithLayouts`,
+     `lowerCoreExpressionWithContext`, `lowerCoreExpressionWithFullContext`,
+     `lowerCoreExpressionWithCompleteContext`, `lowerCoreExpressionLocated`,
+     `lowerCoreRecursiveGroup`, `CoreObservedTypes`, `observedScheme`, `observedOperator`,
+     `observedTypesOf`, `lowerCoreProgramObservingTypes`.
+   - `CoreLowering.Measurement`: `measureRawCoreProgramLowering`, the `None` table of
+     `measuredSeed` and `measureCoreProgramLoweringObserved`, and the raw branch of
+     `measureStitchedLowering`.
+   - `CoreLowering.RecordedTypes`: `rawOperatorDeclarationSchemes`,
+     `withRawOperatorDeclarationSchemes`, `rawOperatorSchemesWithNestedLets`,
+     `rawNestedOperatorGenericScheme`, the `None` branch of `recordedDeferredEvaluation`, and the
+     registry's `rawDeclarationSchemes`.
+   - `CoreLowering.Program`: the replay (`replayProgramWithProofs`, `replayLambdaOrAlias` and the
+     replay dependency graph) and the no-table branch of `lowerScheduledProgramPasses`.
+   - What only the raw path reaches once step 8 is done: discovery, pending and proven goals,
+     deferred operators, the per-binding plan and body re-lowering; step 8 removes their typed
+     uses, after which they are raw-only and go here.
+   - Test users to delete or move with them: the four parity harnesses above and the selfhost
+     semantics tests that import `CoreLowering.Raw` (about thirty files, listed by that import).
 Steps 1 to 5 do not change generated code. Steps 7 and 8 do, in the ownership-sensitive paths, so
 step 3 must exist before they start.
 
@@ -415,8 +583,9 @@ Decided on **2026-11-16**: the standalone inference is stage 1's type checker. `
 `run`, file and project forms, infer the stitched program before lowering it; a program it rejects
 fails with stage 0's code and message (`InferenceDiagnostics.ash` maps every error the inference
 raises), and an accepted program is lowered from the types it recorded (since the 2026-11-25 switch;
-before it, only with `ASHES_TYPED_LOWERING=1`). A bare unification error carries no call, argument or
-operator site, so for it lowering's own diagnostic is printed when lowering words one.
+before it, only with `ASHES_TYPED_LOWERING=1`). Until `a0ecd410` a bare unification error, which
+carried no call, argument or operator site, was worded by lowering's own diagnostic; the inference
+now carries the site and words it.
 `ASHES_SKIP_INFERENCE_CHECK=1` skipped the check until it was removed with the stitched-program
 lowering on 2026-11-25. This gives stage 1 the checks lowering lacks
 (capability rows, providers, handlers, written requirements, type alias cycles) and costs about
