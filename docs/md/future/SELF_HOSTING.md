@@ -484,7 +484,11 @@ Order of work. Each step lands separately and is useful if the later ones are de
       again. (iii) Stage 1 only (stage 0 lowers once); the second lowering is meant to produce what
       a lowering with closed types produces, so the output should not change. (iv) Re-lowerings
       counted by cause in the driver; shadow comparison of the first lowering under recorded scope
-      types against the re-lowered body, expected identical.
+      types against the re-lowered body, expected identical. Found while implementing (2026-11-25):
+      the scope types closed are those of the body's own bindings, its parameters among them, so
+      taking them from the table at entry is the lambda-parameter read step 7 removed because it
+      switched on rule 11's entry normalization in eleven programs that then leaked. Rule 4 is
+      therefore not IR-identical on its own and moves to after 11.
    5. `lowerInternalDeepCopy`. (i) A copy of a value whose type is still a variable passes through
       and asks for the body to be lowered again. (ii) The copy reads the value's recorded type and
       emits the copy for it directly. (iii) Stage 0 emits its deep copy on the type it has at the
@@ -542,8 +546,10 @@ Order of work. Each step lands separately and is useful if the later ones are de
        so the release has to come first. (iv) The eleven programs leak-free with the rule on, then
        the shadow count over the corpus; per-program check.
 
-   Order: 1 and 2 (delete), 3, 4, 5 (shadow count, then switch), then 8 and 9, 6 and 7 with 10, and
-   11 last. The per-binding plan (`constrainedBindingPlan`) is not one of these rules; replacing it
+   Order: 1 and 2 (refused under typed lowering, `d0a78675`, `80dc9a77`), 3 (`1f46e580`), 5
+   (`4176b44c`), then 8 and 9, 6 and 7 with 10, then 11, and 4 after 11. Measurement: `ea730801`,
+   `864d0ad3` (shadow counts and the IR hash; see the driver README).
+   The per-binding plan (`constrainedBindingPlan`) is not one of these rules; replacing it
    by the recorded schemes follows 3, because the plan decides which bodies carry the evidence 3
    reads.
 9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
