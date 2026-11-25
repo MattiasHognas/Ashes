@@ -20,6 +20,7 @@ import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ProgramPartitions
 import AshesCompiler.Backend.ElfRelocatableMerge
 import AshesCompiler.Backend.PartitionProcesses
+import AshesCompiler.Backend.PartitionDiagnostics
 export (
     value optimizeAndEmitPartition,
     value emitPartitionedObject,
@@ -49,33 +50,35 @@ let optimizeAndEmitPartition machine module_ context builder (triple: Str) (payl
     in
         let _ = runPasses(module_)("default<O2>")(machine)(options)
         in
-            let _ = disposePassBuilderOptions(options)
+            let _ = reportPartitionPhase("partition optimized")
             in
-                let emitted =
-                    match linkPartitionPayloads(context)(module_)(triple)(payloadPaths) with
-                        | Error(message) -> failedPartition(message)
-                        | Ok(_) ->
-                            match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                                | (true, _, _) -> failedPartition("LLVM reported a partition module as broken during emission.")
-                                | (false, _, None) -> failedPartition("LLVM produced no object buffer for a partition.")
-                                | (false, _, Some(buffer)) ->
-                                    let copied =
-                                        buffer
-                                        |> getBufferSize
-                                        |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                                    in
-                                        let _ = disposeMemoryBuffer(buffer)
-                                        in
-                                            match copied with
-                                                | Ok(bytes) -> (true, bytes)
-                                                | Error(message) -> failedPartition(message)
+                let _ = disposePassBuilderOptions(options)
                 in
-                    Unit
-                    |> (given (_) -> disposeTargetMachine(machine))
-                    |> (given (_) -> disposeBuilder(builder))
-                    |> (given (_) -> disposeModule(module_))
-                    |> (given (_) -> contextDispose(context))
-                    |> (given (_) -> emitted))
+                    let emitted =
+                        match linkPartitionPayloads(context)(module_)(triple)(payloadPaths) with
+                            | Error(message) -> failedPartition(message)
+                            | Ok(_) ->
+                                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                                    | (true, _, _) -> failedPartition("LLVM reported a partition module as broken during emission.")
+                                    | (false, _, None) -> failedPartition("LLVM produced no object buffer for a partition.")
+                                    | (false, _, Some(buffer)) ->
+                                        let copied =
+                                            buffer
+                                            |> getBufferSize
+                                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                                        in
+                                            let _ = disposeMemoryBuffer(buffer)
+                                            in
+                                                match copied with
+                                                    | Ok(bytes) -> (true, bytes)
+                                                    | Error(message) -> failedPartition(message)
+                    in
+                        Unit
+                        |> (given (_) -> disposeTargetMachine(machine))
+                        |> (given (_) -> disposeBuilder(builder))
+                        |> (given (_) -> disposeModule(module_))
+                        |> (given (_) -> contextDispose(context))
+                        |> (given (_) -> emitted))
 
 let partitionText (index: Int) = "partition " + Ashes.Text.fromInt(index)
 
@@ -91,6 +94,12 @@ type PartitionModule =
     | partitionModuleRef: LLVMModuleRef
     | partitionModuleBuilder: LLVMBuilderRef
 
+// With the statistics switch on, the size of a partition module as code generation left it.
+let reportPartitionBuilt (index: Int) module_ =
+    if partitionStatsRequested(Unit)
+    then reportPartitionPhase(partitionText(index) + " built " + partitionModuleSizeText(module_))
+    else Unit
+
 let recursive buildPartitionModulesFrom (leakCheck: Bool) (entryName: Str) (assignment: MapTree(Str, Int)) (program: IrProgram) (index: Int) (count: Int) (acc: List(PartitionModule)) =
     if index >= count
     then Ashes.Collection.List.reverse(acc)
@@ -98,7 +107,9 @@ let recursive buildPartitionModulesFrom (leakCheck: Bool) (entryName: Str) (assi
         let context = contextCreate(Unit)
         in
             match codegenProgramPartition(leakCheck)(index)(assignment)(entryName)(context)(program) with
-                | (module_, builder) -> buildPartitionModulesFrom(leakCheck)(entryName)(assignment)(program)(index + 1)(count)(PartitionModule(partitionModuleIndex = index, partitionModuleContext = context, partitionModuleRef = module_, partitionModuleBuilder = builder) :: acc)
+                | (module_, builder) ->
+                    let _ = reportPartitionBuilt(index)(module_)
+                    in buildPartitionModulesFrom(leakCheck)(entryName)(assignment)(program)(index + 1)(count)(PartitionModule(partitionModuleIndex = index, partitionModuleContext = context, partitionModuleRef = module_, partitionModuleBuilder = builder) :: acc)
 
 // Every partition's module of `partitions` partitions of `program`, partition 0 first, each in its
 // own context. This is the only step that reads the program: once it returns, a caller holding
@@ -106,7 +117,10 @@ let recursive buildPartitionModulesFrom (leakCheck: Bool) (entryName: Str) (assi
 let buildPartitionModules (leakCheck: Bool) (entryName: Str) (partitions: Int) (program: IrProgram) =
     (let count = clampObjectPartitions(partitions)
     in
-        buildPartitionModulesFrom(leakCheck)(entryName)(assignObjectPartitions(program)(count))(program)(0)(count)([]))
+        let assignment = assignObjectPartitions(program)(count)
+        in
+            let _ = reportPartitionPhase("partition plan " + Ashes.Text.fromInt(count) + " partitions")
+            in buildPartitionModulesFrom(leakCheck)(entryName)(assignment)(program)(0)(count)([]))
 
 // A partition with its own target machine, its module set to the machine's triple and data layout.
 type PartitionJob =
@@ -148,9 +162,13 @@ let emitPartitionInProcess (triple: Str) (payloadPaths: List(Str)) (job: Partiti
                         then payloadPaths
                         else []
                     in
-                        match optimizeAndEmitPartition(machine)(module_)(context)(builder)(triple)(paths) with
-                            | (true, objectBytes) -> Ok(objectBytes)
-                            | (false, errorText) -> Error(partitionText(index) + ": " + bytesText(errorText))
+                        let _ = reportPartitionPhase(partitionText(index) + " verified")
+                        in
+                            match optimizeAndEmitPartition(machine)(module_)(context)(builder)(triple)(paths) with
+                                | (true, objectBytes) ->
+                                    let _ = reportPartitionPhase(partitionText(index) + " emitted")
+                                    in Ok(objectBytes)
+                                | (false, errorText) -> Error(partitionText(index) + ": " + bytesText(errorText))
 
 // Verifies, optimizes and emits one partition module with a fresh target machine, then disposes it.
 let emitPartitionModule (triple: Str) resolveMachine (payloadPaths: List(Str)) (partition: PartitionModule) =
@@ -219,34 +237,44 @@ let partitionErrorPath (directory: Str) (index: Int) = directory + "/partition" 
 let runPartitionChild (directory: Str) (triple: Str) (payloadPaths: List(Str)) (job: PartitionJob) =
     match job with
         | PartitionJob { partitionJobIndex = index, partitionJobContext = context, partitionJobModule = module_, partitionJobMachine = machine } ->
-            let outcome =
-                match verifyModule(module_)(verifierReturnStatusAction) with
-                    | (true, report) ->
-                        report
-                        |> verificationText(index)
-                        |> Error
-                    | (false, _) ->
-                        let _ = runPartitionPasses(machine)(module_)
-                        in
-                            let paths =
-                                if index == 0
-                                then payloadPaths
-                                else []
-                            in
-                                match linkPartitionPayloads(context)(module_)(triple)(paths) with
-                                    | Error(message) -> Error(partitionText(index) + ": " + message)
-                                    | Ok(_) ->
-                                        match targetMachineEmitToFile(machine)(module_)(partitionObjectPath(directory)(index))(objectFileType) with
-                                            | (true, _) -> Error(partitionText(index) + ": LLVM could not emit the object file.")
-                                            | (false, _) -> Ok(Unit)
+            let _ = reportPartitionPhase(partitionText(index) + " child started")
             in
-                let _ =
-                    match outcome with
-                        | Ok(_) ->
-                            Ashes.IO.File.writeText(partitionDonePath(directory)(index))("")
-                        | Error(message) ->
-                            Ashes.IO.File.writeText(partitionErrorPath(directory)(index))(message)
-                in exitChildProcess(0)
+                let outcome =
+                    match verifyModule(module_)(verifierReturnStatusAction) with
+                        | (true, report) ->
+                            report
+                            |> verificationText(index)
+                            |> Error
+                        | (false, _) ->
+                            let _ = reportPartitionPhase(partitionText(index) + " child verified")
+                            in
+                                let _ = runPartitionPasses(machine)(module_)
+                                in
+                                    let _ = reportPartitionPhase(partitionText(index) + " child optimized")
+                                    in
+                                        let paths =
+                                            if index == 0
+                                            then payloadPaths
+                                            else []
+                                        in
+                                            match linkPartitionPayloads(context)(module_)(triple)(paths) with
+                                                | Error(message) -> Error(partitionText(index) + ": " + message)
+                                                | Ok(_) ->
+                                                    let _ = reportPartitionPhase(partitionText(index) + " child payloads linked")
+                                                    in
+                                                        match targetMachineEmitToFile(machine)(module_)(partitionObjectPath(directory)(index))(objectFileType) with
+                                                            | (true, _) -> Error(partitionText(index) + ": LLVM could not emit the object file.")
+                                                            | (false, _) -> Ok(Unit)
+                in
+                    let _ =
+                        match outcome with
+                            | Ok(_) ->
+                                Ashes.IO.File.writeText(partitionDonePath(directory)(index))("")
+                            | Error(message) ->
+                                Ashes.IO.File.writeText(partitionErrorPath(directory)(index))(message)
+                    in
+                        let _ = reportPartitionPhase(partitionText(index) + " child emitted")
+                        in exitChildProcess(0)
 
 // A started partition child: its process id and the partition, whose handles the parent disposes
 // once the child is reaped.
@@ -304,7 +332,10 @@ let recursive drivePartitionChildren (directory: Str) (limit: Int) (triple: Str)
         | (None, job :: rest) when runningCount(running)(0) < limit ->
             match startPartitionChild(directory)(triple)(payloadPaths)(job) with
                 | Error(message) -> drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(rest)(running)(Some(message))
-                | Ok(child) -> drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(rest)(child :: running)(failure)
+                | Ok(child) ->
+                    let _ =
+                        reportPartitionPhase(partitionText(partitionIndexOf(job)) + " forked")
+                    in drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(rest)(child :: running)(failure)
         | _ ->
             match running with
                 | [] -> failure
@@ -316,7 +347,13 @@ let recursive drivePartitionChildren (directory: Str) (limit: Int) (triple: Str)
                         else
                             let _ =
                                 match childJobOf(processId)(running) with
-                                    | Some(job) -> disposePartitionJob(job)
+                                    | Some(job) ->
+                                        let _ =
+                                            reportPartitionPhase(partitionText(partitionIndexOf(job)) + " reaped")
+                                        in
+                                            let _ = disposePartitionJob(job)
+                                            in
+                                                reportPartitionPhase(partitionText(partitionIndexOf(job)) + " disposed")
                                     | None -> Unit
                             in
                                 drivePartitionChildren(directory)(limit)(triple)(payloadPaths)(pending)(withoutChild(processId)(running))(failure)
@@ -385,15 +422,25 @@ let emitPartitionModulesInProcesses (processes: Int) (tempRoot: Str) (triple: St
                         let objects =
                             match drivePartitionChildren(directory)(processes)(triple)(payloadPaths)(jobs)([])(None) with
                                 | Some(message) -> Error(message)
-                                | None -> collectChildObjects(directory)(jobs)([])
+                                | None ->
+                                    let _ = reportPartitionPhase("partition children done")
+                                    in collectChildObjects(directory)(jobs)([])
                         in
-                            let _ = Ashes.IO.Directory.removeTree(directory)
-                            in objects
+                            let _ = reportPartitionPhase("partition objects read")
+                            in
+                                let _ = Ashes.IO.Directory.removeTree(directory)
+                                in objects
 
 let mergePartitionObjects (objects: Result(Str, List(Bytes))) =
     match objects with
         | Error(message) -> Error(message)
-        | Ok(parts) -> mergeElfRelocatableObjects(parts)
+        | Ok(parts) ->
+            let _ = reportPartitionPhase("partition merge started")
+            in
+                let merged = mergeElfRelocatableObjects(parts)
+                in
+                    let _ = reportPartitionPhase("partition merge done")
+                    in merged
 
 // The merged relocatable object of the partition modules, built in this process one partition
 // after another (`processes` 1), or with up to `processes` partitions at once in child processes.
