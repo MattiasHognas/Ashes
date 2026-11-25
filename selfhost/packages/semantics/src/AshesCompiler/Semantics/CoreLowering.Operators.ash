@@ -19,7 +19,7 @@ import AshesCompiler.Semantics.NodeTypeTable.NodeOperator
 import AshesCompiler.Semantics.NodeTypeTable.nodeOperatorAt
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.translateRecordedType
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledType
-import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteInstance
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSiteInstance
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteOperandText
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowGoalTypeText
 import AshesCompiler.Semantics.CoreLowering.Model
@@ -1120,7 +1120,7 @@ let shadowEvidenceDispatch (throughEvidence: Bool) (state: CoreLoweringState) =
             then "evidence"
             else "no-evidence"
         in
-            match (shadowSiteInstance(state), state.currentNode) with
+            match (recordedSiteInstance(state), state.currentNode) with
                 | (Some("evidence"), _node) -> observeShadow(3)(current)(Some("evidence"))(state)
                 | (Some(_direct), _node) -> observeShadow(3)(current)(Some("no-evidence"))(state)
                 | (None, Some(node)) ->
@@ -1173,10 +1173,20 @@ let traitPlanLacksActiveEvidence (plan: TraitEvidencePlan) (methodName: Str) (st
             activeTraitMethod(traitName)(typeArgument)(methodName)(state)(stateActiveTraitMethods(state)) == None
         | _plan -> false
 
+// Whether a trait method dispatched through a plan that is a generic body's hidden parameter finds
+// no evidence for it. Lowered from the type table, at a node whose operator the table records, the
+// record decides: only an instance reached through a dictionary uses the body's evidence. Elsewhere
+// (no table, or a trait-method call the table records no operator for) the body's active trait
+// methods decide.
+let planLacksEvidence (plan: TraitEvidencePlan) (methodName: Str) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), plan, recordedSiteInstance(state)) with
+        | (Some(_table), TraitEvidenceParameter(_constraint), Some(instance)) -> instance != "evidence"
+        | _ -> traitPlanLacksActiveEvidence(plan)(methodName)(state)
+
 // Rule 3 at a trait method dispatched through a plan that is a generic body's hidden parameter.
 let shadowPlanEvidence (plan: TraitEvidencePlan) (methodName: Str) (state: CoreLoweringState) =
     match plan with
-        | TraitEvidenceParameter(_constraint) -> shadowEvidenceDispatch(!traitPlanLacksActiveEvidence(plan)(methodName)(state))(state)
+        | TraitEvidenceParameter(_constraint) -> shadowEvidenceDispatch(!planLacksEvidence(plan)(methodName)(state))(state)
         | _plan -> state
 
 // The site to record when no evidence answers a goal. A pass lowering without proofs defers an
@@ -1288,7 +1298,7 @@ let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: S
                 | TraitEvidenceResolution { plan = Some(plan) } ->
                     let shadowed = shadowPlanEvidence(plan)(methodName)(pinnedState)
                     in
-                        match (traitPlanLacksActiveEvidence(plan)(methodName)(shadowed), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(shadowed)) with
+                        match (planLacksEvidence(plan)(methodName)(shadowed), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(shadowed)) with
                             | (true, Some(key)) -> deferMethodGoal(traitName)(methodName)(key)(pinnedType)(resultType)(shadowed)
                             | _resolvable ->
                                 match buildTraitMethodClosure(plan)(methodName)(lower)(shadowed) with
@@ -1489,6 +1499,15 @@ let shadowEqualityEvidence operator (throughEvidence: Bool) (state: CoreLowering
     match equalityGoalMethod(operator) with
         | Some(_method) -> shadowEvidenceDispatch(throughEvidence)(state)
         | None -> state
+
+// Whether `==` or `!=` over two open operands dispatches through the evidence the body carries.
+// Lowered from the type table, at a node whose operator the table records, the record decides:
+// through the evidence exactly when the instance is reached through a dictionary. Elsewhere the
+// body's active evidence for the operand decides.
+let equalityThroughEvidence operator (operandType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), equalityGoalMethod(operator), recordedSiteInstance(state)) with
+        | (Some(_table), Some(_method), Some(instance)) -> instance == "evidence"
+        | _ -> activeEvidenceCoversOperator(operator)(operandType)(state)
 
 let resolveCoreBinaryOwnTypes (binary: LoweredCoreBinary) =
     match binary with
@@ -1806,7 +1825,7 @@ let emitPreparedCoreBinary operator lower binary =
         | (None, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
                 | (Some(emitDeferred), SemVariable(leftId), SemVariable(rightId)) ->
-                    if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
+                    if equalityThroughEvidence(operator)(SemVariable(leftId))(state)
                     then
                         binary
                         |> withCoreBinaryState(shadowEqualityEvidence(operator)(true)(state))

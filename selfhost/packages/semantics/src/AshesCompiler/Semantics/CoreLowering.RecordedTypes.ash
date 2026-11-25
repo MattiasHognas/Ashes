@@ -53,7 +53,7 @@ export (
     value recordedSettledTypeAt,
     value shadowSiteType,
     value shadowSiteTypeText,
-    value shadowSiteInstance,
+    value recordedSiteInstance,
     value shadowSiteOperandText,
     value shadowGoalTypeText,
     value shadowLambdaParameterType,
@@ -584,7 +584,7 @@ let shadowSiteTypeText (state: CoreLoweringState) =
 
 // How the table records the operator at the site being lowered is reached: "evidence" through a
 // dictionary the body carries, "direct" through a primitive or a declared implementation.
-let shadowSiteInstance (state: CoreLoweringState) =
+let recordedSiteInstance (state: CoreLoweringState) =
     match (stateNodeTypes(state), state.currentNode) with
         | (Some(table), Some(node)) ->
             match nodeOperatorAt(node)(table) with
