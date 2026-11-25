@@ -1,0 +1,3850 @@
+# Self-Hosting Log
+
+The completed work of the self-hosted toolchain migration, kept out of
+[SELF_HOSTING.md](SELF_HOSTING.md) so that document stays a plan rather than a history. Entries are
+verbatim and grouped by the same subsystem headings; a partially complete item appears here with the
+part that is done, and its open tail stays in the plan.
+
+This file is a record, not a queue. Nothing here is work. Identifiers are never reused, so it is
+also where to look before numbering a new item in a series. It closes with the capability audit that
+preceded the port.
+
+## Completed work
+
+### Round 10 shared native and trait selection checkpoints, 2026-11-21
+
+These entries preserve the state at the time of each checkpoint. [Current handoff](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21)
+
+**Round 10 has not run.** Integration is `selfhost/round10`, implementation through `ff71eb10`, based on `main` after #1159 (`f6e28970`). Final helper source preflight passed **10,248 items / 188 modules** and measurement preflight **7,919 items / 137 modules**. The unchanged 220-group native harness now builds and passes every non-leak case in normal and poison modes. Its original HTTP server also passes the traced concurrent replay in both modes. The latest dictionary fixes passed all non-leak reference checks; expanded native regressions, no-reuse and typed counters remain pending. The bootstrap gate is not clear.
+
+| Last completed check | Result and outstanding proof |
+| --- | --- |
+| Full stage 0 reference, `cbbbc830` | Build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **88/88**, e2e **1,319 passed / 0 failed / 80 skipped** in 5.62 minutes. Logs and current compiler: `work/r10pre/dictionary-shared/` and `s0/ashes`. This includes the new equality, inequality, mutual rewrite and suspension controls. Reference HTTP already passed the current helper source in `http-reference-helper2/`; latest native HTTP passed separately in `http-native8-trace/`. |
+| Broad native suite 5, `1a0b4944` | **96/96** named semantics groups passed, including ordered inference and the raw/typed captured-add checks. **32/95** IR fixtures differed; all 32 dumps are byte-identical to native 4 and its prior audit. The poison harness built in 8.79 minutes. Logs: `work/r10pre/named-native5/`. Its wrapper was interrupted by a coordinator edit after the successful build; the saved binary completed cases/parity via `named-native-run.sh` on the unchanged head. `RUNNER-RESUMED.txt` records this. No-reuse validation remains pending. |
+| Backend native 8 exact, `9f336cd1` | **219/220** groups passed in each of normal and poison modes; build **9:01.15**, peak **19,373,372 KiB**. Logs: `work/r10pre/backend-native8-exact/`. All non-leak cases, including generic captured addition and helper lifetime/callable controls, pass. The only failure is the confirmed annotation-loop leak. Original HTTP replay passed 720 requests plus warmups with zero connected retries and no EBADF in `http-native8-trace/`. Six newly added backend groups await the expanded shared build. |
+| Ownership and task runtime | The 32-fixture static audit found equivalent observable instructions in 30 and distinct allocation strategies with no identified lifetime violation on the two audited paths. All 122 transfer guards read 1 (29 fixtures, 51 slots). All eight ownership programs passed stage-0 controls and stage-1 plain/poison children; native 4 passed **16/16 exact stdout/exit checks**. Recycled-cell poison, explicit frame-dropper, Socket close/cancel and graceful drain completion/deadline passed by backend 5. New transparent-helper lifetime controls remain pending natively. |
+
+**Current work and next load.** The full reference suites finished on frozen `cbbbc830` with only the five known RSS failures. Shared native 2 exposed mixed concrete/generic trait-method selection failures, including a subsequently reduced result-directed first-class wrong-code case. Both agents are repairing these in separate worktrees. No main load reader is active after cancelling the historical host build for the documentation correction. Main next validates the frozen C# worker batch centrally, integrates the paired fixes and retries the preserved shared input before expanded/no-reuse and original host validation. Production CLI/REST and S2 lifetime proof belong to the bootstrap. Record legacy/typed measurements as part of round 10; completing steps 7/8 is subsequent work, not a prerequisite to starting the round. Bootstrap remains gated.
+
+**Gate coverage audit active.** While main's shared-native reader holds `31471a6a` frozen, `lowering_evidence` has a 20-minute final inventory task from that head: map each outstanding original non-leak reproduction, especially bugs 0, 2–4, 8 and 10, to its exact registered native test or remaining round-10 CLI/behaviour command. Distinguish stale handoff wording from missing coverage. If an original small regression has no executable coverage, register it unchanged in the worker's own worktree; no driver builds or sweeps. Main will integrate between readers. `tmc_repair` remains idle. Round 10 needs the known correctness fixes; finishing steps 7/8, parallel compilation and all leaks remains subsequent work.
+
+**Original witness registrations ready.** Pushed `22ac3bb5` on `fix/r10-original-witness-audit`, worktree `r10-original-witness-audit`, adds six named backend groups executing unchanged tracked originals: TMC accumulators, Not/competing Eq, unique/shared matched fields, escaping and lexical dictionary capture, returned association-list element, and numbered generic captured addition (`12 4.5`). These are missing runtime checks, not six observed new compiler bugs. They await integration and the next native build; source formatting/diff checks passed. The worker is finishing the remaining CLI/backedge coverage matrix. No active reader has been disturbed.
+
+The audit worker has now handed back and is idle. Pushed follow-ups `588c98ec` and `ffd2862f` preserve byte-identical archived witnesses in those same six groups: the original competing Eq program (`no`), the 50-round qualified callee (`300`), and the original escaping dictionary program with runtime argument `1000` (`passed`). `r10-original-witness-audit/work/PROGRESS.md` maps every original to current evidence and gives exact remaining commands. A separate compiler-host driver must run its original three prechecks, then lower/render the association-list source against current packages; the guest-only assertion is not that host proof. REST real/mock and module-alias collision checks require the fresh S1/S2 CLI during bootstrap, and are distinct from the successful HTTP scheduler fixture. Diagnostic/rendering and actual stage-2 lifetime checks also remain production-bootstrap obligations. No new compiler bug is inferred from missing validation.
+
+**Shared build 1 import failure repaired.** `work/r10pre/shared-native1/` on `31471a6a` failed exit 1 after **17:33.64**, peak **18,618,684 KiB**, with exactly two ASH048 diagnostics at `CoreProgramLoweringTests.ash:884–885`: `TypeMismatch` lacked a direct import of its declaring `Unification` module. No binary or native cases ran. A 10-minute source-only worker task produced `6bc528b4` → `4861a03b`, adding the one import; canonical formatting and diff checks passed. Original witness registrations `22ac3bb5` → `cce9400a`, `588c98ec` → `71207db5` and `ffd2862f` → `22ff641c` are integrated/pushed. No assertions or compiler behavior changed. Main rerenders the expanded input for shared native 2. Main-owned `original-backedge-check.sh` is prepared and shell-checked: it copies the exact historical host sources, verifies all three precheck modules against current sources, rewrites only package paths, builds under poison and requires successful non-empty lowered IR. It has not run yet.
+
+**Offline REST reference ready.** While shared native 2 reads frozen `ddea44de`, a separately capped 8G quick reference compile of `examples/restful_api/ashes-test.json` completed in **4.35s**; its 4G run exited 0 and printed all 12 `ok - ...` assertions followed by `all tests passed`. Exact output and exits are in `work/r10pre/rest-mock-reference/`. Main-owned `original-cli-checks.sh` is shell-checked and prepared for both fresh S1 and S2: compile the real REST server, compile/run its offline mock with byte-for-byte reference stdout comparison, and compile/run the alias-collision project and selector-only MapTree fixture, requiring exact `42` stdout and exit 0. Those S1/S2 runs remain pending; the live real server is not needed for this offline check.
+
+**Mixed trait-call compiler bug active.** `work/r10pre/shared-native2/` on `ddea44de` failed exit 1 after **9:40.20**, peak **18,830,812 KiB**, with three errors in unchanged measurement `reportSites`: ASH010 lost a declared dictionary, then ASH002 confused `Maybe<Int>` and `SemanticType` at `Show.show` and the caller. No binary or native cases ran. Generated input `work/shared-native.gAD7wCpf/` is preserved. `tmc_repair` and `lowering_evidence` each have 30-minute paired tasks from that head. The C# worker reproduced the exact errors in a tiny program and located eager qualified-method rewriting by spelling, which applies the generic dictionary to concrete calls before operand types are available. The stage-1 worker confirmed the same source pattern. Preserve the valid polymorphic measurement source; fix type-directed evidence selection and verify closure/async capture plus custom trait methods. The original host-driver load reads the integration tree while workers implement; integrate only afterward.
+
+**Coordinator correction.** A failed cherry-pick was not checked before the next documentation edit, leaving conflict markers and duplicate notes in `27566b1f`. The newly started `original-backedge` compiler was stopped by its exact PID before correcting the integration tree; its recorded exit 143 is a coordinator cancellation, not a compiler failure or validation result. The handoff now retains each note once and has no conflict markers. Main will restart this host check after the paired trait-dispatch batch so it exercises the repaired core. Stage-0 worker `43b26d44` is ready: recursive mixed Show prints `Some(7):operand:42|Some(7):operand:true`; a poison async closure prints `Some(3):custom:5|Some(3):custom:false`. The stage-1 worker is finishing type-directed custom/first-class dispatch and auditing result-directed methods. The measurement source remains unchanged.
+
+**Result-directed first-class failure confirmed.** The follow-up custom trait control distinguishes a directly annotated `Seed.first` call (correct `17`), a generic call (correct `yes`), and `let concreteMaker : Unit -> Int = Seed.first` inside the same generic context. The latter wrongly returns **1 instead of 17**, using the Bool dictionary before its expected function result is applied. `tmc_repair` resumed in `r10-report-show` / `fix/r10-report-show` for the small bare-reference fix and a bounded incremental 8G CLI build. `lowering_evidence` is implementing the counterpart and shared controls in `r10-recursive-show-capture` / `fix/r10-recursive-show-capture`, including custom methods and captured evidence. `43b26d44` is pushed but not integrated pending its counterpart. No new language rule or measurement-source workaround is authorized or needed.
+
+**Stage-0 batch frozen for central validation.** `fix/r10-report-show` is clean and pushed through `f25bb10b`, following `43b26d44`. The first-class Seed control now prints **17/17/yes** under poison; the original ambiguous eager partial still rejects with ASH010 saying its `Seed(a)` evidence is needed while evaluating the binding. Release build, scoped formatting and diff checks passed. Main runs full reference checks centrally in that frozen worker checkout, using `ASHES_CHECKOUT` with the main-owned `policy-shared-checks.sh`, results under integration `work/r10pre/report-reference/`. The stage-1 worker continues independently. These two known dictionary-selection defects still gate round 10 until the paired implementation and validation finish. Expanded native cases have not run because both shared builds failed before producing a binary.
+
+
+
+
+**New native-driver build blocker.** At `f653067e`, `work/r10pre/backend-native6/` stopped after **7:11.75**, peak **12,065,760 KiB**, exit 1: `<std:Ashes.Trait>:750:32 ASH010` says `Eq(a)` is ambiguous inside `Eq(List(a)).equalLists`, at `x == y`. No binary or native results exist. Its 220-group generated source is preserved in `source/`; the project is `work/r10-backend-capture/ashes.json`. `tmc_repair` has a 30-minute stage-0 investigation in `r10-eq-ambiguity-stage0` / `fix/r10-eq-ambiguity-stage0`, from that head, with a paired fix or explicit already-correct stage-1 proof required. `lowering_evidence` audited new Ash source in `r10-eq-ambiguity-source` / `fix/r10-eq-ambiguity-source`: both new list equalities have concrete element types, and a reduced early-equality/later-typed-consumer program compiled with the exact failing S0 in 494ms and printed `14`. No source change was justified. Next diagnosis must identify the originating specialization caller and ambient evidence; do not guess the element type or rewrite the source to hide the compiler failure.
+
+**Targeted diagnostic compile next.** Instrumentation-only `51d54d4c` is pushed on `fix/r10-eq-ambiguity-stage0`; both agents handed back and are idle. Its Release CLI at `r10-eq-ambiguity-stage0/src/Ashes.Cli/bin/Release/net10.0/ashes` built with zero warnings/errors. `ASHES_TRACE_AMBIGUOUS_TRAIT=Eq` prints caller origins, selected instance/methods, ambient dictionary availability and discovery/replay proof details only when reporting the selected ambiguous trait. A small known-ambiguous smoke preserved the original ASH010. Main repeats the unchanged native6 compile with that flag and `ASHES_RC_POISON=1` in `work/r10pre/backend-eq-trace/`, recording source/compiler commits, inputs, exit and timing. No substantive repair is claimed yet.
+
+**Composite evidence repair and exact retry.** The diagnostic finished exit 1 in **7:55.78** and located the missing proof at `StrictPartialStages.rewrite`, line 162 (`names == []`), inside its mutual group with `rewriteFields`. The selected outer `Eq(List(a))` instance hid an unavailable child `Eq(a)`; the C# deferral path checked only a top-level parameter. It also wrongly selected an ambient element dictionary for the whole list, giving `yes yes` instead of `yes no` for custom parity equality. Instrumentation `51d54d4c` → `b9a542b6` and repair `02ac5442` → `61d7d4af` are integrated/pushed. The repair recursively checks dependencies/supertraits and requires exact compatible identity when choosing an ambient dictionary for a selected instance. Fresh Release reference probes now print `yes no` and `prefixx x`. Stage 1 already recursively checks missing evidence and composes the element method into its container method; paired raw/numbered/native controls are integrated as `0d9a45ae` → `c3742542` and `71ab79a0` → `a9984163`. All workers handed back. Main next retries the **unchanged 220-group generated harness** using the corrected agent Release CLI in `work/r10pre/backend-native7-exact/`; the runner compares every generated source and case list with native6 before compiling. The expanded 223-group harness and new raw/numbered execution controls remain pending afterward. This distinguishes fixing the original failure from merely changing its calling context.
+
+**Exact retry failed; dictionary capture follow-up active.** `work/r10pre/backend-native7-exact/` on `a4f0df19`, using corrected Release CLI `02ac5442`, failed exit 1 after **7:11.21**, peak **12,344,176 KiB**: `<std:Ashes.Trait>:1:1 ASH001 Undefined variable '__trait_0_root_Eq_equal'`. Every generated source and case list was verified byte-identical to native 6. No binary or case results exist. The original 220-group project remains unchanged. `tmc_repair` resumed for 30 minutes in `r10-eq-ambiguity-stage0` and found a seconds-long reproducer: changing the custom ambient list equality to inequality loses the sibling `equal` method needed to construct the list instance. It is repairing capture/projection from the packed dictionary. `lowering_evidence` has a 25-minute paired stage-1 audit and regression task from the integration head; its new worktree/commit will be recorded on handback. Neither fix nor fresh native acceptance is claimed yet.
+
+**Shared native renderer integrated.** `5b49998d` on pushed `fix/r10-shared-native-runner` is integrated as `a9fdd6c6`. `scripts/selfhost-dev/render-shared-native.sh` creates a separate ignored project with unchanged test bodies/assertions, named semantics/backend dispatch and IR mismatch capture. Rendering and case-list comparisons cover **96 semantics groups, 223 backend groups and 95 IR fixtures**; no native build has used it yet. Later expanded checks can share one compilation per reuse configuration. It does not overwrite the original failing 220-group project.
+
+**Dictionary capture repair integrated; next exact retry.** Both workers handed back and are idle. `0c25ed7c` → `ff71eb10` projects an uncaptured method from the in-scope packed dictionary and captures that dictionary for constrained coroutine/helper operators. It uses the existing borrowed method projection and captured-root lifetime. Fresh Release CLI passes unchanged equality (`yes no`), inequality (`no yes`) and an async/recursive suspension variant with poison (`no yes`, exit 0). Stage 1 already captures all active method names and explicitly destructures the full packed ABI; no production change was justified. Paired raw/numbered inequality controls `74add9e0` → `f23164c7` and suspension control `714cdadc` → `8639bf80` are integrated; both worker branches are pushed. Main now freezes the integration tree for `work/r10pre/backend-native8-exact/`, using the frozen corrected agent CLI and the unchanged 220-group native6 input. No full-build or native-runtime pass is claimed yet. The expanded shared runner will now contain **226 backend groups**, alongside 96 semantics groups and 95 IR fixtures. Main-owned `r10-fixture-candidates/work/shared-native-checks.sh` records each exit, original generated sources and compiler hash; its shell syntax check passed.
+
+**Exact-input native repair verified.** `work/r10pre/backend-native8-exact/` on `9f336cd1` built the unchanged native6 220-group input successfully in **9:01.15**, peak **19,373,372 KiB**. Both normal and poison runs completed **219/220 passed**; their only failure is the previously measured leak-only annotation-loop group. Generic captured addition, owned helper backedges, indirect suspension, annotated/helper callable results, Socket teardown and all other non-leak groups pass. The original HTTP server compiles in both modes; its captured normal IR has exactly one outer `RunTask` and helper loop backedges. Main next runs the actual three-round normal/poison HTTP replay under tracing in `work/r10pre/http-native8-trace/`. Compilation does not establish successful HTTP runtime behavior. Expanded 226-group equality/inequality controls, shared semantics/parity, no-reuse and current full reference suites remain pending; round 10 is still gated.
+
+**Current native HTTP replay passed.** `work/r10pre/http-native8-trace/results.tsv` records **exit 0, 3 completed rounds, 0 connected retries and trace checks 1** for both normal and poison stage-1-generated servers: 720 responses plus warmups, two workers per supervisor and no server EBADF. One normal startup connection was refused before connection establishment (client port 0); there were no connected resets/retries. This closes the observed HTTP runtime failure on the unchanged original server. Main next runs full reference checks on the integrated dictionary repairs in `work/r10pre/dictionary-shared/`. `lowering_evidence` has a 15-minute renderer task from `1ff04448` to include the unchanged typed-lowering measurement module in the shared harness, preserving its timing and 19-column TSV; this avoids another separate driver build. It may run rendering checks only. `tmc_repair` is idle. Expanded native controls, no-reuse, measurement counters and round-10 bootstrap are still pending.
+
+**Ready indirect-suspension control.** `b7601312` on pushed `fix/r10-helper-indirect-await` is awaiting integration after the active reference reader. Its 10-minute worker assignment closed a coverage gap: the earlier `62` fixture used zero iterations for partial/higher-order calls. The new unchanged-after-verification program carries freshly constructed strings through two actual timer suspensions via a partial and three via higher-order `apply`. Corrected Release stage 0 with poison prints exactly `p21|q321`, exit 0. Backend group `testIndirectAwaitingHelperCarriesStringAcrossRestart` checks output, EOF and exit; native normal/poison proof is pending. Existing `62` fixture is unchanged. The helper implementation conservatively retains old overwritten heap references and does not add a general arena rewind; measure and fix remaining leak-only growth after multithreading unless it blocks progress.
+
+The full reference reader is finished and the indirect control is integrated/pushed as `b7601312` → `f1cf0faf`. Main next verifies that one added e2e fixture and runs `http-reference-checks.sh` with `helper-shared2/s0/ashes`, output `work/r10pre/http-reference-helper2/`, before the fresh native backend batch. No active agent or pending implementation handback remains.
+
+**Current reference HTTP and added fixture passed.** `work/r10pre/http-reference-helper2/replay/results.tsv` records exit 0, three completed 120-request rounds, zero connected retries and passing trace checks in each of normal and poison modes. All six supervisors forked exactly two workers and no server EBADF appeared. This is **stage-0** evidence, not stage-1 acceptance. `helper-shared2/indirect-added-e2e.log` records **1 passed / 0 failed** for the newly integrated indirect-suspension fixture, supplementing the prior full 1,314-case pass.
+
+**HTTP blocker.** The original three-reactor server at port 43129 compiled in backend native 5, but `work/r10pre/http-native5-trace/` failed: normal completed three 120-request rounds with **40 connected retries**; poison timed out with **2 retries**. Accepted sockets went unread while handlers read/closed fd 0. The integrated transparent-helper port replaces nested schedulers with task factories, direct suspension and backedges, retaining logical callable adapters. Follow-ups preserve source-node identity, declared results, borrowed/owned successors, unused-formal type checking without runtime captures, and parent ownership of proven-confined Socket arguments. Escaping callbacks/tasks and returned resources remain outside the borrowing proof. Fresh native HTTP proof is pending.
+
+**Latest reference regression repair.** `helper-shared` at `a29f4fbb` passed build/format, C# **3,075 / 5 known RSS failures / 2 skips**, and LSP **88/88**, but e2e finished **1,311 passed / 3 failed / 80 skipped**. The unchanged `async_loop_accumulator`, `awaiting_helper_keeps_owned_backedge_values`, and `recursive_awaiting_helper_remains_callable` exposed physical Task results in source checking. `8390b2a2` → `b4f3ff63` fixes source inference hints and hover metadata to retain the logical scheme, preventing a second Task wrapper on replay. Fresh Release CLI printed `62`; central rerun is pending. All three originals have raw/typed and native controls. Other reference controls print `43` for annotation/shadowing/explicit-Task/alias behavior, reject a wrong declared result as `Bool vs Int`, print `2=1=seed` for owned/borrowed backedges under poison, and print `true`, `true` for Socket close/reuse and cancellation.
+
+**Source proof and artifacts.** `work/r10pre/helper-source6/` on `6876180e` explicitly passed CLI inference **10,248 items / 188 modules** and measurement inference **7,919 items / 137 modules**. The later C# hint repair changes no compiler Ash source. Socket confinement `3aea7458` → `6ea9ba67`, unused-formal typing `91fbdf8f` → `73a7082a`, and HTTP IR capture `5652ed1a` → `bc48802f` are integrated/pushed. The HTTP group retains `selfhost_backend_concurrent_http_server.lowered.ir` from the exact object passed to optimization. Require a sole outer RunTask plus helper backedges, all replies, two children per supervisor, zero connected retries and no server EBADF. Dependency-only `6a1913c5` duplicates integrated `f195681a`; do not integrate it again.
+
+**Measurements and scripts.** Old `typed-measurement1` stopped legacy mode after 16:07.81 without a TSV row; typed mode never ran. Integrated `9432264a` reports exact discovery/retained-discovery/replay traversals, body re-lowerings, and optional `--goal-details` on stderr, preserving the 19-column TSV and timing intervals. Rebuild/run both modes on final source; no zero-replay or performance claim exists. Main scripts in `r10-fixture-candidates/work/`: `source-preflight.sh`, `policy-shared-checks.sh`, `named-native-checks.sh`, `named-backend-checks.sh`, `typed-measurement-checks.sh`, `http-native-replay.sh`, `http-reference-checks.sh`. Reference replay explicitly records producer `stage0`; it is not stage-1 proof. Generated harness source is preserved beside new artifacts. Prepared `round10-bootstrap.sh` checks exit codes and requires a matching `nonleak-gate.commit`; stage 3 needs swap allowed in its parent scope too.
+
+All checkpoint text and commit mappings remain verbatim in the log. [Helper correctness follow-up](SELF_HOSTING_LOG.md#round-10-helper-correctness-follow-up-2026-11-21) · [Earlier native runtime follow-up](SELF_HOSTING_LOG.md#round-10-native-runtime-follow-up-2026-11-21) · [Typed consumer audit](SELF_HOSTING_LOG.md#round-10-checkpoints-2026-11-21)
+
+The table records the 13 first failures from native 2 for historical comparison. Native 3 now passes ten of these groups and reaches new failures in the remaining three, described above. Keep the source programs unchanged. An assertion may be updated only after the reference and actual compiler behavior establish that its oracle is stale. Earlier logs are in `work/r10pre/named-native2/cases/`; current logs are in `work/r10pre/named-native3/cases/`.
+
+| Group (`run…Tests`) | First failure |
+| --- | --- |
+| `CapabilityInference` | Resume arguments should match operation results. |
+| `RecordedInferenceCoverage` | Deriving `Tree` fails before numbering with `UnsupportedDerivedTrait("Tree", "Ashes_Trait_Eq")`. |
+| `TraitInference` | Trait declaration rejected with `UndeterminedTraitRequirement("Equal", ...)`. |
+| `Ir` | Opcode assertion at `IrTests.ash:268`, actual 81. |
+| `CoreLogicalNotInference` | Unknown lowering binding `__ashes_standard_trait_Eq_equal_int`. |
+| `CoreOrderedInference` | Unused comparator retains a provisional body, six functions. |
+| `CoreProgramLowering` | Expected constrained program to fail without environment, but it lowered. |
+| `CoreBuiltinLowering` | Builtin registry consumed an async-owned operation. |
+| `CoreExternalLowering` | Assertion at `CoreExternalLoweringTests.ash:286`. |
+| `CoreTraitDispatchLowering` | Assertion at `CoreTraitDispatchLoweringTests.ash:245`, actual 3. |
+| `CoreCapabilityLowering` | Expected internal resume error, received located ASH020. |
+| `CallWindowLowering` | Expected `Alloc Target=21 SizeBytes=16 RuntimeManaged=true` not found. |
+| `TakenOverRecordLowering` | `taken_over_record_group_settled_by_caller` IR mismatch. |
+
+| Source | What was observed |
+| --- | --- |
+| `b17375b1`, `work/r10pre/policy-stored-fix/` | Fresh stage 0, explicit compiler inference `ok` (10,131 items / 184 modules), formatting, poison native policy build and execution all passed. The native run reached all aggregate, recursive sibling/cycle and exact peer assertions. No broad semantics/IR or bootstrap result is implied. |
+| `c15807b7`, `work/r10pre/policy-combined/` | Stage 0 built, standalone compiler-source inference printed `ok` (10,127 items, 184 modules), driver formatting and poison native policy compilation passed. Execution exited 1 with `ImmediateTraitEvidenceRequired("Eq", [SemVariable(2070)])` where the test expected `Seed`. Gdb isolated the second `checkAggregateEvidence` case: `let stored = (pick, Unit); let check = invoke(stored)`. The preceding inline-tuple case passed. Eq should stay latent until the returned comparator is called. Trace: `r10-fixture-candidates/work/policy-failure-gdb.txt`. |
+| `fe385315`, `work/r10pre/policy-preflight-fixed/` | Prior focused native cases passed, including the immediate-demand RHS location. This predates the aggregate/recursive-peer additions. |
+| `f4c4cc6f`, `work/r10pre/coverage-batch/` | Earlier full stage-0 gates. Build and format passed, C# 3,073 passed / 5 RSS failed / 2 skipped, LSP 88/88, e2e 1,291 passed / 1 failed / 80 skipped. The strict-prefix ordering case subsequently passed a fresh focused stage-0 poison check. The integrated full rerun belongs under `work/r10pre/policy-shared/`. |
+| `4a6478c7`, `work/r10pre/native-port/` | Earlier broad native IR result: 35 of 95 differed. Full dumps are in `work/r10-shared-capture/actual/`. The semantics suite stopped at the match-arm diagnostic assertion, since corrected. The no-reuse attempt was cancelled. |
+| `da06e40d`, `work/r10pre/named-native/` | Named harness compilation stopped after 23 minutes at arm 38 (`Unit` versus `List(SemanticStitchUnit)`). The coordinator renderer now evaluates each group and explicitly discards its result. This attempt produced neither case results nor a newer IR matrix. |
+
+Use `work/r10pre/policy-preflight.sh <new-output>` for a fresh stage 0, source inference and poison-built native policy driver. Require an explicit `ok` from inference even when its exit code is zero. The policy driver used `work/r10pre/policy-combined/s0/ashes`. The standalone inference binary used by that script is named in the script. For full solution build/format, C#, LSP and stage-0 e2e use `../r10-fixture-candidates/work/policy-shared-checks.sh <new-output>`. Read each phase's exit code and failure rows in its own log.
+
+
+Once the source is ready, run `../r10-fixture-candidates/work/named-native-checks.sh <absolute-stage0-path> <new-output>` from integration using the coordinator's capped runner. It uses `render-named-capture.sh`, builds a poison-instrumented `--debug -O0` harness and executes all named groups individually from the repository root so they can read the checked-in programs. It then compares 95 lowered-IR fixtures. Case logs, the selected groups and mismatching IR are in `<new-output>/cases/`, `cases-list.txt` and `actual/`. Build and run the separate `--debug-disable-reuse` variant as well. Preserve prior result directories.
+
+### Round 10 checkpoints, 2026-11-21
+
+These checkpoints preserve the observations and assignments as originally recorded. [Current round](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21)
+
+**Round 10 has not run.** The integration branch is `selfhost/round10`, with source pushed through `14823696`. It branches from `main` after #1159 (`f6e28970`). The expanded native policy suite passes with RC poisoning, including stored tuples and recursive peers. The latest broad native preflight passed 83/96 named semantics groups and differs on 32/95 IR fixtures. Both repair batches for those 13 first failures are now integrated; fresh native validation remains before the shared bootstrap.
+
+**Latest integration.** HTTP double-close and task-capture fixes are `1900e4b8` / `530fbfc0`, with their stage-1 Socket capture port through `54a29c9f`. The reference branch `ccd1f4d0` passed build/format, LSP 88/88 and e2e **1,308 passed / 0 failed / 80 skipped**; C# was **3,074 passed / 6 failed / 2 skipped**: five known RSS leaks and one raw ELF snapshot hash. The hash-only correction `a29dd0de` is justified by the changed networking runtime included by raw `CleanupResource(Function)`; the optimized ordinary lambda remains byte-identical and prints 42. The snapshot needs a focused rerun.
+
+`fix/r10-native-inference` through `8ffb56c6` is integrated through `d1edeae2`: canonical deriving names, handler-resume diagnostic context, trait executable-boundary assertion, generalized recursive-group evidence and joint sibling evidence. `fix/r10-native-oracles` through `d81baacd` is integrated through `14823696`: stale inventory/builtin/diagnostic/ABI/structural assertions and the actual pattern-ownership timing fix `3476b728`. Original programs and shared IR fixtures are preserved. Whole-compiler source inference on `54a29c9f` exposed an unresolved stitched field reference `taskStructLayout.frameDropper`; `49e40055` corrects all corresponding field accesses with typed patterns. The next main preflight must require an explicit inference `ok`, then run fresh native semantics, no-reuse and backend checks.
+
+Both implementation batches are handed back clean and pushed. `lowering_evidence` is auditing the remaining IR differences without load work; `tmc_repair` is available for new validation failures. Current-source static analysis reproduced all 122 guards at value 1 over 51 slots in 29 fixtures (`work/r10pre/named-native2/guard-cfg.tsv`); this does not replace generated-program execution. No shared round or native acceptance is claimed from these source fixes.
+
+**Current checkpoint.** Integrated and pushed: backend ownership fixtures `73daf91b` → `d2175893`, native poison instrumentation `8d0a2285` → `79ac86be`, explicit frame teardown `832133cb` → `9ad285aa`, and socket consume/cancellation callbacks `7121ecdc` → `cfe042f0`. The backend test merge retains all three new groups and was canonically formatted. Source/build/runtime proof of these backend changes is pending. The callbacks do not yet establish typed task-capture ownership.
+
+Main is running build, format, C#, LSP and e2e on the frozen HTTP fix tree `r10-http-worker-count` at pushed `ccd1f4d0`, with output `work/http-shared/` there; build and format passed. Its `aa3e07db` fixes the traced double close and parked-socket cancellation, and `ccd1f4d0` fixes caller ownership when a suspending task captures a parameter. Both await integration with the matching stage-1 port. This reader does not read integration source.
+
+Two workers are active: `lowering_evidence` on `fix/r10-native-inference` / `r10-native-inference` from `9ad285aa`, fixing the capability, recorded-coverage, trait and logical-not native failures; its canonical deriving-name fix `abcd28fd` is committed and pushed. `tmc_repair` continues typed task-capture ownership on `fix/r10-resource-frame-port`; its async-capture consumption counterpart `45ad5281` is pushed and awaiting integration. The other nine failed native groups and remaining IR differences are queued for the next implementation batch. No-reuse and backend runtime checks are still pending.
+
+At `617eb374`, `work/r10pre/policy-shared3/` passed build, format and all 88 LSP tests. C# completed **3,072 passed / 6 failed / 2 skipped**: five known RSS failures plus `Linux_backend_llvm_should_serve_http_concurrently_across_workers` (119 of 120 responses contained the expected status). E2e completed **1,308 passed / 0 failed / 80 skipped** in 5.61min. No reader remains from this run. Worker `lowering_evidence` is investigating the HTTP failure in `r10-http-worker-count` from this head; diagnostic commit `ed211374` preserves raw reply bytes and the client port without retrying EOF or relaxing success. The same rare failure is historically recorded as TR-7; an isolated pass does not establish a fix. Main will build and trace the focused test before broad native validation.
+
+Worker `tmc_repair` handed back the source-only audit in `r10-typed-consumer-audit/work/PROGRESS.md` at `617eb374`. Its first proposed step-7 batch measures current replay keys and then substitutes recorded declaration schemes for an eligible top-level tier, preserving the synthetic pass's boundary requirements and outer substitution. The current lowtypes measurement-driver recipe and exact counter columns are in that progress file. No step-7/8 behavior change has been made, and neither agent ran load work.
+
+The main focused HTTP trace on `ea7827ee` passed: the three workers sent 46, 39 and 36 complete replies (121 including readiness). Logs and syscalls are in `r10-http-worker-count/work/http-trace/`. The current and pre-policy compilers emitted byte-identical server ELF and IR, so this batch did not change that generated program. Diagnostic commits `ed211374` / `ea7827ee` are pushed and awaiting integration.
+
+The main runtime-only HTTP replay then passed three fully traced rounds and 100 server-only traced rounds, but the latter exposed connected-client resets hidden by the existing exception retry. `r10-http-worker-count/work/http-replay/stress.log` and `stress-trace.*` contain concrete double-close evidence: PID 952908 closes fd 5 for client 55246, accepts client 55326 on the recycled fd 5, then closes it before reading; that handler gets EBADF. PID 952913 repeats this for client 57130. Ordinary connections also show duplicate close/EBADF. Worker `lowering_evidence` is locating the extra close in lowering/resource finalization and will fix the actual cause in both compilers. TR-7 remains open until that fix is validated.
+
+Main's corrected broad native run is active at `87af15c7`, output `work/r10pre/named-native2/`, using fresh `policy-shared3/s0/ashes`. Integration is frozen. `tmc_repair` also handed back `73daf91b` on `fix/r10-backend-ownership-fixtures` in `r10-typed-consumer-audit`: the backend suite executes the seven original ownership fixture sources and the scalar-shadowing regression. This test-only commit is pushed, awaiting integration and runtime validation. The worker is now implementing the existing stage-0 poison switch in the stage-1 backend, on `fix/r10-native-poison` in `r10-native-poison` from `87af15c7`; default code generation must remain unchanged.
+
+That native run is now complete: the poison `-O0` harness built in **8:59**, peak **20,094,276 KB**, then **83 of 96 named groups passed**, 13 failed assertions, and **32 of 95 IR fixtures differed**. This is the newest broad result. All 32 names also differed in the prior 35-fixture set; `mutual_recursion_later_sibling_call_requests_arena_result`, `recursive_insert_curried_stage_requests_no_arena_result` and `self_call_inside_constructor_owns_its_result` now match. No-reuse validation remains. Current stage-0 controls for all eight ownership programs passed both plain and poison (**16/16**) in `work/r10pre/ownership-stage0-controls2/`. The first controls attempt only rejected the `.source` extension; the corrected runner supplies those exact file contents via `--expr`.
+
+The HTTP candidate's main replay passed 100 rounds (12,000 requests plus readiness) with **zero connected-client resets and zero EBADF trace lines**, versus 13 connected resets in the old binary's 100-round run. It is preserved as `r10-http-worker-count/work/http-replay/fixed-server`, with `fixed.log` / `fixed-trace.*`. The candidate disarms task-frame resource cleanup after an explicit close; deterministic cancellation and descriptor-reuse regressions are still being added by `lowering_evidence`.
+
+Poison instrumentation `8d0a2285` is committed and pushed, awaiting integration/build/runtime proof. `tmc_repair` is now porting task resource-frame lifecycle support on `fix/r10-resource-frame-port` in `r10-resource-frame-port`. Its first prerequisite, pushed `832133cb`, preserves explicit frame-dropper labels and invokes them exactly once on completion/cancellation. Typed Socket capture ownership and consume/disarm notification remain under implementation with the C# worker; enabling untyped cleanup for every saved value is unsafe. No agent load has run.
+
+The stored-tuple fix `bd915b62` is integrated as `4961ecf3`: conservative unknown-callee demands now retain their selected field prefix, leaving unrelated Eq evidence latent. Its native suite, including the positive stage assertion, passes. The full stage-0 attempt at `c313e129` stopped at whitespace before suites; format-only `e3dc636e` is integrated as `eee4de68`, and subsequent full results are recorded above.
+
+While integration is frozen for the running checks, coordinator handoff updates are committed and pushed on `fix/r10-live-checkpoints` in its own worktree. Cherry-pick new documentation commits after the reader finishes; they do not change compiler source.
+
+The full C# run on `b17375b1` completed with **3,022 passed / 56 failed / 2 skipped**, compared with the prior 3,073 / 5 / 2. LSP passed 88/88; e2e completed **1,308 passed / 0 failed / 80 skipped** in 5.75min. No main reader remains. New C# failures cluster around directly escaping owners, immediately consumed runtime builtins, the Box payload transfer and explain fixtures; two additional RSS failures are not exempt as baseline leaks. Both workers identified the earlier scheme-read change `e946de8f` (integrated `3db7a02e`) as the cause in the Box witness: tail-forwarded ownership remained marked borrowed, preventing adoption by the enclosing binding. Pre/post query-optimization IR is identical for that witness, ruling out `66b8d0d3` there. Do not change the test oracles.
+
+The completed C# repair is in `r10-phantom-query`; its stage-1 counterpart audit is in `r10-root-ownership`, branch `fix/r10-root-ownership` from `b17375b1`. No agent load is running.
+
+`2b76c677` and `8d0891e7` are integrated as `90f0392e` and `d1415230`. Focused Box, direct-text and BigInt IR is restored byte-for-byte against the pre-regression compiler, and the original richer prefix UAF witness still passes with poison. The follow-up records borrowed facts only when the binding has ownership provenance; the heap-result-list and borrowing-callee memory reports match their references. The stage-1 audit required no source edit: its existing `transferSlot` path distinguishes actual outgoing ownership from earlier borrowed reads. Exact direct-text and earlier-read/alias historical IR probes corroborate the current-source reasoning; fresh native confirmation remains required.
+
+Main's `work/r10pre/policy-shared2/` run is complete: build/format passed, C# has the 56 failures above, LSP and e2e passed. The ownership-read repair is integrated; main is starting the full stage-0 retry in `work/r10pre/policy-shared3/`. Do not mutate integration while the reader runs. Then use the fresh `policy-shared3/s0/ashes` for corrected broad native cases. Prior `policy-shared` stopped at formatting, and the earlier chained run stopped at policy failure; neither supplies an additional full C#/e2e result.
+
+### Round 10 preflight history
+
+The archived handoff below preserves the original issue descriptions, branch-to-integration commit mappings, historical counts, and superseded coordinator plans through 2026-11-21. Its timestamps and worker assignments describe earlier runs. For the current source, gate and outstanding checks, use the [live handoff](SELF_HOSTING.md#current-round-round-10-resumed-2026-11-21).
+
+<details>
+<summary>Archived preflight checkpoints through c15807b7</summary>
+
+
+This section is the handoff: a session that starts fresh reads it first. Keep it current with each
+integration, and replace it when round 10 has run.
+
+**Integrated checkpoint (2026-11-21 03:38):** the queued source batches below are now integrated
+through `b12affe3` and pushed: callback `cd1c9795`/`5b452baf`/`5df945b3`/`961e5983`/`0db26650`
+became `abebebf6`/`d9089104`/`3cc24de0`/`e2f8459b`/`acd6c19d`; inference
+`947fb5d0`/`0918689b`/`f9bd8d0a` became `d699a4bf`/`22d615b3`/`421e904b`; ownership
+`37bf8d78`/`85a4e368` became `a997de25`/`b12affe3`. Both callback/inference workers handed back
+clean; focused standalone source checks pass, while their combined native cases remain unverified.
+
+The `da06e40d` named-native build **failed after 23 minutes**, before any suite execution:
+`Unit vs List<SemanticStitchUnit>, in match arm 38`. This is a generated harness error:
+`runModuleReferenceRewritingTests` intentionally returns the checked unit list, discarded by the
+original sequential suite. The new named dispatcher had required identical result types across
+all test groups. Corrected coordinator renderer `r10-fixture-candidates/work/render-named-capture.sh`
+evaluates each test and discards its result, preserving the suite's behavior. The test body and
+compiler were not changed for this harness repair. The failed attempt supplies no new IR capture.
+Future named runs use this renderer, configurable output folders and a per-run `actual/` directory.
+
+The guard review found a confirmed correctness counterexample: an `Int` local shadowing another
+match arm's list-tail name inherits that arm's RC-transfer fact. Old-family IR retains integer 7;
+bootstrap54's generated program crashes with exit 139. C# correctly emits two genuine tail retains
+and prints 7. `30935ec4` stores the fact on the actual `CoreBinding` and removes spelling-based
+fallbacks while preserving protective-owner eligibility; its source preflight is running.
+This repair is being integrated before the next checks. Main will run fresh policy/source preflight,
+then C#/LSP/e2e/format, followed by corrected named-native and no-reuse validation. No round 10 yet.
+The lexical-binding repair is integrated as `b438d259`. `lowering_evidence` resumes in fresh
+`r10-phantom-query`, branch `fix/r10-phantom-query` from that head, for a 25-minute bounded
+candidate-directed phantom-variable query optimization in both compilers. It must preserve all
+layout decisions, self/quantifier exclusions and mutable-type correctness; no typed-lowering
+policy change is authorized by this task. Main will measure any improvement. `tmc_repair` finishes
+the guard repair's source check in `r10-ir-ownership-audit`; no more than two workers.
+
+**Queued checkpoint (2026-11-21 03:24):** integration is frozen at `da06e40d` while main's
+`work/r10pre/named-native/` job builds/runs the combined named semantics/IR driver (session 28490).
+The coordinator records this update on `fix/r10-handoff-queue` in its own worktree so the running
+source is unchanged. Cherry-pick this documentation checkpoint onto integration after the reader
+finishes. No shared round 10 has run.
+
+The previous `policy-preflight-fixed` result remains valid: source inference 10,092 items / 184
+modules, focused native policy tests all pass. Queued, pushed implementation commits:
+
+| Branch | Commits waiting after current reader | Status |
+| --- | --- | --- |
+| `fix/r10-evidence-boundaries` | `947fb5d0`, `0918689b` | BATCH READY: callback aggregate selectors and recursive sibling/cycle demand summaries. Focused source inference explicit `ok`, 1,991 items / 44 modules, 39.297s. Native tests pending. `822513dd` is already integrated as `e34a9ad7` and native-proven. |
+| `fix/r10-callback-evidence` | `cd1c9795`, `5b452baf`, `5df945b3`, `961e5983` | Ordinary callback/selected-field checking, finalized scheme identity, analyzer cleanup, direct recursive evidence propagation. Focused stage-0 poison negatives and returned/ignored/delayed positives pass. One confirmed remaining interaction: trait-free recursive peers returning a callback falsely force its evidence at the binding; worker is fixing joint formal-use summaries. `f5b85d06` is already integrated as `d397fa37`. |
+| `fix/r10-ir-ownership-audit` | `37bf8d78`, `85a4e368` | Two concrete correctness repairs: finish the TMC spine before ownership publication and loop-input release; do not apply runtime pointer retain to scalar pattern fields. Source formatting passes. Semantics-manifest inference reached the previously documented `ResultReachTests.ash:34:69` ConsoleIO mismatch; native checks required. |
+
+Active workers: `lowering_evidence` in `r10-callback-evidence` finishes the recursive callback
+interaction; `tmc_repair` has handed back the ownership batch clean and resumed the existing
+`r10-evidence-boundaries` branch at `0918689b`, with a 20-minute brief for the same trait-free
+recursive peer formal-use issue. Exact paired witnesses are
+`recursive_peer_returns_callback_without_invoking_it.ash` and
+`recursive_peer_invokes_callback_during_binding.ash` in the callback worktree. Existing `0918689b`
+does not prove that interaction. Two active agents, no agent load. All commits above are pushed;
+main integrates only between reader jobs. The ownership handoff lists seven unchanged fixtures
+for current-stage backend execution in normal/poison modes, with expected stdout, in
+`r10-ir-ownership-audit/work/PROGRESS.md`.
+Standalone peer coverage is now `f9bd8d0a`, depending on the two e2e fixtures from the callback
+worker. The existing `0918689b` fixed-point pass already propagates trait-free formal-use summaries;
+the new witnesses and delayed `[Eq@2,Seed@1]` assertion need native execution before claiming parity.
+
+Performance observation during the native build: a bounded `dotnet-stack` sample at about
+20 minutes shows stage 0 still in `AddBindingFtv` → `VariablesHeldBesideFunction` →
+`SubstitutePhantomResultVariables` → `ResolveCallPhantomResultLayout`, not LLVM. Full snapshot:
+`r10-fixture-candidates/work/named-native-stack.txt`. Preserve this for typed-lowering performance
+work; a sample is not a whole-run profile. The build continues under its existing 45-minute cap.
+
+Ownership audit details: `LoopPlacement.finishTcoManagedPlacement` previously published the base
+tail and released loop inputs before Bindings/RecursiveGroups closed the returned TMC spine,
+then published ownership again. Regression order changes from `[published,released,closed,published]`
+to stage 0's `[closed,published,released]`. Separately `retainUnplacedAggregateMarkersOf` could
+emit `IsReferenceCounted` and real `RcDup` on the `Int` field in `Add(a+1,b)`, mistaking legal integer
+bits for a pointer. Both are non-leak gate blockers until validated.
+
+The two generic collection fixture differences appear to use safe alternative placement: the
+direct constructor loop has arena nodes and only stack restoration at backedges; the helper loop
+acquires the normalized successor before dropping the old owned graph. Extra deep-copy helpers
+are unreferenced. Do not regenerate fixtures or treat old bootstrap54 execution as proof of changed
+lowering. The extra active-flag guards and remaining borrow/result modes still need classification.
+
+Next load batch after integrating completed slices: focused policy native test including aggregate
+and recursive cases, fresh full stage-0 C#/LSP/e2e/format checks, then updated native semantics/IR and
+no-reuse checks. Scripts are in `r10-fixture-candidates/work/policy-shared-checks.sh` and
+`named-native-checks.sh`; avoid overwriting prior output folders. New native results may add blockers.
+
+**Gate (user, 2026-11-18):** round 10 runs only once every known bug is fixed, leaks excepted
+unless one blocks something. The inference content for round 10 is complete; all agent effort goes
+to the bugs below until then. The user resumed work on 2026-11-21. The integration tree was clean
+and matched origin at `a5eef21e`. The installed Claude CLI supports Opus, but both worker attempts
+stopped on the account's weekly usage limit (reset reported November 22 at 11:00 Stockholm time).
+The user authorized GPT-6.2 Astra as the substitute, and both prepared workers are now running.
+The user reaffirmed the complete goal: stage 2 compiles stage 3 without errors and byte-identically;
+inference replaces discovery/replay and repeated lowering; parallel LLVM/codegen/linking follows.
+Blocking leaks are fixed immediately. After multithreading, **all** remaining compiler and generated
+program leaks must be fixed; this round's leak exclusions are temporary.
+
+**Latest status (2026-11-21, integration `902c0e0b`, pushed):** the user explicitly requested both
+agents work toward full inference coverage. The new evidence and type-table batches are integrated
+but await native validation. Static inventory covers 19 semantic type constructors, 48 expression
+constructors and 14 pattern constructors; this is not a claim of complete tested coverage.
+
+**Newest checkpoint, source `b77ef21e`:** both immediate-evidence batches are integrated and pushed:
+`80e21b10` → `6eb76cf2`, `e946de8f` → `3db7a02e`, `854a6c30` → `2c0486e8`,
+`03875c48` → `f10ccbf2`, `b346b24c` → `ba33aeb2`, `e97feb40` → `0e6a388f`,
+and `4058260d` → `b77ef21e`. Duplicate dependencies were skipped. Both workers handed back clean.
+The standalone policy source check passed 1,950 items / 44 modules; native behavior is unverified.
+Main is running `work/r10pre/policy-preflight.sh`: fresh stage 0, whole-compiler source inference
+with explicit `ok` required, then a focused native policy build/run. Results use the matching folder.
+Do not mutate integration while this job reads it.
+
+One confirmed new gate blocker: stage 0 rejects direct `check = pick(Unit)` but accepts
+`invoke f = f(Unit); check = invoke(pick)`. The source-backed callback-demand port is present in
+standalone inference; stage-0 parity remains. `lowering_evidence` resumed in fresh
+`r10-callback-evidence`, branch `fix/r10-callback-evidence` from `b77ef21e`, to fix it.
+`tmc_repair` resumed in fresh `r10-evidence-boundaries`, branch `fix/r10-evidence-boundaries`
+from the same head, to fix RHS diagnostic locations and audit concrete higher-order boundaries.
+Both have 40-minute self-contained briefs, implementation/quick checks only. All prior branches
+are pushed. The user explicitly requested autonomous iteration through completion without steering.
+The first policy preflight (`367e2f1a`) passed stage-0 build but stopped on
+`UnknownValue("failedCoreLowering")`, `CoreLowering.ash:49:49`: the raw entry point needed an
+explicit helper export. `f5b85d06` fixes the export and is integrated; `822513dd` fixes the
+immediate-evidence diagnostic's RHS location and adds its exact-offset regression, also integrated.
+The native phase did not run on that failed attempt. Retry uses
+`work/r10pre/policy-preflight-fixed/`, preserving the initial logs.
+The corrected preflight at `fe385315` passed: fresh stage 0; explicit inference `ok` for
+10,092 items / 184 modules; focused native policy driver built with `--debug -O0` in 30.12s
+and all immediate-evidence tests passed, including RHS location. The broad native check is next:
+`r10-fixture-candidates/work/named-native-checks.sh`, using this stage 0, logs
+`work/r10pre/named-native/`. It builds with poison and runs every named semantics group separately,
+then captures the 95 IR fixtures. No-reuse and full stage-0 suites remain separate checks.
+`fix/r10-evidence-audit` supplied partial/generalization/evidence fixes through `ce420878` and the
+still-failing strict-callee regression `0f35e319`; `fix/r10-type-coverage` supplied recording,
+translation and diagnostic-test fixes through `146ca698`. Duplicate helper `36392fd2` was skipped
+because `ef95138d` was integrated as `b2f0f591`. Oracle repairs `e8b2074d` and `592c3a8b` are also
+integrated. Every cherry-pick was pushed. Main's next build must include all these batches.
+
+The next stage-0 batch at `f4c4cc6f` completed (`work/r10pre/coverage-batch/`): solution build,
+format and LSP 88/88 pass; C# **3,073 passed / five RSS failures / two skipped**, clearing all
+non-leak C# failures. E2e **1,291 passed / one failed / 80 skipped**; the only failure was the
+known strict-callee ordering regression. The independent strict-prefix split `610c85e3` is now
+integrated as `7115f734`, typo repair `5673913d` as `75f979f8`, and captured-self normalizer
+`5af4e0e1` as `902c0e0b`. The worker's stage-0 poison smokes passed exact ordering and nested
+captured/aliased mixed-constraint behavior; integrated/native stage-1 proof is still pending.
+The fresh-source preflight at `8c8e59a1` (`work/r10pre/prefix-preflight/`) passed the stage-0 build
+and both strict/captured-prefix poison regressions. Whole-compiler inference **failed** at
+`CoreLowering.Program.ash:2267:86`: argument 2 of `lowerScheduledProgramPasses` expected
+`Maybe(Expr)` instead of the normalized trailing `Expr` (10,036 items / 183 modules). The tool
+returned exit 0 despite printing `error`; require an explicit `ok` result when judging this check.
+Worker correction `03875c48` is pushed but not integrated. No main load job is currently running.
+Next: integrate the completed policy batch, rerun source preflight, then the per-module native suite.
+
+The native preflight at `4a6478c7` (`work/r10pre/native-port/`) passed solution build/format,
+C# 3,064 passed / 13 failed / 2 skipped, LSP 88/88 and compiler inference 9,995 items / 182 modules.
+The 13 C# failures were eight structural assertions (now repaired, not yet rerun) and five genuine
+RSS checks (deferred). The combined native semantics/parity driver built in 14.99 minutes.
+Semantics stopped at a stale `PatternInferenceTests` expectation for the newly contextualized match
+diagnostic; corrected in `503dc64f`. Parity captured **35/95 differences**, full actual IR in
+`work/r10-shared-capture/actual/`. Initial analysis: 29 carry extra `rc_transfer_inactive` guards
+for runtime/arena representations, not automatically correctness defects. Six others still need
+classification. The no-reuse rebuild was cancelled after the known diagnostic expectation failed;
+it supplies no result. No load job is currently reading integration; no shared round 10 has run.
+
+Use `r10-type-coverage/work/render-parity-capture.sh` for the next native batch. It renders to
+`work/r10-named-capture/`, adds `case <test-function>`, and writes `cases.txt` (95 module-level
+test functions). Run cases individually under caps to collect all failures rather than stopping
+after the first panic. Keep both normal/no-reuse checks at the agreed gate. Focused drivers can
+use `--debug -O0`; the shared stage-1 build retains the specified `--debug -O2`.
+
+**Semantic decision, resolved by the user:** `r10-evidence-audit/work/early-open-dictionary.ash`
+binds `check = pick(Unit)` before a marker, then uses `check` at Int and Bool. Strict evaluation
+requires an earlier effect once, but that effect depends on the not-yet-selected trait instance.
+Current stage 0 prints `bound|Int|Bool|true true`. The reference does not settle how to select one
+instance. User chose **require concrete evidence at binding; annotate ambiguity**, not making
+affected bindings monomorphic from later top-level uses. Immediate work must have determined or
+available enclosing evidence; requirements used only by the returned function remain generalized.
+Reference change `ec3265c1` is integrated as `62d8e5de` before implementation. Standalone-inference
+and lowering enforcement are active work. The user's positive example keeps Seed.first/inspect
+inside `check x`, so check remains polymorphic with inferred Seed/Eq evidence supplied at each call.
+The independent early-callee effect case has a unique required order:
+`generalized_partial_runs_callee_prefix_before_next_binding.ash` must print
+`entered|bound|v=42 v=true`, not `bound|entered|entered|v=42 v=true`. The declaration-site split
+preserving lexical captures and the ordinary full-call ABI is integrated and passes the fresh
+stage-0 poison check; native stage-1 proof is pending.
+
+Active workers are now `lowering_evidence` in `r10-evidence-audit` (C# policy and lowering scheduling;
+bounded single-project CLI recovery builds/short smokes authorized) and `tmc_repair` in
+`r10-immediate-evidence`, branch `fix/r10-immediate-evidence` from `f4c4cc6f` (45-minute batch:
+standalone inference metadata/enforcement). Its reference dependency `c3f995b8` duplicates
+`ec3265c1`; skip the duplicate at integration. Metadata contract is a demand stage for each
+canonical scheme requirement ordinal, exposed as `nodeEvidenceStagesAt(rhsRoot)(nodeTypes)`;
+direct method/operator execution demands evidence, reference instantiation alone does not.
+Pending pushed slices on `fix/r10-evidence-audit`: `80e21b10` (C# immediate evidence policy),
+`e946de8f` (borrowed scheme-read ownership; stage-1 equivalent path already exists), `854a6c30`
+(transitive wrapper strictness in both compilers), and `03875c48` (normalized trailing expression).
+`fix/r10-immediate-evidence` has `b346b24c` (standalone policy and stage metadata); its
+`335a3d10` dependency duplicates integrated `75f979f8` and must be skipped. The inference worker
+is finishing higher-order invocation/ignored-callback/returned-callback coverage; the lowering worker
+is wiring validation for raw lowering entry points while reusing validation on checked CLI paths.
+Both use
+GPT-6.2 Astra; no third active worker. Their `work/BRIEF.md` and `work/PROGRESS.md` hold details.
+`imports_diagnostics` is idle. The type-coverage manifest preflight reached an unchanged
+`ResultReachTests` row mismatch in the older standalone tool after fixing a new-test member read;
+compare inference binaries/current-source behavior before treating it as a compiler regression.
+
+**How work is done.** One coordinator session integrates and runs every load job (builds, suites,
+sweeps); at most two agents work in parallel, each in its own worktree on a `fix/*` branch from the
+integration head, and hand back a `BATCH READY` batch with the load work they need listed in their
+worktree's `work/PROGRESS.md`. The coordinator pushes each agent branch and the integration branch
+after every commit, cherry-picks batches onto the integration branch, and updates this section. The
+agent rules are in the `step-f-round3` worktree's `work/coord/rules.md` (machine-local).
+User clarification on 2026-11-21: maximize implementation per batch before coordinator heavy
+validation; immediately assign failures to the next implementation batch. Keep remote branches
+current. The coordinator is authorized to choose validated milestone PRs, merge them, and remove
+local/remote branches no longer needed (preserve still-needed evidence first).
+
+**Orientation for a new session.** Everything below is either on `origin` (branches, this file) or
+on the development machine (marked *local*: git-ignored, under the repository checkout).
+
+Read first, in this order:
+1. This section.
+2. `CLAUDE.md` / `AGENTS.md` at the repository root (build, test and format gates, coding rules).
+3. In this file: "Start here" above it (where things stand, the order of work) and "Type inference
+   before lowering" (steps 7 and 8, the order-dependent rules, what the table gives lowering).
+4. The references the bugs touch: `docs/md/reference/language.md` (sections 13.1 imports, 21.2
+   trait declarations, 21.5 to 21.6 requirements and operators), `docs/md/reference/diagnostics.md`
+   (codes, including ASH048), `docs/md/guide/testing.md` (test directives).
+5. Tools: `selfhost/tests/behaviour/README.md` (the behavioural check), `scripts/selfhost-dev/README.md`
+   (the suite runner `suites.sh`, `--focused`, the probes), `selfhost/README.md` (packages).
+
+Branches on `origin`:
+
+| Branch | Role |
+| --- | --- |
+| `main` | Round-10 baseline: #1159 (`f6e28970`); refresh before the milestone PR. |
+| `selfhost/round10` | The integration branch; integrated batches and held changes are distinguished below. |
+| `fix/parity-bugs-4`, `fix/csharp-red-tests` | Integrated, with the TMC correction from fix/r10-tmc-regressions. |
+| `fix/r10-tmc-regressions`, `fix/r10-import-diagnostics`, `fix/r10-lowering-evidence` | First resumed batches integrated through 8da62f16; combined validation pending. |
+| `fix/r10-ownership-parity`, `fix/r10-remaining-correctness` | Active second batches, both from integration 8da62f16. |
+| `fix/parallel-codegen` | CG-17/LNK-14, paused, no commits (design notes in the CG-17 checklist entry). |
+| `fix/typed-generic`, `fix/typed-replay`, `fix/typed-nodes`, `fix/trait-naming`, `fix/typed-step8`, `fix/parity-bugs`, `fix/parity-bugs-2`, `fix/parity-bugs-3`, `fix/typecheck-decisions`, `fix/strict-imports`, `fix/s2-crash`, `fix/infer-edges`, `fix/suite-debt`, `fix/s2-diff-a`, `fix/s2-diff-b`, `round10-premerge` | Already integrated; kept for history, safe to delete once round 10 lands. |
+
+Worktrees (*local*, under `.claude/worktrees/` of the checkout; each agent works in its own):
+
+| Worktree | Branch | Use |
+| --- | --- | --- |
+| `step-f-round3` | `selfhost/round10` | The integration worktree: builds, rounds, results. |
+| `r10-tmc-regressions` | `fix/r10-tmc-regressions` | Completed batch; full C# repair evidence under work/coordinator/repaired/. |
+| `r10-import-diagnostics` | `fix/r10-import-diagnostics` | Completed imports/parser/diagnostics batch; focused probes under work/. |
+| `r10-lowering-evidence` | `fix/r10-lowering-evidence` | Completed Not/equality/executable-boundary batch. |
+| `r10-ownership-parity` | `fix/r10-ownership-parity` | Active: owned match-result uniqueness and IR/explain parity (4, 1, 9). |
+| `r10-remaining-correctness` | `fix/r10-remaining-correctness` | Active: REST example and bootstrap36 correctness audit (8, 10). |
+| `r10-fixture-candidates` | detached 8da62f16 | Coordinator-only disposable fixture generation, candidates under work/. |
+| `parity-bugs` | `fix/parity-bugs-4` | Parity-bug agent; `work/PROGRESS.md`, reproducers in `work/q/`. |
+| `typecheck-decisions` | `fix/csharp-red-tests` | C#-tests agent; `work/PROGRESS.md`, fixture scripts in `work/cs/`. |
+| `parallel-codegen` | `fix/parallel-codegen` | Paused multithreading notes in `work/PROGRESS.md`. |
+| `s2-diff-b` | `fix/s2-crash` | Stage-2 crash notes and gdb scripts in `work/r/`. |
+| `typed-nodes` | (`work/check/infer`) | Holds an inference tool binary used for quick type checks. |
+| `main-baseline` | detached at `main` | For running a check against `main` (its C# failure list: see below). |
+
+Binaries (*local*): newest checked stage 0 is `step-f-round3/work/r10pre/resume-integrated/s0/ashes`
+(integration `fc50661a`, 2026-11-21). Under `step-f-round3/artifacts/`: stage 0 `stage0-b58/ashes` (built from the
+head after strict imports; rebuild with `dotnet build src/Ashes.Cli/Ashes.Cli.csproj -c Release -o
+artifacts/stage0-bNN`, stage 0 embeds `lib/Ashes`, so rebuild it after any stdlib edit); stage 1
+`selfhost-dev/s1-f-bootstrap54-debug` (round 9, before every round-10 batch); stage 2
+`selfhost-dev/s2-f-bootstrap54` with `.map` and `.map.names`; the inference tool
+`work/r10pre/strict/infer/infer` (from the head). Machine rules (caps, `heavy-coord.sh` /
+`heavy-agent.sh` slots, `ulimit -s 1048576`, swap allowed for stage 3) are in
+`step-f-round3/work/coord/rules.md` (*local*) and in the memory index of the coordinating
+assistant.
+
+Scripts and results (*local*, in `step-f-round3/work/`):
+- `step-f/round9.sh`: the template for a round (stage 1, stage 2 with link map, both behavioural
+  checks, crash trace, stage 3 and the byte comparison, suites); round 10 is a copy with the
+  numbers bumped and the typed-lowering steps added.
+- `r10pre/*.sh` and `r10pre/<name>/summary.txt`: the checks run on each batch this round
+  (`decisions`, `parity2`, `crashfix`, `batch3`, `strict`, `suites`); `r10pre/csharp-red-29.txt`
+  lists the 29 non-leak C# tests that were red on `main`.
+- `behaviour/b54-s1/`, `behaviour/b54-s2/`: round 9's behavioural results (`results.tsv`,
+  `summary.txt`); round 10 compares against them.
+- `round9/ir-opt/`: the `IrOptimizer` IR dump from the stage-2 crash hunt (no longer needed).
+- `r10pre/main-csharp-failed.txt`: the 39 C# tests that fail on `main` (`f6e28970`): the 10
+  leak tests (memory plateau and release) plus the 29; rerun the full suite in `main-baseline` to refresh it.
+
+
+**Integration branch:** `selfhost/round10` (from `main` after #1159), worktree `step-f-round3`.
+What it holds beyond `main`, none of it built by stage 1 yet:
+- typed lowering, all behind `ASHES_TYPED_LOWERING=1` (flag-off IR expected byte-identical):
+  node identities, the two `Show.show` goals, operator instance kinds, top-level schemes by node,
+  handler-arm types, requirement reduction, no numeric defaulting; operator-generic copies inside
+  functions, below top level, in place and through inner lambdas, non-tail recursive copies; `!`,
+  `Default`, user trait method and dictionary goals settled from the table; step-8 rules (a) and
+  (b). Expected with the flag on: 0 pending trait goals and no replay pass on the whole compiler.
+- three type-checking decisions in both compilers: a requirement on an outer variable is passed
+  past a local `let`; a trait method that mentions no trait parameter is rejected (ASH010); strict
+  imports (ASH048: a type or constructor is visible unqualified only in its module and modules that
+  import it; shipped `Ashes.*` modules included; trait names in `deriving`, `requires` and
+  `implement` exempt; a value selector does not count); written-requirement diagnostics.
+- stage-1 parity fixes: entry module loaded by path; call parameters typed from argument forms;
+  spans resolved against the import-blanked text (positions after an import header were shifted);
+  parse errors printed with code and position; unknown-qualifier wording; an argument call's
+  result constrained before its row joins the caller's (the `semantics` suite's capability-row
+  error); a lambda argument inferred against its parameter type and row; signature mismatches at
+  the value with the written type first; columns in Unicode scalars.
+- stage-0 fixes: entry-module trait naming; ASH010 on a nested operator-generic `let` used at two
+  types in one lambda; ASH005 on two `(given (xs) -> xs == [])` at different element types; no
+  standard-library cascade after a program error; a retired `Ashes.*` module reported as an
+  unknown standard-library module.
+- the stage-2 use-after-free: `TcoReset.noteSpineFreedSlot` released a span twice (a cons head kept
+  in an owned slot whose retain the call-argument frame already releases); guarded in both
+  compilers.
+- fixtures: `core-copy-plan-view`, `heap-drop-worklist`, the `logical-not-inference` runner entry.
+
+Checks on the head (5f1e591e, after strict imports): `dotnet build` and format clean; the full C#
+suite fails the same 39 tests as `main` and nothing else (10 leak tests, 29 being fixed on
+`fix/csharp-red-tests`); LSP 88 of 88; `ashes test tests` with a stage 0 from the head 1,273
+passed, 0 failed; the whole compiler type-checks with the standalone inference (`ok`, 9,968
+items).
+
+**Earlier checkpoint (2026-11-21 01:51):** integration was pushed through `c787ed37`.
+The combined batch at `ba570923` passed build, format, LSP 88/88 and stage-0 e2e
+1,281 passed / 0 failed / 80 skipped. C#: 3,045 passed / 32 failed / 2 skipped. Logs:
+`work/r10pre/combined/`. Its orchestration was intentionally stopped after e2e finished, before
+native builds, to include the newly completed ownership batch. No test process was interrupted.
+
+**Correction to the earlier leak classification:** the original ten red C# rows were not all
+leaks. Two stdout assertions expect 3 per iteration while their unchanged programs appear to
+compute 9; the others include structural drop counts and missing reuse coverage. They require
+review and justified fixes, not a leak exemption. The five additional failures are RSS plateau
+checks. `fix/r10-test-oracles` owns this audit; the actual evidence is `combined/csharp.log`.
+
+The five ownership/fixture commits are integrated as `36ea713b`, `5cd2bd73`, `02b1c44e`,
+`04d865e6`, `d0553c44`: corrected TMC field access, reviewed all 23 fixture files, and ported
+shared/unique matched-wrapper field ownership. Whole-compiler inference passed 9,993 items in
+182 modules. Native verification is pending. `dd6d3b39` is integrated as `3bcb1978` (unresolved
+tuple evidence and lexical helper regression). The REST example compiles with fresh stage 0.
+
+Fresh historical checks in `r10-fixture-candidates/work/historical/`: the borrowed-association
+list regression passes stage 0 and bootstrap54 with poison enabled. The original escaping partial
+application `step-f-stage0-alias-evidence2/work/fx/v1.ash` crashes with stage 0 (exit 139; jump to
+0x3e8) but passes bootstrap54. Stage-0 correction `9bb94357` is integrated as `c787ed37`, still
+unverified; the worker must provide the stage-1 counterpart or precise existing-equivalence proof.
+
+**Checks next:** `r10-fixture-candidates/work/native.sh`, output
+`work/r10pre/native-reviewed/`: fresh stage 0, format, the escaping-partial poison regression,
+reviewed C# fixtures, frontend, combined semantics/95-fixture IR capture, semantics without reuse,
+and logical-not lifetime. The driver renderer is
+`r10-ownership-parity/work/render-parity-capture.sh`; it uses the integration source at rendering.
+Actual mismatching IR goes to `work/r10-shared-capture/actual/`. This remains preflight, not the
+shared round-10 compiler build.
+
+Follow-up checkpoint at `1f25140b`: stage-0 dictionary-capture correction builds and passes format;
+the original partial-application program runs 1,000 rounds with poison and prints `passed`.
+All 207 reviewed IR/explain fixture tests pass, and the self-hosted frontend suite passes. Logs:
+`work/r10pre/native-reviewed/`. The semantics compile was cancelled shortly after starting to
+include the finished stage-1 port; no result is claimed from that compile. The port is `ba8967ed`,
+missing higher-order dictionary regression `e59f4a0c`, structural capture regression `3c7a11ff`,
+and original escaping-partial e2e regression `1f25140b`. The two incorrect arithmetic oracles are
+fixed in `38c67f01`: both original programs compute 9 per round; memory assertions are retained.
+
+Next continuation is `r10-fixture-candidates/work/native-continuation.sh`, logs
+`work/r10pre/native-port/`, with full C#/LSP validation after the dictionary fix, one compiler
+inference preflight, then the combined semantics/parity and no-reuse builds. It reuses the fresh
+`native-reviewed/s0/ashes` (compiler sources unchanged since that build). The 16 short controlled
+IR compiles requested by the oracle worker completed at `r10-test-oracles/work/oracles/`.
+Architecture documents generic-variant reservation before persistent specialization; the oracle
+worker is separating production placement assertions from the documented differential path.
+
+`imports_diagnostics` handed back clean at `e1a90ca3`, now integrated. `lowering_evidence` resumed
+in new `r10-evidence-audit`, branch `fix/r10-evidence-audit` from `38c67f01`, 40-minute budget.
+It added the original escaping-partial regression and is investigating a newly reproduced issue:
+a generalized constrained partial binding used at Int and Str is rejected by bootstrap54, while
+stage 0 accepts it but evaluates an effectful supplied argument twice. Preserve strict evaluation;
+do not copy that stage-0 defect into the stage-1 port. Current-source proof and fixes are pending.
+The first disposable fixture build stopped on MA0006 in `ProjectSupport.cs`; worker commit
+`70e40f45` corrects the ordinal comparison (integration `d30f72dc`). The worker also supplied
+`f808164a`, fixing explicit module-qualifier collisions with imported bare values; its three-file
+regression already runs correctly on stage 1 bootstrap54. Both are included before the fresh stage-0
+build. The candidate generator is `r10-fixture-candidates/work/candidates.sh`; its initial failed
+build log is preserved as `work/candidates/build-initial.log` there.
+Generate fixture candidates once in `r10-fixture-candidates`, for the parity worker to review.
+Do not repeat heavyweight driver builds for each individual fix.
+
+TMC repair validation completed at `d3493f6e` (`r10-tmc-regressions/work/coordinator/repaired/`):
+build, format, qualified-callee and dedup pass. Full C#: 3,041 passed, 32 failed, 2 skipped;
+15 non-fixture failures and 17 IR/explain fixtures, no runtime crash in that suite. The fixture
+differences are now reviewed; the ten original non-fixture failures require the audit above.
+The integration lowering diagnostic build (`work/r10pre/lowering-diagnostic/`, source `319fbe06`)
+failed before producing a binary: `OwnershipSummary.ash:255:243 ASH048 Constructor 'Consumed' is
+declared in module 'AshesCompiler.Semantics.OwnershipSummary', which this module does not import.`
+No bug-2/3 runtime outputs exist from that build. Root cause was comparing UTF-8 AST offsets with
+UTF-16 module boundaries in declaration provenance; corrected in integration `c0c4ae71`, with a
+Unicode regression. No self-import was added. A fresh stage 0 is required for the next build.
+Parser evidence: `work/r10pre/parse-recovery.log` reproduces EOF instead of Int with integration
+frontend; the worker's `work/parse-recovery-fixed/run.log` confirms its fix reports Int at 21..22.
+Integrated-head checks at `fc50661a` finished on 2026-11-21:
+solution build and `dotnet format --verify-no-changes` pass; C# 3,061 passed, 12 failed (the 10
+previously misclassified non-fixture rows plus the 2 open IR fixtures), 2 skipped; LSP 88/88; fresh stage-0 e2e 1,273 passed,
+0 failed, 72 skipped. Logs and source commit are in `work/r10pre/resume-integrated/`.
+No shared round-10 build has run: the bug gate remains open.
+
+Pre-integration checks finished; logs are under each waiting branch's
+`work/r10-resume/`. The fixture branch has 3,075 tests, 3,061 passed, 12 failed, 2 skipped: exactly
+the 10 original non-fixture tests and 2 open IR fixtures. The parity branch has 3,071 tests, 3,012 passed,
+57 failed, 2 skipped, and e2e 1,264 passed, 0 failed, 60 skipped. Against the saved main failure
+list its 18 additional failures are 12 IR/explain mismatches, five plateau failures, and a crash
+in `Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau` (exit 245).
+That one test passes on the saved main baseline (`work/r10pre/baseline-qualified-callee.log`).
+The isolated check on integration base `a5bf718f` plus only the held TMC patch (`7f3d3e00`)
+also crashes, confirming the patch introduces it; exact log:
+`r10-tmc-regressions/work/coordinator/qualified-callee.log`. Its test-project build is clean.
+The TMC regression is corrected and integrated; stage-1 validation is still pending.
+The old strict-import compile has no recorded
+completion: `work/r10pre/strict/summary.txt` ends at its start, `s1.log` and `s1.time` are empty,
+`artifacts/selfhost-dev/s1-pre10-debug` is absent, and no compiler job was running on resumption.
+That old run supplies no result. Whole-compiler compilation remains pending behind the gate.
+
+**Batch integration on 2026-11-21** (every cherry-pick pushed immediately):
+
+| Branch (worktree) | Commits | What | Load work before or after integrating |
+| --- | --- | --- | --- |
+| `fix/parity-bugs-4` and `fix/r10-tmc-regressions` | Original suite/diagnostic commits 7d866873, bed9e5ab, 7bff6f17; TMC and corrections 4c51c882, f4a48722, aa1d74be | Cons-tail loop-edge facts and correct transfer of the final spine tail, ported to both compilers. | Stage-0 crash and dedup pass; fixture review and shared stage-1 validation pending. |
+| `fix/csharp-red-tests` (`typecheck-decisions`) | 3e944ba7, f3f79418, 54d1999a, f0fcef36 integrated as 79b1af42, 4ecfbf74, 4bc951f3, 207d1ec9 | The 27 stale C# failures are fixed ([record](SELF_HOSTING_LOG.md#round-10-stage-0-fixture-repairs)); the two IR fixtures below remain open. | Full C# validation and integrated-head checks matched expectations; shared stage-1 validation pending. |
+
+The combined source is on origin at `8da62f16`. Lowering-evidence integration is `44820898`,
+`12c7bf89`, `be8f6f28`; imports/parser/diagnostics integration is `1089a9ae`, `bbf05bac`,
+`8f639f6f`, `77dddfc8`, `3552a3f1`, `c0c4ae71`, `a843fbfd`, `e35d9244`, `1dea58a2`, `8da62f16`.
+
+**Active workers:** two GPT-6.2 Astra workers, self-contained `work/BRIEF.md`, no load work or pushes:
+- `tmc_repair` resumed in `r10-immediate-evidence`, from `f4c4cc6f`: standalone inference enforcement
+  of the user-selected immediate-evidence policy. Previous coverage/normalizer batches are integrated.
+- `lowering_evidence` resumed in `r10-evidence-audit`: remaining constrained-binding/evidence audit.
+`imports_diagnostics` is idle. All three first batches handed back clean and are integrated; their
+old `work/PROGRESS.md` files preserve load requests. All branches are pushed.
+
+**Gate status:** 0/2/3/5/6 and the alias/trait portion of 7 have implementations integrated and
+await combined validation. The Unicode provenance blocker is fixed in source. The selector-only
+portion of 7 no longer reproduces on bootstrap54 (regression prints 42); inline declaring-name
+regression still needs stage-1 verification. Bugs 1/4 have implementations integrated, bug 8's real
+example compiles, and bugs 9/10 plus the corrected C# failure audit still require work.
+
+**Original bug descriptions and remaining validation**:
+0. Rework `3d4ff885`: keep the grown-seen TMC accumulator fix while preventing the newly observed
+   qualified-callee fresh-list crash; port the correction to stage 1 and review its fixture changes.
+1. Two lowered-IR fixtures (`fix/csharp-red-tests` notes): `loop_result_some_holding_the_loop_parameter`
+   matches only with five more switches off (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`,
+   `GRC_NO_EXITPARAMOWNFIELDS`, `GRC_NO_ARENACURRYBORROW`, `GRC_NO_BOUNDGENERICCALLTYPES`,
+   `GRC_NO_UNREACHEDGENERICLOOPRC`): narrow to one, review the IR, regenerate.
+   `tco_generic_curried_helper_result_passed_to_self_call` differs with all eight off: cause unknown.
+2. `logical-not-inference` fails "recursive discovery placeholder escaped":
+   `lowerCoreExpression("let recursive invert x = !x in invert")` now returns no error where the
+   fixture expects one. Suspects by date: 1bb37dff (answer open `Not` goals from the table) and
+   d64aa0a4/cc9b0862, although all claim to be typed-lowering only. Next step: a diagnostic run
+   printing the actual `CoreLoweringResult` in `checkRecursiveExpressionBoundary` (recipe in
+   `parity-bugs/work/PROGRESS.md`).
+3. Stage 1 on two `(given (xs) -> xs == [])` at different element types
+   (`parity-bugs/work/q/s5b.ash`): `MissingCoreTraitEvidence("Eq", ...)`. Stage 1 keys a proven
+   goal per span, trait and method, as stage 0 did before 3b54ac0d; the port is a per-lowering
+   ordinal and counter in `CoreLoweringState` (unconfirmed as the cause).
+4. Stage 1 lacks stage 0's uniqueness check when matching an owned call result
+   (`match f(x) with Some(span)`, `rc_match_field_shared/owned`), which let it reach the stage-2
+   double release.
+5. Diagnostic details not ported to the inference: the "Expected shape: Some(T)." suffix, the
+   "in if branches" / "in match arm" contexts, stage 0's order of an unjustified requirement before
+   ambiguity (with its semantics-suite expectation).
+6. Parser recovery: stage 0's later errors after the first come from its wrapped combined source
+   ("found RParen" at EOF is the wrapping parenthesis): decided to make stage 0 stop reporting
+   those, not to imitate them; not implemented. Genuine difference: for `let y = (1\n1` stage 0
+   reports "found Int" at 3:1, stage 1 applies `1 1` across the newline and reports "found EOF".
+7. Left by strict imports: stage 1 cannot stitch `import Ashes.Collection.Map.MapTree`
+   (`shipped_type_selector_import.ash`); stage 0 does not check alias names (`type X = Y`); ASH048
+   names an inline module `file#Inner` in stage 1 and `File.Inner` in stage 0; a user trait of an
+   unimported module in `requires`/`implement` is rejected by stage 1 though trait names resolve
+   without an import.
+8. `examples/restful_api` does not compile with stage 0 (ASH010 ambiguous `Eq(a)` at Main.ash 1:1
+   and 18:1, ASH002 at Api.ash:25:13); broken before this week.
+9. The 30 of 95 `ir-program-parity` fixtures (stage 1 against the shared fixtures): decide each
+   after `fix/csharp-red-tests` regenerated the stage-0 side.
+10. Re-check the "Open work recorded at bootstrap36" list above with small programs.
+11. Audit the misclassified C# failures above: correct proven stale stdout/IR expectations and fix
+    actual compiler defects; only demonstrated leak-only failures can be deferred.
+12. Generalized constrained partial application: preserve polymorphism and evaluate supplied
+    arguments once, before the dictionary lambda. Fresh stage-0 double evaluation is a correctness
+    bug; stage-1 current-source acceptance still needs proof (bootstrap54 rejects the second type).
+13. Independent early-callee effects must run once before the next binding; declaration-site fix
+    is integrated, native verification pending. Enforce the user's chosen early-evidence policy.
+14. Newly found mutual-group dictionary ABI and higher-order/operator evidence cases are fixed in
+    source in both compilers; their new regressions await fresh native validation.
+15. Type-table handler/guard scopes, primitive integer complement and shadowed-let scheme selection
+    have source fixes and dedicated coverage; exact deriving and full recorded-layout checks await
+    the new per-module native suite.
+Leaks stay out: 150 leak-only behaviour rows and demonstrated leak-only C# failures. The old blanket
+exemption for ten C# rows was based on incorrect classification and must not be used.
+
+**Paused, not a bug:** `fix/parallel-codegen` (CG-17, LNK-14), paused by the user for the bug
+work; design notes in the CG-17 checklist entry.
+
+**Round 10, once the gate is met** (one shared round, run by the coordinator):
+1. Stage 0 from the head: `dotnet build Ashes.slnx`, `dotnet format --verify-no-changes`, the full
+   C# suite and the LSP suite against `main`'s failures, `ashes test tests`.
+2. Stage 1 (`--debug -O2`, `ASHES_RC_LEAKCHECK=1`), stage 2 with a link map, the behavioural
+   check of both against stage 0, stage 3 and the byte comparison (stage 3 needs swap allowed).
+3. The same behavioural check of stage 1 with `ASHES_TYPED_LOWERING=1`, and the lowered-IR identity
+   sweep with the flag off against the previous stage 1.
+4. The whole-compiler counters with the flag on (pending trait goals, structural equality goals,
+   replay passes, bodies lowered again): expected 0 pending goals and no replay pass.
+5. The self-hosted suites (`scripts/selfhost-dev/suites.sh`, then `--focused`).
+6. The quick runs each batch lists in its worktree's `work/PROGRESS.md`.
+
+After round 10: the flag-on differences it shows, then typed lowering on by default (end of step
+7), then the step-8 ownership rules one at a time, and multithreading resumes.
+
+**Known work parked for later items (2026-11-17), so it is not lost:**
+- Lowering time (item 3): a per-type admissibility/reachability query that walks each type's whole subgraph, quadratic in the number of types (`recordGeneralRcTypeFacts`); the linear scans `lookupBinding` (CoreLowering.Emit) and `lookupSubstitution` (Types); `reachesGeneralRcNamedTypeIndexed` walks every path with no memo (an unverified visited-set rewrite exists as a patch on branch `perf/step-f-optimizer-tables`, `work/reach.patch`); one compiler definition costs about 30 seconds in each lowering pass in tail-call argument-type containment.
+- Code generation and linking (item 4): the ELF linker is mildly super-linear (2.4-2.7x per doubling of functions); LLVM emission of the unoptimized entry function grows 2.2-2.3x per doubling.
+- Leaks (item 5): the rewritten tagless resource walk (`TaglessAdtLayout`) leaks about 1.3 KB per query when built by stage 0; task-frame teardown and reclaiming a spawned task's arena are not ported; several crash fixes keep a value alive instead of releasing it (recorded in their commit messages); 129 test programs differ from stage 0 only in live-cell count.
+
+**When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
+than marking it done here. Read "How to work on this" below before your first change.
+
+</details>
+
+### Round 10 stage-0 fixture repairs
+
+On 2026-11-21, integration commits `79b1af42`, `4ecfbf74`, `4bc951f3`, and `207d1ec9`
+closed 27 stale C# failures: LLVM 23 ELF snapshot hashes, project-fixture source context,
+the generic-variant-loop ToSpace decline expectation, and the reviewed lowered-IR/explain oracles.
+The full C# suite on integration `fc50661a` has exactly the remaining 10 known leak failures and
+two separately tracked IR fixtures (3,061 passed, 12 failed, 2 skipped). Build and format pass;
+LSP 88/88 and stage-0 e2e 1,273 passed, 0 failed, 72 skipped. Logs are local to the integration
+worktree under `work/r10pre/resume-integrated/`.
+
+### Package and test foundations
+
+- [x] **PKG-1** Define pure-Ashes `frontend`, `formatter`, and `semantics` packages with the required dependency
+  direction and no host-language implementation helpers.
+- [x] **PKG-2** Keep package tests in separate `devDependency` projects and compile them into standalone native
+  executables.
+- [x] **PKG-3** Exercise frontend, formatter, and semantics tests with reuse enabled and with
+  `--debug-disable-reuse`.
+- [x] **PKG-4** Supply the language, standard-library, host-environment, filesystem, process, byte-buffer, JSON,
+  regex, and installed-layout capabilities identified by the prerequisite audit below.
+- [x] **PKG-5** Document every production module's responsibility and load-bearing invariants, preserving
+  behaviorally relevant stage-0 contracts without copying host-language API boilerplate.
+- [x] **PKG-7** Make every self-hosted package buildable from a restored source-only dependency graph without
+  undeclared checkout-relative inputs.
+- [x] **PKG-8** Run the three script-style project test files (`ProjectDiscoveryTests.ash`,
+  `ProjectSourceEnumerationTests.ash`, `ProjectCompilationPlanningTests.ash` under
+  `selfhost/tests/semantics/`) from a suite: they are trailing-expression scripts that no runner
+  invokes today, so their assertions have not been executed since they were written. Wire them
+  into the projects suite (or a runner of their own if they need the repository layout), fix
+  whatever has rotted, and keep them in the standing gate.
+  Done: the three files now live in `selfhost/tests/projects/`, export their `run...Tests`
+  entry, and run first in that suite's `Main.ash` ahead of the dependency-graph and lock-file
+  groups, with a pass line of their own. They build their fixtures under the process's
+  temporary directory and remove them afterwards, so they need no repository layout. Nothing
+  had rotted: every assertion passes as written against the current discovery, enumeration,
+  and planning modules.
+
+
+### Frontend and source model
+
+- [x] **FE-1** Model tokens, structured diagnostics, and canonical UTF-8 byte spans.
+- [x] **FE-2** Lex identifiers, keywords, operators, comments, whitespace, strings, runes, signed and unsigned
+  integers, floats, and malformed input, including Unicode scalar validation.
+- [x] **FE-3** Model the complete typed syntax surface for programs, declarations, expressions, patterns, and
+  type expressions without collapsing those categories.
+- [x] **FE-4** Parse literals, variables, qualified references, calls, tuples, lists, records, record updates,
+  unary/binary operators, pipes, and their precedence and associativity.
+- [x] **FE-5** Parse lambdas, conditionals, nested and recursive bindings, `let?`, `let!`, matches, guards,
+  handlers, `perform`, and every current pattern form.
+- [x] **FE-6** Parse named, applied, tuple, function, pointer, capability-row, annotated, and constrained type
+  syntax.
+- [x] **FE-7** Parse exports, aliases, algebraic/record/zero-cost types, flat top-level bindings, recursive
+  groups, and optional trailing expressions after the project layer has separated any import header.
+- [x] **FE-8** Parse external functions and types, ownership annotations, resources and destructors, native
+  strings, pointers, buffers, out parameters, capability rows, and `symbol@library` aliases.
+- [x] **FE-9** Parse capability declarations, static providers, trait declarations, implementations,
+  supertraits, requirements, defaults, and deriving clauses.
+- [x] **FE-10** Preserve source-ordered recovery diagnostics and the current declaration-boundary behavior for
+  incomplete editor input and project-stitched programs.
+- [x] **FE-11** Compare the complete frontend diagnostic corpus with the C# frontend by diagnostic code, span,
+  ordering, and recovery result (the versioned `ashes-diagnostic-v1` parity format under
+  `parity/frontend/diagnostics`, checked from both stage 0 and
+  `selfhost/tests/frontend-diagnostic-parity`). Porting surfaced and fixed: unsigned-literal
+  overflow picking the wrong diagnostic, an unmatched closing bracket permanently disabling
+  declaration-boundary detection, three divergent end-of-input wordings unified behind one shared
+  check, a refutable-let-pattern span read after its arena scope was reclaimed, and a spurious
+  `ASH003` code on the constructor-less-type diagnostic.
+
+
+### Formatter
+
+- [x] **FMT-1** Canonically format every expression, pattern, and type form while preserving precedence.
+- [x] **FMT-2** Canonically format complete programs and every top-level declaration form.
+- [x] **FMT-3** Preserve intentional source spellings where the formatter contract requires them and sort only
+  semantically unordered surfaces such as requirement sets.
+- [x] **FMT-4** Cover golden output, parse-format-parse behavior, and formatter idempotence.
+- [x] **FMT-5** Preserve written import headers and leading/standalone comments around the formatted AST body
+  (`formatSource`): the leading comment block kept verbatim, imports re-rendered canonically,
+  standalone comments reinserted at their whitespace-insensitive token-signature anchors (next
+  anchor, then previous, then top of file — no comment text is ever dropped).
+- [x] **FMT-6** Apply formatter options for indentation/newlines (`FormattingOptions`, applied as a
+  post-processing rescale over the fixed-4-space internal output) and the opt-in pipeline-layout
+  collection (`x |> f |> g` from a nested call chain, all-or-nothing, stopping at a capitalized
+  constructor once an outer stage exists). Porting found and fixed a pre-existing stage-0
+  double-newline-conversion bug (`\r\r\n`) and a stage-order reversal in the first selfhost port.
+- [x] **FMT-7** Keep the parentheses around a record update used as a record-literal field value (and in
+  multiline call arguments and list elements) whenever another sibling follows — dropping them
+  makes the update absorb the following fields, so the formatted file no longer parses the same.
+  The rule is written into the formatter reference; covered by `selfhost/tests/formatter/Main.ash`.
+- [x] **FMT-8** Compare the full formatter corpus and malformed-input behavior with the C# formatter. The
+  whole-file pass found one crash — a nested `let name param = ...` binding's sugar-parameter list
+  clobbered by arena reuse one call after parsing, fixed by deep-copying the built value before
+  span construction in `parserParseTopLevelBinding` — and a boundary-splitter gate (a declaration
+  value is no longer cut at an indented `then`/`else`/`in`/pipe line after a completed call).
+
+
+### Semantic foundations and ordinary inference
+
+- [x] **SEM-1** Model stable symbols, qualified identities, immutable lexical scopes, and deterministic fresh
+  type variables.
+- [x] **SEM-2** Model semantic primitive, unsigned, function, tuple, list, pointer, named, capability, and open-row
+  types.
+- [x] **SEM-3** Compute free variables, substitutions, occurs checks, structural unification, generalization,
+  instantiation, and constrained rank-1 schemes.
+- [x] **SEM-4** Unify capability rows independently of declaration order and allow open tails to absorb unmatched
+  capabilities.
+- [x] **SEM-5** Resolve source primitives, parameters, functions, tuples, pointers, aliases, nominal types,
+  zero-cost types, and capability rows.
+- [x] **SEM-6** Infer literals, variables, lambdas, calls, tuples, lists, conditionals, ordinary lets, recursive
+  lets, and annotations with let-polymorphism.
+- [x] **SEM-7** Infer all operator families while retaining their trait constraints.
+- [x] **SEM-8** Infer matches, guards, literal/list/tuple/constructor/record/as/or patterns, and consistent
+  pattern-local bindings.
+- [x] **SEM-9** Register algebraic, record, alias, and zero-cost declarations; infer constructors, constructor
+  patterns, record literals, and record updates.
+- [x] **SEM-10** Infer `Result` map/flat-map/error-map pipelines and `let?` propagation.
+- [x] **SEM-11** Infer sequential top-level bindings, shared-monomorphic recursive groups, and an optional trailing
+  expression.
+- [x] **SEM-12** Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs:
+  the standard `Task(e, a)` type is seeded next to `Maybe`/`Result`, `await task` types as the
+  `Result(e, a)` the task runs to (`ExpectedTaskType` otherwise), and `let!` exposes that `Result`
+  to the ordinary propagation rules; lowering `await` belongs to core lowering.
+- [x] **SEM-13** Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
+  diagnostic reporting (`matchCoverageError`, stage 0's message text; also enforced during
+  single-file lowering via `checkCoreMatchCoverage`, so the `tests/pattern_*` diagnostics fail
+  through the self-hosted CLI with stage 0's wording). Porting found the parser had no column rule
+  for match/handler arm attachment — a nested match silently swallowed the enclosing match's
+  remaining arms; `parserLeadingPipeColumn` now ends an arm list at any `|` dedented past the
+  first arm's column, as stage 0 does.
+- [x] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
+  diagnostics at the semantic boundary. In `CoreLowering.ash`, every owned `let` or pattern
+  binding whose resolved type is a resource — the compiler-provided `FileHandle` and `Process`,
+  or a declared `external type T resource destructor f` by its opaque name — is live, closed, or
+  moved. Closed: an explicit `File.close`, or a `consume` argument of the resource's own
+  destructor (closing a moved or closed binding is reported: moved-close, double close). Moved:
+  stored into a constructor, tuple, list, or cons cell; passed to a consuming callee (a let-bound
+  lambda borrows a parameter only when stage 0's `isParamUsedOnlyAsBorrowRead` proves it reads
+  it, any other callee and any non-destructor `consume` external consumes; a `borrow` external
+  only reads); captured by a closure; or returned as its arm's result. A resource builtin or
+  external reading a released binding reports stage 0's use-after-close/use-after-move messages,
+  and a live binding gets stage 0's `CleanupResource` at its `let` or arm exit — naming the
+  destructor ABI for a declared resource — which the backend lowers to `close` for a handle and
+  pipe-close plus reap for a process (the destructor call itself is CG-8's). Residue tracked
+  elsewhere: sockets join the resource names with milestone 6's net builtins; the recursive
+  cleanup of a resource-bearing aggregate and the dropper of a resource-capturing closure are
+  OPT-25's; the cleanup a tail self-call must run before its back edge is OPT-25's TCO tail
+  (today the arm's cleanup follows the call, which keeps that call an ordinary call rather than
+  a fused tail call).
+- [x] **SEM-16** Validate every written binding `requires` clause against the inferred canonical external
+  requirement set, including recursive groups and ambiguity checks.
+- [x] **SEM-18** Resolve a polymorphic `==` the way stage 0 does when the operands' type is still a
+  variable at the comparison. `tests/runtime_rc_tco_nested_tuple_pattern_alias.ash` is rejected by
+  the self-hosted lowering with a `String`/`Int` mismatch (`CoreCallTypeMismatch`) where stage 0
+  accepts the program: the comparison's operand type is defaulted before the pattern alias that
+  pins it is seen. Establish which side stage 0 takes (the deferred operator default sealed at
+  finalization against the finished substitution), mirror it, and register the fixture in the
+  loop sweep. The trait-evidence lowering of `==` on a derived type stays under TRT-15.
+  Done: stage 0 maps such a comparison to the `Eq` trait, emits a placeholder when the operand
+  is still a variable, and lowers the binding again with a late type hint once the body has pinned
+  it, so the fixture's `lit == ch` becomes a `CmpStrEq`. The self-hosted lowering now takes the
+  path its deferred `+` already took: two unresolved operands are unified with each other, an
+  integer comparison is emitted speculatively and recorded under its target temp, and the shared
+  variable joins the body's unresolved call results, so a body that pins it later is lowered a
+  second time against the resolved type. The finalization rewrite covers the still-speculative
+  survivors (a lambda pinned by the enclosing program): `CmpStrEq`/`CmpStrNe`, the float forms,
+  and the BigInt compare expansion, which takes two fresh temps past the function's count. A
+  variable no body pins seals to the integer comparison, as `+` seals to `AddInt`, until TRT-15's
+  dictionaries. Both fixtures (`runtime_rc_tco_nested_tuple_pattern_alias`,
+  `runtime_rc_whole_string_pattern_recursion`) compile and match stage 0 in the loop sweep.
+- [x] **SEM-19** Report an argument type mismatch once per call. Stage 0 reports the same mismatch
+  three times at the call span on an ordinary call (the expected-type unification in `LowerExpr`
+  plus the contextual unification) and twice on a tail self-call; the self-hosted lowering rejects
+  the same programs through `ensureFunctionType` binding the open return to a fresh arrow and
+  reports a location-less `CoreCallTypeMismatch`. Dedupe stage 0's diagnostics at the call span,
+  give the self-hosted mismatch the call's span, and pin both in the diagnostic parity fixtures.
+  Done: stage 0's call site owns the report. A `LoweredValueRequest` whose expected type is
+  caller-reported (`WithCallerReportedExpectedType`: a call argument's parameter type, a list
+  literal's element type) makes the expected-type unification in `LowerExpr`, the call result
+  pre-constraint, and the result unification in `LowerCallFinish` silent
+  (`SuppressUnificationDiagnostics`), the literal pre-constraint is always silent, and the tail
+  self-call's contextual unification reports at the call span like the ordinary path, so an
+  ordinary call, a tail self-call, a call-shaped argument (one report per call), and a list-literal
+  argument (one `ASH005`) each report a mismatch exactly once. The self-hosted `CoreCallTypeMismatch`
+  carries a `CoreMismatchSite`: every unification failure takes the innermost enclosing span and
+  its resolved location (stage 0's span stack), and a call argument's failure takes the call's
+  span plus the argument's ordinal and the callee's display name, attached by the ordinary and tail
+  self-call argument bindings and by the argument request the expected type travels under
+  (`ConsumerRequest.argumentSite`, so a nested call's result pre-constraint and the unforwarded
+  expected-type unification report the outer argument, as stage 0's silenced unifications leave
+  the outer call site to). `LoweringDiagnostics.ash` renders it as stage 0's `ASH002` text with
+  stage 0's type spelling (`List<Int>`, shared `a`, `b` variable names) and the CLI prints
+  `path:line:col ASH002 message`. Porting the tail self-call fixture surfaced a typing gap fixed
+  on the way: a recursive member's first parameter annotation was dropped (`lambdaParts` kept no
+  annotation) and its body was lowered without the member's result type as the expected type, so
+  a self-call met fresh arrows instead of the annotated parameter types and the mismatch surfaced
+  at the outer call; the annotation now binds before the body and the body request carries the
+  result type (`withRecursiveBodyRequest`), as stage 0's lambda-chain lowering does. The new
+  `selfhost/parity/semantics/diagnostics` fixtures pin both calls in the `ashes-diagnostic-v1`
+  format, checked by `SelfhostSemanticDiagnosticParityTests` and the
+  `selfhost/tests/semantics-diagnostic-parity` suite. Not ported: stage 0's enclosing contexts
+  (`-> in if branches`) and the excerpt lines under a diagnostic.
+
+
+### Capabilities and handlers
+
+- [x] **CAP-1** Register capability declarations and parameter-sharing operation schemes.
+- [x] **CAP-2** Propagate ambient effects through implicit/explicit operations, lambdas, ordinary and
+  higher-order calls, partial application, and `Result` pipelines.
+- [x] **CAP-3** Infer handler operation arms, shared instances, `resume`, return arms, arm effects, and residual
+  row discharge.
+- [x] **CAP-4** Register complete, coherent, instance-specialized static providers and type-check their operation
+  implementations.
+- [x] **CAP-5** Satisfy exact concrete capability requirements from providers while retaining abstract
+  requirements and rejecting provider/handler ambiguity.
+- [x] **CAP-6** Lower dynamic handler evidence, one-shot continuation state, pre/post handler control flow, and
+  dynamically scoped handler globals into IR — the mechanism is described under the
+  "Lower capability handlers/providers and trait evidence" entry in "IR model and lowering".
+
+### Traits, implementations, and evidence
+
+- [x] **TRT-1** Infer operator constraints and retain them in generalized schemes.
+- [x] **TRT-2** Register trait declarations, qualified method schemes, forward supertraits, acyclic supertrait
+  graphs, and type-checked default bodies.
+- [x] **TRT-3** Register ordinary `implement` declarations with resolved rigid heads, requirements, supplied
+  methods, and inherited defaults.
+- [x] **TRT-4** Validate implementation trait/arity, method uniqueness and completeness, substituted method
+  signatures, capability rows, and requirement variables.
+- [x] **TRT-5** Reject exact duplicate and structurally overlapping implementation heads independently of source
+  or traversal order.
+- [x] **TRT-6** Track package provenance for traits and nominal head types and enforce the orphan ownership rule.
+- [x] **TRT-7** Validate decreasing conditional requirements for generic implementation heads while allowing
+  fixed requirements on fully concrete heads.
+- [x] **TRT-8** Reject dependency cycles among the defaults selected by an implementation while allowing a
+  supplied method override to break the cycle.
+- [x] **TRT-9** Canonicalize constraints, remove exact duplicates, and remove supertraits implied by stronger
+  constraints.
+- [x] **TRT-10** Validate written binding `requires` clauses against inferred canonical constraints, including
+  nested lets, recursive groups, invalid trait heads, and ambiguous requirement variables.
+- [x] **TRT-11** Resolve unique concrete instances recursively with cycle/depth guards while preserving abstract
+  constraints as hidden dictionary parameters.
+- [x] **TRT-12** Diagnose missing, ambiguous, incoherent, non-terminating, and ambiguous-type-variable goals with
+  canonical requirement traces.
+- [x] **TRT-16** Stage 0: compile a concrete instance's implementation lambdas once instead of
+  rebuilding them at every use. Every `==`, `show`, `compare`, or `hash` on a derived type
+  rewrote the whole nested dictionary value at the call site, closures for each method of each
+  nested type included, so the emitted program grew linearly with the number of uses of a large
+  derived type rather than with the number of types: a three-level derived type cost about 660
+  functions, 19,000 IR lines, and 1 MB of binary per use, and the self-hosted semantics test
+  program (`selfhost/tests/semantics`) was 79,348 functions and 4.06 million IR lines, of which
+  78,713 functions were copies of another function after masking numbers; 1.2 million lines
+  carried `Ashes.Trait` source locations and another 1.4 million the derived instances of
+  `Types.ash` and `Token.ash`. Its stage-0 compile had gone from 36 s at `--debug` and about
+  100 s at the default level on 2026-08-26 to 4.5 min and 10.6 min on 2026-09-07 (212 MB and 53
+  MB binaries, 14 GB peak resident set), while the source grew 1.8x.
+  Done (2026-09-07): `BuildTraitImplementationMethod` offers the implementation lambda it lowers
+  for sharing under the goal's stable key, the method, and the construction context (the
+  enclosing instances' self-ties, the hidden dictionary parameters active at the site, and the
+  coroutine placement), and `LowerLambdaCore` reuses the recorded function when a later
+  construction in the same context computes the same captures, emitting only the environment and
+  the closure object; the self-tie ordinal is assigned once per goal and method so every
+  construction binds the same tie name. Only fully concrete plans share. The repro's four
+  `==`/`show` sites went from 2,654 functions to 193; the semantics test program to 19,619
+  functions and 1.35 million IR lines, its default-level compile to 5.5 min, 13 MB, 7.7 GB.
+  Three more stage-0 levers followed in the same change: the lifetime placement's alias-store
+  scan indexed by slot (5.5 to 4.0 min), hover-type recording skipped outside the language
+  server and resolved layout types memoized (4.0 to 3.4 min), and parallel code generation over
+  partitions of the program module merged into one relocatable object (3.4 to 1.9 min; see
+  [Parallel code generation](../internals/architecture.md#parallel-code-generation)). Compile
+  phases are reported under `ASHES_TIMING`. Stage 1: the self-hosted trait lowering (TRT-13 to
+  TRT-15) must build dictionaries over shared implementation functions from the start, never the
+  per-use form; the other levers are tracked as OPT-53, CG-17, and CLI-11. Track the stage-0
+  compile time and peak resident set of the self-hosted packages in the phase benchmark
+  (BOOT-8) so the next drift is caught at a milestone close.
+
+
+### Modules, projects, externals, and whole-program semantics
+
+- [x] **MOD-1** Separate and validate leading import headers while preserving their written forms, aliases,
+  selectors, source lines, and imports-stripped UTF-8 body offsets for formatting and diagnostics;
+  retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
+- [x] **MOD-2** Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
+  interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
+  checks. Map module names to source paths and select project, include, dependency, or shipped-library
+  sources with ambiguity and reserved-namespace checks. Construct deterministic reachable-module plans
+  in dependency-first order, reject cycles, and enumerate filesystem-backed sources deterministically.
+- [x] **MOD-3** Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
+  programs without exporting externals, trailing bodies, private declarations, or imported modules
+  implicitly.
+- [x] **MOD-4** Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
+  compiler-private names across stitched modules. Dependency planning, cycle rejection, and
+  dependency-ordered semantic scopes assign deterministic definition identities, record ordinary
+  versus recursive visibility boundaries, realize resolved selectors and whole-module imports, validate
+  full/short qualifiers and collisions, and assign stable public and compiler-private names. Syntax-tree
+  rewriting preserves lexical shadows and source spans while replacing declaration, value, constructor,
+  type, trait, and capability references with those compiler names.
+- [x] **MOD-5** Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
+  defaults, source roots, includes, output settings, registry/path dependencies, dev dependencies,
+  root-level local `overrides`, and forward-compatible unknown fields. Filesystem path resolution and
+  entry existence checks belong to project discovery.
+- [x] **MOD-6** Discover projects upward, honor explicit project selection, load manifests, resolve project
+  paths, validate entry existence, and deterministically plan reachable modules from source-only
+  packages.
+- [x] **MOD-9** Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
+  with cross-file imports, exports, aliases, and selector ambiguity rules. Pure-Ashes lifting covers
+  header recognition, indentation and dedenting, nested name composition, child-before-parent order,
+  same-scope qualifier rewriting, and restricted-body, reserved-name, and duplicate-name validation.
+  Reachable compilation planning now publishes synthetic sources with stable provenance, orders nested
+  children before parents, rejects reachable file/inline collisions, honors compatibility and explicit
+  parent exports, and resolves cross-file whole-module, alias, value-selector, and uppercase type imports.
+- [x] **MOD-10** Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
+  pointers, buffers, out parameters, symbols, libraries, and capability requirements. External opaque
+  types are registered before function typing; source-call shapes omit compiler-owned out parameters,
+  append their values to results, retain ABI syntax for validation, and keep direct-only contracts out
+  of first-class bindings.
+- [x] **MOD-11** Validate external ABI combinations and produce the metadata required by lowering, code generation,
+  linking, LSP, and package capability auditing. Pure-Ashes validation resolves transparent aliases and
+  zero-cost representations, preserves ordered parameter/source shapes and native ownership, verifies
+  resource and owned-string destructors, and publishes canonical function, resource, symbol/library,
+  direct-call, and sorted runtime-authority metadata with the inferred program.
+- [x] **MOD-12** Match the current compiler's entry-expression rules, project diagnostics, and deterministic
+  diagnostic ordering across files. Declaration-only entries infer Unit, non-entry trailing bodies
+  are ignored, and reachable parse diagnostics retain their structured source/span data in stable
+  discovery, span, and emission order.
+- [x] **MOD-13** A stitched generic type used without its argument. The BOOT-2 probe (the stage-1
+  CLI compiling its own CLI package) stopped in the lowering with
+  `UnsupportedTypeDeclaration("Type 'AshesCompiler_Frontend_Syntax_Expr' expects 1 type
+  argument(s) but got 0.")` (2026-09-13): `Expr` is declared without type parameters, so the
+  stitched declaration got one from `collectImplicitTypeParametersFromConstructors`, whose
+  `isKnownTypeName` only knew the layouts registered so far, and a constructor field naming a
+  type declared later in the stitched order (`Expr`'s `TypeParameter`) read as an implicit
+  parameter. Two causes, both fixed: the lowering now pre-scans every type, alias, zero-cost
+  and external opaque declaration into `declaredTypeNames` before registering any (stage 0's
+  `knownTypeNames`), and the stitcher keeps an `external type` declaration's compiler name bare
+  (stage 0's `RenamePrivateModuleMembers` never renames one) where it used to rename the
+  declaration `AshesPrivateType_...` while the constructor fields still named `LLVMValueRef`,
+  which made `CopyOutRuntime`'s field an implicit parameter. Tests:
+  `expectForwardTypeReferenceKeepsArity` and `expectExternalOpaqueFieldKeepsArity` in the
+  semantics suite.
+- [x] **MOD-14** The stage-1 lowering of the CLI package failed with
+  `CoreCallTypeMismatch(TypeArityMismatch(0, 4))` reported at `Package.ash:20`, reached once
+  MOD-13 closed (2026-09-13). The location was borrowed from the entry file (the stitched
+  line-mapping gap); the span was `ProjectManifest.ash`'s `findField (key: Str) (json:
+  ManifestJson)`, where `type alias ManifestJson = Json(Bool, Int, Float, Str)`. Two causes,
+  both fixed: the core lowering never expanded type aliases, so an alias in an annotation
+  became a bare nominal type with no arguments and failed to unify with the four-argument
+  constructor patterns (stage 0's `ResolveTypeAlias`); `registerProgramTypes` now collects every
+  alias into `typeAliases` and `expandTypeAliases` substitutes its target, parameters bound to
+  the written arguments, wherever a type expression is converted (annotations, constructor
+  fields, capability signatures), with a fuel against alias cycles. And `Ashes.IO.args` had no
+  standard builtin layout (`UnknownLoweringBinding` in a single-file compile), added as the
+  nullary `List(Str)` value. Tests: `expectTypeAliasAnnotationKeepsArguments` (an alias chain
+  over a generic tree) and `expectStandardProgramArgsValue` in the semantics suite; the
+  reduced programs compile with the stage-1 CLI and run correctly.
+- [x] **MOD-15** The stage-1 lowering of the CLI package failed with
+  `UnknownLoweringBinding("__ashes_private_external_AshesCompiler_Backend_Llvm_LLVMContextCreate")`,
+  reached once MOD-14 closed (2026-09-13). Three causes, all fixed: the core lowering never
+  registered a program's `external` declarations (every program-mode entry built its state
+  with no external layouts), so `registerProgramExternals` now types them with
+  `validateExternalProgramAbi` against a resolution context naming the program's own types,
+  the compiler-provided `Maybe`, `Result` and `Unit`, and the opaque external types, and
+  installs a `CoreExternalFunctionLayout` per function under its declared name (stage 0's
+  `RegisterExternalFunctions`); the stitcher renamed a private module's `external` function
+  `__ashes_private_external_...` while a native-string destructor reference
+  (`FfiStr(owned LLVMDisposeMessage)`) kept the source name, where stage 0 hoists an external
+  program-wide under its own name, so the stitcher now keeps it bare like an opaque type; and a
+  nullary external called as `f(Unit)` with a spanned argument fell off the direct-call path
+  into the first-class reference and its `CoreExternalDirectOnlyViolation`. Test:
+  `expectExternalFunctionDeclarationLowers` (opaque type, string and nullary externals) in the
+  semantics suite; the projects and cli suites are green.
+- [x] **MOD-16** The stage-1 compile of the CLI package failed with `ASH002 Type mismatch: Str vs
+  Result<a, b>` reported at `Main.ash:3:24433`, reached once MOD-15 closed (2026-09-13). The
+  offset pointed into `Llvm.ash`'s `match LLVMCopyStringRepOfTargetData(targetData) with |
+  Ok(layout) -> ...`: the self-hosted external lowering typed a copied native string
+  (`CopyFfiString`) as a bare `Str`, or `Maybe(Str)` when nullable, where stage 0's
+  `MaterializeNativeString` types it as `Result(Str, Str)` or `Result(Str, Maybe(Str))` (the
+  `Error` carries the conversion's message) and an `out` native string always as the nullable
+  form. `CoreExternalLowering.ash`'s `fromExternalAbiType` and both materializations now give
+  the `Result` types; the external lowering tests assert them.
+- [x] **MOD-18** The stage-1 compile of the CLI package failed with
+  `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")`, reached once MOD-17b closed
+  (2026-09-14, 31.6 s and 13.9 GiB), in `TypeResolution.resolveTypeExpression`, which gets
+  `TypeExpr` through the type selector import `import AshesCompiler.Frontend.Syntax.TypeExpr`
+  and matches its constructors bare. Stage 0 normalizes a type selector into a whole-module
+  import of the parent beside the selector (`NormalizeTypeSelectors`), so the module's
+  constructors and other exports are in scope; the self-hosted stitcher bound the selected
+  type alone and left the constructor patterns unresolved (a nullary one became a variable
+  pattern). Done (2026-09-14): `addTypeSelectorImport` imports the module wholesale beside
+  the selector unless the scope already imports it; the language reference states the rule;
+  `tests/import_type_selector_project` and a stitching test cover it.
+- [x] **MOD-19** The stage-1 compile of the CLI package failed with
+  `UnsupportedCoreLoweringPattern("unknown record AshesPrivateType_AshesCompiler_Semantics_TypeInference_HandlerOperationArmDefinition")`,
+  reached once MOD-18 closed (2026-09-14, 41.5 s and 14.1 GiB). A private type and its
+  record constructor carry different stitched compiler names (`AshesPrivateType_` and
+  `AshesPrivateConstructor_`), while an exported record's coincide; the stitcher rewrote a
+  record literal's and a record pattern's name as the type, and the lowering looks both up by
+  constructor name. Done (2026-09-14): `rewriteRecordName` resolves them as the constructor;
+  `tests/private_record_pattern_project` (a private record built and matched in its own
+  module) and a reference-rewriting test cover it.
+- [x] **MOD-20** FIXED 2026-09-16: a lambda never captured a record receiver it read only as
+  `receiver.field`. `receiver.field` parses as a qualified name, so a body that reads a record
+  that way mentions the receiver nowhere the self-hosted free-variable walk looked — `collectFree`
+  in `CoreLowering.ash` had no `ExprQualifiedVar` case at all, so the closure captured nothing and
+  lowering the field access then found no binding. Stage 0 was never affected: its
+  `FreeVarsVisitQualifiedVar` carries the rule explicitly, for exactly this reason. The fix adds
+  the receiver as a free name; over-reporting is safe because `capturedBindings` already drops
+  every name that is not a binding, which is what keeps a genuine module path like `Ashes.Text`
+  out. The probe stopped on `TcoPromotionCostSignal` with
+  `UnknownLoweringBinding("facts.consumedListTail")` and on `ModuleSemanticStitching` with
+  `UnknownLoweringBinding("entry.modulePath")`; `TcoPromotionCostSignal` now compiles and links in
+  0.9 s and 3.0 GiB, and `ModuleSemanticStitching` runs past that diagnostic into OPT-85's memory
+  wall. Regression: `selfhost/tests/semantics/QualifiedReceiverCaptureTests.ash`.
+- [x] **MOD-21** FIXED 2026-09-16, and the self-hosted compiler was the one in the right. The probe
+  stopped on `PatternBindingOwnership` with `UnsupportedCoreLoweringPattern("unknown record
+  TextSpan")` because that module matches `PatternAt(TextSpan { start = start }, inner)` while
+  importing only `AshesCompiler.Frontend.Syntax`; `TextSpan` is declared in
+  `AshesCompiler.Frontend.Token`, which `Syntax` imports but does not re-export. The language
+  reference is explicit that there is no implicit re-export and that each importer must import what
+  it needs directly, so the fix is the missing `import AshesCompiler.Frontend.Token.TextSpan`
+  rather than a stitcher change. `ResultReachSummaries` relies on the same leniency at
+  `ExprAt(TextSpan { start = start }, _inner)` and got the same import; a sweep of the semantics
+  and formatter packages found no others. `PatternBindingOwnership` now compiles and links in
+  5.2 s and 18.7 GiB. Stage 0 still accepts the un-imported use, which is a leniency worth
+  narrowing on its own some day, not here.
+
+
+### IR model and lowering
+
+- [x] **IR-1** Model the complete `IrProgram` — functions, registers, locals, literals, coroutine metadata,
+  ownership instructions, and stable function-origin lineage — covering all 229 instruction
+  variants, source locations, task-frame ABI constants, and external/trait metadata.
+- [x] **IR-2** The canonical lowered/final IR text format and deterministic function selection used by
+  `--emit-ir` and compiler reports, matching stage 0's ordering, annotations, operand rules, and
+  the complete 229-instruction textual vocabulary.
+- [x] **IR-3** Lower constants, locals, strict left-to-right evaluation, calls, closures, captures, partial
+  applications, and lifted functions, driving a whole `ProgramSyntax` (top-level items threaded
+  directly; `let recursive ... and ...` groups split into member and continuation lowerers;
+  duplicate top-level bindings rejected). Covered by `CoreProgramLoweringTests.ash` and the
+  byte-for-byte `selfhost/tests/ir-program-parity` fixtures.
+- [x] **IR-4** Lower control flow, conditions, matches, guards, recursion, mutual recursion, and tail calls
+  (recursive groups predeclare monomorphic member types and share one environment; tail-position
+  recursive applications stay ordinary calls at this phase — the optimization milestone owns the
+  back-edge transforms).
+- [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
+  filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
+  Followed up (2026-09-17): the two tables this rests on had drifted. `coreBuiltinKind` dispatched
+  152 members, `standardBuiltinLayouts` carried schemes for 100, and a member with a kind and no
+  scheme is unreachable — `lowerCoreQualifiedVariable` finds a builtin only through its layout, so
+  the reference fell past the external table into record field access and failed as
+  `UnknownLoweringBinding("Ashes.Internal.Regex.compileRaw")`, naming a field access that was never
+  in the source. All of `Ashes.Number.Math`, `Ashes.Internal.Regex`, `Ashes.Net.Tcp`,
+  `Ashes.Net.Tcp.Server`, `Ashes.Net.Tls`, `Ashes.Net.Http` and `Ashes.Net.Tls.Server.handshake`
+  were affected, plus `Ashes.Rune.toInt`/`fromInt` and `Ashes.IO.readExact`. All 52 now have schemes
+  transcribed from stage 0's registrations, and `CoreBuiltinLoweringTests.ash` pins one member per
+  module so the tables cannot drift silently again.
+- [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
+  references, and target ABI metadata.
+- [x] **IR-10** Resolve a dependency module's combined-source positions through stitched item regions — the
+  self-hosted stitcher combines syntax trees, so a module's spans stay offsets into its own file,
+  and every emitted instruction carries the innermost enclosing `ExprAt` span. Covered by
+  `MetadataAndOriginsTests.ash`. (Stage 0's re-rendered text regions needed `SourceLineAnchor`
+  fragment anchors instead — recorded there.)
+- [x] **IR-11** Validate lowered IR invariants (program- and function-level) and compare normalized
+  lowered-IR fixtures byte-for-byte with the C# compiler
+  (`selfhost/parity/semantics/lowered-ir/`).
+
+
+### Optimization, ownership, and reuse
+
+- [x] **OPT-1** Port compile-time evaluation (bounded step/depth budgets, scalar call folding) and the
+  deterministic IR optimization pipeline: ownership-copy elision, RcDup sinking and RcDup/RcDrop
+  fusion, known-closure devirtualization, constant propagation/folding, identity elimination and
+  strength reduction, unreachable/dead-code elimination, and redundant arena-bracket stripping.
+- [x] **OPT-2** Constant propagation computes a true meet-over-paths at multi-predecessor labels (one fact
+  snapshot per incoming edge, intersected once all are observed; unobserved back edges clear) and
+  tracks local-slot state — essential, since real lowered IR routes every `let` and join through a
+  slot, so temp-only facts fold nothing. Covered by `selfhost/tests/semantics/IrOptimizerTests.ash`.
+- [x] **OPT-3** Fold statically-known conditional branches and `SwitchTag`s, recomputing predecessor edges
+  from the post-fold instruction list so a newly-unreferenced label dies with its body.
+- [x] **OPT-4** Re-run ownership-copy elision after identity elimination/strength reduction (the identity
+  rewrite introduces copies the earlier elision pass never revisits; the pass recomputes its facts
+  per call, so a second run is safe).
+- [x] **OPT-5** Devirtualization reaches a curried call's later applications via a whole-program
+  known-returned-label fixpoint (`CallKnown` to a function proven to return one heap `MakeClosure`
+  label rewrites to an env-word load plus direct `CallKnown`, iterated to a local fixed point).
+  A stack closure never qualifies as a known returned label — its environment dies with the frame.
+- [x] **OPT-6** Block-local common-subexpression elimination over duplicate `GetAdtField` reads and pure
+  `CallKnown` calls, keyed through a LoadLocal/StoreLocal/Borrow/RcDup alias map with seeded
+  env/arg-slot identities; invalidated by potential aliased writes but NOT by arena/stack
+  bookkeeping (cursor moves, not writes).
+- [x] **OPT-7** Store-to-load forwarding through provably-fresh allocation targets. The cached value must be
+  the write's raw source temp, never its alias-canonicalized identity — a canonicalized sentinel is
+  a valid cache key but crashes codegen if emitted as a value.
+- [x] **OPT-8** Closure environment scalarization for one scalar capture (the captured value rides the env
+  argument of a memoized `__scalarenvN` callee variant; `LoadEnv`-only callees, coroutines
+  excluded), and
+- [x] **OPT-9** for two captures (the second rides the free ownership-flag word), reaching let-bound local
+  helpers via slot-resolved devirtualization with dead-load and dropper-free cleanup removal.
+- [x] **OPT-10** Prune closure captures the lowered body never reads (`pruneDeadCaptures`): fills deleted,
+  survivors renumbered compactly, environment shrunk; self-referential lambdas and
+  mutual-recursion groups decline.
+- [x] **OPT-11** Fold left-nested single-use string-concatenation chains into one N-ary `ConcatStrN` as the
+  pipeline's last step. Single-use analysis alone is insufficient: the fold delays reads across the
+  chain, so any arena save/restore/reclaim, stack-pointer bracket, or branch between the innermost
+  part and the fold point declines the whole chain (a reclaim can reuse an earlier part's address).
+- [x] **OPT-12** The two whole-program closure-environment passes between the per-function pipeline and
+  scalarization: captured-closure-call devirtualization (every creation site stores the same label,
+  settled by a fixpoint over the capture graph) and currying-stage inlining (a copy-only stage's
+  chain rewritten to a caller-frame environment). These took the stitched packages from
+  almost-all-`CallClosure` to mostly-direct calls.
+- [x] **OPT-14** Control-flow simplification (jump threading, unreferenced-label removal, redundant
+  fallthrough elision), iterated with unreachable-code elimination to a true fixed point — one pass
+  cannot fully collapse a real multi-arm match cascade.
+- [x] **OPT-15** Tag-grouped match compilation (`planTagGroups`/`lowerMatchArmsViaTagGroups`): arms grouped by
+  outer tag, one switch, linear testing scoped inside a group. Sharp edges, each confirmed by a
+  real failure: unify the scrutinee against the patterns BEFORE deciding (its type can still be a
+  variable that only these patterns pin down); a group's fail target is the match's trailing
+  default arm when one exists, never the exhaustiveness-failure label; and a bare `None`-style arm
+  is a variable pattern syntactically — it must resolve against the constructor table or it becomes
+  a catch-all that absorbs every later arm.
+- [x] **OPT-16** Gate the dead-arm trim to shapes the coverage engine analyzes exactly (catch-alls, bool
+  literals, empty list, constructors whose children are all catch-alls). The "Missing case" engine
+  under-approximates by design — correct for a diagnostic, unsound as an unreachability proof
+  (record sub-patterns contribute no constraints; per-column independence misses cross-column
+  gaps), and the unsound trim deleted live arms in the semantics package itself.
+- [x] **OPT-17** Ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
+  signals, with SCC decomposition and tag-based dispatch trampoline plans. Covered by
+  `selfhost/tests/semantics/TcoTests.ash`.
+- [x] **OPT-18** Upgrade the advisory `tail` marker to `musttail` for proven-eligible non-loop tail calls,
+  gated on a whole-function scan for native stack allocations; `IrCodegen.ash` fuses direct,
+  stored-to-join-slot, and fallthrough-into-join shapes through arbitrarily deep copy-forwarding
+  chains (`computeTailJoins`, including an `if` join reached only by a jump that forwards into the
+  enclosing `match` join), and currying-stage inlining heap-allocates a self-re-entering
+  chain's environment so recursive back edges stay fusable.
+- [x] **OPT-21** Infer parameter/capture ownership, result reachability and freshness, moves, borrows,
+  forwarding, and whole-program SCC provenance summaries.
+- [x] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
+  function, so in-place reuse borrowing survives a hand-off to a proven read-only helper
+  (`FunctionOwnershipSummary.ParameterOwnership` cannot answer this — it classifies a plain
+  inspecting helper's parameter as consumed).
+  Done (`OwnershipInference.ash`): `inferProgramParameterOwnership` classifies every registered
+  function's parameters as a whole-program fixpoint in stage 0's direction (the proven set
+  starts empty, a parameter is promoted to borrowed once every mention is a borrow read, passes
+  repeat until stable), so a hand-off to a proven inspecting helper or a chain of them stays
+  borrowed, a genuine hand-off cycle never converges and stays consumed, and a shadowed,
+  unregistered, ambiguous, or partially applied callee still consumes;
+  `inferProgramOwnership` reports the fixpoint verdict. `CoreLowering` seeds its state with the
+  fixpoint over the program's top-level functions (`withProgramParameterOwnership`) and its
+  call-site borrow decision (`markCallArgumentsMoved`) overlays the proven verdict on the
+  single-function summary the way stage 0's call lowering consults its proven inspect-only set:
+  a parameter the fixpoint proved borrowed stays a borrow where the single-function summary saw
+  a consuming hand-off, for a callee that is a registered top-level function with the classified
+  parameter chain; a local lambda or a shadowing name keeps the single-function verdict.
+- [x] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
+  carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
+  synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
+  layout from the start rather than unboxing the tagged layout later. Done: `TaglessAdtLayout.ash`
+  decides the flag once per type declaration (a sole constructor of arity at least one that is
+  not compiler-provided, zero-cost, a resource handle, or resource-bearing through any field, type
+  argument, list, or tuple) and owns the offset/size helpers the lowering and backend share;
+  `CoreConstructorLayout.tagless` carries the decision, and `CoreLowering.ash` emits it on
+  `AllocAdt`/`SetAdtField`/`GetAdtField` at construction, record access and update, and
+  pattern-field loads, skipping the tag compare (the `ptr != 0` guard stays) and the sole-group
+  `GetAdtTag`/`SwitchTag`; `IrText` prints `Tagless=true` as stage 0 does; the backend sizes the
+  cell, skips the tag store, offsets fields from 0, and refuses a `GetAdtTag` of a tagless cell
+  before emitting a function. Covered by `TaglessAdtLayoutTests.ash` and the tagless record,
+  nested, generic, tail-loop, and nullary programs in `selfhost/tests/backend/Main.ash`. The
+  synthesized droppers and copiers read the flag: field loads and stores carry it, the
+  deep-copy plan of a sole-constructor type never switches on a tag, and the constructor-switching
+  ADT dropper loads a tagless cell's tag as the literal 0 (stage 0's `EmitAdtTag`), checked by
+  `StructuralDroppersTests.ash`. Verified (2026-09-09): `AllocReusing` is emitted, tagless flag
+  included — `CoreLowering.ash`'s ordinary-match-arm reuse path (OPT-42)
+  `emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))`
+  — stale by the time this note was last read; OPT-42's own entry already documented the mechanism,
+  just never crossed off this sibling claim. Reuse-token layout exactness reaches list cells too
+  (2026-09-09): the `f$reuse` specialization's cons arm mints a two-field token and the rebuild
+  consumes it as an `AllocReusing` carrying `ListCell`, the shape stage 0 emits for the same
+  program. A named-type accumulator layout followed with OPT-42's to-space materialization
+  (2026-09-09), and `AllocAdtToSpace` with it: `emitFreshConstructorCell` is stage 0's
+  `EmitFreshConstructorCell` `_inSpecialization` branch, so a cell a rebuild could not take from a
+  reuse token is allocated in the never-reset to-space with its tagless flag rather than the arena,
+  and is not marked runtime-managed. That is also what keeps the specialized body's reset safe: the
+  scan rejects a plain `AllocAdt`, which could put a live part of the result above the watermark, and
+  never a to-space cell. `AllocAdtStack` has its backend half too (2026-09-09):
+  `emitStackAllocAdt` is stage 0's `EmitStackAllocAdt`, the same `[tag][fields...]` layout the arena
+  and RC forms use over `emitStackAlloc`'s `[n x i64]` frame storage, with no tag word for a tagless
+  cell; `selfhost_backend_alloc_adt_stack_e2e` writes and reads back a tagged cell through a tagless
+  one across an arena bracket whose chunk is unmapped, since frame storage is not the arena's to
+  reclaim. `functionAllocatesStackMemory` deliberately does NOT list it, matching stage 0's own
+  `FunctionAllocatesNativeStackMemory`: a stack ADT is dead before any tail call in its frame, so
+  downgrading `musttail` for it would cost a real loop its tail call. The placement decision followed
+  (2026-09-09), closing the gate: `constructorExpression` is stage 0's `IsConstructorExpression`
+  plus a saturation check (only a saturated application reaches `lowerConstructor`; a partial one
+  builds a closure and would leave the request for whatever constructor came next),
+  `immediateSingleArmDestructuringMatch` its `IsImmediateSingleArmAdtDestructuringMatch`, and
+  `stackAllocatableScrutineeCases` its `ShouldStackAllocateImmediateMatchScrutinee`. The request
+  rides `stackAllocateConstructor` on the lowering state rather than a parameter on every
+  constructor-lowering signature, and `lowerConstructor` takes it and clears it before lowering its
+  own arguments, so a nested constructor argument never claims the one its parent made. A stack cell
+  consumes no reuse token and is not marked runtime-managed. Two deliberate narrowings against
+  stage 0, both costing an optimization and never soundness: `exprMentionsName` is shadow-blind, so a
+  pattern that rebinds the `let`'s name declines where stage 0 allows it; and stage 0 also withholds
+  the placement inside a coroutine body, which this lowering has none of yet.
+- [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
+  represented: only a fresh producer or a transferred value confers a releasable reference; a
+  plain read of an RC-normalized slot is a borrowed read, and registering it as an owner
+  double-releases every iteration. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
+  `adoptRuntimeLetValue` registers an owner only for a `RuntimeNewlyProduced` value temp — a
+  fresh producer's result, a known call marked by its callee's body placement, a copy-out, or a
+  transferred read (`transferRuntimeOwner`); a parameter `LoadLocal`, a `LoadEnv`, a pattern-field
+  load, and the `Borrow` of an owner's read are never marked, so `let r = acc` inside a loop
+  releases nothing at its exit (`TcoOwnershipRulesTests.ash`; the regression program runs through
+  the backend suite). The RC-normalized loop parameter the rule guards against arrives with
+  OPT-25's parameter entry normalization. Selfhost port: `acc` itself (the parameter `r`
+  aliases) is now placed runtime-managed and carries its own back-edge predecessor release and
+  transfer-checked exit release (OPT-26/OPT-29's shared "runtime-managed loop parameters" tail),
+  while `r`'s own reads still add neither — `TcoOwnershipRulesTests.ash`'s
+  `expectLetAliasOfParameterIsNotAnOwner` now asserts exactly the parameter's own two releases
+  and no duplicate from the alias.
+- [x] **OPT-31** Keep a heap aggregate alive when stored through a generic parameter of a function neither
+  inlined nor specialized: both call-lowering paths copy the argument into the persistent to-space
+  region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
+  `List(Str)`; extend on new failing shapes. Regression:
+  `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
+- [x] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
+  consumed list into cells it builds — the generic cons allocates an arena cell around a
+  type-variable head with no retain. Root cause was one call-boundary gap, not the cons cell
+  itself: `GetCallCopyOutKind` recognized only a `Str` head or a list of arena-resettable elements
+  and fell straight to `CopyOutKind.None` for anything else a generic function's element type
+  variable can be instantiated with — a tuple, a named record/ADT, `Bytes`, `BigInt`, or a nested
+  list over one of those — so a generic function's returned list of such elements escaped the call
+  with no normalization at all, in place of the retain a monomorphic accumulator's own TCO
+  parameter-entry normalization already performs for the identical element shape via
+  `EmitRuntimeManagedTcoListDeepCopy`. Fixed by routing that already-proven recursive per-element
+  deep-copy machinery through the call-result path too (`CanEmitRuntimeManagedListElementDeepCopy`,
+  `LowerUncoveredCallResultCopyOut`, `LowerCallDeepCopyOutListResult` in `Lowering.cs`/
+  `Lowering.Ownership.cs`), both for the immediate and the type-inference-deferred copy-out sites.
+  Regression: `src/Ashes.Tests/GenericListRetainsRuntimeManagedElementsTests.cs` (an IR-level
+  assertion that the deep-copy walk now appears at the call site, plus a churn-loop execution
+  test) and `tests/generic_reverse_retains_runtime_managed_elements.ash`. Two consequences of
+  that copy now owning what was arena-placed before, both caller-side in `LowerCallFinish`: a
+  call's consumed runtime-managed arguments are released only after its result is normalized
+  (the deep copy of `append(map(f)(xs))(map(f)(ys))` read records the release had already
+  freed through the callee's arena cells), and a deep-copied generic result consumed by a callee
+  whose result stays in its own region (neither normalized here nor produced runtime-managed)
+  and whose ownership summary is poisoned is not released at all — that callee may have borrowed
+  the records' strings into a region that outlives the call (the self-hosted lowering's
+  `finishMatchArm` stores an `ArmOwner` type name into an emitted `CleanupResource`), exactly as it
+  could when the list was arena-placed, so the copy is left with the callee the way its arena
+  predecessor was (`ConsumedDeepCopiedListStaysWithCallee`). Regression:
+  `ConsumedArgumentsReleasedAfterResultNormalizationTests.cs`,
+  `tests/generic_append_of_generic_map_results_releases_after_copy.ash`,
+  `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`. The same release rule also
+  trusted a result-reach summary that `Lowering.MoveAnalysis.cs` had left empty: a record update
+  and a dotted field read of a local (`x with f = v`, `x.f`, the latter parsed as a qualified
+  name) were unmodeled and poisoned with no parameter in the reach set, so a fresh
+  reference-counted argument a callee embedded through `with` was released by the caller right
+  after the call and its block reused by the next allocation of the same size. Both are modeled
+  now: the update's target and a field read reach the result through a component, the updated
+  values whole (`OwnershipProvenanceTests.cs`).
+- [x] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
+  specialization (a helper's own body must resolve in the isolated scope too; an already-visited
+  helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
+  selfhost: OPT-42's ordinary match-arm reuse path never inlines a helper call into an arm (no
+  `InlineCall`/`_inliningInProgress` family is ported), so there is nothing for this check to gate
+  yet — it becomes relevant once helper inlining or fold specialization lands.
+  Done: helper inlining landed with OPT-48, and its `inlinedReferencesResolveHere` walks a
+  candidate's free names transitively (lexical binding, constructor, a helper already accepted
+  on the walk, or an inlinable helper whose own references resolve in turn). Pinning it against
+  stage 0 found three divergences, all closed: a top-level function the caller never captured
+  now resolves by label the way stage 0's `_topLevelFunctionRefs` does (`topLevelFunctionRefs`,
+  recorded at a top-level `let` whose closure has an empty environment and rebuilt with a null
+  environment by `lowerTopLevelFunctionReference`, also accepted by the reference check); the
+  runtime-managed temp facts are now cleared when a lambda's body begins
+  (`prepareLambdaBodyState`), since an outer function's temp numbers leaked into a spliced
+  helper's nested loop and gave its closure a returns bit stage 0 does not set; and the forced
+  retain flag of a pending call argument is reserved for a pattern binding extracted from a loop
+  parameter (`patternBindingArgumentRootSlot`), not a read of the parameter itself, as stage 0's
+  `TryGetRuntimeManagedPatternBindingArgument` has it. The whole-program parity fixtures
+  `inlined_helper_chain_under_back_edge` (a helper chain spliced under a back edge),
+  `inlined_helper_sibling_by_label` (a spliced helper calling an uncaptured top-level function),
+  `inlined_helper_sibling_spliced` (a helper whose sibling is spliced in turn), and
+  `helper_call_without_inline_trigger` (the same helper left as a call outside any trigger) pin
+  the decisions.
+- [x] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
+  rather than clone the string elements of an escaping arena tuple — threading a large string
+  through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
+  `Bytes` view to sidestep this; the general cost remains). Shipped: the per-rebuild copy came
+  from `MaterializeEscapingArenaTupleElements` cloning every string binding placed into an
+  arena-shell tuple, including one bound out of the borrowed parameter, whose release is an arena
+  identity marker. Stage 0 now clones only a string whose owner really releases it (a
+  runtime-managed let or match owner, a stable pattern owner, or an untracked binding); a
+  borrowed parameter part is carried as is, since the parameter outlives the call and the call
+  boundary copies the escaping result out as a whole. A 128 KB state string threaded through
+  20000 rebuilds went from 0.49 s to under 10 ms; the shared
+  `tests/escaping_tuple_borrowed_state_string.ash` runs the carried and the still-cloned shapes
+  through both backends. The self-hosted lowering never had the clone. Admitting the tuple itself
+  to runtime-RC placement (a list-of-records element needs a synthesized list dropper over record
+  heads and a runtime-managed cons for the rebuilt list) stays open as a later placement widening.
+- [x] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
+  caller can prove the aggregate is reference-counted (accessor shape:
+  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root cause: an
+  accessor's own compiled body (`let name (p: Person) = p.name`, a bare `GetAdtField` + `Return`)
+  never allocates anything RC, so its per-callee `ReturnsRuntimeManaged` bit is `false`, baked once
+  into every closure value built for that function (`LowerVar`'s top-level-function-ref case) — it
+  can never reflect what a *specific call site's* own argument is, so `CopyOutArena
+  RcNormalization` ran on every call regardless. Fixed with a call-site-local decision, not a
+  change to the callee's bit: `IsTrivialParameterFieldAccessorBody` (`Lowering.cs`) recognizes the
+  callee's body shape (a bare `LoadLocal`/`[Borrow]`/`GetAdtField` of its own single parameter,
+  restricted to a Shallow-copyable field); `ClassifyAccessorArgumentRc` classifies the call site's
+  own argument as `NotRc` (unchanged copy behavior), `DefinitelyRc` (a fresh temp, or a named
+  binding whose own `OwnershipInfo` already says `RuntimeManaged` — the same per-name fact OPT-27's
+  let-ownership rules read), or `PendingTcoSlot` for a self-recursive loop's own parameter, whose
+  arena-vs-runtime-RC placement is not settled this early in lowering (`TryGetRuntimeManagedCallArgument`'s
+  own documented timing) — resolved later by `FinalizeAccessorResultRetains`, an `RcDup`-marker
+  mechanism mirroring `TcoParameterAggregateRetain`. Verified: a 200000-call loop over a `Person`
+  sourced from a genuinely RC-placed `List(Person)` (the TCO parameter-entry path places it RC)
+  went from 15.06s / 38.6M minor page faults (the old unconditional copy of a ~768 KB field) to
+  0.06s / 4K page faults after the fix — a ~250x improvement — with RSS materially unchanged (the
+  per-iteration arena bracket already reclaimed the copy either way; the win is the eliminated copy
+  work, not peak memory). Regression:
+  `src/Ashes.Tests/AccessorRetainsRcAggregateFieldTests.cs` (an IR-level assertion that the call
+  site emits a forced-true ownership flag followed by an `RcDup ... RuntimeManaged=true` in place
+  of the old packed-word bit-63 read, plus a correctness execution test) and
+  `tests/accessor_returns_retained_string_from_rc_record.ash`.
+- [x] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
+  it consumes into its accumulator — the consumed cell's release frees the moved element, read
+  back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline
+  consing the lines, join the result. Closed by the consumed-argument release rule: a fresh list
+  consumed by a callee whose result reaches its parts is released spine-only in the caller
+  (`LowerCallDropConsumedRuntimeArguments`, the child-preserving walk), so the moved lines stay
+  alive for the join. Regression: `tests/tco_loop_moves_split_line_into_accumulator.ash` (three
+  5 KB lines split inline, walked, then read back after 20000 unrelated allocations).
+- [x] **OPT-37** Release a TCO loop's aggregate result in its caller when the exit arm builds an ADT from the
+  loop's own runtime-managed accumulators — the shell is recognized as runtime-manageable when its
+  field is the enclosing loop's own parameter slot (narrowly — not any outer variable).
+  Regression: `LinuxBackendCoverageTests.cs` (mechanism + RSS-plateau behavior tests).
+- [x] **OPT-38** Release a plain runtime-RC value extracted by a match pattern and passed by name as a TCO
+  back-edge argument: argument evaluation retains it for the successor, so the back edge must also
+  release the pattern-bound owner's reference — it is not a moved value and must not follow the
+  moved-argument rule written for resources. Only a plateau-over-iterations test catches this
+  class (confirmed 2.4 GB → 8.2 MB on fannkuch-redux).
+  Selfhost port: `let recursive f n xs last = match xs with | [] -> last | head :: rest ->
+  f(n - 1)(rest)(head)` used to store the raw pattern-extracted `head` into the runtime-managed
+  `last` slot with no retain while the back edge released the predecessor `last` — an
+  over-release rather than the leak first suspected: with `xs: List(Str)`, the list's strings
+  were freed while the list still held them (a use-after-free the selfhost-compiled
+  `tests/tco_pattern_head_forwarded_to_other_parameter.ash` crashed on). Closed by porting stage
+  0's pattern-binding ownership: `PatternBindingOwnership.ash` classifies every binder a `match`
+  extracts from a loop parameter by its uses (borrowed by a plain call, transferred to its own
+  parameter, embedded in an aggregate, forwarded to another parameter or captured, or
+  unclassified), keyed by the binder's span; `CoreLowering.ash` binds a protected binder as a
+  pattern owner (`CoreBinding.patternOwner`) whose reads always borrow, records a placement site
+  after the arm's pattern, takes an identity `RcDup` where the binding is read into a tail
+  self-call argument, a cons, a list literal, or an owning constructor, releases it at the arm exit
+  under its resolved type name (`PatternBinding` while unresolved), and at the loop's finalize
+  promotes the markers of a binder whose root parameter is runtime-managed or whose own type is
+  `Str`/`Bytes`/`BigInt` to real retains and releases and splices stage 0's protective duplicate
+  right after the pattern (`PatternBindingOwnershipTests.ash`, `TcoOwnershipRulesTests.ash`).
+  A runtime-managed root with an aggregate-typed escaping binder names the structural dropper
+  on the promoted release, and the consumed-tail guard over escaping heads is gone (see OPT-25's
+  note).
+- [x] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
+  else owns it. Three facts must stay consistent: the release fires only for freshly-produced
+  arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's
+  save/reload preserves the fact across the reload. Needs a long-running plateau test. Shipped:
+  stage 0 releases the consumed result in all three shapes and its
+  `Linux_backend_llvm_read_builtin_consumed_call_result_memory_should_plateau` test holds the RSS
+  flat over 200000 iterations; the self-hosted lowering emits the same `RcDrop` after the read
+  for a direct call result and for an `if`/`match` join of fresh branches, keeps a join with a
+  borrowed branch and a let-owned result unreleased (the owner's scope-exit drop covers it), and
+  the shared `tests/rc_release_read_builtin_join_result.ash` runs all four shapes through both
+  backends. The self-hosted binaries plateau too since the backend places `ConcatStr`/
+  `ConcatStrN`/`TextFromInt` results by their runtime-managed flag (CG-4): the direct, join,
+  let-scope and discarded-result probes run 200000 iterations in 5.6 MB of RSS, down from 55 to
+  190 MB when every string result was a `malloc` that nothing freed. `Text.uncons`/`unconsText`
+  results are placed by the same flag: an escaping runtime-managed result owns copied strings, a
+  reference-counted tuple, and a reference-counted option cell, while the immediate arena result
+  keeps zero-copy views over the scrutinee's bytes (`emitArenaStringView`, stage 0's
+  `EmitStringView`) with its tuple and option cell in the arena. `Text.length` walks a string by
+  `unconsText` in a non-tail recursion, so a 15 KB string cost 121 MB of tail copies held by
+  the nested frames and now costs 9 MB, and
+  `tests/tco_loop_moves_split_line_into_accumulator.ash` runs in 11.6 MB instead of 124 MB.
+  That recursion also overflowed the stack — the self-hosted `fmt` segfaulted on every source
+  above roughly 90 KB, stage 0's own binaries above roughly 250 KB — so `Ashes.Text.length`,
+  `take`, and `drop` now walk the bytes with an index (`countCodepoints`, `cpByteOffset`) and
+  slice; regression `tests/text_length_take_drop_large_string.ash`. That fix and the
+  optimization-level one below raised the threshold without removing it: `fmt` still segfaults on a
+  241 KB source, from a cause neither of them addressed. Tracked as OPT-67 — do not read this item
+  as having closed `fmt` on large files. What remained was the frame
+  size: this backend emitted at LLVM optimization level none, so a call frame was about four
+  times stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design,
+  the shape the reuse optimizer relies on) overflowed the 8 MB machine stack at about 100000
+  elements against stage 0's 400000. Fixed (2026-09-11): optimization-level selection landed —
+  the backend now runs LLVM's own `default<O2>` pass pipeline (`OPT-58`'s neighbor; see
+  `project_selfhost_gaps_found_task3` session memory for the original bisection). Measured
+  directly: the same non-TMC `List.map` shape now survives to roughly 170000 elements, matching
+  stage 0's own threshold, up from roughly 30000 before. Landing it surfaced and fixed a genuine,
+  separate linker bug on the way (read-only sections joined at a fixed 16-byte boundary regardless
+  of what LLVM's optimizer actually needed, faulting the first time the SLP vectorizer folded a
+  string literal into an aligned 32-byte vector load — rodata joins are now 32-byte aligned) plus
+  two missing libc symbols (`bcmp`, `memset`) LLVM's idiom recognition can introduce even when the
+  codegen itself never calls them directly.
+  Still open: the self-hosted `fmt` still faults on the three sources whose token lists were
+  previously blamed on this same gap (`TypeInference.ash`, `ProgramInference.ash`,
+  `OwnershipInference.ash`) — confirmed directly (`TypeInference.ash` still segfaults) even with
+  the optimization pipeline now running, so `fmt`'s own stack cost has a further, separate cause
+  not covered by this fix (plausibly the parser/formatter's own recursive-descent shape rather
+  than the one-frame-per-element `List.map` pattern this fix specifically measured) — not yet
+  investigated.
+- [x] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
+  them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
+  call's consumed arguments, so stage 0 releases them with their elements after the copy instead
+  of spine-only (`resultDeepCopied` through `LowerCallRestoreArena` to
+  `LowerCallDropConsumedRuntimeArguments`); `tests/generic_append_map_churn_plateau.ash` leaked
+  every record and string once per iteration before (32.8 MB at 200000 iterations, 8.2 MB at
+  20000). Done (2026-09-06, both compilers): the arena-result boundary. A generic body applying
+  a closure parameter has no static layout for the result, stores it wherever an arena value
+  goes, and its own caller deep-copies the whole result out, so a reference-counted result
+  returned into it was never released (a `map` over a function returning a fresh string or
+  record leaked one value per element). Such a call site now sets bit 1 of the hidden ownership
+  word (`RequestsArenaResult`, a type variable anywhere in the application's result type), and a
+  callee whose result is reference-counted honors it in its epilogue
+  (`LowerLambdaCoreNormalizeRequestedArenaResult` / `normalizeRequestedArenaResult`): the
+  result is deep-copied into the arena (`CopyOutPurpose.ArenaResultBoundary`) and the original
+  released; the entry normalization masks bit 0 for its own flag. Beside it, a string parameter
+  the entry normalization owns because the result always reaches it now counts as a fresh owned
+  child of the record storing it (`IsNormalizedAlwaysReturnedStringParameterRead`), so that
+  record is placed on the RC heap and releases the owned copy with itself; the selfhost decides
+  the normalization before the body is lowered for the same reason (`withNormalizedAlwaysReturnedParameter`)
+  and computes the function-body request against the prepared body state, not the outer one.
+  A function whose body result is a plain read of that normalized parameter (`identity (s: Str)
+  = s`) returns the owned value on both flag paths, so both compilers count the body result as
+  runtime-managed for a plain function (`ReturnsNormalizedAlwaysReturnedParameter` /
+  `adoptNormalizedParameterResult`): the closure carries the returns bit beside the accepts
+  bit, callers adopt the value instead of copying it, and the epilogue honors a generic
+  caller's arena-result request, which `apply(identity)(fresh)` through a parameter function
+  had been missing (512 bytes leaked per call in both compilers;
+  `tests/runtime_rc_normalized_parameter_returned_through_parameter_function_plateau.ash`).
+  The churn fixture is flat at 8.2 MB (stage 0) and 5.6 MB (selfhost) at both 20000 and 200000
+  iterations. Done (2026-09-06): the same loop over a string-returning function
+  (`tests/generic_map_string_churn_plateau.ash`) grew from 8.2 MB to 12.3 MB, because the
+  conditional list copy-out with string heads copies the heads on its arena branch while the
+  consumed first argument was released spine-only on both branches; the release now follows the
+  result's branch (`EmitConsumedArgumentDropByResultBranch` / `emitConsumedArgumentDropByResultBranch`:
+  spine-only on the owned branch, with the elements on the copied one), and stage 0 also
+  releases the elements outright after an unconditional head-copying list copy-out (the selfhost
+  has no unconditional call copy-out yet, so only its conditional case applies). The parity fixture
+  `consumed_string_list_copied_release` covers the branch in both compilers. Done (2026-09-06):
+  the string fixture still grew in the selfhost (9.4 MB to 43 MB) because its result-reach
+  analysis was a per-function approximation: a plain-name call summed the callee's and the
+  argument's reach (so the argument read as reached whole), a `let recursive` name was bound to
+  its analyzed body instead of the nested function being registered, and an unbound name was
+  bottom instead of poison, so `append`'s summary said its result keeps both parameters whole
+  (stage 0: `left` by component, poisoned) and both fresh `map` results handed over without a
+  retain or release. `ResultReachSummaries.ash` now ports stage 0's `MoveAnalysis` result reach:
+  a registry of every let-bound function, nested ones included, with the functions in scope of
+  its body (sequential top-level scoping, recursive groups, parameter and pattern shadowing), the
+  Map.set shape registered over its outer parameters plus accumulator with the inner self-call
+  resolved against the enclosing summary, a least fixpoint from bottom, call-site substitution
+  of the callee's stored summary (whole roots versus `name/*` components, multiplicity capped at
+  two with internal-sharing and path-ancestor poison, over-application inlined one level over
+  argument markers), constructor and record fields skipping copy-typed scalars, sole nullary
+  constructors, dotted field reads through named sub-cells, and poison for free names, lambdas,
+  pipes, handlers, and unmodelled calls. The lowering resolves a callee's summary by name and
+  lambda identity (`letLambdaIdentities`), taking the registered parameters and body, and the
+  decision snapshot lists nested functions with their qualified names. The string fixture is flat
+  at 5.6 MB and the ownership report of the append probe matches stage 0 line for line;
+  `aggregate_children_retain`'s ownership explain fixture matches and its known difference is
+  retired. Done (2026-09-06): the selfhost suppressed the returns-bit read for every call to the
+  enclosing recursive binding (the backend fuses a self call and its return into a loop, which a
+  copy-out block between them would break), so a self call outside tail position
+  (`bang(head) :: stamp(tail)`) kept its string-list result in an open window and placement
+  never protected the pattern-owned tail across it. The consumer request now carries the tail
+  position of every function body (`tailCall`, stage 0's `InTailPosition` without the loop
+  condition), the suppression applies to tail self calls only, and the closure a self reference
+  rebuilds carries its environment size in bytes rather than its capture count; parity fixture
+  `non_tail_self_call_list_result`. Done (2026-09-06): a `match` on a fresh reference-counted
+  call result made its scrutinee owner only in arms binding nothing heap-typed (the selfhost
+  assumed stage 0 aliases a bound field to the owner and hands the owner over), so an arm binding
+  a string head (`head :: _ -> print(head)`) never released the list, and one returning the head
+  would have released it under the result once the owner existed. Every arm now adopts the owner
+  (stage 0's `TrackRuntimeManagedMatchScrutineeOwner`), and an arm whose result is a heap value
+  its pattern bound out of the scrutinee retains it and releases the owner right there through
+  its structural dropper (`transferScrutineeChildResult`, stage 0's
+  `EmitRuntimeManagedParentFieldTransfer`), the dropper's instructions carrying the match's
+  location as stage 0's do; parity fixtures `match_fresh_scrutinee_owner_release` and
+  `match_fresh_scrutinee_head_returned`. Done (2026-09-06): the self-hosted lowering infers as it
+  lowers, where stage 0 lowers against the whole program's finished inference, so a call whose
+  result type a later expression of the same body resolves (a self call under a string
+  concatenation, `"a" + go(n - 1)`, whose result only the concatenation pins) still saw a type
+  variable at the call: it asked the callee for an arena result and skipped the returns-bit read
+  and the copy-out stage 0 emits. The lowering now records every call whose result type was
+  unresolved when it was lowered (`unresolvedCallResults`), and a function body that finishes
+  with such a type resolved is lowered a second time from its entry state
+  (`lowerFunctionBodyResolvingCalls`) carrying only the finished substitution and variable
+  supply, so counters, labels, and lifted functions are numbered as in one pass over resolved
+  types; a body whose call results stay unresolved (a generic function's own parameter) keeps
+  the single pass, and compile time of the larger tests is unchanged. A recursive member's
+  epilogue now also honors the arena-result request (`normalizeRequestedArenaResult`) as a
+  plain lambda's does. Parity fixture `self_call_operand_string_result`. Resolving the type
+  exposed a second gap the arena path had hidden: the heap-typed bindings a pattern bound out of
+  a fresh reference-counted scrutinee (`library :: reversedSymbol` over a `reverse` result) were
+  read as borrows nothing owned, so a constructor or call carrying one past the arm's release
+  stored the freed string (`tests/escaping_tuple_nested_adt_lifetime.ash` printed the other
+  call's library). Stage 0 aliases such a binding to the arm's scrutinee owner; the self-hosted
+  lowering now records the same aliases (`runtimeOwnerAliases`, `aliasArmBindingsToOwner`) and
+  resolves them wherever a live owner is looked up (`liveRuntimeOwnerSlot`,
+  `namesRuntimeOwner`), so the transfer retain, the aggregate child retain, and the call
+  argument hand-off treat the binding as the owner's value. Done (2026-09-06): a self call
+  passing a loop parameter, or a pattern binding extracted from one, whose placement the
+  finalize pass still decides (a list walk's `1 + count(tail)`) now takes stage 0's pending
+  argument-retain skeleton: the callee's accepts bit is read and the argument retained under it
+  (or under a forced flag when the callee's result may keep the binding), the flag is registered
+  under the parameter's slot (`pendingRuntimeArgumentFlags`), and finalize rewrites the flag's
+  definition to zero for a parameter the frame keeps in the arena
+  (`resolvePendingArgumentFlags`, stage 0's `ResolvePendingRuntimeArgumentFlags`). Every such
+  argument stays pending until finalize: the per-slot admission the body can read
+  (`tcoAdtSlotAdmitted`) is still demoted with the frame, and handing an arena value over under
+  the accepts bit let the callee reuse it in place (`tco_deep_adt_accumulator` rebuilt its count
+  list on top of the loop's own). Parity fixture
+  `tco_non_tail_self_call_in_operator_operand` is registered in the runner and its six loops
+  compared in `TcoLoopLoweringTests`. Done (2026-09-06): a closure capturing a string, bytes, a
+  big integer, or a list over scalars now gets its environment normalizer and closure dropper
+  when its closure is emitted, as stage 0 synthesizes them (`recordClosureNormalizer`,
+  `synthesizeClosureDropper`): `lambda_N$env_normalize` copies each such capture out into the
+  escaping environment (`CopyOutArena`, `CopyOutList`) beside the word copies of the scalars and
+  returns the address of the `__rc_cdrop_N` dropper, synthesized once per owned-capture layout
+  and taking a lambda id like any lifted function, which walks each owned capture. A closure
+  whose captures include a still-unresolved type keeps the deferred scalar-only decision; one
+  capturing a tuple, a multi-constructor named type, a list over heap elements, or a function
+  gets none, as in stage 0 for the latter. A sole-constructor named capture (2026-09-07)
+  qualifies: a scalar-field cell copies out by its size, a cell with owned children copies out
+  and re-establishes each owned child by its own kind behind the temp stage 0's deep-copy
+  emitter burns (`AdtCaptureCopy`), and the dropper releases it through the unique-guarded
+  walk. Parity fixture `tco_list_walk` joins the runner. Still open
+  (cosmetic): the selfhost attaches no source
+  location to instructions synthesized outside any located expression (a curried stage's
+  closure construction, epilogue blocks), where stage 0 attaches the declaration span. Done
+  (2026-09-06, both compilers): an un-annotated parameter missed the pre-body decision in both
+  compilers, since both interleave inference with lowering and the parameter's type resolved
+  only inside the body: `let toEntry n = Item(name = n, flag = true)` normalized its argument
+  after the body but kept the record in the arena, orphaning the owned copy
+  (`tests/generic_append_map_churn_unannotated_plateau.ash` grew from 8.2 MB to 20.5 MB in
+  stage 0 and from 7.4 MB to 24 MB in the selfhost at 200000 iterations). Before the body is
+  lowered, an un-annotated parameter whose type is still a variable now takes the declared type
+  of the first constructor field it is passed to directly anywhere in the body (the bare
+  parameter as a record literal field or a positional constructor argument, outside any binder
+  that shadows it) when that field holds a string or a named type
+  (`LowerLambdaCoreSeedParamTypeFromConstructorFields` / `seedParameterFromConstructorFields`),
+  the unification the body would perform later; the fixture is flat in both compilers and the
+  un-annotated builder lowers exactly as the annotated one (parity fixture
+  `unannotated_parameter_record`). Done (2026-09-06, selfhost): the generic list deep-copy
+  call path. A known callee whose declared scheme yields a list over one of its own quantified
+  variables (`mapAll(toItem)(xs)`) builds its result for every instantiation alike, so a
+  result over records has no call copy-out and stayed in an open window in the selfhost. The
+  call now closes its window through the per-element deep copy the loop entry normalization
+  already uses (`emitCallDeepCopyOut`, stage 0's `LowerCallDeepCopyOutListResult`: the
+  `rc_normalize_list` walk, unconditionally when the call read no returns flag, else on the
+  flag's arena branch), the result is recorded as deep-copied (`genericDeepCopiedListTemps`),
+  the consumed arguments are released with their parts after it, and a consumed list an earlier
+  deep copy produced is left with a callee whose result reach is unknown when that result was
+  neither copied out nor produced reference-counted (stage 0's
+  `ConsumedDeepCopiedListStaysWithCallee`). A call result whose type still holds an unresolved
+  layout also takes the slot and temp stage 0's deferred copy-out placeholder takes, so a
+  generic body's numbering matches. The churn fixture's loop matches stage 0 apart from the
+  inlined `List.length` entry helper (not ported), and `CallWindowLoweringTests` pins the entry
+  function of parity fixture `generic_list_result_deep_copy` line for line (the whole program
+  stays out of the runner until the synthesized copier and epilogue carry stage 0's locations).
+  Closed (2026-09-08): the theorized gap — a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or
+  pattern binding stored into a constructor argument with no compensating retain — does not
+  reproduce in stage 0: every admission rule that lets a constructor result count as a fresh
+  runtime-RC value (`CanRuntimeManageFreshHeapChildAdtConstructorApplication`,
+  `CanRuntimeManageFreshOwnedChildExpression`, `IsRuntimeManageableFreshGenericPayload`) requires
+  the field to be a proven producer (`IsRuntimeRcStringProducer`/`IsRuntimeRcBigIntProducer`/
+  `CanMaterializeOwnedBytes`) or the narrow `IsNormalizedAlwaysReturnedStringParameterRead` case; a
+  bare borrow never passes, so it never reaches a store site that needs a retain — confirmed with
+  targeted probes (an ordinary function's field projection, a TCO loop's dot-field read, and a TCO
+  loop's pattern-match-destructured field, all storing a non-literal string into a sibling
+  constructor and consed across 300000 iterations) that stayed either correctly arena-classified or
+  already retained through `RetainRuntimeManagedTcoConstructorArguments`/the pattern-binding
+  bind-time retain, in both compilers.
+
+  The self-hosted mirror's actual, verified divergence was one level down, in
+  `PerceusLifetimePlacement.ash`'s general Perceus dup/alias pass (the same machinery OPT-25
+  covers): stage 0's `PerceusLifetimePlacement.cs` collects every arena- or stack-allocated ADT
+  cell once per function (`CollectArenaAdtCells`) and uses it in three places — `AddCallDups` skips
+  the compensating `RcDup` for a tracked owner's field store into such a cell (an arena cell embeds
+  the owner's reference without a reference of its own, so the owner's own release is the only one
+  that ever fires), `PropagateAlias`'s `SetAdtField` case extends the owner's tracked aliases
+  through such a cell (so a later read of the cell keeps the owner artificially live, the same
+  "relies on the borrowed value's owner outliving the region" rule OPT-32's release side already
+  leans on), and `PlaceOwner` empties that exemption when a `CopyOutArena`/`RcNormalization` alias
+  carries the cell across a tail-call back edge (a by-name arena successor's copy releases its
+  children as owned references, so that store needs the retain after all). The self-hosted
+  `PerceusLifetimePlacement.ash` had none of the three: `arenaAdtCells` did not exist, so its
+  `callDupsAfterLoad`'s `SetAdtField` case (and `propagateAlias`'s, which had no `SetAdtField` case
+  at all) treated every field store alike regardless of the target cell's own placement. The
+  observable effect is a permanently unbalanced `RcDup` lifetime marker (currently a no-op at
+  codegen for a non-runtime-managed value, since only a `RuntimeManaged` `RcDup`/`RcDrop` pair does
+  real reference counting — a full-cost divergence once arena values gain their own runtime
+  bookkeeping) every time an owner-tracked value's field is stored into an arena cell, which is a
+  common shape (any record- or tuple-update building a fresh arena aggregate out of a still-live
+  local). Ported `arenaAdtCellTarget`/`collectArenaAdtCells`, the `arenaAdtCells`-gated skip in
+  `callDupsAfterLoad`, the `SetAdtField` case in `propagateAlias`, and the
+  `arenaCellCopyOutReleasesOwner`/`borrowingArenaCells` back-edge exception, threading
+  `arenaAdtCells` through the whole owner-placement call chain
+  (`placeInstructionLifetimesIn`→`placeOwnerSlots`→`placeOwner`→`placeOwnerRegion`→
+  `placeOwnerBetween`→`placeOwnerInRegion`→`collectOwnerAliases`/`collectInsertions`→`callDups`).
+  `PerceusLifetimePlacementTests.ash` gained
+  `expectRecordFieldStoreIntoArenaCellIsNotDuplicated` (fails on the pre-fix code: an unwanted
+  `RcDup` appears before the `SetAdtField`) and
+  `expectRecordFieldStoreIntoRuntimeManagedCellIsDuplicated` (the contrasting case, unchanged by
+  the fix) built directly on synthetic IR, the same idiom as
+  `expectBorrowedCallArgumentIsDuplicated`. The whole-program parity fixture
+  `reuse_shared_falls_back` exercised the case end to end and needed its checked-in `.ir`
+  regenerated (one fewer `RcDup`, `temps=36` → `35`). All ten selfhost test suites, the full C#
+  suite (2553/2553), the LSP suite (72/72), and the e2e suite are green.
+- [x] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
+  allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
+  `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
+  non-specialization) match-arm path — `ReuseSpecialization.ash` (the pure Expr/Pattern-shape
+  analysis: `reusePatternConstructorArity`/`reusePatternFieldBindings` extract a matched
+  constructor's field-index-to-bound-name map, `reuseArmBodyRebuildsSameConstructor` recognizes a
+  same-name, same-arity rebuild through nested `let`s including a field-order-projected record
+  literal, `reuseTransferredFieldsSafe` checks every pointer-typed field is passed straight through
+  unchanged rather than dropped or replaced, `exprMentionsName` is the shadow-blind dead-cell
+  check) plus the state-threaded `CoreLowering.ash` hooks: `withReuseScrutinee` gates a whole match
+  (exhaustive, guard-free, every case a distinct constructor of one type, every case's own rebuild
+  transfer-safe — narrower than stage 0's cross-constructor reuse by requiring every arm, not only
+  the ones with pointer fields, to rebuild its own matched constructor, so a produced token is
+  always consumed by construction and the unconsumed-token release path stage 0 needs never
+  arises), `reuseTokenIfEligible`/`reuseTruncateArmTokens` publish and bookkeep one `DropReuse`
+  token per arm, and `allocateOrReuseConstructorCell`/`reuseEmitTransferredChild` consume it with
+  `AllocReusing`, branching a transferred pointer field on the token's own runtime nullness exactly
+  like stage 0's `EmitRuntimeReuseTransferredChild`. Verified: 16 existing whole-program parity
+  fixtures re-checked byte-identical (no regression), 19 unit tests in
+  `ReuseSpecializationTests.ash` covering the analysis functions directly, and a stage-0 oracle
+  pair (`reuse_record_update.source`/`.ir`, `reuse_list_map.source`/`.ir`) that DOES emit
+  `DropReuse`/`AllocReusing` for this exact mechanism, plus a `reuse_shared_falls_back` pair where
+  stage 0 correctly emits neither (the scrutinee is provably shared by a second top-level binding).
+  Activated end to end (2026-09-05): the three oracle pairs are registered in
+  `ir-program-parity/Main.ash` and match byte for byte (the runner drops stage 0's `trait
+  evidence` section, which trait lowering does not produce until milestone 3). The gate is stage
+  0's `TryGetRuntimeManagedReuseScrutinee` rather than a runtime temp: the scrutinee must be a
+  `let` binding still owning its reference-counted value (`liveRuntimeOwnerSlot`), every arm
+  guard-free and leaving the cell dead, and the match a transfer-safe rebuild; the owner is then
+  released into the arms' tokens (`withReuseScrutinee`), so no scope-exit release or arm adoption
+  competes with `DropReuse`. Feeding it, four placement gaps closed: an ordinary `let` body now
+  carries stage 0's `LowerEscapingResult` request (`escapingLetBodyRequest`, chain-aware like
+  `LowerSequentialBindingChain`, applied to the remaining program body for a top-level `let`); a
+  self-recursive copy ADT `let` matched immediately by a reuse-safe rebuild is placed on the
+  reference-counted heap (`isImmediateSafeAdtMatchUse`, stage 0's
+  `RuntimeReusePointerFieldsAreSafe` branch, with positional constructors matched by arity); a
+  bare nullary constructor keeps the consumer's aggregate request (`aggregateRequestForwards`,
+  stage 0's `LowerNullaryConstructor`), so a runtime-managed parent's `Nil` field lands beside
+  it; and `let y = x` over an owned binding is an alias the original owner alone releases
+  (`letAliasesOwnedBinding`, stage 0's `TrackLetOwnership`). A live token is consumed whatever
+  the rebuild's own placement request, its transferred pointer child read without a borrow
+  (`reuseTransferredNames`, stage 0's alias to the dead scrutinee owner) and guarded on the
+  token's runtime nullness. The TCO-loop-native ARENA direct-reuse mechanism
+  (`LowerLambdaCoreScanDirectReuse` and `CollectCtorMatchedScrutinees`'s constructor-pattern-only
+  scan) is ported under OPT-25's aggregate tail (2026-09-07: linear reuse roots, arena tokens,
+  the no-structural-reuse revert, and the move-safe entry-copy elision; see OPT-25's note and
+  `tco_variant_parameter_reused_in_place`). Corrected (2026-09-09): `RcIsUnique` and structural
+  droppers are NOT part of the remaining gap — both are already fully ported end to end
+  (`RcIsUnique`'s IR kind, backend codegen `emitRuntimeRcIsUnique`, and three real `CoreLowering.ash`
+  emission sites plus `StructuralDroppers.ash`'s own dropper-sharing check). What is still missing
+  is specifically the `f$reuse` whole-function SPECIALIZATION stage 0's
+  `GetOrCreateReuseSpecialization` builds (`Lowering.Reuse.cs`): a compile-time, per-instantiation
+  monomorphization of a registered single-accumulator recursive function with its parameter treated
+  as linear, self-calls redirected to the specialization, and `IsFullyReusing` statically proving
+  every constructor in the specialized body is already an in-place `AllocReusing` before the
+  function's own arena reset is trusted safe — the qualification is static (call-site proofs of a
+  provably-unique argument), not an `RcIsUnique` runtime branch. Its to-space materialization side
+  (`AllocAdtToSpace`, `CopyOutArenaToSpace`, `CopyFixedInto`) has no self-hosted lowering emission
+  site at all yet (the IR kinds, backend codegen, and `PerceusLifetimePlacement.ash` awareness
+  exist; only hand-built backend test IR and stage-0 parity fixtures reach them). Given the
+  soundness risk (a wrong `IsFullyReusing` verdict corrupts memory, not merely leaks), the safest
+  first port slice restricts to a copy-type element (no to-space needed at all, since
+  `AccumulatorIsFullyPersistent` degenerates trivially): specialization generation, call-site
+  qualification, and the reset-safety scan, deferring the to-space materialization of a heap-leaf
+  accumulator field to a follow-up. Ported (2026-09-09), the analysis half of that slice:
+  `ReuseResetSafety.ash` carries stage 0's `IsFullyReusing` whole — the forbidden-allocation scan
+  (`AllocAdt`/`AllocAdtStack`/`AllocStack`/`ConcatStr` and the four copy-outs, each rejecting with
+  its own `ReuseDecisionReason` and the offending instruction's location), the temp-reader and
+  local-slot dataflow tables, the safely-consumed walk (writes into, field reads from,
+  `CopyFixedInto`/`CopyOutArenaToSpace` materialization, closure-environment capture, and
+  borrow/single-store-slot moves, bounded at stage 0's four levels), and the closure-consumed-as-
+  call-target walk that rejects a closure passed as an argument — plus
+  `specializationRebuildsAccumulator` (a rewriter's result type is the same list or named type as
+  its last parameter; a reader is declined) and `accumulatorIsFullyPersistent`, which admits a
+  copy-type-element list and nothing else, since a named type's fresh heap leaf fields needed a
+  to-space materialization no self-hosted lowering site emitted at that point. Verified by 30 unit
+  tests in
+  `ReuseResetSafetyTests.ash` over hand-built instruction lists. Ported next (2026-09-09), the
+  generation and call-site half, narrowed to the fresh-result path over one copy-element list
+  accumulator: `ReuseFunctionSpecialization.ash` scans the parsed program for its self-recursive
+  top-level functions (stage 0's `RegisterRecursiveReuseCandidate`) and names their specializations
+  the way stage 0 does (`f__reuse`, then `f__reuse$N`); `CoreLowering.ash`'s `reuseSpecializedCallOf`
+  qualifies a call whose callee is one of them, takes exactly its own parameter count of arguments,
+  rebuilds its accumulator (`specializationRebuildsAccumulator`), carries a layout the
+  specialization can keep persistent (`accumulatorLayoutIsPersistable`: a list always does, since
+  its cells are rebuilt in the ordinary heap and carry whatever their elements already were, while
+  a named ADT needed the to-space materialization no lowering site emitted at that point), is handed
+  a value
+  the callee's whole-program result reach proves fresh (stage 0's `IsFreshOwnershipResultCall`),
+  and mentions only names a body lowered here can bind; and
+  `lowerReuseSpecializedCall` lowers the candidate's own lambda as a one-member recursive group
+  under that label, with `armSpecializationLinearParameter` making the accumulator a linear reuse
+  root and the group's self binding redirecting the recursion into the specialization, the call
+  itself becoming the group's continuation. Feeding it, list cells learned the reuse token the
+  constructor path already had: a cons arm on a linear reuse root publishes an arena `DropReuse`
+  token (`listCellReuseToken`), and `allocateListCell` consumes it as an
+  `AllocReusing`/`ListCell` rebuild instead of a fresh `Alloc` — a reference-counted cell still
+  takes neither, since its transferred children would need the runtime nullness guard only the
+  constructor path emits. The accumulator may be the last of several parameters, the earlier ones
+  being configuration the specialization carries unchanged (stage 0's own `moveBodies` shape):
+  `armSpecializationLinearParameter` runs at both the recursive member's own parameter and every
+  nested lambda's, so whichever binds the accumulator claims the request, and the call is rebuilt
+  over the whole argument list. Verified: eleven unit tests in
+  `ReuseFunctionSpecializationTests.ash` (the candidate scan, the label scheme, `doubleAll__reuse`
+  generated with `DropReuse`/`AllocReusing` for the shape stage 0 specializes, the same call under
+  a tail-recursive driver, a second call site taking `doubleAll__reuse$1`, a heap-element list and
+  a two-parameter candidate — both of which stage 0 specializes too, confirmed against its own
+  `--explain reuse` output — and the two declines, a threaded rather than fresh argument and a
+  reader); all four self-hosted suites and the whole-program IR parity fixtures green; and the
+  self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
+  matching its own `--debug-disable-reuse` build to within the reused cells. A specialization is now
+  generated once per concrete instantiation (2026-09-09), stage 0's own cache:
+  `reuseSpecializationCacheKey` keys `reuseSpecializations` on
+  the callee and its resolved function type, and a later call at the same type takes a closure over
+  the label already emitted (`lowerCachedReuseSpecializedCall`) instead of lowering the candidate's
+  body again — the closure goes in a local and the ordinary call path applies the arguments to it,
+  so nothing about argument ownership is re-implemented. The cached path marks the callee in
+  progress exactly as generation does; without that the rebuilt call qualifies again, hits the same
+  cache entry, and recurses until the stack overflows. Measured on a program calling one
+  specializable function from two sites: the emitted binary drops from 28,784 to 24,688 bytes and
+  its answer is unchanged. The reset-safety verdict now
+  has its consumers (2026-09-09): `recordFullyReusingSpecialization` scans the generated body that
+  bound the linear parameter (`specializingReuseLabel`, stage 0's own) with `reuseResetSafety` and,
+  when it allocates nothing that could escape the watermark and the accumulator's layout is fully
+  persistent — a list only over a copy-type element, stricter than the routing gate —
+  records the callee in `fullyReusingCallees`; `backEdgeArgumentIsInPlaceReuse` then lets a loop
+  argument that is a call to such a callee over that loop's own parameter count as surviving a
+  plain reset (stage 0's `stableAccArg`), recognized structurally rather than by remembering the
+  call node, which has no identity here. The `Tree` loop's back edge consequently reclaims its
+  arena on every iteration, pinned by `testLoopBackEdgeReclaimsItsArena`. It costs that particular
+  program nothing measurable — once the specialization rewrites every cell in place there is
+  nothing above the watermark left to reclaim — which is the expected shape of the win, not its
+  absence.
+  The direct-unique call path over a loop accumulator is ported (2026-09-09), together with the
+  named-ADT accumulator shape it is the only route to: stage 0's fresh-result path rejects any
+  accumulator that is not a `TList` outright
+  (`QualifyFreshResultReuseSpecialization`'s `NthCurriedArgType ... is not TypeRef.TList`, confirmed
+  by running a `Tree -> Tree` rewriter through stage 0's `--explain reuse`, which answers
+  `fresh accumulator layout unsupported`), so `specializationAccumulatorIsUnique` now applies that
+  list requirement to the fresh path alone and lets a loop accumulator through on the strength of
+  its entry copy instead. `collectSpecializableCallArgs` (`ReuseFunctionSpecialization.ash`, stage
+  0's own walk) finds every loop parameter handed straight to a single-parameter candidate — stage
+  0's `_freshCompositionOnlySpecializable` excludes multi-parameter ones from this scan and so does
+  this — `CoreTcoLoop.specializationAccumulators` carries them to `scanSpecializationAccumulators`,
+  which admits one whose slot is not provisionally runtime-managed and whose type the entry copier
+  can clone, records it in `linearSpecializationAccumulators`, and adds the entry-copy candidate
+  the existing `finalizeDirectReuse` machinery emits or elides by move safety. That "worth its
+  cost" gate now governs only the direct-in-place candidates: a specialization's reuse fires in the
+  generated function, which the loop body's own instructions never contain, so a specialization
+  candidate keeps its copy either way (stage 0's `LowerLambdaCoreSpliceReuseCopies` makes the same
+  exemption). The named-ADT accumulator is admitted in the shape needing no materialization at all —
+  every constructor field the accumulator itself or a copy type
+  (`namedAccumulatorFieldsPersistent`) — and the copier-synthesis gate is deliberately not
+  `arenaDeepCopySupported`, whose cycle guard reports every recursive ADT as not deep-copyable:
+  that flag answers whether an inline walk terminates, while `StructuralCopiers.ash`'s
+  `emitCopierField` synthesizes a recursive copier by construction, which is the question stage 0's
+  `TrySynthesizeAdtCopier` asks. Measured on a 4095-node tree rewritten 200 times: 5.6 MB peak
+  resident against 34.3 MB for the same program built `--debug-disable-reuse` and 4.1 MB through
+  stage 0, output identical.
+  To-space materialization of a rebuilt cell's leaf fields is emitted (2026-09-09), stage 0's
+  `MaterializeSpecializationField` called from `LowerConstructorApplication`: a constructor field
+  built from one of the specialization's fresh inputs points into the arena scratch the loop's reset
+  reclaims, so it is relocated into to-space before the store. Fresh-input tracking is stage 0's
+  `_specFreshInputNames` — `specializationFreshInputs` holds the specialization's own parameter names
+  while its body is lowered, and `extendedSpecializationFreshInputs` propagates the status through an
+  inlined helper whose argument names a fresh input or is any expression the arm computed (a value in
+  per-iteration scratch); a field argument that is a bare name the specialization did NOT bring in was
+  matched out of the accumulator, is already persistent, and passes through. `materializeSpecializationField`
+  covers the two leaf shapes needing no copier synthesis: a string or bytes value (a length-prefixed
+  blob copy) and a tuple of copy types (a fixed-size cell copy). The materialization runs after the
+  cell is claimed and before the field stores, stage 0's own order, so the reused cell's old field is
+  still readable: an unbound field slot takes the in-place `CopyStringIntoOrFresh`/`CopyFixedIntoOrFresh`
+  update path, which bounds blob growth to the largest value a cell ever held, and every other field
+  the conservative fresh `CopyOutArenaToSpace`. That is narrower than stage 0's
+  `ReuseTokenFieldIsDead`, which also clears a field whose bound name has had every arm reference
+  lowered — it keeps a per-binding reference tally this lowering does not; the difference costs a blob
+  per rewrite and never correctness. `ReuseResetSafety.ash`'s named-ADT gate widens to match
+  (`reuseMaterializableFieldType`), so an accumulator carrying a string, bytes or copy-tuple leaf is
+  now fully persistent and its loop's back edge reclaims its arena. Verified: five new tests in
+  `ReuseFunctionSpecializationTests.ash` (a `Tree` with a `Str` label generates its specialization,
+  overwrites the dead blob in place, and reclaims its arena on the back edge; a still-bound label takes
+  the fresh cell; an ordinary constructor outside a specialization emits neither), all four self-hosted
+  suites plus both parity runners green, and stage 0's own `--explain reuse`/`--emit-ir` on the same
+  `Tree` program confirming it accepts reset safety and emits `CopyStringIntoOrFresh` there too.
+  The two field shapes needing a synthesized copier followed (2026-09-09), closing OPT-42:
+  `ToSpaceCopiers.ash` is the to-space analogue of `StructuralCopiers.ash`, carrying stage 0's
+  `SynthesizeListToSpaceCopier` and `TrySynthesizeAdtToSpaceCopier`. Neither can allocate directly
+  in to-space — `AllocAdtToSpace` is reserved for in-place reuse's own fixed-shape node arena, and
+  interleaving unrelated cells into it would corrupt that mechanism — so both follow stage 0's
+  shape: build the cell as ordinary arena scratch with its fields already relocated, then flat-copy
+  the finished cell into the blob with `CopyOutArenaToSpace`'s fixed-size branch, the scratch cell's
+  own later reclaim being harmless once it has been copied. The label is registered before the body
+  is emitted, so a recursive or mutually recursive type finds its own label instead of recursing
+  forever, and the shared copier-label cache keys a to-space copier apart from the arena copier of
+  the same type by prefix. `toSpaceCopySafeType` is stage 0's `IsToSpaceCopySafeType` with the same
+  path guard: it decides which field shapes the walk relocates completely, so
+  `namedAccumulatorFieldsPersistent` can decline the rest rather than leave half a graph behind — it
+  takes that predicate as a parameter, since the answer needs the type environment the analysis
+  module has no access to. `materializeSpecializationField` routes a `SemList` and a non-self
+  `SemNamed` field through `synthesizeToSpaceCopy`, always rebuilding fresh rather than over an
+  update's dead cell (no in-place primitive exists for either shape, stage 0's own reason). A field
+  of the accumulator's own type is still excluded by symbol identity, stage 0's
+  `isAccumulatorSelfType`. Verified: three more tests in `ReuseFunctionSpecializationTests.ash` (a
+  `List(Str)` field relocates through `__tospacecopy_list_`, a foreign `Label` ADT field through
+  `__tospacecopy_adt_`, and the `Tree` accumulator's own recursive child through neither); all four
+  self-hosted suites and both parity runners green; the self-hosted CLI compiling all three probe
+  programs to binaries that run natively and print stage 0's own answers; and, on a 4095-node tree
+  with a string label rewritten 200 times, 9.7 MB peak resident against stage 0's 8.2 MB and
+  32.8 MB for the same program built `--debug-disable-reuse`. The last placement the mechanism
+  needed followed (2026-09-09), closing OPT-24's remaining `AllocAdtToSpace` note with it: a cell
+  the rebuild could not take from a reuse token is fresh, and inside a specialization
+  `emitFreshConstructorCell` puts it in to-space rather than the arena, stage 0's
+  `EmitFreshConstructorCell` `_inSpecialization` branch. Pinned by two more tests, one that the fresh
+  `Tag("z")` cell of a specialized body is an `AllocAdtToSpace` and one that an ordinary constructor
+  outside a specialization is not.
+  Stage 0's own reference-counted-spine fix for a non-tail recursive producer followed
+  (2026-09-10): a self-recursive call built its callee closure before its own body's
+  runtime-managed verdict existed, so every self-closure carried the returns bit clear and its
+  call site always took the arena copy-out branch — one copy of the whole result per recursion
+  level. `backfillSelfClosureResultOwnership` writes the verdict back into the not-yet-frozen
+  instruction buffer once known, mirroring stage 0's own backfill; `isRecursiveProducerTail`
+  requests the reference-counted heap for a cons cell whose tail calls a member of the enclosing
+  recursive group, so the copy is unnecessary rather than merely cheaper, deferring to a live
+  arena list-cell reuse token when one exists (`consumeListCellReuseToken` already declines a
+  token under a runtime-managed request, so forcing one blindly here would have silently defeated
+  the reuse OPT-42 exists for). `makeList(20000) |> sumList`: 6.3 GB to 10.4 MB, matching stage
+  0's own 11.6 MB. Still open: when the same producer's result feeds an OPT-42 specialization
+  (`doubleAll(makeList(20000))`), the specialization's own self-call is generated through this
+  lowering's general recursive-body finishing path — the same one an ordinary call uses — where
+  stage 0 has a dedicated specialization-call lowering that never opens a window around it at
+  all. Backfilling that self-call too (the current behavior) still measures far better than not
+  (28.1 GB baseline to 9.4 GB) but neither matches stage 0's 11.6 MB for this combined shape;
+  porting stage 0's window-free specialization-call bypass is the next step. Pinned by
+  `CallWindowLoweringTests.ash`'s `expectNonTailSelfCallReadsReturnsBit`; three whole-program IR
+  parity fixtures refreshed to match stage 0's own now-current output
+  (`non_tail_self_call_list_result`, `self_call_operand_string_result`,
+  `pattern_head_read_under_operator` — stale since stage 0's own fix landed, exposed only once
+  this lowering started producing the matching shape).
+  Recursive producer provenance also follows frame-local aliases and all-proven joins
+  (`RecursiveProducerResult.ash`); shadowed names and mixed joins stay conservative, and a cons
+  retains an already-owned recursive tail (`RecursiveProducerResultTests.ash`).
+- [x] **OPT-46** Admit every `Str` loop parameter to the reference-counted heap as stage 0's
+  `IsRcEligibleScalarTupleOrAdtType` does. The self-hosted admission (`runtimeManagedStrOrdinals`
+  and the affine-append walk) declines a string parameter the successor reads more than once
+  (`widen(n - 1)(text + text)`), so such a loop keeps its strings in the arena and grows per
+  iteration where stage 0 plateaus. Widen the admission, keep the affine in-place append for the
+  single-read shape, and pin the two-read shape with a plateau fixture through both compilers.
+  Done: measured, the premise did not hold. The self-hosted walk already admits a parameter its
+  successor reads twice (`text + text` is the parameter's own append; only the in-place tip
+  reservation stays single-read), its loop plateaus at 5.6 MB, and the growth was stage 0's: a
+  guard-plus-double successor (`if byteLength(text) >= 4096 then "ab" else text + text`) grew to
+  211 MB, and a successor cut out of the parameter by the standard library's `substring` to 408 MB.
+  Three stage-0 defects, each fixed in both compilers where the rule exists: a control-flow join of
+  a literal and a fresh string was an arena join whose later copy-out orphaned the fresh branch's
+  reference-counted value, so a reconcilable join (`IsReconcilableFreshStringJoin`, the match
+  arms' rule extended to `if`) now asks its branches for a runtime-managed string and copies the
+  literal branches inside their branch (`WithReconcilableFreshStringJoinRequest`,
+  `TryLowerStaticStringNormalizedBranch`; self-hosted `withReconcilableFreshStringJoinRequest`,
+  `lowerStaticStringNormalizedBody`); the post-hoc promotion of a concatenation reached from a
+  runtime-managed parameter is limited to values that flow to a parameter store or the result and
+  outside a mixed join (`TempsFlowingToLoopParameters`, `MixedJoinSources`), and the concat fold
+  accepts arena inner links under a reference-counted root; and a fresh reference-counted builtin
+  result reaches none of its arguments in the ownership summaries (both reach walks), which made
+  `substring`'s result fresh, so the entry-helper inliner took it and now releases a fresh
+  reference-counted argument the inlined result cannot keep (`ReleaseInlinedFreshArguments`). The
+  self-hosted backend's `BytesSubText` also allocated a reference-counted cell for an arena request
+  (a 4 KB leak per slice); it now places the string where the instruction asked. Pinned by
+  `tests/tco_runtime_managed_str_parameter_read_twice_plateau.ash` (both compilers, 200000
+  iterations, 8.2 and 5.9 MB) and
+  `Linux_backend_llvm_runtime_rc_string_parameter_read_twice_memory_should_plateau`; the explain
+  parity fixtures record the now-fresh results. With those results no longer poisoning their
+  callers, stage 0 counts a call whose result reaches no parameter as a moved argument, so the
+  self-hosted ownership inference now applies the same result-alias rule (`resultAliasMove` over
+  the program's reach summaries) and the parity reports agree on which parameters are unique.
+- [x] **OPT-47** Retain a whole ADT loop parameter consed into a sibling list accumulator
+  (`collect(n - 1)(State(...))(s :: acc)`) in the self-hosted lowering, stage 0's rule since the
+  sibling-accumulator UAF fix. The shape is reachable only once a list over records is admitted
+  as a runtime-managed list parameter alongside the record parameter it stores; confirm the
+  admission after the record-list accumulator work, add the retain at the cons, and pin the
+  shape with a fixture whose output would print the released record otherwise.
+  Done: confirmed rather than added. The record-list accumulator work admits both parameters
+  (the record slot is copied out of the arena at entry and at every back edge, the list slot is
+  normalized at entry), and its `retainListElement` marker already puts the `RcDup` of the
+  record parameter on the cons cell before the back edge releases the old record; the
+  self-hosted loop body matches stage 0's instruction for instruction at the cons and the back
+  edge, differing only in temp numbering, the always-emitted list exit-transfer check, and
+  stage 0's dead constant-guarded retain of the successor's scalar field.
+  `tests/tco_runtime_managed_record_param_consed_into_sibling_accumulator.ash` pins the shape
+  through both compilers: 20000 records consed behind their successor, then read in both
+  orders, so a released record would print reused memory. The self-hosted binary's higher peak
+  for a retained list of records (about 290 bytes per record against stage 0's 200) is the
+  libc `malloc` allocator recorded under CG-4, not a lowering difference: the same probe
+  without the string field shows a gap of the same kind while the instruction streams agree,
+  and both binaries scale linearly in the record count.
+- [x] **OPT-48** Port stage 0's entry-helper inlining: a call to a stdlib or user function whose
+  body is a `let recursive go ... in go(seed)(argument)` entry (`List.length`, `List.reverse`, the
+  fold family) is lowered as the loop closure built in the caller and applied directly, so the
+  argument passes without the accepts-bit retain of a general call. The churn fixture's loop
+  (`tests/generic_append_map_churn_plateau.ash`) differs from stage 0 only at its
+  `list.length(entries)` call for this reason; the parity fixtures and the churn loop diff are
+  the oracle.
+  Done: `HelperInlining.ash` carries the structural shapes (`exprHasCallOrAggregate`, the
+  nested-recursive-return shape stage 0 specializes instead of inlining), and every
+  non-recursive let-bound lambda whose innermost body allocates or calls is registered as an
+  inlinable helper when its `let` is lowered, stitched stdlib functions included. A saturated
+  call to such a helper is spliced into its site (`tryInlineHelperCall`, before the general
+  call's arena window opens) while a reuse token is live, or under a loop's back edge when the
+  helper's result reach is fresh; the helper must not be inlining already, its name must still
+  bind a function at the site, and every name its body reads past its parameters must resolve
+  there lexically, as a constructor, or as an inlinable helper in turn (a top-level function the
+  caller did not capture resolves by label since OPT-33, see below). The arguments
+  are lowered under a plain request into fresh locals, the parameters bound to those locals, the
+  body lowered under the call's own request, and a fresh reference-counted argument the result
+  cannot keep is released after the body (`releaseInlinedFreshArguments`). The churn loop now
+  lowers instruction for instruction as stage 0 does, and
+  `inlined_entry_helper_under_back_edge` pins a user helper spliced under a back edge as a
+  whole-program parity fixture.
+- [x] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
+  reference-counted argument. Every shape named below is measured and fixed, and the work split
+  out of this item — OPT-49a, OPT-49b, OPT-49c, OPT-50, and OPT-51 — has all landed; the
+  self-hosted mirror of the two stage-0 halves continues under OPT-52. Only the deep-copied list
+  case consults the callee's poison
+  (`ConsumedDeepCopiedListStaysWithCallee` / `consumedDeepCopiedListStaysWithCallee`); the
+  remaining poison sources (a lambda, `await`, a handler, a result pipe, an unresolved callee)
+  can still release an argument the callee's arena-placed result embeds. Model each shape
+  precisely rather than forcing retains (which would leak), mirror the rule in
+  `CoreLowering.ash`, and pin each source with a parity fixture and an execution test.
+  Measured (2026-09-07): no shape over-releases. A fresh string consumed by a callee whose
+  result reach is poisoned reaches the caller either copied (the arena-result request, bit 1 of
+  the ownership word, and the conditional copy-out on an unknown returns bit both copy the
+  result before the consumed argument is released) or adopted, so the probes print correctly
+  and the defects are leaks: the unresolved callee (`apply f s = f(s)` applied to `identity`)
+  leaked the returned string in both compilers, fixed by the returns bit of a returned
+  normalized parameter (see the arena-result boundary above); a result pipe (`|?>`) and an
+  awaited task (`await echo(fresh)` inside an async body) both plateau at 8.2 MB; a handler arm
+  (`handle Tag.tag(s) with | Tag.tag(text) -> resume(text)`) leaked the arm's
+  reference-counted copy of `text`, which the perform site took for an arena value and the
+  handle copied at its scope boundary (about 615 bytes per call in stage 0), until OPT-49a made
+  the perform site adopt it and the handle release it (8.2 MB plateau); a record holding a
+  closure that captures the normalized parameter (`Box(reader = given (u) -> s)`) leaked the
+  owned string through an arena environment nothing released, fixed in stage 0 by OPT-49b
+  below (the closure owns the capture on the reference-counted heap and the record releases
+  the closure as a child). `tests/consumed_argument_*` pin the correct output of every shape
+  through stage 0. The remaining work is split below.
+- [x] **OPT-49a** Stage 0: the perform site adopts a handler arm's reference-counted result.
+  Read the arm closure's returns bit at the call, take the value as newly produced on that
+  branch and copy it out otherwise, so the handle's scope-boundary copy no longer duplicates a
+  value nothing releases; the arm closure built by `LowerHandleLowerArmClosures` must carry the
+  returns bit its lowered body earned.
+  Done (2026-09-07): `EmitPerform` reads the arm closure's returns bit at the saturating call
+  and adopts the result as newly produced on that branch, normalizing an arena result into a
+  reference-counted copy otherwise (`PlanPerformResultOwnership`: a resolved string, bytes,
+  list, or shallow-copyable ADT result adopts; an unresolved layout, or a function that may
+  execute inside a coroutine, requests the arena form through bit 1 of the ownership word;
+  copy types, closures, and resources are unchanged). A closure's returns bit is now the
+  compiled body's own fact rather than gated on the creating function's placement context
+  (`LowerLambdaCoreMakeClosure` and the two label-reconstructed `MakeClosure` sites), so the arm
+  closure reports the result its entry normalization earns. A return arm over a body value the
+  handle owns applies as a continuation under the ordinary closure ownership contract
+  (`EmitOwnedContinuationCall`: retain the argument when the closure adopts arguments, adopt or
+  normalize the result by its returns bit, release the original once the result cannot reach
+  it), and the posts fold applies the same contract per post, so the scope-boundary copy is
+  gone and the caller releases the value. `tests/consumed_argument_through_handler.ash`
+  through stage 0: 28.7 MB peak at 40000 iterations and 110.6 MB at 200000 before, 8.2 MB at
+  both after, output unchanged; `tests/handler_arm_reference_counted_result_plateau.ash` pins
+  the 200000-iteration output, and the one-shot post, non-identity return arm, `Int` return
+  arm, and let-forwarded body shapes all plateau at 8.2 MB. Two neighbouring shapes still leak
+  and are split out as OPT-50 and OPT-51.
+- [x] **OPT-49b** Stage 0: a closure capturing an entry-normalized parameter owns the capture.
+  The environment holding the owned string (or record) is placed on the reference-counted heap
+  with its dropper, and the record storing that closure counts it as a fresh owned child, so the
+  caller's copy-out of the record retains rather than duplicates the value.
+  Done (2026-09-07): a closure literal whose captures are inline values beside the
+  entry-normalized string parameter is a fresh owned child of the record storing it
+  (`IsRuntimeRcOwningClosureExpression`, consulted by both fresh-child predicates and by the
+  field request, which lowers the lambda under the `Closure` representation). The capture
+  moves the owned string into a reference-counted environment, the closure carries the
+  `__rc_cdrop` dropper releasing it, and the record is placed on the RC heap with a `Closure`
+  child drop kind (`OrdinaryHeapChildDropKind.Closure`; records and owned-child ADTs admit a
+  function field, `CanDropAdtGraph` counts it droppable, and the runtime-managed deep copy
+  copies it with `CopyOutClosure RuntimeManaged`). The caller adopts the record through the
+  compiled-body fact and its structural release drops the closure as a child. The backend's
+  closure release is now count-aware: `RcDrop Function` runs the dropper on the last reference
+  only, then releases the environment and the cell; the packed closure word carries a
+  runtime-managed bit (bit 61) so `CleanupResource` on a borrowed reference-counted closure is a
+  no-op, and an arena `CopyOutClosure` of a reference-counted closure carries no dropper.
+  Measured on `tests/consumed_argument_captured_by_lambda.ash`: 40,972 KB at 40000 iterations
+  and 159,756 KB at 200000 before; 8,204 KB and 4,108 KB after, output unchanged.
+  `tests/consumed_argument_captured_by_lambda_plateau.ash` pins the 200000-iteration output;
+  `closure_record_parameter_entry_normalized.ash` and `closure_record_accumulator_loop.ash` pin
+  a closure-bearing record through entry normalization and as a loop accumulator. The
+  self-hosted backend mirror of the closure-word bit and the count-aware release landed under
+  OPT-52 (2026-09-08).
+- [x] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
+  lowers as a core expression, and a record may hold a function-typed field, so the handler,
+  result-pipe, and closure-capture shapes compile through the self-hosted compiler and OPT-49a
+  and OPT-49b can be mirrored. `async`/`await` as core expressions
+  (`UnknownLoweringBinding("async")` today) is milestone 4's CG-12/OPT-43, not this item; the
+  await shape stays stage-0-only until then.
+  Done (2026-09-07), function-typed fields: `typeExprToSemanticType` resolves a pure arrow
+  (`TypeArrow` with no capabilities and no tail) to `SemFunction`, the arity and implicit-type-
+  parameter walks descend into arrows, and the rejection message names the arrow among the
+  supported field types; nothing downstream needed changing — `HeapLayoutClassification.ash`
+  already classified a function child as `UnsupportedChildDrop`/`NoStructuralCopy` (stage 0's
+  rule before OPT-49b: the closure child is never dropped or copied structurally, see OPT-52), the
+  single-constructor record is tagless, and the closure word is stored and loaded like any field.
+  `tests/consumed_argument_captured_by_lambda.ash` prints `41337792` through the built
+  self-hosted compiler (peak RSS 38.9 MB against stage 0's 41.0 MB). Its lowered IR differs from
+  stage 0's only in the loop back edge, where stage 0 emits a `CleanupResource TypeName=Function`
+  for the pattern-bound `reader` closure that the self-hosted placement does not (a codegen no-op
+  for a closure, see `IrCodegen.ash`), and in the trait-evidence header, so no parity fixture was
+  pinned. `FunctionFieldLoweringTests.ash` covers the record, positional, and type-parameter
+  arrow fields and the capability-row rejection.
+  Done (2026-09-07), `|?>`: `lowerResultPipe` (`CoreLowering.ash`) unifies the left operand with
+  `Result(e, s)`, the mapper with `s -> r`, decides the flat-map case from the resolved `r`, and
+  `CoreResultPipeLowering.ash` emits stage 0's `EmitResultPipeBranches` shape (tag test against
+  `Ok`, `GetAdtField`, `CallClosure`, `Ok` rewrap or plain store, `result_error_N`/`result_end_N`
+  join through one local); neither operand inherits the context's request. `|!>` is not ported.
+  `tests/consumed_argument_through_result_pipe.ash` prints `41337792` through the built
+  self-hosted compiler (peak RSS 5.6 MB against stage 0's 8.2 MB plateau). The pipe's own IR is
+  byte-identical to stage 0's; the surrounding difference is the known OPT-33 divergence
+  (`stamp` reaches `check` by label where stage 0 captures it), so no parity fixture was pinned.
+  `ResultPipeLoweringTests.ash` covers the rewrap, the flat map, and a mapper mismatch.
+  Done (2026-09-07), capability declarations: `registerProgramCapabilities` registers every
+  top-level `capability` ahead of the value chain (declaration order gives the evidence global,
+  operations are numbered within the frame, reserved and duplicate names and duplicate
+  operations are rejected — `ReservedCapabilityName`, `DuplicateCapabilityName`,
+  `DuplicateCapabilityOperationName`), `capabilityHandlerGlobals` is stage 0's `count + 2`, the
+  implicit call form `Cap.op(x)` routes to `lowerPerform` (`isCapabilityOperationCall`), the
+  perform site types its result from the operation's recorded signature (`performResultType`)
+  instead of `Unit`, the unhandled-operation panic message is interned as a real string literal,
+  and the backend defines one `__ashes_capability_handler_<i>` global per slot and lowers
+  `LoadCapabilityHandler`/`StoreCapabilityHandler` over them. Stitching already renamed the
+  declaration and every `Cap.op` reference consistently (`AshesPrivateType_<module>_Cap`).
+  `tests/consumed_argument_through_handler.ash` prints `41337792` through the built self-hosted
+  compiler, at a peak RSS of 60.7 MB against stage 0's 28.7 MB: the handler shape leaks in both
+  compilers until OPT-49a lands, and the self-hosted arm closure leaks more because it carries
+  neither stage 0's argument normalization nor its returns-bit epilogue (CAP-10). The perform
+  site's evidence save/restore order and the post-register labels (`capability_post_skip_N`,
+  `capability_posts_loop_N`/`capability_posts_done_N` against stage 0's `capability_no_post_N`
+  and `posts_fold_N`) also differ, so no parity fixture was pinned.
+  `CapabilityProgramLoweringTests.ash` covers the registration, numbering, global count, and the
+  three rejections.
+- [x] **OPT-50** Stage 0: a function that may execute under a live handler post ignored an
+  unknown callee's returns bit. `apply (f: Str -> Str) (s: Str) = handle f(s) with ...` applied
+  to `identity` (whose entry normalizes and returns its parameter) leaked the returned string:
+  the caller's placement context turned off `needsResultOwnership`, so the result was copied at
+  `ArenaCallBoundary` and the callee's reference-counted original was never released (measured
+  2026-09-07: 28.7 MB peak at 40000 iterations, 110.6 MB at 200000, about 520 bytes per call).
+  `needsResultOwnership`'s gate on `AllowsOrdinaryRcPlacement` was the only difference from
+  `PlanPerformResultOwnership`'s parallel condition (OPT-49a), which never checks it: adopting a
+  value the callee already reports as freshly reference-counted needs no scope-based placement
+  decision by the caller, so it stays safe under a live handler post the same way the perform
+  site's adoption already does, even though this call site is an ordinary application rather than
+  a `perform`. Dropping that one condition re-enables the existing adopt/normalize machinery
+  (`ResolveCallResultOwnershipFlag`/`EmitClosureReturnsRuntimeManagedFlag`) unchanged; the result
+  is unrelated to `RequestsArenaResult`, which was already computed unconditionally and correctly
+  requests the arena form for an unresolved result layout regardless of handler-post status.
+  `tests/handler_post_unknown_callee_result_plateau.ash` plateaus at 8.2 MB for both iteration
+  counts after (was 28.7 MB / 110.6 MB before), output unchanged.
+- [x] **OPT-51** Stage 0: an arm result whose type has no complete copy-out layout kept the
+  arm's reference-counted child alive. With `capability Tag = | tag : Str -> Wrapped` and
+  `Tag.tag(text) -> resume(Just(text))` the arm built the constructor in the arena over its
+  entry-normalized copy of `text`; the perform site left such a result unchanged
+  (`PerformResultOwnership.Unchanged`) and the copy leaked at the same rate as OPT-50 (measured
+  2026-09-07: 28.7 MB / 110.6 MB at 40000/200000 iterations, same as OPT-50's baseline). Two
+  coordinated fixes, both needed:
+  1. Placement, scoped narrowly: `CanRuntimeManageFreshHeapChildAdtConstructorApplication`'s `Str`
+     field case gained an alternative — `IsNormalizedAlwaysReturnedStringParameterRead`, the same
+     fact `LowerLambdaCoreLowerBody`'s own entry preamble already uses to decide whether a
+     parameter is unconditionally RC after normalization — so `Just(text)` is recognized as a fresh
+     owned child when `text` is exactly the arm's own always-returned parameter. Reaching this
+     branch at all also needed the arm closure's OWN escaping-result gate relaxed past
+     `AllowsOrdinaryRcPlacement`, but ONLY for the arm's own body: a new ambient flag,
+     `_loweringHandlerArmOwnResult`, set for the duration of `LowerHandleLowerArmClosures`' own
+     `LowerExpr(armLambda, ...)` call and ORed into `LowerEscapingResult`'s/
+     `LowerLambdaCoreLowerBody`'s existing `AllowsOrdinaryRcPlacement` check — never a blanket
+     removal of that check. A first attempt that dropped `AllowsOrdinaryRcPlacement` for every
+     function reachable from a live handler post (not just the arm's own body) broke
+     `Helper_reachable_from_a_handle_stays_on_the_guarded_arena_path`/
+     `Higher_order_target_reachable_from_a_handle_falls_back_to_the_safe_arena_path`: an ordinary
+     function merely CALLED from inside an arm has no adopt/release net at its own result the way
+     the arm's own perform site now does, so it must stay conservative. A second attempt reused the
+     positional single-constructor accumulator shape (`CanRuntimeManageTcoOwnedChildAdt`,
+     `IsRuntimeManagedConstructorCandidate`'s own branch) instead, but that shape's `List` field
+     case accepts ANY `Var` argument (not just a fresh construction or an enclosing TCO loop's own
+     parameter) — safe in the narrower contexts that already reach it, unsafe once
+     `IsFreshRuntimeManageableAdtExpressionCore` could reach it unconditionally too; broke
+     `Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed`
+     (`Payload(values)` over a plain outer-scope `let values = [40, 2]`, which nothing retains).
+  2. Perform site: even with the arm genuinely placing `Just(text)` on the RC heap,
+     `PlanPerformResultOwnership`'s `CopyOutKind.None` branch only requested the arena form when
+     `RequestsArenaResult` (a generic/unresolved-layout check) applied — never for a concretely
+     resolved, pointer-bearing type like `Wrapped`. Widened to also request the arena form whenever
+     `AllowsAsyncIndependentRcPlacement` holds, the same condition already gating `Adopt` for a
+     `Shallow`/`List` result: the arm's own epilogue
+     (`LowerLambdaCoreNormalizeRequestedArenaResult`) is a no-op whenever the result was never RC to
+     begin with (every closure/resource result already routed through this branch included), and a
+     real deep-copy-and-release otherwise, so requesting it unconditionally under that placement
+     flag is safe regardless of what a specific arm produces. `Adopt` itself was not extended to
+     `CopyOutKind.None`, since there is no defined "copy this shape out of the arena" fallback for
+     `EmitPerformAdoptResult` to fall back to. With this fix, `decorate`'s own compiled result stays
+     arena (the arm's RC construction is deep-copied out and released before the perform site ever
+     returns), so no caller-side change was needed for a plain external `match decorate(x) with ...`.
+  `tests/handler_arm_constructed_reference_counted_result_plateau.ash` plateaus at 8.2 MB for both
+  iteration counts after (was 28.7 MB / 110.6 MB before), output unchanged. Full C# suite
+  (2553/2553), LSP suite (72/72), and e2e suite (748/0/55 skipped) all green.
+- [x] **OPT-54** Measured with per-phase timers before rewriting, and the entry function was not
+  the cost. The self-hosted semantics test program's 72,000-instruction entry is about 5 s of
+  its compile (3.8 s of lifetime placement plus part of entry inference), not the majority:
+  `ASHES_TIMING`'s `lower.*` and `optimize.*` sub-phases put the 44 s of lowering at 14 s for
+  the inferred-trait discovery pass, 8 s for move analysis, 10 s for body lowering, 5 s for
+  placement, and 2 s for entry inference, and the 12 s of optimizing at 7 s for the closure
+  passes, with a profile showing 29% of the main thread waiting on the garbage collector and
+  11% in runtime type checks. The fixes were allocation and rescanning, not a global-slot
+  rewrite: the discovery pass shares trait implementation lambdas like the real pass; the closure
+  passes cache def-use facts by instruction-list identity and skip functions without an indirect
+  call; the deferred TCO reset splice swaps the entry's instruction list and ownership facts
+  instead of copying them per function; free-variable analysis binds and unbinds in place
+  instead of copying the bound set per binder; match exhaustiveness buckets patterns by
+  constructor name once instead of filtering every pattern per constructor; the environment
+  free-variable scan remembers each monomorphic binding's variable nodes; lambda entry reseeds
+  the top-level scope's intrinsic bindings from a list filtered once per scope; and the CLI runs
+  the server garbage collector. Lowering went from 36 s to 26 s, optimizing from 12 s to 7 s, and
+  the whole compile of the semantics test program from 68 s to 52 s wall; the stage-1 CLI package
+  from 65 s to 50 s; peak memory unchanged at about 8 GB. The entry keeps its `optnone`
+  treatment; a global-slot rewrite is not worth its risk while the entry is 5 s.
+- [x] **OPT-55** Self-hosted mirror of OPT-54's two shapes that stage 1 shares.
+  `IrOptimizer.ash`'s known-returned fixpoint now computes every function's single-definition
+  facts once (`withSingleDefinitions`) ahead of every round instead of per function per round,
+  and both per-function devirtualizations return a function without a `CallClosure` untouched
+  before counting anything (`containsCallClosure`). `TypeSchemes.ash`'s `generalize` computes
+  the candidate variables first and never scans the environment when there are none, and the
+  lowering's `generalizeResolvedType` skips resolving every outer binding's scheme for a
+  variable-free type. Stage 1's deferred TCO resets already splice per function, and its
+  free-variable walks use persistent lists, so those two needed nothing. Not measurable on the
+  one program shape stage 1 compiles today: the stage-1 CLI takes a single file, and the largest
+  single-file test (`tests/text_json_parser_smoke.ash`, 22 KB) compiled in 1.45 s of user time
+  before and after, with 17.5 GB of peak RSS and as much system time as user time: that cost was
+  lifetime placement's per-owner dominator sets (OPT-57), not these passes; re-measure once
+  stage 1 compiles a package (CLI-4). Stage 1's `countDefinitions`, `countUses`, and
+  `collectSingleDefiningInstructions` remain association lists with a linear lookup per temp,
+  quadratic per function; `Ashes.Collection.Map` (unused in the semantics package so far) is the
+  replacement when that shows up.
+- [x] **OPT-57** Stage-1 memory under compilation. The stage-1 compiler peaked at 17.5 GB on the
+  22 KB JSON parser test, growing roughly with the cube of an if-chain's depth once its arms held
+  a `match`. Narrowed by reading the process RSS at phase boundaries under gdb (perf callchains
+  and mmap backtraces on these binaries pointed at the linker and the formatter, both wrong):
+  lowering proper ended at 73 MB, and lifetime placement took it to 4 GB across twelve owners of
+  one function, about 370 MB each, all in `computeDominators`, called once per owner and keeping
+  one sorted-list set per block that every fixpoint round rebuilt and nothing reclaimed, plus a
+  second, independent O(blocks) `predecessorsOf` filter-scan run once per block (so O(blocks²)
+  overall) inside every one of those per-owner `buildCfgBlocks` calls. Stage 0 computes dominators once per function and
+  reuses them across owners, since an owner's edits move instruction indices but never change the
+  block graph. Stage 1 now does the same through `PlacedInstructions.placedDominators`, and holds
+  dominance as the immediate dominator of each block (`computeImmediateDominators`: a reverse
+  postorder of the reachable blocks, then the Cooper-Harvey-Kennedy refinement, with `dominates`
+  walking the tree), one `Int` per block instead of a set; block predecessors are now built once
+  per `buildCfgBlocks` call from a flat edge list (`edgesOf`/`predecessorsFromEdges`) instead of a
+  filter over every block's successors for every other block. JSON parser test: 17.5 GB to 2.8 GB
+  (0.44 s), with the residual now flat per owner (about 33 MB, independent of the owner's index
+  within its function) rather than growing — proportional to program size, not owner count
+  squared. The IR parity suite pins the placement output unchanged.
+
+  Found and worked around a stage-0 codegen bug on the way: a `List((Int, Int))` (tuple list)
+  accumulator threaded through a self-recursive function that calls a SECOND self-recursive
+  function to extend that accumulator before its own next tail call segfaults at runtime — mininal
+  repro is two five-line functions, reproduces from stage 0 directly (`ashes run`), unrelated to
+  self-hosting. Bisected with a size-3 input list (`[(1,[2,3]),(2,[3]),(3,[1])]` through
+  `edgesOf`/`edgesFrom`); the emitted IR shows a spurious deep-copy-then-drop of the tuple list on
+  the "borrowed argument" exit path (`__deepcopy_list_N` immediately followed by an `RcDrop` of
+  the same temp it just copied from). Plain `List(Int)` accumulators through the identical shape
+  do not trigger it. Worked around here by flattening the two functions into one self-recursive
+  walk over both the remaining groups and the current group's remaining targets (`edgesOf`'s
+  current shape) rather than fixing the underlying stage-0 bug, which needs its own narrowing pass
+  in `Lowering.Ownership.cs`/`IrOptimizer`'s deep-copy insertion for a borrowed `List` of a
+  runtime-managed aggregate element type.
+- [x] **OPT-68** The self-hosted semantics suite was red on main (found 2026-09-13 while landing
+  LNK-2's qualified-reference port, reproduced on a baseline build of main itself):
+  `CallWindowLoweringTests.ash`'s "generic list result deep copy program entry" check differed
+  from stage 0's `generic_list_result_deep_copy.ir` fixture by exactly five label numbers
+  (`rc_normalize_list_13` versus `_18` and every label after it) with every instruction
+  otherwise identical. Not an emission drift in the entry: label numbers are allocated
+  program-wide, and `mapAll`'s closure helper is lowered with tail-modulo-constructor by the
+  self-hosted compiler and without it by stage 0 (OPT-63's cross-compiler coverage gap), so its
+  extra labels (two `tmc_close_*`, three `rc_call_argument_not_retained_*` since #1002) shift
+  the entry's numbering. The check now compares labels renumbered by their order within the
+  entry (`withFunctionLocalLabels` in `LoweredIrFixtures.ash`); the helper's own divergence
+  stays OPT-63's. The suite's second red check was a real regression from #962's port: the
+  transformed `stamp` (`bang(head) :: stamp(tail)`) lost its `ReturnsRuntimeManaged` bit and
+  result-ownership epilogue, so a caller wanting an arena result copied the reference-counted
+  spine out and reclaimed only the arena, stranding every cell. Two facts stage 0 keeps were
+  missing: the back-edge dummy is a reference-counted value (`LowerCallTcoBackEdgeDummy`'s
+  `MarkRuntimeManagedTemp`, so a join of reachable reference-counted arms and the back-edge arm
+  stays reference-counted), and the closed spine carries the body value's representation
+  (`RecordControlFlowJoinTemp` at `LowerLambdaCoreCloseTmcChain`); both ported, and the check
+  rewritten to the transformed shape (`expectConstructorRecursiveProducerKeepsRuntimeManagedSpine`).
+  That program now matches stage 0's `non_tail_self_call_list_result` fixture byte for byte, the
+  exit-transfer selection slot stage 0 reserves for any loop with a reference-counted result
+  included (`reserveTcoExitTransferSlot`). `ResultReachTests.ash`'s three entry-normalization
+  expectations had also drifted, since #996 located every instruction a binding's finalization
+  emits at the binding's declaration; regenerated from the (main-identical) output. The suite
+  now runs green in both modes; its last red check, `TcoLoopLoweringTests.ash`'s `countLeft`,
+  closed with OPT-65's self-call port.
+- [x] **OPT-69** `selfhost/tests/ir-program-parity` stopped at its first mismatch, so a red
+  fixture hid every fixture after it. The runner now checks every listed fixture and prints one
+  report per red fixture (line number, expected and actual line) before failing, and names the
+  fixtures it leaves out. The two fixtures found red behind it on 2026-09-13
+  (`tco_consumed_list_parameter_borrowed_head`, `pattern_head_read_under_operator`) turned out to
+  be OPT-70's oracle gap, not lowering bugs: the self-hosted dump of both equals the stage-0
+  CLI's own `--emit-ir lowered` dump function for function. What was a genuine gap is the
+  active-flag slot of a loop parameter whose type is still a variable at the loop entry: stage 0
+  admits a parameter to the reference-counted heap only once its layout is resolved
+  (`ResolvedLayoutEligible`), so it allocates the flag where a back edge or the post-body
+  refresh resolves it, after the locals allocated in between; the self-hosted entry allocated
+  every shape candidate's flag ahead of the body. `allocateListActiveSlots` now skips an
+  unresolved candidate and `allocateListActiveSlotsAt` allocates at the back edge (from the
+  argument types, ahead of the pattern-binding transfer) and at the finalize (every remaining
+  candidate, retired if the resolved types keep it in the arena), pinned by the new
+  `tco_list_parameter_resolved_by_back_edge` fixture (an operator-free loop, so both oracles
+  agree on it).
+- [x] **OPT-72** The self-hosted lowering's memory and time on a whole stitched project, first
+  measured 2026-09-13 with BOOT-2's phase probe (the stitched CLI package exhausted 24 GiB in
+  six seconds where stage 0 compiles it in about 9 GiB). Profiled with a `--debug -O2` build of
+  a lowering-only driver over generated programs of n independent top-level functions
+  (`perf record` plus `addr2line`, the binary loads at 0x400000): time and memory were both
+  quadratic in n. Every dominator found is fixed, in the self-hosted lowering unless noted: the
+  flat top-level chain nested one bracket close per declaration (a continuation per `let`, a
+  stack frame per declaration, and a stack overflow at 2,000 declarations on the default
+  stack), now walked iteratively with the pending closes on a list
+  (`openArenaBracketedTopLevelLet`, `closePendingTopLevelItems`); the whole remaining chain
+  was walked again per declaration for two facts (`escapingChainBody`,
+  `isTailForwardedBindingResult`), now precomputed once in `TopLevelLoweringAnalysis`; the
+  direct-callee analysis walked the rest of the program per binding (`programNonCalleeUses`,
+  one walk); the result-provenance SCC (`OwnershipProvenance`) used association lists for
+  every lookup and recursed with a `(visited, ...)` pair per visit whose returned map was
+  cloned, now balanced maps and explicit-stack walks; `lookupRuntimeTemp`,
+  `bodyRuntimeManagedByLabel`, `topLevelNames`, `checkTopLevelNames`, the reach registry's
+  value names, and the RC-eligibility table were lists searched per query, now maps;
+  `dedupeValuePlacements` compared origin records pairwise, now keyed by label and temp;
+  `SourceContext.findLine` scanned the line starts, now a balanced tree; and two placement
+  walks tail-called through a pipe into a lambda (`ownerSlots`, `collectArenaAdtCells`), which
+  stage 0 does not compile as a loop (OPT-75). Two stage-0 findings came out of it: a list
+  builder that conses a string or list borrowed from a record around its recursive call has
+  its partial list copied out at every return (OPT-74; the affected builders now accumulate and
+  reverse once), and a match arm that speculatively reused a dead nullary cell for its result
+  (`| Empty -> None`) was later reverted to a fresh arena allocation while the arm's scope had
+  already reset the arena under the result on the strength of the reuse, so the `None` came
+  back in a reclaimed chunk whenever that allocation opened one (a use after unmap the stage-1
+  compiler hit in `Ashes.Collection.Map.getStr`; a nullary reuse no longer registers as a
+  reuse result, pinned by `RevertedNullaryReuseArmResetTests`, the explain fixtures the parity
+  test listed without files are generated). Measured on the same driver, lowering only:
+  8,000 independent functions went from 12.4 s and 7.3 GiB to 0.62 s and 1.7 GiB, memory now
+  doubling with n, and 8,000 declarations lower on the default 8 MB stack. The remaining
+  superlinear cost is the shape where every function calls an earlier one: 1,000 such
+  functions take 1.8 s and 10 GiB, 2,000 take 11 s and 40 GiB, because
+  `ensureResultRcEligibility` recomputes the whole-program provenance fixpoint at the first
+  call site after every recorded lambda (OPT-73). The standard library's `append` is still not
+  tail-recursive (a stack-safe `append` belongs to OPT-73's arc, since the stitched CLI's
+  instruction lists are the first place it will matter).
+- [x] **OPT-73** The result-provenance fixpoint is computed once per program, keyed by function
+  identity, as stage 0's `ComputeFunctionResultProvenanceFixpoint` over `_maFuncs` is. The
+  self-hosted `ensureResultRcEligibility` recomputed the nodes and the SCC fixpoint over every
+  lambda recorded so far whenever a lambda was recorded since the last call site, so a program
+  of n calling functions paid n fixpoints of size n (10 GiB per 1,000 such functions), and it
+  resolved forward targets by name against the latest recorded lambda of that name, so a nested
+  helper shared by several functions (a `go`) resolved to whichever was lowered last. The nodes
+  are now built from the reach registry's functions (`ReachFunction`'s key, registered
+  parameters and body, and lexical scope from names to keys; `CallResultProvenance` extends that
+  scope through nested bindings the way stage 0's `ExtendFuncScope` does), solved once right
+  after the type declarations are registered (stage 0 registers every type declaration before
+  it lowers a value, so the item walk now does the same, `registerProgramTypes`), and a call site
+  resolves its callee by `name@identity` through the summaries' indexes (`calleeSummaryOf`),
+  never eligible outside the registry, as stage 0's memo default. The let-lambda tables a call
+  site consulted per call (`letLambdas`, `letLambdaLabels`, `letLambdaIdentities`) and the reach
+  summaries (`reachSummaryFor`, `reachSummaryNamed`) were lists walked per call site and are
+  indexed by maps. The whole-program reach fixpoint itself re-summarized every function per
+  sweep until nothing changed; it is now stage 0's worklist (`solveReach`): a function is
+  re-summarized only when a summary it depends on grew, the dependents coming from a syntactic
+  walk of each body over its scope (`dependencyKeys`, a superset of what the reach walk
+  consults). Measured on the lowering-only driver: 4,000 functions each calling the previous
+  one went from 74 s and an out-of-memory kill at 58 GiB to 1.5 s and 1.2 GiB; 8,000
+  independent functions stay at 0.7 s and 1.9 GiB. The BOOT-2 probe now lowers the whole
+  stitched CLI package (10 s, 15 GiB, against stage 0's 9 GiB) and stops at the next blocker,
+  MOD-13. Found on the way, and filed as OPT-76 with its reproduction: a stage-0 use after
+  free that the accumulate-and-reverse shape of a record builder triggers, which is why
+  `buildComponents` keeps its recursive shape.
+- [x] **OPT-74** Stage 0 copies the partial result of a list builder out at every return when
+  the element consed around the recursive call is a string or list borrowed from a record
+  (`| Node { functionName = name } :: tail -> name :: getNodeNames(tail)`), so a builder over n
+  records costs n^2 memory: measured 2026-09-13, 4,000 records cost 1.1 GiB and 0.19 s where
+  the same builder consing a fresh string, a tuple, or the record itself, and the same walk as
+  an accumulator loop reversed once, cost 8 MiB. The builder's result is arena-placed (a
+  borrowed element keeps it off the reference-counted heap) and each return crosses the
+  callee's bracket with a `CopyOutList HeadCopy=String`; the copy should retain the borrowed
+  element or place the spine on the reference-counted heap instead of copying the prefix at
+  every level. Until then the self-hosted compiler's builders over record fields accumulate
+  and reverse (`getNodeNamesInto`, `nodesOf`, `resolveNodeProvenancesInto`,
+  `dedupeValuePlacementsInto`). This shape is what now dominates the BOOT-2 probe's memory
+  (2026-09-13, sampled with gdb at every heap-growing `mmap` past 8 GiB): the two constructor
+  name builders `constructorLayoutNames` and `constructorNamesOf` in `CoreLowering.ash`,
+  called per parameter and per pattern name over every constructor of the stitched program,
+  account for most of the samples, then `refineProgramParameterOwnership` (one list per
+  fixpoint pass over every function) and the `ResultReachSummaries` path builders. Fixing the
+  stage-0 copy is the leveraged fix; the selfhost can also stop building name lists for
+  membership tests (a constructor name set in the lowering state). Fixed in both compilers
+  (2026-09-13): the head admission was the gap. A cons whose tail is a call back into the
+  producer already asks for a reference-counted cell, but a string or list bound out of a
+  record or list pattern is a borrowed read of a value the pattern's root owns, never a
+  runtime-managed element, so the cell stayed in the arena. Under that request the head now
+  takes an owned reference-counted copy once per cell (`NormalizePatternOwnerElement`, a
+  `CopyOutArena` for a string and a `CopyOutList` for a list of scalars or strings), the
+  pattern-owner marker is not stacked on it, and the tail-modulo-constructor path no longer
+  marks such a head moved, so the owner still releases its own reference. The 4,000-record
+  builder went from 509 MiB to 8 MiB, its tuple and list-head variants likewise, and the
+  BOOT-2 probe from exhausting 45 GiB to reaching MOD-14 in 25 s and 28 GiB. Tests:
+  `NonTailRecursiveProducerTests` (string and list heads), the rewritten
+  `List_rebuilt_by_consing_a_borrowed_head_onto_a_recursive_call_result_is_reference_counted`,
+  and the parity fixture `producer_conses_record_string_head`. A head of any other type (a
+  record, a list of records, an unresolved element type in a generic producer) still keeps the
+  arena cell and the per-level copy.
+- [x] **OPT-79** Stage 0 released a `let`-bound reference-counted value that a callee's result
+  kept: `let methodName = nameOf(t) in add(t)([Method(name = methodName, ...)])(env)` stored the
+  string into an arena record inside a list literal passed to `add`, whose result embeds the
+  argument, and the caller borrowed the string into the record (an arena aggregate retains
+  nothing) then dropped the binding at scope exit, so every seeded standard trait
+  implementation of `standardTraitEnvironment` carried a dangling method name (`"default"`,
+  then whatever reused the memory). The fresh-argument transfer of #743 covered only a
+  reference-counted argument itself, not the owned bindings inside an arena aggregate argument.
+  Fixed (2026-09-14): a call argument the callee's result may reach is lowered under the
+  children transfer (`TransfersRuntimeManagedChildren`, the tail self-call argument's rule) in
+  stage 0's `LowerCallArgumentValue` and the self-hosted `lowerCoreCallTyped`, so the stored
+  binding is retained into the aggregate. Regression
+  `tests/rc_child_of_call_argument_kept_by_callee_result.ash`, oracle fixture of the same
+  name (the retain and release sequence of `addImpl` matches exactly in both compilers).
+- [x] **OPT-81** FIXED 2026-09-15 by arming the loop exit's hand-over guard for a result that can be a bare read of a parameter the loop owns. The self-hosted pipeline now runs to completion for `Scope`, `Symbols` and `ExprMentions`, and `DerivingExpansion` reaches CG-18 in the backend. The investigation below is kept because its reduction and its two corrections are what found the fix.
+  The self-hosted lowering segfaulted on a medium compiler input before any of the
+  later blockers is reached (found 2026-09-15, and it is not a regression: it reproduces at
+  `3274dc10`, before the OPT-80j slice). A scratch project whose entry is one `import
+  AshesCompiler.Semantics.<Module>` plus a `print` crashes in `lowerCoreProgramWithSource` for
+  `TypeInference`, `DerivingExpansion` and `ModuleSemanticStitching`, and compiles cleanly for
+  `Types` and `TypeSchemes`, so the trigger is size or shape rather than a particular module.
+  The fault is in `OwnershipInference.borrowReadHandOff` at the `match ownership with` of a
+  recursive step. It is an early release, and it reduces to thirty lines with no flags:
+
+  ```ash
+  type Own =
+      | Borrowed
+      | Consumed
+
+  let recursive pick (name: Str) (table: List((Str, List((Str, Own))))) (found: Maybe(List((Str, Own)))) =
+      match table with
+          | [] -> found
+          | (candidate, values) :: rest ->
+              if candidate != name
+              then pick(name)(rest)(found)
+              else
+                  match found with
+                      | Some(_) -> None
+                      | None -> pick(name)(rest)(Some(values))
+  ```
+
+  Built over nine entries whose sub-lists are `[("runes", Borrowed), ("text" <> n, Consumed)]` and
+  asked for `fn3`, this prints `runes=b text3=b`: the second element's tag reads `Borrowed`. Binding
+  the table to a `let` and reading it again after the call segfaults instead. Three ingredients are
+  each necessary. The sub-list's element must be a tuple carrying an ADT — the same loop over
+  `List(Str)`, `List(Int)` or `List((Str, Int))` is correct. The body must inspect the accumulator
+  before rebuilding it — replacing the inner `match found with` by a direct `Some(values)` is
+  correct, and so is replacing the `None` arm by `found`. And the loop must carry the result across
+  further iterations — an immediate `Some(ownership)` return is correct.
+
+  Two earlier readings of this entry were wrong and are corrected here. It is not the hand-spliced
+  curried environment chain. And the bad word is not stored: at the fault, the cell the walk
+  dereferences is a live arena allocation whose first word is the length `5` and whose bytes are
+  `runes`, a parameter name from `lib/Ashes/Text.ash`, so the block was recycled into a string.
+  Under the release-poison knob the reduction stops printing a wrong tag and segfaults instead,
+  which is the second independent confirmation that the value is read after release.
+
+  Where it goes wrong: the loop exit releases the runtime-managed `found` accumulator, and on the
+  `| [] -> found` arm the loop's result IS that accumulator. The hand-over guard that exists for
+  exactly this (`rc_tco_exit_transfer_not_selected`) is emitted only when the result join is
+  runtime-managed, and this join is mixed — `found` is reference-counted while the bare `None`
+  beside it is an arena `AllocAdt`. That is the same mechanism as the returned-loop-parameter fix,
+  one level up in the type system, where the join is an ADT rather than a string.
+
+  Two attempted fixes were measured and do not work, so do not repeat them. Teaching
+  `IsRuntimeManagedStringMatchArm` to recurse into a nested `match` the way it recurses into an
+  `if`, and adding `IsRuntimeManagedLoopParameterTerminal` to `IsProvenFreshCallFunnelArm`, leave
+  the reduction unchanged: at the point both predicates run, the accumulator's placement is not yet
+  decided, so the loop-parameter terminal reports false. A trace of the ADT terminals also shows the
+  correct `List(Str)` loop and the broken `List((Str, Own))` loop classifying identically (`found`
+  not a funnel, `None` not fresh) and both dropping the accumulator through `__rcdrop_4` at the
+  exit, so the freshness machinery is not the differentiator either. What separates them is further
+  down, in what the structural release of the table reaches.
+
+  The probe is a stage-0-compiled driver (so it carries symbols and DWARF) that runs `loadProject`,
+  `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
+  printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
+  bt`. Its manifest needs `AshesCompiler.Frontend` and `AshesCompiler.Semantics` listed as
+  devDependencies beside the path override, or project loading fails with a null reference. The
+  stage-1 CLI crashes on the same input in the same place, without symbols.
+
+  Measured further (2026-09-15). The fault needs at least two elements in the sub-list: the same
+  program with `[("x", Borrowed)]` is correct, and with two or three elements it segfaults outright,
+  so a literal two-entry table is enough and no `buildTable` loop is needed. A watchpoint on the
+  returned sub-list's reference count shows it go `3 -> 2 -> 1 -> freed`, every transition inside the
+  single arm that builds `Some(values)`, where the correct count after that arm is 2: one reference
+  from the table the loop owns and one from the `Some` cell. One decrement too many. The `Consumed`
+  cell of the second element is released twice, once from the `candidate != name` arm of the next
+  iteration and once from the loop exit. The control that removes only the accumulator inspection
+  emits the same reference-counting shape in that arm — dup the pattern owner, release it
+  structurally, dup the tail — so the divergence is not in what that arm emits.
+  The gdb recipe: break on the generated `__rcdrop_structural_*` and `__rcdrop_*` droppers, where the
+  dropped value arrives in `rsi`; the reference count is the word at payload minus 16 and the
+  allocation size the word at payload minus 8. Print both, then arm a watchpoint on the count word of
+  the value the first structural drop reports.
+
+  Confirmed at the release site (2026-09-15). A single-entry table is enough, so the loop need not
+  carry the result past another entry. Reading only the label of each element, never the ADT beside
+  it, still faults, so the whole returned list is gone rather than just its ADT children. And the
+  last release before the fault is the ADT dropper called from the function header line, which is
+  where the loop exit's drops are attributed: the exit releases the accumulator, the accumulator is
+  what the `| [] -> found` arm returns, and the dropper walks into the list and frees its elements.
+  That is the mechanism named above, now observed rather than inferred.
+- [x] **OPT-77** Stage 0 deep-copies a loop's accumulator at entry for an in-place reuse
+  specialization that never runs, and for one that does but cannot pay for the copy. A loop
+  parameter passed to a specializable function is scanned as a specialization candidate and,
+  when the whole-program move analysis cannot prove it unique, deep-copied once at loop entry
+  so an `f$reuse` clone may rewrite it in place. Two gaps found in the BOOT-2 probe
+  (2026-09-13): the copy is kept even when every such call was qualified away (`getStr` on a
+  map is a pure reader, "result does not rebuild accumulator", so no clone is generated and the
+  copy only duplicates the map), and when the clone is `Map.setStr`, a helper loop such as
+  `enqueueDependents` re-entered from `solveReach` once per changed summary copies the whole
+  queued-set map (about 30,000 nodes) on every entry to save an O(log n) path rebuild, because
+  the argument is the result of an over-applied nested-`go` call (`setStr(k)(v)(map)`) that
+  `OverApplicationReach` poisons, so `ResultAliasUnsafe` rejects the elision. The first gap is
+  fixed on a branch (a `NoSpecializedCall` entry-copy outcome that omits the copy unless a call
+  was routed to a clone for that accumulator; `SpecializationCandidate_OmitsEntryCopyWhenNoCallIsSpecialized`).
+  The second needs either an over-application reach for the nested-`go` shape so the
+  elision can prove the argument moved, or a cost gate that declines the copy when the
+  clone's rebuild is a path rather than the whole accumulator; measured with the copies
+  disabled, the probe's lowering still needs 43 GiB (OPT-74 dominates), so this is not the
+  first blocker. Fixed in both compilers (2026-09-13) with the cost gate: a specialization
+  candidate whose accumulator is unproven takes no entry copy when the callee's recursive body
+  (its nested `go` or its own innermost body) makes at most one self call on any path over a
+  type whose constructors hold two or more children of their own type
+  (`SpecializationRebuildsOnlyAPath`, reported as `path rebuild not amortized`), and none
+  either when no call was routed to a clone for it (`no specialized call`); the copier is
+  synthesized only once the copy is wanted, so a declined copy leaves no dead copier. A
+  whole-structure rebuild (`update` with two self calls, a list map) keeps the gamble. The
+  self-hosted lowering mirrors both on the single-parameter candidates it scans, with a
+  path-sensitive `maxPathOccurrences`. Tests: `ReuseDecisionTests` (reader over a chain, path
+  rebuild versus whole rebuild) and the parity fixture `reuse_path_rebuild_declines_copy`.
+  The BOOT-2 probe went from 28 GiB to 12.9 GiB and 21 s, reaching MOD-14; the map copies
+  under `enqueueDependents` and `shadowNames` that dominated the gdb sampling are gone.
+
+
+### LLVM code generation and runtime integration
+
+- [x] **CG-10** Every fixed-size runtime-helper scratch `alloca` (syscall scratch such as `timespec`/
+  `pollfd`/`termios`/`stat` buffers, the read-line and subprocess pipe buffers, `spawn`'s argv
+  vector, print/format buffers, arena copy-out/reclaim slots, and the branch-merging result slots
+  the `phi`-free codegen uses) goes through `Llvm.ash`'s `buildEntryAlloca`, which places it in the
+  current function's **entry block** and restores the builder to the block it was emitting — the
+  self-hosted backend emits at optimization level none, where a fixed-size alloca in any other
+  block is a runtime stack-pointer adjustment that only function return reclaims, so one inside a
+  jump-based loop body leaks native stack every iteration. The helper derives the function from
+  the builder's current block rather than from a threaded `function_`, so a runtime helper
+  synthesized into its own function hoists into that function's entry. The genuine `AllocStack`/
+  `MakeClosureStack` path (`emitStackAlloc`, managed by its own save/restore bracket) keeps its
+  loop-body alloca on purpose. Guarded by the backend suite's hand-built `Label`/`Jump` loop around
+  `MonotonicMillis` (two million iterations, a stack overflow before the hoist); every loop the
+  self-hosted lowering produces today is a `musttail` self call, so a source-level program cannot
+  yet observe the leak.
+- [x] **CG-16** Lower the builtins the self-hosted compiler still rejects with
+  `UnknownLoweringBinding`: `Ashes.Text.fromBigInt`, `Ashes.Text.formatFloat`,
+  `Ashes.Rune.isAsciiLetter`, and `Ashes.Internal.deepCopy`, each through the semantic builtin
+  table and the backend emitter, placed by the runtime-managed flag like the other fresh-value
+  builtins. They are what keeps `tco_fixed_watermark_whole_value_accumulators`,
+  `tco_list_of_adt_accumulator`, `runtime_rc_branch_late_tco_promotion`,
+  `runtime_rc_multi_bigint_tco`, and `runtime_rc_whole_string_pattern_recursion` out of the loop
+  sweep and `stdlib_string` out of the compile-time timing set. `Ashes.Trait.Show.show` and
+  `Ashes.Trait.Hash.hash` (the remaining sweep and timing failures) are trait dictionary lowering
+  and stay under TRT-13..TRT-15. Done (2026-09-06): the rejections came from the builtin type
+  table (`standardBuiltinLayouts`), which lacked the schemes although the kinds and their
+  emission arms existed, so `Text.fromFloat`, `Text.formatFloat`, `Text.asciiUpper`,
+  `Text.asciiLower`, `Rune.isAsciiLetter`, `Rune.isAsciiDigit`, `Rune.isAsciiWhiteSpace`, and
+  `Internal.deepCopy` now carry theirs (`deepCopy` under a fifth reserved type variable), the
+  ASCII case builtins honor the runtime request, and `deepCopy` lowers through the structural
+  copier synthesis (`lowerInternalDeepCopy`, an argument whose type is still a variable passing
+  through and recorded for the body's second lowering, as stage 0 defers it). The backend gained
+  the float text emitters (`IrCodegen.FloatText.ash`: `TextFromFloat` and `TextFormatFloat`
+  written forward into one stack buffer, sign, integer digits, fraction with half-up rounding
+  and carry, trailing-zero trim for `fromFloat`, the `e+N` form past the signed 64-bit range,
+  the decimal count clamped to 0..18) and the ASCII case mapper (`IrCodegen.AsciiCase.ash`),
+  both placed by the flag; `tco_list_of_adt_accumulator` joins the sweep and the backend suite
+  pins float text, case mapping, the rune class, and the deep copy. Done (2026-09-06): the
+  BigInt runtime, the milestone 6 slice of CG-11 pulled forward because `Text.fromBigInt` and
+  the arithmetic the three BigInt fixtures compute with need it. `IrCodegen.BigInt.ash` ports
+  stage 0's `LlvmCodegenBuiltins.BigInt.cs`: the internal helper functions
+  (`bi_normalize`/`bi_cmp_mag`/`bi_add_mag`/`bi_sub_mag`, `bignum_from_i64`/`_cmp`/`_add`/
+  `_sub`/`_mul`/`_divmod`/`_to_decimal`/`_from_decimal`) emitted once per program whose IR
+  carries a BigInt instruction, division as Knuth's Algorithm D over 32-bit digits, and the
+  call sites (`BigIntFromInt`/`ToString`/`ToInt`/`FromString`/`Binary`/`Compare`) that read the
+  operand limb counts and place the result and scratch buffers where the instruction asks (a
+  reference-counted cell released after the call for a scratch, an arena value or block
+  otherwise). The `Ashes.Number.BigInt` members and `Text.fromBigInt`/`parseBigInt` carry their
+  schemes, so `tco_fixed_watermark_whole_value_accumulators`, `runtime_rc_branch_late_tco_promotion`,
+  and `runtime_rc_multi_bigint_tco` join the sweep (51 ok); a 33-case probe (sums past a limb,
+  the most negative machine value, forty-digit quotients and remainders of both signs, products,
+  comparisons, the machine conversions at both ends of the range, and parses of valid, empty,
+  sign-only, and malformed text) matches stage 0 byte for byte, and the backend suite pins a
+  representative slice. Found and fixed on the way, not a BigInt defect: the self-hosted
+  lowering overflowed its 8 MB native stack on a top-level owned `let` followed by a trailing
+  pipe chain of some thirty stages, because placement's dominator computation
+  (`IrControlFlowGraph.ash`) walked the blocks with a cons recursion per block and intersected
+  dominator sets with one per element, and a deep block's dominator set holds every block above
+  it; both walks now gather through an accumulator, and `CoreProgramLoweringTests` lowers a
+  forty-stage chain under such a `let`. `runtime_rc_whole_string_pattern_recursion` now stops at
+  SEM-18's comparison default instead.
+- [x] **CG-18** FIXED 2026-09-15: the deferred call-result copy-out found its reload by position,
+  and a loop frame's entry splice moved it. A call whose result type is still unresolved when the
+  call closes its arena window stores the result into a local and reads it back, and
+  `resolvePendingTcoResets` walks the finished body to put the copy-out block between that store
+  and that reload. The walk matched the reload by an instruction index recorded when the copy-out
+  was registered, but `spliceTcoEntryNormalization` and the direct-reuse entry copies insert their
+  instructions at the loop entry once the body is lowered, so every index recorded inside that
+  body is short by what they inserted. In `DerivingExpansion.variablePatterns` the index then
+  named the conditional argument retain's reload, three instructions earlier: the walk removed
+  that reload and renamed the real one's temp, leaving the self call reading a temp nothing
+  defines, which the backend reported as `codegen: unknown index 27 bound=26`. The fix drops the
+  index and finds the reload by the instruction itself, the one `LoadLocal(reloadTemp,
+  resultSlot)` — which is how stage 0's `SpliceDeferredPlaceholders` finds it, through a
+  `CallResultCopyOutPending` placeholder instruction, so stage 0 was never affected. Fifteen lines
+  reproduce it: a non-tail cons producer over a self-referential ADT whose element layout is
+  unresolved at the self call. Regression:
+  `selfhost/tests/semantics/DeferredCallCopyOutTests.ash`, which lowers that producer and asserts
+  the self call's argument temp is defined before the call reads it.
+- [x] **CG-20** Two different functions compiled to the same scalarized variant, so calling one ran
+  the other's body (2026-09-16). Twelve lines reproduced it — two recursive list folds, one adding
+  1 and one adding 10 — where stage 1 printed `3|3` against stage 0's `3|30`, both call sites
+  targeting `lambda_1__scalarenv0`, the first fold's variant. It is what the self-hosted backend
+  suite stopped on, so that suite was red until this closed.
+
+  `getOrCreateScalarEnvVariant` in `IrOptimizer.ash` memoized the variant under a key built as
+  `label + "#" + show(captureCount)`. That key is a freshly allocated string whose only owner is
+  the memo it is stored into, and it was released at the function's scope exit while the returned
+  state still held it; the next call's own key reused the freed cell, so the lookup matched a
+  different callee's entry. The memo now holds the label and the capture count side by side, with
+  its own lookup comparing the two fields directly, and allocates no key at all — so there is no
+  reference for a lifetime to get wrong, and both comparisons are primitive. It is also cheaper:
+  the concatenation and the `Int` rendering are gone from a whole-program pass.
+
+  `selfhost/tests/semantics/ScalarEnvVariantTests.ash` is the regression and now runs in that
+  suite's `Main.ash`, where it had deliberately been left unwired.
+
+  **The stage-0 lifetime defect behind it is OPT-86, fixed below.** This fix removed the trigger
+  rather than that defect, and is belt and braces now that OPT-86 has closed: stage 1 rebuilt from
+  the commit before this one — with the string-keyed memo that miscompiled — prints `3|30` when
+  compiled by a stage 0 carrying OPT-86's fix.
+
+  The six reductions that failed before it was found are worth keeping, because they say where the
+  defect is *not*: a generic `setAssociation` storing a built key into a returned list; the same
+  into a record field; the same threaded through a recursive walk; the same with the key built
+  before a heavily allocating call; the same with the generic setter also instantiated at a second
+  key type; and the same returning the structure as the second element of a tuple. All six answer
+  correctly. The ingredient they were missing is in OPT-86.
+- [x] **OPT-86** A `let`-bound reference-counted value handed to a callee whose own result keeps it
+  was released at the `let` scope's exit, freeing a cell the escaping result still pointed at
+  (2026-09-16). This was the defect behind CG-20.
+
+  **The reproducer needed a self-recursive type in the scope result**, which is what six earlier
+  reductions were missing. Without it the scope copies its result out at the `let`'s exit and the
+  copy carries a fresh value, so the program is correct for a reason unrelated to the lifetime. A
+  self-recursive result type has no copy-out kind, the scope abandons its window, and nothing
+  rescues the released value — the same fact OPT-85 measures at 93% of abandoned scope exits.
+  `tests/rc_let_bound_argument_kept_by_constrained_callee_result.ash` is that reproducer.
+
+  **Why every ownership hook missed it.** A constrained callee's arguments are not lowered by
+  `LowerAppliedClosureCall`; they go through `LowerTraitDictionaryRealArguments`, which lowers each
+  with a bare `LowerExpr` and applies none of the call-boundary ownership rules. `setAssoc` compares
+  keys with `==`, so it takes a hidden `Eq` dictionary and every call to it took that path. The
+  retain is restored there, asking the whole-parameter question as every other retain site does.
+
+  **A second defect fixed with it.** Argument indices and ownership-summary parameter indices ran off
+  by one for every dictionary-parameterized callee: the dictionaries are applied first and the
+  summary does not count them, so a question about argument *i* read `Parameters[i]` — the parameter
+  one place to the left. In `setAssoc k v es` the argument `k` was tested against `v`; both answer
+  the same there, which is why it was invisible. `SummaryParameterIndex` maps the position once, and
+  the five summary predicates that had only an upper bound now have a lower one, so a dictionary
+  argument answers "no fact" instead of throwing. `IsCalleeParameterQuantifiedInScheme` keeps the
+  applied index deliberately — it walks the callee's scheme, whose arrows include the dictionaries.
+
+  **Two measured dead ends, recorded so they are not retried.** Widening
+  `GetOwnershipSummaryForCallRoot`'s bail for the general may-reach question turns the
+  `user_type_named_function_release` lowered-IR fixture red, by forcing a retain on a parameter the
+  result reaches only through destructured heads. And marking the owned binding at the call site to
+  abandon its drop at scope exit never fires, because in the real lowering pass that call site
+  reaches `LowerAppliedClosureCall` only in the trait-elaboration pre-pass, whose ownership scopes
+  `PopOwnershipScope` discards on entry.
+- [x] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
+  comparison result miscompiled (2026-09-16). It was filed as its own defect while validating
+  MOD-17c and turned out to be **the same defect as CG-20**, which closed it.
+
+  ```ash
+  let describe label flag = label + "=" + (if flag then "T" else "F")
+
+  Ashes.IO.print(describe("eq")([1] == [2]))
+  ```
+
+  Stage 1 printed kilobytes of heap bytes where stage 0 prints `eq=F`, and the `Ord` form
+  (`describe("lt")("a" < "b")`) segfaulted on `mov (%rsi),%rax` with `rsi = 1` — a `Bool`
+  dereferenced as a pointer. That is what a call running another function's body looks like from the
+  outside: `describe` is curried over two parameters, so it is exactly the scalarized single-capture
+  closure shape whose variant memo CG-20 corrupted.
+
+  Verified rather than assumed: a stage 1 built from the commit before CG-20's fix still prints the
+  garbage, and one built from the commit after prints `eq=F`. The whole family now matches stage 0 —
+  `lt=T le=T gt=F ge=F eq=F ne=T` from both compilers. Nothing was needed beyond CG-20.
+
+  The narrowing that made it look independent is still worth reading, because it is what pointed at
+  a curried shape: the same helper with one parameter, with a literal `Bool`, over a primitive
+  comparison that never dispatches, and with the comparison consumed directly by an `if`, were all
+  correct. Only the two-parameter form failed, and partial application is what builds the closure
+  that CG-20 mis-specialized.
+
+
+### Object parsing and executable linking
+
+- [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
+  reserved built-in runtime type names rejected in top-level `type` declarations, explicit
+  lambda-parameter type annotations enforced (previously silently discarded), and a `perform`
+  whose target is not a capability operation rejected.
+
+### Optimization, ownership, and reuse
+
+Completed work of **OPT-25**, whose open tail is in the [plan](SELF_HOSTING.md). Inserting Perceus
+duplication and drop operations, and deterministic resource cleanup, across ordinary, exceptional,
+handler and coroutine control flow.
+
+  Done: arena save/restore/reclaim
+  brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
+  innermost body), `match` arm on the linear dispatch path (save before the pattern test;
+  restore/reclaim on both exits, the arm's own `match_arm_cleanup_N` block jumping on to the real
+  fail target), and general call spine (opened before the callee, closed after the last
+  application), each closed under stage 0's scope rule: reset when the result's resolved type
+  survives a reset (scalars and zero-cost wrappers of them; an operator-defaulted variable counts
+  as `Int`), otherwise left open (copy-out is not ported). The rule is type-directed, so the
+  context's expected type is threaded through the lowering state as stage 0's
+  `LoweredValueRequest.ExpectedType`: a `let`, recursive binding, lambda, `if`, `match`, `handle`,
+  call, list literal, and cons forward it to the parts stage 0 forwards it to (the else branch
+  expects the then branch's type, a call argument its parameter type, a list element its element
+  type, a lambda pins its parameter type from it), every other expression is unified with it
+  afterwards, and a general call constrains its spine's result with it before any argument is
+  lowered — so a sibling call inside a recursive-group member, whose result type is unresolved on
+  its own, still resets its window. A constructor allocates in the arena unless its consumer
+  requests an RC cell (`runtimeAdtRequested`, consumed at instantiation), the dead top-level `let`
+  path being the one requester. Reads of owned bindings emit stage 0's `Borrow` alias; a bracketed
+  `let` that owns its binding spills the body result to a slot across the closing restore
+  (`closeOwnedLetBracket`) and anchors the release at the scope exit; the ported
+  `PerceusLifetimePlacement` (over `IrControlFlowGraph`) re-inserts each drop at the control-flow
+  precise last use per block, with compensating `RcDup`s for borrowed closure arguments and
+  record-field stores. Both compilers follow the owner through the same aliases: `Borrow`, a slot
+  holding an alias (only for loads a store of the alias can reach: a load earlier in the store's
+  own block reads the previous value, the loop parameter a back edge releases before storing its
+  successor), an arena cell that embeds an alias without a reference of its own (a list
+  literal's cons cell, a tuple, a closure environment), a closure made over such an environment,
+  and the result of a call that receives an alias as its argument, closure, or environment (the
+  callee may carry the pointer out, and the copy-out past the call window reads it). Before the
+  cell and call-result rules the drop of a `let`-owned string embedded in a list literal landed
+  right after the store, before the consuming call or the copy-out of its result — silent for a
+  recycled small string, a segfault for an OS-backed one of 4 KiB or more (`Text.join` over a
+  built line); regression `tests/list_literal_keeps_built_string_alive_across_call.ash`. A join
+  block that some predecessor reaches without the owner (a path that already released it) no
+  longer takes the drop at its entry, which ran twice on that path; the live branch's edge gets
+  its own block (`<function>_rc_edge_<slot>_<block>`: drop, then jump to the join) — the
+  `pattern_match` fixture's second arm cleanup now shows that block, and the widened aliasing
+  had otherwise double-freed a runtime-managed string in the CLI test suite's tree rendering.
+  Tagged constructor patterns on the linear path guard the tag test with
+  `ptr != 0` in stage 0's temp order; the tag-group path binds fields under the switch without
+  either. Closures carry stage 0's origins (`SourceFunction from <let name>`, `ClosureHelper` with
+  the `lambda:<start>:<length>:<param>` discriminator, anonymous helpers), a scalar-capture
+  environment normalizer (`<label>$env_normalize`), and a let-bound lambda used only as a direct
+  callee is a `MakeClosureStack`. Runtime-managed strings follow stage 0's
+  `LoweredValueRequest`: a consumer that keeps a fresh string alive (a direct binding result, an
+  immediate `Text.length`/`byteLength`/`IO.print` use) asks the fresh-string builtins
+  (`fromInt`/`fromFloat`/`formatFloat`/`fromBigInt`/`toHex`/ASCII case/`Rune.toText`/
+  `Bytes.subText`) for an RC result (`RuntimeManaged=true`), the consumed operand of a
+  print/write/`byteLength`/concat is released right after the use (`RcDrop ... RuntimeManaged`
+  on a newly produced temp), a `let` adopts its RC value as an owner released at scope exit
+  unless its body tail-forwards the binding (the read then transfers ownership without a
+  `Borrow`), a lambda whose body produces an RC value is a `MakeClosure ReturnsRuntimeManaged`
+  and a single-argument call to it marks its result newly produced, and a scope that owned and
+  released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
+  cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
+  same-arity scalar-field ADT) is copied past the reset as an RC-normalized
+  `CopyOutArena`/`CopyOutList`, the ADT's static size counting its tag word only when the type
+  is not tagless. Every `match` arm is bracketed on every dispatch path: the tag-group
+  (`SwitchTag`) path brackets each linearly tested group case with its own `match_arm_cleanup_N`
+  block (the `match_group_next_N` label allocated first) and a trivial single-case group on its
+  success path only, and the capability-operation arms bracket like linear arms. An arm's
+  pattern bindings are stage 0's `TrackOwnedBindingsInPattern` owners (a resource, or any
+  heap-typed binding by its owned type name), released at the arm exit after the result store
+  (`RcDrop ... OwnerSlot=N`, moved to the last use by the placement pass), and an arm that owned
+  a live binding closes with the same `PopOwnershipScope` copy-out as an owned `let`, the copy
+  replacing the result in the match slot; a record field receiver is loaded without the
+  owned-read `Borrow`, as stage 0's `TryLowerRecordFieldLoad` does. The `let_bindings`,
+  `nested_let_scopes`, `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`,
+  `heap_result_builtin`, `heap_result_let`, `heap_result_list`, `record_pattern`,
+  `tag_group_arm_brackets`, and `match_arm_copy_out` fixtures match stage 0 byte-for-byte,
+  source locations included (`MatchArmScopeTests.ash` covers the list and tagged-ADT arm
+  copy-outs, the lambda arm's pattern-owner release, and the operation-arm brackets). A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  into a `musttail` when the instruction past the call's own window close stores or returns its
+  result. A function whose parameter always reaches its result (`ResultReach.ash`, stage 0's
+  `ResultAlwaysReachesVariable` over the parsed tree, following saturated calls into the
+  let-bound callees the lowering already records) normalizes a string or ADT argument at entry:
+  the `rc_arg_normalize_copy`/`rc_arg_normalize_done` block reads the hidden ownership flag
+  (`LoadArgumentOwnership`), copies a borrowed argument into an owned value (an RC-normalized
+  `CopyOutArena` for a string or a same-arity scalar-field ADT, a `CopyOutList` for a list over
+  copyable heads, the per-child deep copy for a tuple and a runtime-managed ADT, single- and
+  multi-constructor), stores it back into the argument slot ahead of the body, and the closure
+  carrying the function is a `MakeClosure`/`MakeClosureStack AcceptsRuntimeManagedArgument`;
+  the normalized functions of the `parameter_reaches_result_string`,
+  `parameter_reaches_result_record`, and `parameter_reaches_result_record_update` fixtures
+  match stage 0's text (`ResultReachTests.ash`). A general call closes its window under stage 0's
+  `LowerCallRestoreArena`: a scalar result, or a result the callee is known to place on the RC
+  heap (a single application of a let-bound function whose lowered body produced an RC result
+  of a runtime-manageable type, or of a heap type without any copy-out), resets the window; any
+  other result whose type has a call copy-out (the scope kinds plus lists of strings and of
+  scalar lists, `GetCallCopyOutKind`) reads the callee's `ReturnsRuntimeManaged` bit before the
+  call and crosses the reset through the conditional `call_copy_arena_result` /
+  `call_reclaim_owned_result` block, the reloaded slot value being the RC result; a
+  self-recursive callee keeps the plain scope rule so the backend's tail fusion still finds the
+  call adjacent to its return. On the argument side (`LowerAppliedClosureCall`), an RC argument
+  (a fresh runtime temp, or a binding that owns one) to a parameter the callee does not borrow
+  reads the callee's `AcceptsRuntimeManagedArgument` bit: a fresh argument the callee's result
+  keeps, or that an entry-normalizing callee adopts (`runtimeNormalizedArgumentLabels`), passes
+  as is; a named binding the result may keep is retained unconditionally; any other is retained
+  under the bit through the `rc_call_argument_not_retained` slot. The flag rides on the
+  `CallClosure`, and a fresh string, `Bytes`, `BigInt`, closure, or childless-ADT argument the
+  callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
+  (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
+  a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
+  `call_argument_retain` fixtures join the byte-identical set. A saturated application of a
+  curried let-bound function follows stage 0's returned-closure chain
+  (`functionReturnedClosureLabels`, recorded from the last closure instruction producing a
+  body temp) to the innermost stage's recorded placement, the known-result decision is gated by
+  the RC-eligibility provenance (`CallResultProvenance.ash` classifies each let-bound function's
+  terminal arms as stage 0's `BuildProvenanceFunctionNode` does and `OwnershipProvenance.ash`
+  solves the forwarding fixpoint; a body-RC but non-eligible callee still reads the returns
+  bit), a `ConcatStr` carries `RuntimeManaged=true` when its consumer asked for a runtime string
+  (its operands lowered without the request, its result newly produced, a newly produced
+  operand released after the use), and a consumed list, tuple, or ADT argument is released
+  through stage 0's inline `rcdrop_list`/`rc_drop_tuple_shared`/`rc_drop_shared` walks (the
+  spine-only and shallow releases when the callee's arena result may keep the parts, the
+  constructor-switching dropper for a recursive or owned-child ADT); the
+  `consumed_list_argument` fixture joins the byte-identical set, while
+  `curried_known_call_result` and `concat_runtime_result` match stage 0 up to the trait-evidence
+  header and the curried inner lambda's locations (`CallWindowLoweringTests.ash`). A fresh runtime-managed scrutinee
+  matched directly (a call result or a nested match result that is a string, `Bytes`, or a list
+  over scalars) is owned by the arm that matched it, stage 0's `$match_rc_N`: after the pattern
+  test and guard the arm stores it into an owner slot of its own, releases it at the arm exit
+  (`RcDrop ... OwnerSlot=N RuntimeManaged=true`, moved to the store by the placement pass; a
+  list owner walks its spine inline through the `rcdrop_list_N` loop, stage 0's
+  `EmitRuntimeManagedListDrop`), and closes with the owned-scope copy-out; an arm whose pattern
+  binds the whole scrutinee or a heap value out of it takes no owner. The match result carries
+  stage 0's `MarkRuntimeManagedMatchResult` status: runtime-managed when every arm stored a
+  runtime-managed value (the empty list literal of a list-typed join counts), newly produced only
+  when every arm's was, so a lambda whose body is such a match is a `ReturnsRuntimeManaged`
+  closure and a known call to it resets its window. Beside a fresh-string arm, a literal string
+  arm of a guard-free match is normalized to an RC-normalized `CopyOutArena` of the constant
+  (`ShouldNormalizeStaticStringMatchArms`; stage 0 applies no such rule to `if`). With a
+  capability in the program, an arm's closing reset and its cleanup block's reset run under the
+  live-posts guard (`live_posts_skip_N`, the counter one past the pending-post register). The
+  pure rules live in `MatchArmOwnership.ash`; the `match_rc_scrutinee` and
+  `match_list_scrutinee_drop` fixtures join the byte-identical set, and `MatchArmScopeTests.ash`
+  covers the guarded arm resets under a `handle` at the expression level (the
+  `handle_match_arm_reset` fixture stays out of the runner: the single-file lowering takes no
+  capability declarations). The TCO loop of a self-recursive
+  function is lowered as stage 0's loop rather than a call the backend fuses: the chain
+  parameters the loop body captures move into local slots at entry (`LoadEnv`, `StoreLocal`), an
+  unread or shadowed parameter gets a zeroed synthetic slot, the fixed loop-entry watermark, the
+  compaction-size slot, and a reservation slot pair per affine accumulator
+  (`TcoAffineAppend.ash`, stage 0's `ComputeAffineSelfAppendOrdinals`) precede the
+  `lambda_N_body` label, the per-iteration watermark and `SaveStackPointer` follow it, and the
+  back edge evaluates every argument into a temp under the children transfer, loads the old
+  parameters, stores the new ones, releases the iteration-local runtime owners, resets the
+  per-iteration watermark when every argument's resolved type survives a reset (both resolved
+  through a `TcoResetPending` placeholder once the function body is lowered, the pre-restore
+  slot and release temps allocated after the body's own), restores the stack pointer, and jumps;
+  the backend emits `SaveStackPointer`/`RestoreStackPointer` through `llvm.stacksave`/
+  `llvm.stackrestore`. The `tco_scalar_loop`, `tco_scalar_owned_let`, and
+  `tco_unused_chain_parameter` fixtures join the byte-identical set; `TcoLoopLoweringTests.ash`
+  holds the loop-function comparisons of `tco_list_walk` (identical loop function; the program
+  lacks the list capture's closure normalizer and dropper) and
+  `tco_non_tail_self_call_in_operator_operand` (the scalar loops match except for the window
+  reset of the non-tail self-call under the operator, whose result type stage 0 infers before
+  lowering). Runtime-managed loop parameters (stage 0's `RuntimeManagedSlotsInOrder`) are now
+  ported for the `Str` shape: `TcoRuntimeManagedParams.ash`'s `runtimeManagedStrOrdinals` decides,
+  from the loop's raw body before lowering, which parameters are rebuilt only through `+` — read
+  through a plain-variable alias first — or passed straight through at every tail self-call, and
+  `CoreLowering.ash` splices the entry normalization at the recorded loop-entry point once the
+  whole body's types resolve (the function's own direct argument reads the caller's hidden
+  ownership flag via `LoadArgumentOwnership`, stage 0's `EmitRuntimeManagedTcoArgumentNormalization`;
+  a captured chain parameter is always copied, stage 0's `EmitRuntimeManagedTcoParamCopy`) and
+  sets the slot's active flag; the tail self-call's own `+` chain rooted at the parameter is
+  armed (`affineAppendContextFor`, stage 0's `LowerCallTcoArmAffineStringArg`) so the
+  concatenation is the reservation-growing `ConcatStrTip` over the loop's reservation slot pair,
+  promoted to `RuntimeManaged=true` once the parameter's placement is final
+  (`promoteAffineAppends`, stage 0's `PromoteRuntimeManagedStringConcats`); the back edge takes
+  the runtime-managed reset for a `Str`-only loop as well (the in-place append consumed the
+  predecessor's reference, so nothing is released; any other successor is copied out to the
+  reference-counted heap and the predecessor released under the active flag; the fixed
+  loop-entry watermark is restored and the successor stored with its flag set), and the exit
+  transfer-checks the slot against the loop's result under the flag, the copy-ADT slots' own
+  check, with the loop's closure advertising a runtime-managed result. The backend grows the
+  reservation in place when the left operand is the recorded reservation and the bytes fit,
+  and otherwise concatenates into a fresh doubling-headroom allocation placed by the flag,
+  releasing the old reference-counted accumulator and recording the new bounds
+  (`emitConcatStrTip`, stage 0's `EmitConcatStrTip`). The accumulator's loop function of
+  `tests/tco_runtime_managed_str_accumulator_plateau.ash` matches stage 0's text; run through
+  the backend suite next to a 200000-element `List(Str)` consumed through its own pattern-owned
+  tail, the fixture went from 19.8 GB of RSS and 1.1 s (every append copied the whole
+  accumulator into the arena, no back-edge reset) to 47 MB and 0.01 s. A single-parameter loop
+  (`let recursive loop n = ...`) now runs the same placement finalization as a curried one (its
+  body is entered straight from the recursive binding, which used to finish without it, leaving
+  every active flag unretired and unnormalized). Verified (2026-09-09): the `let`-bound append
+  form (`let acc2 = acc + rhs in loop(n - 1)(acc2)`) already takes the in-place `ConcatStrTip`
+  path, not the arena back-edge copy-out this note once flagged as open — stale by the time it was
+  read again, per `TcoRuntimeManagedParams.ash`'s own header (a later port, `inlinePlainVarAliases`
+  over `TcoAffineAppend.ash`'s existing walk). `tests/tco_affine_string_append_let_bound.ash`
+  (`// expect: 200000 09876543210987654321 30`) already pins exactly this shape and passes
+  byte-for-byte through the self-hosted compiler; a hand-built 200000-iteration probe of the same
+  shape plateaus at 6.2 MB through the self-hosted CLI (stage 0: 8.4 MB), confirming the affine
+  reservation, not a growing arena copy, is what runs. Still open, root-caused (2026-09-09): an
+  append whose operand type is still a raw type variable at the point it is lowered speculates
+  `AddInt` and records the target temp in `pendingOperatorDefaults`
+  (`emitDeferredCoreAdd`/`deferredCoreOperatorEmitter`, `CoreLowering.ash`); once the whole
+  program's substitution is final, `resolveDeferredOperator` seals a `Str`-resolved deferred add
+  unconditionally to a copying `ConcatStr`, never consulting `state.affineAppendReservation` the
+  way the immediate path's `emitCoreConcat` does — so a self-append that would otherwise qualify
+  for the in-place `ConcatStrTip` reservation loses the optimization if its operand type happened
+  to still be a variable at lowering time, even though `binaryAffineReservation` already computed
+  the reservation before the operand type check ran. A minimal reproduction was attempted and did
+  not succeed: a self-recursive loop's own accumulator append needs a trait witness for `+`
+  resolved at loop-definition time, so an accumulator used nowhere else in the loop's own body is
+  an ambiguous `Ashes.Trait.Add(a)` (`ASH010`) in stage 0 itself, not a deferred-then-resolved
+  case; the shape the deferred path actually exists for (`Text.join`'s `pairwiseGo`, cited by the
+  code's own comment) accumulates a `List` of merged strings rather than growing one string in
+  place, so it was never an affine-reservation candidate regardless of timing. The natural
+  candidate for a genuinely late-resolved self-append — a mutually recursive accumulator loop,
+  where a sibling member's body fixes the shared element type — depends on the mutual-recursion
+  loop merge this note's own list below still has open (milestone 5's OPT-19), so this gap's
+  practical exposure is unconfirmed rather than ruled out. A `List`-typed
+  parameter is placed the same way in two self-call shapes (`TcoRuntimeManagedParams.ash`'s
+  `tcoSelfCallShapes`, stage 0's `TcoSelfCallArgumentShape` walk over the loop body's `if`
+  branches, `match` arms, and `let` bodies): grown by one cons cell per iteration onto the
+  parameter's own value (every back edge's cell allocated on the reference-counted heap, its head
+  a fresh producer or a retained owner) or consumed through its own pattern-bound tail over heap
+  heads whose arm keeps them borrowed (`namesBorrowedOnly`: an operator operand, a scrutinee, a
+  condition, a field read, or an argument of a borrowing builtin — a head passed to a self-call
+  or user function, consed, stored, returned, or captured keeps the list in the arena, since no
+  pattern-owner protective duplicate is ported). The resolved element must support the
+  runtime-managed accumulator layout and a spine copy (`listHeadCopyKindOf`), and a sibling that
+  permanently blocks the frame's reclaim (stage 0's `IsPermanentlyBlockingTcoParam`) demotes every
+  list candidate. Each candidate's active flag is allocated at loop entry; an admitted slot is
+  normalized at entry (`CopyOutList` under the ownership flag for the direct argument, unconditional
+  for a captured chain parameter) with its flag set, every back edge with a runtime-managed list
+  takes stage 0's runtime-managed reset (`TcoBackEdgeTryEmitRuntimeManagedReset`: a consumed
+  tail's successor is retained null-tolerantly and the old root released under the flag, the
+  iteration owners released, the fixed loop-entry watermark restored, the successors stored with
+  their flags set, the chunks reclaimed), and the exit releases each slot under its flag through
+  the shared-cell `rcdrop_list` walk, transfer-checked against a list-typed result whose direct
+  read of a slot also marks the function's result runtime-managed. Verified at 200000 iterations
+  by `tests/tco_runtime_managed_list_accumulator_plateau.ash` through the backend suite and by
+  `TcoOwnershipRulesTests.ash`. A consumed list whose heads outlive their arm (a head forwarded
+  to another parameter) is admitted too, its heads protected by their pattern owners' retains
+  (string-like heads first, aggregate heads once the promoted release named the structural
+  dropper, see OPT-25's note); the active flag a list-shaped parameter gets
+  at the loop entry is retired from the function's slots when the resolved types keep the list
+  in the arena, so the numbering stays stage 0's. A single-constructor copy ADT parameter (every
+  field a scalar, stage 0's `CanCopyOutAdt`) is placed on the reference-counted heap too: its
+  cell is copied out under the caller's ownership flag at entry, every back edge copies the fresh
+  arena successor out (`CopyOutArena` by the cell's size) and releases the predecessor under the
+  active flag before the loop-entry watermark is restored, and the exit transfers the value to
+  the caller when it is the body's result or releases it; a loop that rebuilt a record every
+  iteration went from 50.7 MB to 5.6 MB of RSS at three million iterations
+  (`tests/tco_runtime_managed_record_accumulator_plateau.ash`). A tuple of scalars takes the same
+  placement under the type name `Tuple`
+  (`tests/tco_runtime_managed_tuple_accumulator_plateau.ash`, 50.7 MB to 5.6 MB). A record with
+  owned children (a `Str` field) copies its children with the cell at entry and at every back
+  edge, releases the dying arena successor's own child references after the copy, and releases
+  the predecessor and the exit value through the cell's inline structural walk (`RcIsUnique`,
+  the children, `rc_drop_shared`, the cell), as stage 0's
+  `EmitRuntimeManagedTcoConstructorDeepCopy` and `EmitRuntimeManagedAdtDrop` do
+  (`tests/tco_runtime_managed_owned_child_record_accumulator_plateau.ash`, 145 MB to 5.6 MB). A
+  record of records takes the same path once the classification admits it (see OPT-23's fix),
+  with the nested cells copied recursively
+  (`tests/tco_runtime_managed_param_field_read_into_successor.ash`, 30 MB to 5.6 MB). FIXED in
+  both compilers (2026-09-05): the back edge released every owned child of the dying successor as
+  a reference-counted cell, but a child the construction built as a fresh literal
+  (`Pair(previous = State(...), ...)`) is an arena cell with no header — stage 0 decremented
+  whatever word preceded it and the self-hosted backend handed the pointer to `free`. The successor's
+  argument expression now reaches the back edge (`PendingTcoReset.ArgExpressions`,
+  `CoreTcoReset.argumentExpressions`), and a literal child releases only the references it holds,
+  recursively through nested constructor, record, tuple, list and cons literals
+  (`TryEmitRuntimeManagedTcoLiteralChildrenRelease`, `emitLiteralChildrenRelease`). A list
+  accumulator over record heads (`collect(n - 1)(State(...))(s :: acc)`) is admitted with the
+  record parameter it conses: the entry normalizes the borrowed list through stage 0's
+  `rc_normalize_list` walk (`ListDeepArgumentCopy`, each head deep-copied into a fresh
+  reference-counted cell), a loop-parameter read consed into a sibling accumulator or into the
+  exit arm's cell takes the retain marker the constructor path already took (`retainListElement`,
+  `retainConsTail`; a parameter's own read inside the argument that rebuilds it is the reference
+  the back edge moves, `backEdgeArgumentSlot`), and a cons cell around an admitted parameter's
+  read is placed on the reference-counted heap as it is lowered (`loopParameterIsRuntimeManaged`,
+  the frame's later demotion never reclaims the arena at the back edge, so an early placement
+  never dangles). The loop's lowered IR matches stage 0's
+  (`tests/tco_runtime_managed_record_list_accumulator.ash`). A `Str` parameter the affine
+  analysis declines (read a second time outside its own successor, or rebuilt from a producer
+  not rooted at it) is placed by its type through the same ADT-slot machinery as stage 0's
+  `IsRcEligibleScalarTupleOrAdtType` places it: its cell plan is the one-piece string copy, its
+  fresh successor is asked for a reference-counted string (`tailSelfCallStringSuccessor`) so
+  the back edge stores it directly, the old value is released under the active flag, and the
+  exit transfers or releases it; the affine in-place append keeps its own path
+  (`tests/tco_runtime_managed_str_param_non_affine_plateau.ash`, and
+  `tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash` now takes the
+  reference-counted path). Tuple literal elements take the loop-parameter retain marker too
+  (stage 0's `RetainRuntimeManagedTupleChildren`). A list parameter rebuilt as a fresh literal
+  at every back edge (`step(n - 1)([fromInt(n), head])`, stage 0's `FreshListRebuild` fact) has
+  its own self-call shape (`TcoFreshListShape`: a list literal, or a cons chain ending in one)
+  and takes the ADT-slot placement under the type name `List`: the entry normalization and the
+  back-edge copy are the list's own copy plan (`CopyOutList` over string or scalar heads, the
+  cell-by-cell walk over record heads), the old value releases through the list walk, and a
+  pattern owner extracted from such a parameter is placed by the ADT-slot entries as well
+  (`patternSiteRootManaged`). A divergence fixed on the way: the self-hosted list-literal
+  lowering took a pattern-owner duplicate at every element, which stage 0 takes only at tuple
+  elements, constructor arguments, cons parts and tail-call arguments, so a matched head consed
+  into a copied-out literal leaked one reference per iteration
+  (`tests/tco_runtime_managed_fresh_list_rebuild_plateau.ash`, 22 MB to 5.6 MB). A
+  body result that reloads an
+  `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
+  result runtime-managed, as a direct read did, through nested joins as well (an `if` whose
+  branches both take the back edge inside a `match` arm). A consumed list whose matched
+  aggregate heads escape their arm is admitted like one over strings: the head's promoted
+  pattern-owner release names the record's structural dropper (`synthesizeStructuralDropperLabel`
+  in `promotePatternOwnerMarkers`, stage 0's `SynthesizeStructuralOwnerDropper`), so the release
+  reaches the record's string child, and the escaping-head guard and its borrow walk are gone
+  (`tests/tco_runtime_managed_consumed_record_heads_escape.ash`). Three gaps on the caller's side
+  surfaced with it and are closed: a recursive binding is now a known callee (recorded as a
+  let-lambda with its label, its body placement, and its returned-closure chain, so a call
+  through the name reads the loop's `ReturnsRuntimeManaged` bit statically, as stage 0's
+  `TryGetCompiledFunctionResultRuntimeManaged` does); a fresh runtime-managed tuple, record, or
+  heap-element list matched directly is owned by the arm (stage 0's
+  `TrackRuntimeManagedMatchScrutineeOwner`, a plain variable pattern owning it through its own
+  slot and handing its reference on when returned, `TryTrackWholeRuntimeManagedMatchBinding` and
+  `TransferVariableRuntimeManagedMatchResult`); and the iteration-local owners released at a back
+  edge walk their owned children inline (stage 0's `EmitOwnedValueDrop`) instead of dropping the
+  cell alone. A matched head returned from an `if` branch inside its arm takes the pattern-owner
+  duplicate as the branch's result (stage 0's `TransferDirectRuntimeManagedBranchResult`, a
+  marker until the loop's finalize places the owner), the join every reaching branch stores such
+  a result into crosses the arm's reset without a copy (`patternOwnerResultTemps`), and the
+  literal arms beside a retained owner are normalized so the loop's result is uniformly
+  runtime-managed: a string literal arm is copied to the reference-counted heap
+  (`shouldNormalizeStaticStringArms` sees through an `if` and counts a retained owner as a fresh
+  arm and a tail self-call as a runtime-managed one; stage 0's `IsRuntimeManagedStringMatchArm`
+  does the same), and a fresh constructor arm requests the reference-counted cell
+  (`retainedPatternOwnerTerminal` is a funnel of the escaping-result reconciliation, stage 0's
+  `IsRetainedPatternOwnerTerminal` in `IsProvenFreshCallFunnelArm`). FIXED in stage 0
+  (2026-09-05) with the same rule: the string-head search leaked the retained head and, through
+  the caller's child-preserving release of a result it took for arena-placed, the list's heads as
+  well, 127 MB over three hundred thousand searches
+  (`tests/tco_runtime_managed_find_string_head_plateau.ash`,
+  `Linux_backend_llvm_find_loop_returning_string_head_memory_should_plateau`). A static
+  constructor arm (every argument a literal, or another such application: `Item(name = "none",
+  weight = 0)`) is a value that owns nothing, which placement deliberately keeps in the arena
+  (`Directly_escaping_adt_with_literal_string_child_remains_arena_managed`), so beside a
+  retained head it is built in the arena as usual and deep-copied to the reference-counted heap
+  the way a literal string arm is copied (`staticConstructorArm` in `lowerMatchArmBody`, stage
+  0's `IsStaticConstructorArm` in `LowerMatchArmExpression` through
+  `EmitRuntimeManagedTcoDeepCopy`); the record-head search runs at 5.6 MB through both compilers
+  (250 MB and 33 MB before, `tests/tco_runtime_managed_find_record_head_plateau.ash`,
+  `Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau`). A loop parameter
+  the reference-counted placement does not admit (a multi-constructor variant, a big integer, a
+  tuple or ADT with heap children) stays in the arena and takes stage 0's fixed-watermark
+  compaction at the back edge (`emitArenaTcoReset`, stage 0's `EmitTcoBackEdgeArenaBlock` past
+  the runtime-managed reset): the per-iteration watermark is restored when every argument
+  survives a reset on its own (a scalar, a resource handle, or the loop's own unchanged value,
+  `TcoBackEdgeTryEmitPlainReset`), and otherwise, when every heap argument has a whole-value copy
+  (a string or big integer by size, a same-arity scalar-field ADT by its cell, a deep-copyable
+  ADT or tuple through its clone; a list keeps the arena), the compaction runs under stage 0's
+  threshold (`emitCompactionCheck`: the arena grew past twice the live size recorded in the
+  compaction-size slot plus 4096 bytes, or the cursor left the watermark's chunk): every heap
+  argument is copied up above the cursor, a deep clone twice (`emitCompactionUpCopies`), the
+  arena is reset to the fixed loop-entry watermark with an arena string reservation's slots
+  zeroed, the copies are copied down onto the watermark (an affine arena string re-reserving
+  through an empty in-place append) and stored (`emitCompactionDownCopies`), the chunks above
+  are reclaimed, and the live size is recorded, or the watermark rebased to the new chunk's
+  allocation start read from the chunk footer when the copy crossed a chunk
+  (`emitCompactionRecord`). The deep clone is `StructuralCopiers.ash`'s `synthesizeDeepCopy`
+  (stage 0's `EmitDeepCopy`): a string or bytes value copies by its length, a tuple is rebuilt
+  element by element, a list over scalar, string or scalar-list heads copies through the
+  cons-chain copy, a list over deep-copyable heads clones cell by cell through a synthesized
+  `__deepcopy_list_N` copier (stage 0's `EmitListDeepCopierBody`), and a named type calls its
+  synthesized `__deepcopy_N` copier (`AdtDeepCopier`, cached per pretty type beside the
+  droppers) through a closure whose environment holds the closure itself, the copier switching
+  on the constructor tag, allocating a fresh cell of the same constructor, and copying every
+  field, a field of the type itself through the self-closure.
+  `tests/tco_arena_variant_accumulator_plateau.ash` (a
+  `Empty | Filled(Int, Int)` parameter over three million iterations) went from 75 MB to 5.6 MB
+  through the self-hosted compiler (stage 0: 4.1 MB), its back edge matching stage 0's text up
+  to the reuse-specialization and dead retention-flag blocks stage 0 still emits around it.
+Completed work of **OPT-80**, whose open tail is in the [plan](SELF_HOSTING.md). The stage-1 compile
+of the semantics package alone outgrows the address space the probe can give it.
+
+  Once MOD-19 closed (2026-09-14) the compile of
+  `selfhost/packages/semantics/ashes.json` under the stage-1 CLI died with `failed to allocate
+  heap memory from OS` after 15 s at 22.7 GiB resident under a 50 GiB cap (the arena reserves
+  roughly twice what it touches, so the cap is the address space, not one request: a gdb
+  catchpoint on any `mmap` over 4 GiB never fired, and the cap-bound runs pass once the cap is
+  raised). Per-phase resident sizes read at breakpoints on the `--debug` build name the
+  self-hosted IR optimizer, not the lowering: a scratch entry importing `Types` costs
+  114 MiB before lowering, 594 MiB before optimizing, and 2913 MiB before code generation;
+  `TypeResolution` 135, 1143, and 6809 MiB; a private copy of `TypeInference` with its four
+  dependencies truncated to 2265 lines 194, 3799, and 22887 MiB. Every program-level optimizer
+  stage retains what it allocates (the per-function pipeline 1.4 GiB, the captured-closure
+  devirtualization 1.1 GiB, currying-stage inlining 0.9 GiB, and so on for `TypeResolution`),
+  and nothing is corrupt. The cause is a stage-0 memory-model gap, reproduced by thirty-line
+  programs: a function returning a list whose element carries a heap field (`Add(Int, Int) |
+  Name(Str, Int)`, a record with a string field, and every self-hosted IR type) built its
+  result in the arena, because a list is a runtime-manageable result only over copy-type
+  elements, a constructor head under the runtime-list request never asked for the runtime
+  ADT representation, and a string child read out of a pattern owner did not count as owned.
+  Such a result has no arena copy-out strategy either, so the call window was never restored
+  (a map over 200 lists of 2000 elements grew 16 MiB per extra pass with the same live result)
+  and the handed-over argument was never released (one whole list leaked per round of a
+  producer loop, 100 bytes per element per pass), where the same program over `(Str, Int)`
+  tuples stays flat. The architecture's contract (an escaping ordinary graph is normalized to
+  reference counting) was not met for these types. Slice a, done (2026-09-14): the result
+  predicate admits lists over runtime-manageable elements, a fresh constructor or record head
+  under the runtime-list request is built reference-counted, and a pattern-owner string is an
+  owned child of the aggregate storing it (its aggregate duplicate is a real retain whatever
+  the root's placement); mirrored in `CoreLowering.ash`, twelve lowered-IR parity fixtures
+  regenerated and matched by the self-hosted lowering, plateau tests
+  `Linux_backend_llvm_string_adt_list_producer_pipeline_memory_should_plateau` and
+  `tests/rc_string_adt_list_producer_pipeline.ash`. The non-tail producer, the let chain, and
+  the loop over such lists are now flat; the probe is unchanged (the self-hosted IR types
+
+Completed slices of **MOD-17**, whose open tail is in the [plan](SELF_HOSTING.md):
+
+  - [x] **MOD-17a** Concrete dispatch on a program implementation. The core lowering expands
+    `deriving` into implementation items and registers every `implement` of the program (its
+    head types with parameters, its requirements, its method bodies) in a trait environment
+    seeded from `standardTraitEnvironment`; `==`/`!=` first unify the operands, then take the
+    primitive comparison, else resolve `Eq(T)` evidence and, for an implementation with no
+    requirement or supertrait dictionaries, lower the selected method once as a capture-free
+    closure helper (cached by label like stage 0's TRT-16 instance cache) and call it on the two
+    operand temps; an unsupplied `notEqual` negates `equal`. `Eq.equal(a)(b)` calls, which the
+    derived bodies use per field, lower as `a == b`. Done (2026-09-13).
+  - [x] **MOD-17b** Structural standard implementations with requirement dictionaries. Done
+    (2026-09-14): the stitchers load `Ashes.Trait` into every program as a dependency of the
+    entry (stage 0's implicit prelude), and a stitched implementation replaces the seeded
+    placeholder of the same trait and head shape (`Ashes_Trait_Eq` normalizes to `Eq`). A
+    method of an implementation with requirements is lowered once per implementation head as a
+    generic closure taking one hidden parameter per method of each required trait (in
+    requirement order, methods by name), the body pinned to the head with fresh variables for
+    its type parameters; a site applies that closure to the requirement plans' method closures
+    (recursively for nested evidence) and calls the result. Inside the body, `==` on the
+    parameter type dispatches through the active evidence (stage 0's
+    `TryLowerActiveTraitMethod`): a comparison of two still-variable operands covered by active
+    evidence skips the speculative integer compare, a recursive let's declared type is read
+    against the head's parameters (`equalLists : List(a) -> List(a) -> Bool`), a lambda hands
+    its expected result type on to its body so a curried chain's inner parameters pin before
+    the body is lowered, and nested lambdas capture the evidence parameters (dead captures are
+    pruned). Derived implementations of parameterized types take the same path. Runtime-checked
+    against stage 0 on lists, nested lists, `Maybe`, tuples, and `Box(a)` over unit, record,
+    and integer elements; `tests/reuse_specialization_declines_unreachable_helper.ash` compiles
+    and prints `2` under the stage-1 CLI. Found and fixed OPT-79 on the way (the seeded method
+    names were dangling).
+
+Completed slices of **OPT-80**, whose open tail is in the [plan](SELF_HOSTING.md):
+
+  - [x] **OPT-80b** A fresh reference-counted call result handed straight to a callee that
+    borrows it (`bump(bumpTimes(p - 1)(insts))`) was never released. The root cause was wider
+    than the self call: a plain function returning its parameter on one arm and a fresh list on
+    another (`if flag == 0 then insts else bump(insts)`, the shape of every self-hosted
+    optimizer pass) joined a borrowed value with a reference-counted one, so its result was
+    never reference-counted, no caller released it, and every intermediate of a pass chain
+    stayed allocated (the pass-shaped experiment grew to 962 MiB at 16 rounds, the map-shaped
+    one to 536 MiB). Done (2026-09-14): a plain function whose terminal arms are all either the
+    bare parameter or a freshly built value (a constructor application, literal, cons, a call
+    to a function compiled reference-counted, or a self call) copies the parameter into an
+    owned graph on the arm returning it (`Lowering.ParameterPassthrough.cs`,
+    `NormalizeParameterPassthroughBranch` at the `if` and `match` joins), so the join and the
+    function's result are reference-counted; lists over runtime-manageable elements, owned
+    tuples, and copyable or runtime-managed named types qualify, strings stay with their affine
+    placement. Such a function's result is promised reference-counted before its body is
+    lowered (`PredictRuntimeManagedResult`, kept at the return by a copy when the body's own
+    result is not), and a curry stage records its returned-closure link as soon as the inner
+    lambda is entered, so a recursive call inside the body resolves statically and hands its
+    result to the next callee as an owned value. Mirrored in `ParameterPassthrough.ash` and
+    `CoreLowering.ash`. Both experiments are flat (86 MiB at every round count); plateau test
+    `Linux_backend_llvm_passthrough_or_fresh_result_pipeline_memory_should_plateau`,
+    `tests/rc_passthrough_or_fresh_result_pipeline.ash`, parity fixture
+    `passthrough_or_fresh_result`.
+  - [x] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
+    `IsRuntimeRecordAdtLayout`, `IsRuntimeOwnedChildAdtLayout`, and the `TList` arms that
+    admitted only copy-type elements everywhere) rejected a variant child inside a record, a
+    generic payload (`Maybe(Str)`, any type with parameters, any builtin variant), and a list
+    over variants, so `IrInstruction { instruction: IrInst, location: Maybe(SourceLocation) }`
+    and `List(IrFunction)` never qualified, while the runtime dropper and copier already
+    walked those shapes. Done (2026-09-14): one owned-field rule (`IsRuntimeOwnedFieldLayout`)
+    admits a scalar, string, bytes, or big integer, a list or tuple of owned fields, a record,
+    variant, positional single-constructor type (`IsRuntimePositionalAdtLayout`, a new
+    capability kept out of the record and outer-cell reuse paths), or closure, rejecting a
+    type that reaches itself (the inline runtime-managed copy of a recursive graph does not
+    terminate); the drop-graph walks recurse through list elements; a fresh constructor
+    application, a pattern-owner aggregate read, and a list over owned elements are accepted
+    as owned children, and a child that is not yet reference-counted is cloned into an owned
+    graph before the reference-counted parent stores it (`RequiresRuntimeManagedChildCopy`).
+    A user type named `Function` is now released through the reference-counted path, where the
+    backend took the `Function` tag for a closure and jumped through its fourth word: release
+    and cleanup instructions tag such a type `Function_` (`RuntimeManagedAdtTypeName`,
+    mirrored). Nested and string-list element experiments are flat; plateau test
+    `Linux_backend_llvm_nested_variant_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_nested_variant_list_producer_pipeline.ash`, parity fixtures
+    `producer_conses_nested_variant_head` and `user_type_named_function_release`. The builtin
+    variants stay out (OPT-80f).
+  - [x] **OPT-80f** `Maybe` and `Result` did not qualify as owned-child variants
+    (`IsRuntimeOwnedChildAdtLayout` rejected builtin symbols), and the stage 0 that admitted
+    them miscompiled the self-hosted parity runner (the runner checking `heap_result_list`
+    died with `failed to allocate heap memory` inside the IR text formatter). Done
+    (2026-09-14): the crash was a stage-0 loop-parameter bug the admission exposed rather than
+    anything about the two variants. Bisected by admitting one payload family at a time (a
+    temporary environment probe in the classifier) to `Maybe<Str>` together with
+    `Maybe<IrSourceLocation>`, then watched with hardware watchpoints on the corrupted cell:
+    once `OwnerAnchor { anchorTypeName: Str, anchorStructuralDropper: Maybe(Str),
+    anchorLocation: Maybe(IrSourceLocation) }` became runtime-manageable, the lifetime
+    placement loop `collectInsertions` copied its `anchor` parameter into an owned value at
+    entry and released it at loop exit, while `placedDrop(anchor)(slot)(owner)`, whose
+    summary borrows `anchor` and whose result aliases it, returned arena instructions that
+    borrowed the anchor's type-name string into the loop's accumulator: a borrowed parameter
+    whose parts the callee's result keeps was never retained when the argument was a
+    runtime-managed loop parameter, since `CalleeResultMayReachParameter` only recognized
+    fresh result temps and `PrepareRuntimeManagedCallArgument` returns before any retain for a
+    borrowing callee. Now a loop parameter (or a pattern binding of one) handed to a callee
+    whose result may reach it is retained for the result, unconditionally once the loop admits
+    the parameter and under the parameter's pending flag before that
+    (`RetainBorrowedLoopArgumentForCalleeResult`, `IsTcoParameterArgument`; mirrored in
+    `CoreLowering.ash` through `argumentRootSlotOf` and a `borrowedReach` hand-off fact); the
+    retained reference travels with the arena result exactly as a let-bound owner's does. Both
+    builtin variants are admitted in both compilers. The stage-1 binaries built by that
+    compiler then crashed in `QualifiedShippedReferences`, and a standalone copy of its scan
+    narrowed the crash to a second pre-existing loop-parameter bug the admission exposed: a
+    tail self-call whose successor is a record update of the loop's own runtime-managed
+    parameter (`scanTokens(known)(rest)((state with scanAfterDot = true))`) built the arena
+    successor with raw reads of the unchanged fields, and the back edge released those fields
+    once as the dying successor's references and again through the old parameter's structural
+    walk (a program with a plain `Str` field crashed on the compiler before this slice too).
+    An unchanged heap-typed field of a record update whose target reads a loop parameter is
+    now retained like a field read stored into an aggregate, through the same marker the loop's
+    finalize pass promotes (`RetainUnchangedRecordUpdateField` over the shared
+    `DuplicateTcoParameterReadForAggregate`; mirrored by `retainUnchangedRecordField`, which
+    threads the target's `loopParameterReadSlot` through `lowerRecordUpdateFields`). The
+    self-hosted projects suite then reported a dependency namespace equal to the dependency
+    name: a third latent loop-parameter bug, this one visible on the compiler before the slice
+    as well. `validateDependencyModules` hands its `namespace` parameter (a `Str` whose
+    admission is still pending while the body is lowered) to `validateDependencyModulePath`,
+    whose `Error(ProjectDependencyModuleOutsideNamespace(...))` keeps it; the retain guard was
+    the callee's accepts bit rather than the forced flag, since
+    `CalleeResultMayReachOrKeepPatternBinding` only recognized fresh temps and pattern
+    bindings, so the loop's exit released its own copy under the error. A pending loop
+    parameter the callee's result may reach now retains under the forced flag like a pattern
+    binding, and the retained reference is handed over with an adoption flag that reads true
+    when the callee accepted it or when finalization zeroed the forced flag
+    (`EmitPendingRetainAdoptionFlag`), so the caller releases it where the result was copied
+    out; the borrowed-parameter retain admits strings too. A coroutine loop
+    (`LowerHelperCoroutineTaskEmitLoopBody`) never resolved the flags registered under its
+    slots, which left such a forced flag at one for a parameter the coroutine boundary keeps in
+    the arena; it now resolves them itself. Mirrored by `pendingRetainAdoption` and the
+    `mayReach` hand-off fact covering the parameter itself. The optional-string experiment is
+    flat (20 MiB at every round count); plateau test
+    `Linux_backend_llvm_optional_string_variant_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_optional_string_variant_list_producer_pipeline.ash`,
+    `tests/rc_loop_parameter_parts_kept_by_callee_result.ash`,
+    `tests/rc_loop_parameter_record_update_successor.ash`,
+    `tests/rc_loop_parameter_kept_by_callee_error_result.ash`, parity fixtures
+    `tco_parameter_kept_by_borrowing_callee_result`,
+    `record_update_successor_of_loop_parameter`, and
+    `tco_string_parameter_kept_by_callee_error_result`.
+  - [x] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
+    generic `reverse`) still leaked a whole list per round (827 MiB at 160 rounds of 50000).
+    Done (2026-09-14): the loop's runtime-managed accumulator handed to `reverse`, whose result
+    reaches it, was retained for that result and handed over under the callee's adoption bit,
+    and `reverse` (a generic list function whose closure never accepts a runtime-managed
+    argument) neither adopted the reference nor let the caller release it: the release guard
+    (`ResolveHandedOverReleaseGuard`) only recognized the shallow and list copy-outs as
+    severing the result from the argument, while this call's `List(Inst)` result has no
+    copy-out kind and is normalized by the generic list deep copy instead
+    (`LowerCallDeepCopyOutListResult`), which rebuilds every element and its owned parts. The
+    deep copy now counts as severing on the arena branch of the result flag
+    (`DeepCopiedResultSevers`; mirrored by `deepCopiedResultSevers` in `CoreLowering.ash`), so
+    the handed-over accumulator is released where the copy ran: flat at 20 MiB for 20, 40,
+    and 160 rounds. Plateau test
+    `Linux_backend_llvm_accumulate_and_reverse_producer_pipeline_memory_should_plateau`,
+    `tests/rc_accumulate_and_reverse_producer_pipeline.ash`, parity fixture
+    `accumulate_and_reverse_producer`.
+  - [x] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
+    probe after each slice; the BOOT-2 probe resumes when the semantics package compiles
+    under the 24 GiB cap. Measured (2026-09-14, after slices a, b, c, d, and f, stage-1 CLI
+    built by the merged stage 0, resident size at the start of lowering, optimizing, and
+    code generation): `Types` 266, 799, and 3127 MiB (peak 3.2 GiB, 2.5 s); `TypeResolution`
+    864, 2028, and 7712 MiB (peak 7.9 GiB, 10.8 s); the semantics package still dies at the
+    24 GiB cap after 5 s. The optimizer stages retain exactly what they did before the slices
+    (`TypeResolution`: the map of `optimizeIrFunctionWithEvaluable` over the functions
+    +1.5 GiB, `devirtualizeCapturedClosureCalls` +1.1 GiB, `inlineCurryingStages` +0.95 GiB,
+    `scalarizeSingleCaptureStackClosures` +0.5 GiB, the two `computeKnownReturnedClosureLabels`
+    +0.3 and +0.4 GiB), so the slices closed shapes the optimizer does not hit. The shape it
+    does hit is reproduced by `opt80/exp/map_record_fn.ash` (a record `Fn { label: Str, insts:
+    List(Inst) }` rebuilt by a producer, `optFn(fn) :: mapFns(rest)`, 200 records of 2000
+    instructions per round): 69 MiB retained per round on the merged compiler and on the
+    compiler before the slices alike, with or without let-bound intermediate lists. The record
+    head `Fn(label = label, insts = bump(insts))` is allocated in the arena (`AllocAdt` without
+    the runtime-managed bit) and the producer's cons cell too, so the list of records is an
+    arena value whose call windows are never restored; see OPT-80h.
+  - [x] **OPT-80h** A record head carrying a list of heap-bearing variants (the self-hosted
+    `IrFunction { instructions: List(IrInstruction), ... }`) rebuilt by a producer stayed in
+    the arena together with the producer's cons cells: `optFn(fn) :: mapFns(rest)` over `Fn {
+    label: Str, insts: List(Inst) }` retained 69 MiB per round of 200 records of 2000
+    instructions, the exact shape of the optimizer's per-function map. Done (2026-09-14): the
+    escaping-result record decision walks the body's terminal arms like the variant case
+    (`ProducesFreshRuntimeManageableRecord`, so the literal inside the match arm is seen), and
+    a borrowed string field read out of a local binding, whole or by field, a name the arm
+    binds later included, is copied into an owned string at the head
+    (`IsMaterializableStringChildRead`; a literal keeps the parent in the arena, as the
+    directly-escaping-variant tests require); the cons and the consumed record's release
+    follow from OPT-80a: flat at 155 MiB for 1 and 16 rounds. Making the lexer's result
+    reference-counted exposed a stage-0 gap present on main: a field read out of a
+    runtime-managed `let` (`lexed.tokens`) stored into an arena tuple, and that tuple passed
+    by name to a callee whose result keeps it, retained nothing, so the owner's scope-exit
+    release freed the token strings the syntax tree still borrowed (the parity runner's stack
+    was overwritten with IR text). Fixed by retaining a heap-typed field read like the whole
+    owner (`DuplicateRuntimeManagedOwnedValueForTransfer`) and by recording the owners an
+    arena `let` aggregate borrows (`OwnershipInfo.BorrowedRuntimeOwners`, collected from the
+    literal's children) so a transfer of the binding retains them
+    (`RetainBorrowedRuntimeOwnersOfAlias`, at a keeping call's plain argument too). Mirrored in
+    `CoreLowering.ash` (`producesFreshRuntimeManageableRecord`,
+    `isMaterializableStringChildRead`, `materializeStringChildArgument`, the field arm of
+    `retainTransferredChild`, `borrowedOwners` and `pendingBorrowedOwners` with
+    `borrowedOwnersOfExpression` and `retainAliasBorrowedOwners`, and `emitChildDeepCopy`
+    reserving the temp stage 0's inline copy reserves ahead of a nested list child). Plateau
+    test `Linux_backend_llvm_record_head_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_record_head_list_producer_pipeline.ash`,
+    `tests/rc_let_bound_aggregate_borrowing_owner_kept_by_callee.ash`, compared parity
+    fixtures `record_head_list_producer` and `aggregate_borrowing_owner_kept_by_callee`. The
+    stage-1 probe is unchanged: the self-hosted `IrFunction` carries fields the record
+    classifier rejects (OPT-80i).
+  - [x] **OPT-80j** A record reassembled out of a callee result's fields leaked the references it
+    retained: `let lexed = tokenize(n) in ... Program(items = items, diagnostics =
+    lexed.diagnostics)` leaked 235 KiB per round of a lexer result rebuilt into a program
+    record. `lexed.diagnostics` and a `match`-bound `diagnostics` reach the child identically
+    and stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` retains both alike, but only
+    the pattern binding counted as a child an aggregate can own, so
+    `CanRuntimeManageFreshOwnedChildExpression` rejected the field read, the record stayed
+    arena-placed, and the references retained into it were never released. Fixed (2026-09-15):
+    a field read of a local binding is admitted as an owned child beside the `Var` case it
+    spells (`IsLocalRecordFieldRead` in stage 0, `isLocalRecordFieldRead` in the self-hosted
+    `canRuntimeManageFreshOwnedChild`), so the record is reference-counted and dups its
+    children on store. The self-hosted mirror needed two more pieces stage 0 already had:
+    `retainAggregateChildTemp` retains a heap-typed field taken out of a live owner the way
+    `RetainRuntimeManagedAggregateChild` does, and a `let` value now starts from the consumer
+    request it inherits (`inheritedLetValueRequest`, stage 0's `PushSequentialLet`) instead of
+    an empty one. Measured with `/usr/bin/time -f %M`: 235 KiB per round before, flat at 8.2 MB
+    across both 80 and 160 rounds after. Regression
+    `tests/rc_callee_result_field_reads_reassembled_into_record.ash`, plateau test
+    `Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau`,
+    and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
+    compilers reproduce instruction for instruction along with the other 53.
+
+Completed work of **OPT-80i**, a measured negative result. The approach is refuted; the live memory
+task is OPT-85 in the [plan](SELF_HOSTING.md).
+
+  The record layout classifier rejects every self-hosted IR record, because `IrFunction` carries a
+  type that reaches itself, so the optimizer's per-function map builds its results in the arena. The
+  attempt was to admit such records to the reference-counted heap by copying and releasing their
+  fields through generated per-type copier and dropper functions, so the map could leave the arena.
+  Measured on `feature/opt80i-recursive-record-fields` at `2390ec1d`, unmerged and never proposed: a
+  stage-1 CLI built by the admitting compiler against one built by the same compiler with the
+  admission restricted to nothing, same source, same probe.
+
+  | module probe | admission off | admission on |
+  |---|---|---|
+  | `Types` | 0.70 s / 3.17 GB | 1.60 s / 4.64 GB |
+  | `TypeSchemes` | 0.95 s / 3.86 GB | 2.17 s / 5.86 GB |
+  | `Unification` | 2.13 s / 7.65 GB | 6.84 s / 22.3 GB |
+  | `TypeResolution` | 2.82 s / 7.91 GB | died at a 30 GB cap in 10 s |
+
+  The off column reproduces the pre-admission numbers exactly, so the delta is the admission and
+  nothing else, and it grows with module size. Why it fails: making a self-reaching type
+  reference-counted does not stop the arena accumulating. It replaces a shared arena pointer with a
+  deep copy of the whole type graph at every boundary that used to share one.
+
+  The attempt exposed seven soundness bugs, and none of them is independently landable: each is
+  reachable only through the admission, and every regression it produced passes on a plain build both
+  with and without its fix. They are the price of the design rather than latent defects.
+
+## Language and standard-library prerequisites
+
+The capability audit that preceded the port: what the language, compiler and standard library had to
+provide before a compiler could be written in Ashes. Every row is complete, which is why it lives
+here rather than in the plan. An area tag names the eventual consumer, not the project that had to
+implement the prerequisite, and each row links to the normative documentation for the shipped
+surface. If a later audit finds one of these incomplete, add the work to the plan and link the row
+to it.
+
+| Capability | Status | Areas |
+|---|---|---|
+| [Unsigned integer support (`u8`, `u16`, `u32`, `u64`)](../reference/language.md#_2-1-integers) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| [Byte type (`u8`) and byte literals](../reference/language.md#_2-1-integers) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| [Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`)](../reference/language.md#_3-5-bitwise) | Complete | `Compiler/Backend`, `Compiler/Linker` |
+| [Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
+| [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend` |
+| [Call-scoped native arrays of opaque handles](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [LLVM out parameters](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [Returned native strings](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [Foreign pointer-plus-length buffers](../reference/standard-library.md#ashes-ffi) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
+| [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
+| [Efficient preallocation, range copy, and random-access binary patching](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `LSP`, `Fuzzing` |
+| [Binary file output (`Ashes.IO.File.writeBytes`)](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
+| [Path normalization, joining, parent/basename, and relative paths](../reference/standard-library.md#ashes-io-path) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [Current/executable/temp/cache directories and environment lookup](../reference/standard-library.md#ashes-io-environment) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| [Directory enumeration, creation, deletion, and atomic rename](../reference/standard-library.md#ashes-io-directory) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [Marking emitted ELF files executable](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [stderr output and controlled process exit codes](../reference/standard-library.md#ashes-io) | Complete | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| [Installed-layout host-tool integration workflow](../guide/testing.md#execution-model) | Complete | `Compiler`, `CLI`, `TestRunner`, `Fuzzing` |
+| [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| [Unicode scalar classification through `Rune`](../reference/standard-library.md#ashes-rune) | Complete | `Compiler/Frontend`, `Formatter`, `LSP` |
+| [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](../reference/language.md#source-encoding-and-coordinates) | Complete | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
+| [Persistent immutable map (`Ashes.Collection.Map`)](../reference/standard-library.md#ashes-collection-map) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
+| [Persistent immutable array (`Ashes.Collection.Array`)](../reference/standard-library.md#ashes-collection-array) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
+| [Records, named patterns, and record-update syntax](../reference/language.md#_4-3-record-types) | Complete | `Compiler`, `Formatter`, `LSP` |
+| [User-written type annotations, aliases, and zero-cost nominal types](../reference/language.md#_4-2-zero-cost-nominal-types) | Complete | `Compiler`, `Formatter`, `LSP` |
+| [Project/module compilation with explicit exports and path dependencies](../guide/projects.md) | Complete | `Compiler/Semantics`, `CLI`, `LSP` |
+| [Catchable error propagation for compile-pipeline flows](../reference/language.md#_13-4-error-handling) | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| [RC-Perceus deterministic memory without cyclic graphs](../internals/architecture.md#memory-model) | Complete | `Compiler`, `Formatter`, `LSP`, `DAP` |
+| [Large-ADT exhaustiveness and performance hardening](../reference/language.md#_11-pattern-matching) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
+| [JSON parsing/serialization for `ashes.json` and JSON-RPC](../reference/standard-library.md#ashes-text-json) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
+| [Stdio JSON-RPC Content-Length framing](../reference/standard-library.md#ashes-net-rpc) | Complete | `LSP`, `DAP` |
+| [Interactive subprocess control with piped streams and timeouts](../reference/standard-library.md#ashes-io-process) | Complete | `DAP`, `TestRunner`, `Fuzzing` |
+| [Regex utilities for tooling text](../reference/standard-library.md#ashes-text-regex) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
+| [`Ashes.Test` unit assertions](../reference/standard-library.md#ashes-test) | Complete | `Tests` |
+
+All currently identified Ashes prerequisites for self-hosting are complete. This audit does not claim
+that compiler sources have been ported or that bootstrap staging has begun.
+
+Registry/package commands, LSP, DAP, TestRunner, fuzz-harness parity, bootstrap staging, persistent
+sets, generic hashing, and a named text builder are not missing Ashes prerequisites. They may become
+separate port or optimization work later, but are outside this capability audit until a concrete
+language/runtime/stdlib blocker is demonstrated.
+
+## Start here, as it read before the fixpoint (2026-09-20 to 2026-11-18)
+
+Moved here from SELF_HOSTING.md on 2026-11-18, when its "Start here" was rewritten for the work after
+the fixpoint. Kept as the record of how the order was decided.
+
+**Path forward (decided 2026-11-16; supersedes the order below where they differ).** Stage 1
+now compiles the whole compiler, so stage 2 exists; it is not yet correct. The goal is for stage 1
+to replace stage 0, which needs both a clean bootstrap and parity with stage 0. The order:
+
+1. **Stage 2 to stage 3, clean, and stage-1 parity with stage 0, in parallel.**
+   **Reached on 2026-11-18 (bootstrap52):** stage 2 compiles the compiler into a stage 3 that is byte-for-byte identical to stage 2 (45,851,504 bytes; stage 3 built in 11:25 at a 12.5 GiB peak). Stage 1 behaves as stage 0 on every `tests/*.ash` program apart from live-cell counts (973 same, 149 differ only in leaks, 0 crashes, 0 wrong outputs). Stage 2 matches stage 0 on 971; its 6 remaining differences are the next work. A capped run with swap disallowed was killed by the kernel with memory free; run stage 3 with swap allowed.
+   - Stage 2 is wrong because stage 1 miscompiles parts of the compiler's own source. Each round
+     builds stage 2 with a link map (`ASHES_LINK_MAP`), runs `selfhost/tests/behaviour/check.sh`
+     with stage 2 as the compiler under test, groups the crashes by function with
+     `cluster-crashes.sh`, and fixes the largest group in stage 1 with a reduced regression test.
+     Done when stage 2 compiles the compiler into a stage 3 that is byte-identical to stage 2.
+   - Parity: stage 1 behaves as stage 0 on every `tests/*.ash` (accept/reject, diagnostics,
+     output, exit code), measured by the same check against `selfhost/tests/behaviour/baseline.tsv`.
+     This includes missing features (`async` and `Ashes.Task`, static capability providers,
+     network tasks, vendored bitcode for openlibm, PCRE2 and Mbed TLS) and stage-0 bugs found on
+     the way. Leak counts are not part of this item.
+   - Stage 1 type-checks every program with the standalone inference before lowering and reports
+     its errors with stage 0's codes and wording; lowering does not read its results yet.
+2. **The standalone inference's remaining edge cases:** `deriving` on a recursive generic type, fork
+   outside `async`, the builtin integer argument it generalizes where stage 0 does not, and the
+   diagnostic wordings it cannot produce yet.
+3. **Lowering from the type table.** Finish step 7 of "Type inference before lowering" (typed
+   lowering on by default; generic bodies read through their instantiation; an identity for nodes
+   lowering synthesizes; the last open `Show.show` goals), then step 8 (rewrite the order-dependent
+   ownership rules listed under step 7 as rules over the final type, each with a lifetime test),
+   which retires the discovery and replay passes and body re-lowering. This is where compile
+   time drops.
+4. **Multithreading:** CG-17 parallel code generation and LNK-14 relocatable merge. LLVM is about
+   half of a stage-2 build.
+5. **Memory leaks last:** live-count parity with stage 0 and the leaks stage 1 shows while building
+   stage 2, resumed only after items 1 to 4.
+
+Work is verified in shared rounds: agents finish a batch, run only cheap checks (format, a
+whole-compiler type check with the standalone inference), and one stage-1 build per round runs the
+behavioural check for all of them and the stage-2 round above.
+
+The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
+sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
+matching its output instruction for instruction.
+
+**Where things stand (2026-09-20).** Memory no longer has to be what stops the whole-tree build. The
+wall this document used to describe was mostly repeated work rather than retained memory: stage 1
+lowered the body of a function nested *k* lambdas deep 2^k times, and a curried function of *k*
+parameters is *k* nested lambdas. With that fixed, stage 1 compiling the whole self-hosted tree goes
+from being killed at a 40 GB cap after 23 minutes to finishing its lowering in 82 seconds at a
+14.7 GB peak, and what stops it is a stage-1 semantic defect. Two things keep that from being the
+state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit on the branch
+`stage0-rc-general-results`. And that branch changed how stage 0 lowers ownership without the
+matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
+is.
+
+**The next task** is step F, after recording a fresh baseline census. The remaining step-E leak
+work is paused until after F; it is not complete. Steps A to D have landed. Read the
+work order's introduction before anything else. It holds:
+- what was measured;
+- the rule it establishes: a stage-0 ownership change ships with its stage-1 mirror;
+- the definition of leak-free that ends the memory work.
+
+Stage 1 still leaks. Clearing F first broadens the real compiler workloads available for measuring
+stage-1 leaks; it does not make the existing census more accurate. After F, repeat the same census
+and reassess whether to finish E or proceed to G. Advancing to G is not automatic.
+
+The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
+section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
+`sort`, is confined to `HoverTypeInfo` and unblocks nothing else. Everything else the 2026-09-17
+sweep of the semantics package found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles
+CG-20 and CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout
+table's 52-member gap behind `QualifiedShippedReferences`. That sweep read 33 modules compiling, 51
+exhausting a 24 GB cap and 2 stopping with a diagnostic; repeat it once step A has landed, because
+most of those 51 were the repeated work and not their own memory.
+
+OPT-85 keeps the record of the memory work before this: the profiling recipe headed "Profile it; do
+not reason about it", the five sites that paid for the whole program at every query or release, the
+whole-list copy stage 0 makes when a function returns or loops over a list parameter it cannot prove
+is owned, **four approaches already refuted by measurement**, the genericity finding, and the
+quadratic analysis tables (7,313 MB to 3,761 MB). It still stands as what not to retry.
+
+**The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
+that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
+so the last marker names the phase that failed:
+
+```
+loadProject -> stitchProject -> lowerCoreProgramWithSource -> optimizeIrProgram -> codegenProgram
+```
+
+Build it with stage 0 and `--debug`, so it carries symbols, and run it under `gdb -batch -ex run -ex
+bt` when it faults rather than reading the exit code. Its `ashes.json` must list
+`AshesCompiler.Frontend` and `AshesCompiler.Semantics` as devDependencies beside the path overrides,
+or project loading fails with a null reference (SEM-20). Point it at one module at a time and sweep a
+whole package before fixing anything, so what remains is a list you can order rather than a queue you
+discover one failure at a time.
+
+A module imported on its own is a good measure of time and memory and a poor end-to-end test: a
+generic helper whose trait goal only its call sites settle is reported as missing evidence when
+those call sites are not in the program. `IrCodegen.Support` imported alone stops that way in one
+second on any stage 1. The end-to-end measure is stage 1 compiling the whole tree.
+
+**Expect `main` to be slow and hungry until step A lands.** There the probe's own module
+(`TypeResolution`) costs 3,776 MB and 2.56 s through the whole pipeline, a compiler module in the
+middle of the package exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB
+after 10m40s before it had to be killed. Those figures are the repeated lowering: the `IrCodegen`
+probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB with the fix.
+
+
+## Round 10 native runtime follow-up, 2026-11-21
+
+Native 3 completed. Its matching generated source `work/r10-named-capture/` is preserved for debugger evidence. Logical-not now fails replay of coincident operator sites with `Bool` versus `Bit`; ordered inference reaches the unchanged mutually recursive Show program and fails `Int` versus `Bool` at `bounce`, line 11:39; external lowering reaches another assertion. The two inference failures are assigned to `lowering_evidence` in `r10-native-evidence-next` / `fix/r10-native-evidence-next`, and the external assertion to `tmc_repair` in `r10-external-next` / `fix/r10-external-next`. Both have quick-probe-only briefs and a 40-minute implementation budget. The coordinator next runs all 200 backend groups with normal and poisoned children in `work/r10pre/backend-native3/`, holding integration fixed while read.
+
+The measurement tool `7e61aa4c` is integrated as `4a478e9f`, awaiting its main-owned build. Its `selfhost/tests/typed-lowering-measurement/README.md` specifies separate legacy/typed runs and 19 TSV columns for timings, replay occurrence, pending/equality goals and per-pass lowering counters. The public API exposes a replay Boolean, not an exact traversal count. This tool changes no compiler behavior.
+
+Backend attempt `work/r10pre/backend-native3/` stopped before compilation at ASH038: the generated wrapper put its export after declarations. The renderer now puts the export before the first declaration; the retry uses `backend-native3-fixed/`. External fixture repair `9e7e5508` is integrated: the synthetic `openCounted` signature incorrectly returned `Unit`, removing its cleanup obligation. The fixture now uses its real source declarations and production ABI registration, preserving all program bodies and assertions. A single native-3 probe with real declarations emitted exactly one `CleanupResource` for `Counted` with `closeCounted`; full group rerun remains pending. The external worker now reviews the new Socket and poison paths while the backend run proceeds.
+
+The backend retry reads frozen `da068c5e`; external repair maps to `aebb362c`. Native-3 audit refresh found 31 of the 32 actual IR files byte-identical to native 2. The changed `non_tail_self_call_list_result` now equals the reference under the stricter `keep-reads.awk` comparison, without deleting its former identity borrow separately. Recomputed guard data still has 122 guards, 51 slots and 29 fixtures, all value 1 with resolved targets. Evidence is `work/r10pre/named-native3/{guard-cfg.tsv,audit/}`. This updates the static comparison, not generated-code runtime acceptance. The main-owned measurement script is `r10-fixture-candidates/work/typed-measurement-checks.sh`; its build and both measurements remain pending.
+
+Inference worker commits `42524c1f` and `61fe580e` are integrated as `e72af846` and `a0a66ff1`. Joint recursive inference was skipped because candidate detection did not recognize stitched `Ashes_Trait_Show` / `Ashes_Trait_Hash`; the predicate now uses the canonical names already recognized by resolution. Changing only that decision in a debugger let the original stitched fixture complete. The separate coincident-Not repair preserves the discovery traversal's consumed proof cursor when returning from a locally re-emitted body, while retaining the original lookup environment for that body's own retry. Both original regression programs and assertions are unchanged. Formatting and the single allowed compiler-source inference check passed: explicit `ok`, 10,170 items / 186 modules, 63.7 seconds. The unresolved-Not follow-on was a debugger probe holding an unrooted pointer across arena restoration; a corrected controlled probe completed the entire unchanged logical-not group. Fresh-native validation remains required. Continuing past Show exposed another ordered-suite failure: `constrained_partial_uses_declared_arithmetic_methods.ash`, Box versus Int at span 654–677, now assigned to the same worker. Evidence: `r10-native-evidence-next/work/PROGRESS.md` and `work/inference.log`.
+
+**Backend native 3 completed:** `work/r10pre/backend-native3-fixed/` at `da068c5e`, build 7.84 minutes, **198/200 groups in normal mode and 198/200 in poison mode**. All eight unchanged ownership programs passed in both modes. RC instrumentation, the actual poisoned recycled-cell check and explicit task frame-dropper execution passed. `testSocketCaptureTeardown` fails in both modes with unsupported IR instruction and is assigned to `tmc_repair`; it still gates the shared round. The other failure is confirmed leak-only: annotation-loop children exit 0, print the correct 12/36, and have live counts 14/40, or 13 cells per additional round. Record that for the post-parallel leak phase. No reader remains from this backend job. The coordinator next builds and runs the typed measurement tool in `work/r10pre/typed-measurement1/` while the two workers implement arithmetic evidence and Socket backend fixes.
+
+The unsupported Socket instruction is `SetDrainTimeout` in the shipped TCP server wrapper; stage-0 shutdown semantics also involve `RequestServerStop`. The worker is tracing the scheduler contract before porting the missing backend path, with both Socket source programs unchanged. Exact reruns of all saved ownership executables passed **16/16**, including the scalar-shadowing program's expected 7. Logs and verdicts are `work/r10pre/backend-native3-fixed/ownership-exact.tsv` and each mode's `.stdout` / `.stderr` files; the main script is `r10-fixture-candidates/work/ownership-native-exact.sh`. The measurement reader remains active at `75fb346f`; integration must not change until it finishes.
+
+Socket worker commit `3502ed04` on `fix/r10-external-next` implements `SetDrainTimeout` emission using the same 10,000 ms initial setting as stage 0, with a targeted shared-global/store check. It is pending integration and native validation. This is only the opcode slice: the stage-1 accept runtime predates graceful shutdown and does not yet consume the setting. The worker is continuing `RequestServerStop` and actual drain/shutdown semantics, with another 30-minute implementation budget; do not count a stored-but-unused setting as completed behavior.
+
+At 05:46 local (04:46 UTC), both workers received 45-minute implementation budgets for the discovered server-runtime gap. Stage 1 creates `ForkWorkers` tasks but lacks scheduler dispatch and worker lifecycle; graceful stop cannot be implemented by sending an unhandled SIGTERM. `tmc_repair` owns `IrCodegen.Server.ash`, signals, fork dispatch, worker-cap visibility and minimal scheduler wiring in `r10-external-next`. `lowering_evidence` now owns accept draining, timer/reaping/fanout, spawned-root accounting and actual graceful-stop regressions in `r10-server-drain` / `fix/r10-server-drain`. Contract slice `0a59931f` is pending integration: `sc.schedServer` and `taskRuntime.serverState` carry an optional `ServerRuntime`; deadline is absolute monotonic milliseconds, timeout duration defaults to 10,000 ms, and child PID storage has 1,024 i64 slots. Peer work begins from integration plus the setter and contract commits. These are correctness prerequisites, distinct from planned parallel compiler code generation.
+
+The arithmetic batch is BATCH READY through `e944cdfc`, pending integration after the measurement reader. It retains the actual written trait requirements through scheduled binding probes and uses program-signature semantics for declared constrained probes, rather than inferring parsed negation as integer-only subtraction. The unchanged stage-0 program prints `-1 17`. Source inference and rebuilt native normal/no-reuse verification of this third fix remain coordinator-owned. The measurement tool built in **5.02 minutes** and is running its legacy measurement before typed mode, still reading `75fb346f`.
+
+Worker/signals slice `49cd9475` is committed on `fix/r10-external-next`, pending integration and runtime validation. It installs SIGTERM/SIGINT handling before forking, shares the Parallel worker cap, returns worker indices, records child PIDs and parent-death behavior, and routes `RequestServerStop` to the supervisor. Direct generated-child signal and one-worker-cap tests are in progress; the peer still implements draining and task accounting. No graceful-stop acceptance claim follows from these unexecuted changes. `fix/r10-server-drain` is pushed with setter/contract prerequisites `920168b8` and `df918941` (duplicates of `3502ed04` and `0a59931f`; integrate each source change once).
+
+Worker tests `f87ab65b` add actual forked-index and SIGTERM stop children. Its source preflight rejected a wrongly nested `RequestServerStop` match: formatter success did not establish correct opcode dispatch structure. Fix `9dc76556` uses a typed accessor and restores the exact previous dispatch tail; the worker compared it against the parent, excluding comments, with no difference. Test refinement `97867ec6` uses a real `wait(NULL)` in the supervisor so child output precedes parent output, avoiding scheduling-dependent parent death. Both repairs are committed and need the main-owned source-inference retry plus native execution. The agent's single source preflight was consumed; no extra agent load was authorized. The peer drain/accounting work continues.
+
+Drain slice `2389ced1` and regressions `ff002244` are committed on `fix/r10-server-drain`, awaiting integration. They implement signal fanout, monotonic deadline, nonblocking child reaping, 50 ms scheduler wakeups and spawned-root accounting. The two new unchanged-source controls pass stage 0 with exact `handler drained` and `bounded` output; they are being registered in the backend harness for stage-1 execution. The drain agent is combining the worker commits and may run its one allowed whole-source inference check for this separate assignment. The worker agent has a short follow-up to cover auto worker count under an explicit one-worker Parallel cap; the existing signal test uses explicit count 1 and does not establish that cap behavior. Main-owned normal/poison execution remains pending.
+
+Both runtime workers have handed back. Backend registrations are in `febcd83d`; the combined source check at that commit passed explicitly: **10,191 items / 187 modules**, 64.3 seconds. Integrate drain-owned `2389ced1`, `ff002244`, `febcd83d` after worker prerequisites, preserving both workers' test registrations. Additional worker test `c8c0d66c` checks automatic count against an installed one-worker backend override, with a test-only two-CPU cache seed bounding failure to one child; expect `0` then `true` for no child. The analogous public `withWorkers` wrapper correctly rejects the effectful `NetListen` body with ASH018, so that language contract is preserved. Native runtime execution of all these commits remains pending.
+
+Measurement progress-only tool change `4b11ff7b` on `fix/r10-measure-progress` is BATCH READY: stderr markers surround load/stitch, inference and the combined first/replay lowering API. Writes are outside measured intervals, and the 19-column TSV writer is unchanged. It awaits integration for the next driver build. The original measurement reader at `75fb346f` remains active in legacy mode (about 13 minutes at 05:59 local); no data row or completion result exists yet. Do not mutate its integration sources or mistake that running process for a completed timing.
+
+**06:04 local checkpoint:** the measurement reader was explicitly stopped at 06:02 after **16:07.81**, with no counter row; typed mode never ran. `legacy.time` records signal 15, and `STOPPED.txt` explains the cancellation. This is neither a completed benchmark nor a compiler failure. Both reader PIDs were confirmed gone before integration. Arithmetic `e944cdfc` → `c2e1c50b`; setter/contract → `39050a0f` / `1cb299fc`; drain/tests → `461635e9` / `8743a4a4`; workers/signals → `a42078f0`; signal tests/dispatch fix/reap test → `6b604641` / `2e08d59f` / `e774b49d`; drain registrations → `31573ec3`; auto-cap test → `c47aa238`; progress tool → `956d4252`. All commits and branches are pushed. Integrated backend package files match the combined runtime source-check revision exactly. Formatting all 11 changed Ashes files left the tree clean. The next reader is the coordinator's `work/r10pre/combined-preflight3/`; fresh native semantic/backend acceptance remains pending.
+
+**06:08 local checkpoint:** `work/r10pre/combined-preflight3/` completed on `6c4cb170`: explicit source inference **ok, 10,190 items / 187 modules**, solution build, format verification, **3/3 snapshot tests**, and fresh stage-0 CLI all passed. Current reference compiler is `work/r10pre/combined-preflight3/s0/ashes`. Both implementation agents are idle and available for actual native failures. Next reader is `work/r10pre/backend-native4/` (expanded backend suite, normal and poisoned children), followed by fresh native semantics. This order exposes server-runtime failures while the semantic rebuild runs. The normal/no-reuse semantic gate, current Socket/shutdown/multiworker execution, round-10 bootstrap/behavior and final-source typed counters remain pending.
+
+
+## Round 10 helper correctness follow-up, 2026-11-21
+
+**Responsibilities and next load.** HTTP replay finished and failed the correctness gate in both modes; evidence is below. `tmc_repair` owns the coroutine repair in `r10-http-native-fix` / `fix/r10-http-native-fix`, from `e34a4193`, with a 40-minute implementation budget from 07:00 local. `lowering_evidence` handed back the captured generic-add repair, integrated and pushed as `64161655` → `95950d96` and `af1d7fe5` → `9be3b8bf`; its branch is also pushed. Raw lowering now retains declaration-only arithmetic schemes and the checked CLI forwards them. The agent's source check caught a CLI signature mismatch corrected by the second commit; final source confirmation and native proof are pending. Main next runs combined preflight and fresh semantics, then combines the HTTP repair into the next backend validation. Rerun progress-enabled measurements on the resulting source. Scripts are `r10-fixture-candidates/work/{combined-preflight,named-native-checks,named-backend-checks,typed-measurement-checks,http-native-replay}.sh`. Inspect actual failed rows; wrappers can finish successfully despite failed cases. Run the shared bootstrap only after the non-leak gate below clears. `17d8825a` confirms the language and regression intentionally reject `state.supply.nextId`. [Earlier checkpoints and step-7/8 audit](SELF_HOSTING_LOG.md#round-10-checkpoints-2026-11-21)
+
+**Actual HTTP replay failed.** `work/r10pre/http-native5-trace/results.tsv`: normal completed three 120-request rounds but logged **40 connected retries** and failed trace checks; poison timed out in its first round, exit 1, with **2 connected retries**. Both runs are finished. Trace inspection found accepted descriptors left unread while the reactor instead read/closed descriptor 0 (including EBADF). The current hypothesis is missing transparent local recursive coroutine-helper lowering: stage 0 preserves awaits as task factories/backedges, whereas stage 1 lowers those helpers as ordinary lambdas with coroutine context reset. This is a non-leak blocker, not an accepted HTTP result. Preserve the original server and client. Reference IR is `r10-http-worker-count/work/server-fixed.ir`; fresh stage-1 IR and a focused regression are requested. Earlier paragraphs describing replay as upcoming are historical checkpoints.
+
+**Active readers and workers.** Combined preflight 4 passed on frozen `a2ea6525`: explicit inference **10,201 items / 187 modules**, solution build, format verification, **3/3 snapshots**, and fresh stage 0 at `work/r10pre/combined-preflight4/s0/ashes`. Fresh named native semantics is next at `work/r10pre/named-native5/`. `lowering_evidence` has a new 30-minute instrumentation-only assignment in `r10-typed-gate-evidence` / `fix/r10-typed-gate-evidence` from that head: expose actionable residual goals and exact replay traversal evidence, preserving the existing TSV and timing windows. This prepares the later typed-lowering gate; it does not enable steps 7/8 early. `tmc_repair` continues the HTTP coroutine repair. Main owns all load work.
+**New helper reference defect.** During the HTTP helper port, a focused stage-0 control rejected partial/first-class uses of a suspending local helper: its physical `Task<Str,Int>` leaked into arithmetic and produced ASH002, whereas a direct call exposed the logical `Int`. The worker is isolating the exact source and has authorization to fix both compilers under the existing transparent-helper contract, with 15 extra minutes if needed. This is a new non-leak gate item; neither the reference rejection nor the unvalidated stage-1 adapter counts as acceptance. Preserve the original reproduction and record its path/hash in the handback.
+
+**Ready batches while native semantics 5 reads integration.** `8b504b03` on `fix/r10-http-native-fix` ports transparent recursive coroutine helpers and adds direct/partial/higher-order controls expecting `62`, plus an IR assertion against nested `RunTask`. The worker continues its C# counterpart. `acdcad8e` on `fix/r10-typed-gate-evidence` adds opt-in `--goal-details`, exact discovery/retained-discovery/replay traversal counts and per-traversal body re-lowerings on stderr; the 19-column TSV is unchanged. Both branches are pushed. Each worker used its one source check, corrected the diagnostic it exposed, and requires final confirmation by main. The next combined preflight checks both the CLI project and the measurement project. Integrate between readers, then run fresh native controls and HTTP replay before acceptance.
+
+**Latest integration and next reader.** With native 5 finished, both batches are integrated and pushed: `8b504b03` → `d3933006`, `acdcad8e` → `9432264a`. Main next runs `work/r10pre/combined-preflight5/`, including the measurement-project source check, and preserves generated harness source with each future output. C# indirect-helper repair and owned/borrowed values across helper suspension/backedges remain with `tmc_repair`; the measurement worker is idle. The HTTP gate is still open. The prepared phased runner is `r10-fixture-candidates/work/round10-bootstrap.sh`; it requires a matching `nonleak-gate.commit` and has not run. It checks exit status before using stage artifacts and allows swap for stage 3.
+
+**C# handback and helper hardening assignment.** `676b1902` on the pushed `fix/r10-http-native-fix` repairs the C# callable adapter and preconstraint: its fresh single-project CLI built with zero warnings/errors and the unchanged mixed helper program printed exactly `62`, exit 0. Main integration is pending the active reader. `lowering_evidence` now owns a 35-minute batch in `r10-helper-lifetime` / `fix/r10-helper-lifetime`, based on `4765f991`: preserve RC-owned/borrowed backedge arguments, avoid forced captures of unused parameters, keep synthesized task nodes separate from original typed identities, and prove Socket transfer/cancellation cleanup. `tmc_repair` transferred the scope with no uncommitted Ash edits. Blocking lifetime defects are in scope; conservative leak-only growth must be recorded. Preflight 5's CLI inference explicitly passed **10,235 items / 188 modules**; the measurement project check and remaining phases are running.
+
+**Current shared load and assignments.** Preflight 5 completed successfully. C# repair `676b1902` → `7ec6bfd8` is integrated and pushed; main next runs the full stage-0 build/format/C#/LSP/e2e batch in `work/r10pre/helper-shared/`. Helper provenance commit `35f97da2` is pushed on `fix/r10-helper-lifetime`; its worker continues lifetime/capture controls before handback. `tmc_repair` has a 20-minute follow-up in `r10-helper-signatures` / `fix/r10-helper-signatures` from `7ec6bfd8`, covering declared results, deliberately Task-returning helpers, and lexical shadowing/aliases without changing the peer's helper implementation. Integrate their ready batches between readers before the next native backend/replay round.
+
+The signature follow-up immediately reproduced another non-leak defect before that shared load started: a suspending helper annotated `Int -> Int` is rejected at its binding because the physical factory returns `Task<Str,Int>`. The worker is fixing the physical annotation while preserving the declared source type; its unchanged combined annotation/shadow/explicit-task/alias control expects `43`. Main will include this correction in the next full reference batch rather than run that batch on the known-broken head. Stage-1 annotation preservation is coordinated with the lifetime worker.
+
+**Combined helper batch now frozen for full reference validation.** Integrated/pushed: source identity `35f97da2` → `5af15ace`; stage-1 annotation `cd05d681` → `969e765c`; borrowed/owned successor retention and unused-capture correction `63c76637` → `42d505e5`; C# annotation `665db39e` → `1656570c`; raw/typed signature assertions `89c610df` → `f195681a`; negative declared-result control `ec6e12e9` → `9ab8a9c8`. All agent branches are pushed. Corrected stage 0 prints `43` for the original combined signature control and `2=1=seed` for the owned-string/borrowed-record backedge control under poison; the negative control reports source-level `Bool vs Int`, proving checks remain active. Main runs `work/r10pre/helper-shared/` now. `tmc_repair` is idle; `lowering_evidence` continues Socket transfer/cancellation controls and its final source check. Fresh native proof of these helper slices is pending.
+
+**Reference results and next ready controls.** On frozen `a29f4fbb`, build/format passed; C# finished **3,075 passed / 5 failed / 2 skipped**, with exactly the five known RSS cases, and LSP passed **88/88**. Fresh reference compiler is `work/r10pre/helper-shared/s0/ashes`; e2e is running. `3aea7458` is pushed on the helper-lifetime branch: confined saturated helpers borrow their parent-owned Socket, with explicit-close/reused-descriptor and timed-cancellation controls passing stage-0 poison (`true`, `true`). Native proof is pending. Its source check is running; a final unused-parameter scheme correction is also being prepared so removing a runtime capture does not admit an incorrectly typed backedge. Dependency-only `6a1913c5` repeats integrated `89c610df`; do not cherry-pick it again. `tmc_repair` has a 10-minute test-artifact task in `r10-http-ir-capture` / `fix/r10-http-ir-capture`, from `a29f4fbb`, retaining exact pre-optimizer HTTP IR without a second lowering pass. The new coordinator `http-reference-checks.sh` compiles the unchanged reference server and uses the replay runner's explicit `stage0` producer mode; run it after the full suite releases port 43129.
+
+HTTP IR artifact task handed back **`5652ed1a`**, pushed, not yet integrated: the original compile-only group writes `selfhost_backend_concurrent_http_server.lowered.ir` from exactly the IR passed to optimization, with no repeated lowering. Formatting and diff checks pass; the worker is idle. The lifetime branch source preflight completed explicitly **10,245 items / 188 modules** at `3aea7458`; the final unused-slot scheme correction still needs main's final combined source confirmation.
+
+**Full reference batch exposed three non-leak regressions.** `work/r10pre/helper-shared/` finished at `a29f4fbb`: build/format passed, C# **3,075 passed / 5 known RSS failed / 2 skipped**, LSP **88/88**, e2e **1,311 passed / 3 failed / 80 skipped**. `async_loop_accumulator.ash`, `awaiting_helper_keeps_owned_backedge_values.ash`, and `recursive_awaiting_helper_remains_callable.ash` reject unannotated helper results as physical `Task<Str,T>`; the annotated `43` fixture passes. This supersedes the earlier partial e2e observations. `tmc_repair` owns a 30-minute correction in `r10-helper-inferred-result` / `fix/r10-helper-inferred-result`, from `bc48802f`. The identified mismatch is physical helper schemes written into source inference hints and wrapped a second time on the next pass. Stage 1 has no equivalent physical-hint writer; its annotation conversion only applies to explicit annotations, but fresh native checks are still required.
+
+The completed lifetime and IR batches are integrated/pushed: Socket confinement `3aea7458` → `6ea9ba67`, unused-formal backedge typing `91fbdf8f` → `73a7082a`, HTTP IR capture `5652ed1a` → `bc48802f`. The final unused-formal correction retains type checking without a runtime capture and has a raw negative control. Main next runs CLI plus measurement source preflight in `work/r10pre/helper-source6/` via `r10-fixture-candidates/work/source-preflight.sh`, then incorporates the C# metadata correction for the next shared load. `lowering_evidence` handed back and is idle. The bootstrap gate remains closed.
+
+
+**Integrated native repair batch.** Logical-not replay now preserves consumed proof positions (`a0a66ff1`); constrained planning recognizes stitched Show/Hash (`e72af846`) and retains written arithmetic requirements (`c2e1c50b`). External-resource tests use their real declared signatures (`aebb362c`). The original failing programs and assertions remain unchanged. Fresh native groups must confirm these repairs, including the previously masked arithmetic fixture.
+
+**Integrated server runtime.** The first Socket execution failure exposed missing timeout emission, fork-worker scheduling and graceful shutdown. Setter/state, signal installation, worker dispatch, parent-death handling, supervisor stop, accept draining, child reaping and spawned-root accounting are integrated through `2e08d59f`, with backend registrations and cap tests through `c47aa238`. The two new shutdown programs pass stage 0; current stage-1 children remain unverified. Native 4 includes worker-index/reap, first/second stop signal, automatic worker override, timeout setting, both drain fixtures and the unchanged Socket close/cancel programs. The one-worker override is tested at the backend instruction level: the analogous effectful public `withWorkers` body correctly rejects NetListen with ASH018.
+
+Native 4 exposed a source-lowering operand swap: `forkWorkers(0)(2)` selected automatic worker count, producing 31 forks on this 32-CPU host. `da9917c2` → `9323b713` preserves port/count order and fixes the semantic assertion that had encoded the same reversal. `21c3c3ca` → `00072197` recognizes direct `Stop.stop` without a handler/provider table and shares its operation path with explicit `perform`; both check the Unit argument and use a fresh result target. Existing integer-zero misuse remains a negative control, and both shutdown source programs are unchanged. Worktrees `r10-server-worker-fix` and `r10-stop-binding` contain the evidence and exact pending native checks in `work/PROGRESS.md`.
+
+**Current reader and next backend controls.** Native semantics 4 reads frozen `586512f7`; its source preflight explicitly passed **10,190 items / 187 modules** before the harness build. Two test-only handbacks are pending integration afterward. `5ce8e443` on `fix/r10-http-native-control` adds a clearly compile-only group for the original three-reactor HTTP server at port 43129, retaining `selfhost_backend_concurrent_http_server`. The fixture is byte-identical to the expanded C# source (SHA256 `c63101eedc93656902cb53586d877398c1d13d0987f46f432b4cc0fb41ea77ec`); main must run the existing 120-request/repeated HTTP client in normal and poison modes. `00b73779` on `fix/r10-bootstrap-runtime-controls` adds actual child execution for five previously unregistered witnesses: generic captured top-level addition, generic trait goals settled at binding, later-sibling result beside a fresh tuple arm, declared arithmetic partials, and recursive Show dictionaries. Their original files/directives are unchanged, and checks require exact output through EOF plus exit 0. Both worktrees' progress files name the cases, retained artifacts and main-owned commands. Both agents are idle; runtime verification remains pending.
+
+**Latest semantic result and integrated repair.** Native 4 failed only `runCoreOrderedInferenceTests` at `forwarded_partial_runs_callee_prefix_before_next_binding.ash:14:36` (`partial`, Int versus Bool). Tail-forwarding helpers now consult the lexically resolved callee's scheme (`0f8825bd` → `4c715545`). The subsequently exposed ambient `Describe` requirement in `partial_uses_ambient_evidence_during_binding_evaluation.ash` now participates in the enclosing dictionary plan (`fdfe00d7` → `4a85f4ce`). Combined source inference passed **10,194 items / 187 modules**. Correcting both decisions in the historical debugger run let the whole ordered group finish; this is not fresh-native proof. Exact unchanged-program controls are integrated as `54d8bcd5` → `07c321bf`, expecting `entered|bound|v=42 v=true` and `7|7 true`. Native verification remains pending. The older `backend-native5` build was stopped before execution when this complete batch became ready; its `STOPPED.txt` preserves that cancellation, not a compiler failure. For HTTP replay require zero logged retries after a successful connection as well as 120/120 responses; transport exceptions can otherwise be retried by the client.
+
+**Backend 5 follow-up:** both exact partial-prefix programs now pass natively in normal and poison modes. Of the five prior bootstrap witnesses, only `generic_add_binding_reading_top_level_value_used_at_int_and_float.ash` fails: `triple` argument 1, line 11:75/span 256–267, Int versus Float during lowering. The other four pass through exact output/EOF and exit checks. The unchanged generic-add program remains a non-leak gate item and is assigned a 30-minute implementation batch from 06:57 local. HTTP compile-only success is separate: the upcoming replay requires all 120 responses plus warmup, two actual forked children per supervisor, no connected retries and no server EBADF. All runtime artifacts and the active generated harness source are preserved.
+
+**Measurement status.** `work/r10pre/typed-measurement1/` built the standalone tool in 5.02 minutes at `75fb346f`. Its legacy run was stopped incomplete after 16:07.81 to validate the ready correctness batch; no counter row exists and typed mode never ran. `STOPPED.txt` and `legacy.time` preserve this result. The progress-enabled tool is integrated as `956d4252`; its stderr markers leave the 19-column TSV and timing intervals unchanged. Rebuild and measure both modes on the resulting frozen source before claiming the step-7/8 counter gate. The API reports replay occurrence, not an exact traversal count.
+
+The commit mappings, debugger evidence, prior active assignments and chronological checkpoints are preserved verbatim in the log. [Native runtime follow-up](SELF_HOSTING_LOG.md#round-10-native-runtime-follow-up-2026-11-21)
+
+
+## Round-10 split-driver and Seed validation checkpoints (2026-11-21)
+
+The following checkpoints are preserved verbatim. Their chronological active-job statements are historical; use the current round section in SELF_HOSTING.md for the latest state.
+
+
+**Parallel validation, 2026-11-21.** The user requested overlapping independent work instead of serializing the entire queue. At frozen integration `db54fdb9`, the coordinator is running the preserved input in `work/r10pre/shared-native3-exact/` alongside the expanded no-reuse input in `work/r10pre/shared-native4-no-reuse/`. Both combined-source inference preflights passed explicitly; native build results remain pending. Each build has a 24 GiB cap, no swap, and a timeout. The first uses the coordinator slot; the second is coordinator-owned work admitted through the existing auxiliary slot script. Keep at most two such load jobs, check available memory before admission, and do not add worker compile/inference jobs while both occupy the memory budget. Workers may implement independently.
+
+The auxiliary `shared-native-build-only.sh` stops after producing the driver. `shared-native-run.sh` then runs its cases without rebuilding, requiring the recorded source commit and a clean tree. Serialize the two backend runtime suites where their network fixtures may share ports. Start `original-backedge-check.sh` in the freed slot while the other job continues: its compiler-host check has no network dependency. Integration remains frozen until all source readers finish. This checkpoint is committed separately while the integration worktree is being read; integrate it between runs.
+
+At 10:44:47, shared native 3 reached its individual 24 GiB cap and the kernel killed its scope (`oom-kill`, 11m31s, wrapper exit 143). No binary or native acceptance resulted. This was not machine-wide memory exhaustion: 54 GiB was available after it stopped. Preserve the exact input and do not retry without a cap. The no-reuse build continues; the coordinator started the independent historical host check in `work/r10pre/original-backedge2/` in the freed slot. Worker `tmc_repair` is investigating the memory growth in `r10-shared-memory` / `fix/r10-shared-memory` from `db54fdb9`, with static work only while the two main jobs occupy the memory budget; request is to distinguish the larger combined input from a compiler regression and propose the smallest diagnostic without weakening acceptance.
+
+The second worker, `lowering_evidence`, is preparing the next table-driven lowering slice in `r10-typed-lowering-next` / `fix/r10-typed-lowering-next` from `db54fdb9`. Work must stay behind the existing typed path, preserve flag-off behavior and generic evidence identity, and replace actual discovery or repeated lowering rather than suppress counters. It is separate from the frozen validation input and will be assessed against measured counters and lifetime checks. Static implementation only while the two main jobs occupy the memory budget; formatting and its one allowed source check await admission. If a sound change needs missing measurements, the worker must identify those instead of guessing.
+
+Memory investigation handed back `BATCH READY` with no compiler changes: see `r10-shared-memory/work/PROGRESS.md`. Shared native 3 combines 101 local modules (1,897,996 source bytes), versus backend native 8's three (510,756 bytes); this alone does not predict peak memory or prove a compiler defect. Earlier separate backend, semantics/parity and measurement drivers peaked at 19,373,372, 20,155,344 and 13,922,064 KiB. Existing `ASHES_TIMING=1` brackets completed phases, so no new instrumentation is needed. The coordinator prepared `split-native-build.sh` and `split-native-run.sh` under `r10-fixture-candidates/work/`: fresh project/output paths, exact copies from the preserved expanded snapshot, only a smaller entry-point dispatcher, and byte comparisons for every copied module and manifest. Backend coverage remains 234 cases, semantics 96 groups, parity 95 fixtures; the unchanged standalone measurement project remains required separately. Both build modes and normal/poison backend children remain required. The failed combined input is retained as evidence, not treated as a pass.
+
+Shared native 4 no-reuse also reached its individual 24 GiB cap at 10:54:41 (11m58s, kernel `oom-kill`, wrapper exit 143); no binary resulted. A bounded gdb attachment was refused by the host ptrace policy, so no stack was obtained and no system setting was changed. Stop building the all-in-one harness; use the split drivers with timing. Historical host 2 remains live. The typed-lowering worker was admitted to formatting (8 GiB) and one CLI inference check (12 GiB through the auxiliary slot) while that is the only main build, then releases the slot for the next split build. Its current patch replaces repeated source-copy call inference with checked recorded instantiations where sufficiently concrete and pure; native correctness and shortcut-use evidence remain pending.
+
+Historical host 2 ended at 10:58:07: build exit 1 after 12:40.15, peak 9,097,852 KiB. Its old `Main.ash` lacks the direct `CoreLowering.Model` import required for `CoreLoweringResult` (two ASH048 diagnostics), followed by many ASH010 diagnostics and `Add(Never)` / `Subtract(Never)` ASH036. Do not count the follow-on diagnostics as independent root causes without checking the valid harness. Worker `imports_diagnostics` is preparing an import-only correction and auditing possible cascades in `r10-historical-host-imports` / `fix/r10-historical-host-imports`; original bodies and prechecks must remain unchanged. The typed worker formatted seven files at 4 GiB and committed/pushed `36d8dbe1`; it is now admitted to its single 12 GiB CLI preflight alongside the split backend build. Coordinator `measurement-build.sh` / `measurement-run.sh` also separate measurement compilation from each run; legacy and typed counters can use independent outputs, with concurrent timings explicitly not treated as an isolated speed comparison.
+
+Both workers handed back. Typed batch `36d8dbe1` passed its one CLI source inference with explicit `ok`, **10,265 items / 188 modules**; native proof is pending. The host correction adds only `import AshesCompiler.Semantics.CoreLowering.Model.CoreLoweringResult`; removing that line restores the archived file byte-for-byte, and formatting preserves the corrected bytes. The coordinator prepared `original-backedge-check-imports.sh` with this identity check and phase timing. Static audit found that any discovery diagnostic skips transfer of inferred evidence, plausibly explaining the host's 83 ASH010 and two ASH036 follow-ons; the corrected build must confirm it. No compiler patch was justified by this invalid-input log. `split-measurement` is now building alongside `split-backend-normal`, with the corrected host retry and split semantics/parity next.
+
+**Fresh native result and active fixes.** Split backend normal built at `db54fdb9` in **8:25.57**, peak **19,310,292 KiB**, with all 234 case registrations preserved. Its runtime starts the 14 additions before the old cases, without omitting or repeating any case. At 11:05, normal mode found `testOriginalTmcAccumulators` failing with `UnknownLoweringBinding("Names.collect")`, and both raw/numbered mixed-method groups failing in unchanged `awaiting_report_keeps_typed_show_dictionaries.ash:24:42` with `SemInt` versus `SemBool` at argument 1 of `job`. The annotation-loop leak also remains; other completed original ownership/evidence witnesses passed. Full normal/poison totals are pending. Worker `tmc_repair` owns the TMC resolution failure in `r10-original-tmc-resolution`; `lowering_evidence` owns the async mixed-dictionary failure in `r10-async-mixed-dictionaries`, both `fix/*` branches from `db54fdb9`, both pushed. The optimization branch stays separate. They implement statically while two 24 GiB builds and one 4 GiB backend runtime job run (52 GiB maximum for those jobs, leaving workstation headroom). No worker compilation or source inference is admitted in that interval. Integration remains frozen.
+
+**Batch integrated after those readers finished.** Final backend totals are 230 passed / 4 failed in each normal/poison mode, with exactly the failure set above. The original C# 50-round fixture explicitly models already-stitched input (`BuildQualifiedCalleeFreshListArgumentProgram`); the new test adapter resolves its one `Names.collect` reference to its existing `Names_collect` definition through the normal reference rewriter. Public module/import controls and the archived source bytes remain unchanged. Async planning lacked the intrinsic `async` scheme and queried Task using the standalone nominal identity instead of Core's layout identity; the paired internal correction preserves the standalone identity and has new scheme/await assertions. Its CLI source check passed **10,259 items / 188 modules**. Native confirmation remains required. The worker is separately verifying whether current stage 0 accepts the flattened spelling as public source; an older successful CLI log is not sufficient current evidence.
+
+`original-backedge3` passed build and all three compiler-host prechecks plus the original lowering run: build **5:32.98**, peak **14,197,820 KiB**, host exit 0 and 1,597 IR lines. Adding the missing import removed all 87 earlier diagnostics. `split-measurement` built in **5:28.16**, peak **13,958,208 KiB**. Legacy and typed counter runs use `r10-measurement-baseline` / `fix/r10-measurement-baseline` at `db54fdb9`; outputs are `work/legacy/` and `work/typed/` there. Each has a 12 GiB cap and timeout; both source inputs are frozen independently of integration. Concurrent wall times cannot establish an isolated speedup. The main checkpoint commits and both correction branches are pushed; typed optimization `36d8dbe1` is still separate.
+
+**Public qualified-name follow-up.** The current `method-reference/s0/ashes` accepts a small public program declaring only `Names_collect` and calling `Names.collect` (422 ms compile), so this is a verified stage-0 import-boundary defect, distinct from the valid internal fixture convention. Worker `tmc_repair` continues on `fix/r10-original-tmc-resolution` with a separate compiler fix and public negative/real-module positive controls; stage 1 already failed the unmatched name, and its public rejection/diagnostic parity must be preserved. The language's explicit-import rule settles the intended public behavior. No new compiler commit yet. Main prepared `async-native-input` at `1ceb60c9` and runs its combined source preflight; this only renders/checks the harness, never attempts the oversized native combined build. Subsequent builds use the split scripts. The two frozen measurement runs remain active and independent of integration changes.
+
+`async-native-input` passed explicit `ok`, **12,737 items / 283 modules**, and `split-backend-async` is now building from that exact input at `1ceb60c9`. C# fix `d1252a5d` is committed and pushed on `fix/r10-original-tmc-resolution`, separate from the integrated harness correction. It permits flattened references only at the explicit internal lowering boundary; public CLI, REPL, LSP and TestRunner use actual visible exports. Its 4 GiB Release CLI build, focused rejection, genuine module/selector output `21`, and scoped formatting passed. Current stage-1 wording for the new negative is being audited; full reference suites and native parity remain pending. Do not integrate while the backend retry reads integration. The prior annotation-loop children were rerun from `split-backend-normal/annotation-check2/`: normal and poison both exit 0, print 12/36 and report live 14/40, confirming the deferred failure remains leak-only. `annotation-check/` records a failed shell wrapper attempt (127), not a compiler/program failure. Future historical-host wrappers compare copied prechecks with the archived originals, so newly added current-suite assertions do not replace or invalidate the exact historical inputs.
+
+**Latest results, 11:38.** `split-backend-async` built and completed **231/234** in each normal/poison mode. The original TMC witness and async fixture now pass. The two mixed-dictionary groups advance to their fourth fixture, `local_eager_seed_uses_evidence_of_its_enclosing_function.ash`, and reject `check(True)` at 30:1 with `SemInt` versus `SemBool`; the fifth custom-method fixture is not reached. The only other failure is the known annotation leak. Worker `lowering_evidence` implements the Seed fix in `r10-enclosing-seed-native` / `fix/r10-enclosing-seed-native` from `1ceb60c9`, with strict concrete-or-enclosing evidence semantics preserved. Its batch will register the five fixtures as separate raw/numbered cases so one failure no longer masks later cases; no witness bytes or outputs change.
+
+Public lookup follow-ups `adbe3bce` (real alias/private member regression) and `82052af0` (value-selector qualifier/sibling isolation) are pushed with `d1252a5d`. Normal stage-1 CLI diagnostics were traced to the same `Unknown module 'Names'.` wording; stage-1 value selectors already create only the selected binding, while type selectors import the module whole as the reference specifies. Main's full reference run is frozen at `82052af0` in `r10-original-tmc-resolution/work/reference/`: build/format pass, C# **3,073 passed / 9 failed / 2 skipped**, LSP **88/88**, E2E still running. Five C# failures are known RSS leaks; the other four all failed to load `libedit.so.2` because the worker had linked only `libLLVM.so`. A coordinator rerun of the entire affected FFI class with `LD_LIBRARY_PATH` set to integration's complete LLVM 23 runtime directory passed **6/6**, including all four failures, in `work/reference-ffi-dependencies/`; no compiler or test source changed. Complete the worker's runtime dependency links after its active run before future builds. C# public fixes are not yet integrated; the Seed fix is the only known compiler bug still being implemented, with fresh semantics/parity/no-reuse and remaining current-head validation still pending.
+
+| Completed check | Result |
+| --- | --- |
+| Public-name reference, `82052af0` | `r10-original-tmc-resolution/work/reference/`: build/format passed, C# **3,073 passed / 9 failed / 2 skipped**; four failures were missing `libedit.so.2` and passed the dependency-corrected **6/6** FFI rerun, leaving only the five known RSS leaks. LSP **88/88**, e2e **1,325 passed / 0 failed / 81 skipped**. Fresh CLI is `work/reference/s0/ashes` in that worktree. |
+| Final trait reference, `b5551092` | `work/r10pre/method-reference/`: build/format passed, C# **3,075 passed / 5 known RSS failures / 2 skipped**, LSP **88/88**, e2e **1,323 passed / 0 failed / 80 skipped** in 5.67 minutes. The prior eager-Seed and hover failures are resolved. Fresh reference CLI: `s0/ashes`. |
+| Paired source preflight, `0f1c4da1` | `work/r10pre/method-source1/`: CLI **10,258 items / 188 modules**, measurement **7,929 items / 137 modules**, both explicit `ok`, exit 0. This is source consistency, not native acceptance. |
+| Full stage-0 reference, `cbbbc830` | Build and format passed. C# 3,075 passed, five known RSS failures, two skipped. LSP 88/88. E2e 1,319 passed, zero failed, 80 skipped. Logs and compiler under `work/r10pre/dictionary-shared/`, binary `s0/ashes`. |
+| Broad native 5, `1a0b4944` | 96/96 named semantics groups passed. 32 of 95 IR fixtures differed, byte-identical to the previously audited dumps. Eight ownership programs passed plain and poison child checks. Logs under `work/r10pre/named-native5/`. |
+| Backend native 8 exact, `9f336cd1` | 219/220 in each of normal and poison modes. Only the annotation-loop leak failed. Original concurrent HTTP replay passed 720 requests plus warmups, zero connected retries and no EBADF. See `work/r10pre/backend-native8-exact/` and `work/r10pre/http-native8-trace/`. |
+| Shared native attempts | Shared native 1 failed on a missing `Unification` import, fixed by `4861a03b`. Shared native 2 at `ddea44de` stopped in measurement `reportSites` with ASH010/ASH002. Neither attempt produced a binary. Input `work/shared-native.gAD7wCpf/` and logs `work/r10pre/shared-native{1,2}/` are preserved. |
+| REST reference and historical host | Offline stage-0 REST mock passed all 12 assertions in `work/r10pre/rest-mock-reference/`. The historical backedge host build was cancelled (143) before validation. The focused association-list guest passed separately. |
+
+**Integrated batch, 11:52.** Public-name commits `d1252a5d`, `adbe3bce`, `82052af0` are integrated as `1194c512`, `c2f52225`, `3d29ea5c`; each was pushed. The completed reference above validates the unchanged C# source in integration. Stage 1 already enforces these import boundaries, with fresh behavioral diagnostic checks still required. Seed commits `5a311429`, `6a4f39d2` are integrated as `b5332c2e`, `37777548` and pushed. Their CLI source inference passed **10,261 items / 188 modules**. The repair preserves strict ambiguous eager-binding rejection while allowing a dictionary supplied by the enclosing polymorphic function. All workers are handed back; no worker load is active. See `r10-enclosing-seed-native/work/PROGRESS.md` for the ten raw/numbered case names and expected outputs. Native proof is pending.
+
+**Seed native verification started.** Frozen integration is `39e79d7f`. `work/r10pre/seed-native-input/` passed explicit source inference, **12,747 items / 283 modules**, and preserves **242 backend cases, 96 semantics groups and 95 IR fixtures**. The coordinator started `work/r10pre/split-backend-seed/` with the corrected public-name reference compiler from `r10-original-tmc-resolution/work/reference/s0/ashes`; its missing runtime dependencies were linked before admission. Build cap 24 GiB, no swap, auxiliary slot, 5,400-second compiler timeout. Legacy/typed measurements still read only the separate frozen baseline. Integration must remain unchanged while the native job reads it; checkpoint updates go to `fix/r10-parallel-validation`, then fast-forward integration between readers. The user asked whether Seed allows round 10 now: its source check is not native proof, so complete this failing witness and the outstanding semantics/IR/no-reuse checks before declaring the non-leak gate clear. Start round 10 without another approval once that gate is satisfied.
+
+**Inference-cost diagnostics prepared in parallel.** The baseline legacy/typed runs remained in inference after 45 minutes, around 960 MiB RSS each; neither has counters yet. They retain their original 3,600-second bounds. `imports_diagnostics` is preparing minimal progress instrumentation in `r10-inference-progress-diag` / `fix/r10-inference-progress-diag` from `39e79d7f`, with a 3,000-token budget and formatting only under 4 GiB. No worker build or inference is admitted. This is a separate diagnostic branch, not a solver change or intended integration. Before using it, prefer the controlled optimized/unpoisoned same-source comparison described in `r10-measurement-inference-cost/work/PROGRESS.md`: the old 65-second checker predates recursive evidence analysis, so it cannot isolate a current-source regression from debug/poison overhead. If the optimized run still stalls, sparse unit/group progress should identify where. Do not cap the production solver or drop evidence to force convergence.
+
+The diagnostic worker handed back `4c1d782a`, now pushed: identification-complete, per-unit ordinal/package/leading declaration, and power-of-two recursive evidence pass markers with prior summary/direct-use counts. Formatting and static checks passed; compilation/execution are unverified. The patch also applies cleanly to `db54fdb9` for a matched diagnostic comparison. Exact commands and overhead caveats are in `r10-inference-progress-diag/work/PROGRESS.md`. Main prepared `r10-fixture-candidates/work/measurement-optimized-build.sh` (shell syntax checked) for the uninstrumented controlled build: frozen `db54fdb9`, identical stage-0 executable and assembly hashes, `-O2`, no debug/poison/leakcheck, 24 GiB/5,400 seconds. Run through a heavy slot, then use `measurement-run.sh` with `ASHES_CHECKOUT` set to the frozen baseline and a fresh output directory. No worker is active after this handback.
+
+**First Seed native proof, 12:03.** `split-backend-seed` built successfully in **8:49.29**, peak **19,103,672 KiB**, at frozen `39e79d7f`. All ten separate trait controls passed in normal mode, including raw/numbered enclosing Seed (`Int|true Bool|true`) and custom method (`tag:tag:int|tag:tag:bool`), the latter previously masked by the Seed failure. Full 242-case normal/poison execution is running. `work/r10pre/split-semantics-seed/` is building the same preserved input's 96 semantic groups and 95 IR fixtures concurrently, 24 GiB/no swap through an auxiliary slot. No-reuse builds remain next. Main confirmed `git diff 82052af0 39e79d7f -- src` is empty, so the completed public-name C# reference validates the exact integrated C# source without another identical full run. Prioritize correctness validation over the optional optimized measurement comparison.
+
+**Backend completion, 12:08.** `split-backend-seed` finished **241/242 normal and 241/242 poison**; the sole failure is `testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree`. Fresh child reruns in `annotation-check/results.tsv` confirm exit 0, stdout 12/36 and live cells 14/40 in both modes, the same deferred leak. All non-leak backend cases pass, including the previously masked custom-method pair. `annotation-leak-check.sh` in the coordinator script directory preserves this verification. The latest weekly quota snapshot is **95% used at 11:07:38 UTC**; the 97% stop threshold still applies. Semantics/parity build is active; no-reuse checks are next when the frozen measurements release their slots.
+
+**Measurement bounds reached, 12:09.** Both frozen `db54fdb9` debug/poison measurements ended at their original one-hour bound: inner exit **124**, wrapper exit 1, zero TSV rows, stderr ends at `inference start`. Both process handles are terminal and PIDs are gone. This is unresolved inference cost, not proof of an infinite loop or successful counters; the optimized same-source comparison and prepared diagnostic markers remain available. Main immediately started `work/r10pre/split-backend-seed-no-reuse/` through the coordinator slot, 24 GiB/no swap, alongside the existing normal semantics build. Start the no-reuse semantics build when normal semantics releases its build slot. Keep integration frozen at `39e79d7f` until those source readers and their runtime checks finish.
+
+Coordinator scripts are in `r10-fixture-candidates/work/`. On the integrated batch, use `shared-native-prepare.sh` only to render and source-check the full input, then `split-native-build.sh` / `split-native-run.sh` for backend and semantics/parity, including no-reuse. Do not retry the oversized combined native build. Preserve every case and the older dumps. The import-corrected historical host already passed in `original-backedge3`; its repeatable wrapper is `original-backedge-check-imports.sh`. Use `original-cli-checks.sh` against fresh S1 and S2 for real REST compilation, offline mock stdout and module alias/selector results. Read `r10-original-witness-audit/work/PROGRESS.md` for the per-program matrix.
+
+The earlier source preflight at `6876180e` covered 10,248 compiler items in 188 modules and 7,919 measurement items in 137 modules. Use `source-preflight.sh` on the paired source. Run `shared-measurements.sh` on the current build for both legacy and typed counters. The old legacy measurement produced no TSV row and typed mode never ran. Main's `round10-bootstrap.sh` requires a matching `nonleak-gate.commit`. Stage 3 needs swap allowed in the parent scope. The fresh CLI and lifetime checks and S2/S3 byte comparison remain pending.
+
+
+## Round-10 bootstrap55 and quota pause checkpoints (2026-11-21)
+
+The following checkpoints are preserved verbatim. Their chronological active-job statements are historical; use the current round section in SELF_HOSTING.md for the latest state.
+
+
+**Validated source: `39e79d7f`; bootstrap head: `78325617`.** Their only differences are documentation, verified before writing the gate certificate. Integration is clean and pushed. While jobs read it, newer handoff commits are pushed on `fix/r10-parallel-validation`; fast-forward integration between readers only when the round scripts' recorded source head permits it. All implementation workers are handed back. [Verbatim preceding checkpoints](SELF_HOSTING_LOG.md#round-10-split-driver-and-seed-validation-checkpoints-2026-11-21)
+
+| Check | Current evidence |
+| --- | --- |
+| Stage-0 public-name reference, `82052af0` | `r10-original-tmc-resolution/work/reference/`: solution build/format pass; C# 3,073 pass / 9 fail / 2 skip, of which four missing-`libedit.so.2` failures pass the corrected 6/6 FFI-class rerun; only five known RSS leaks remain. LSP 88/88; e2e 1,325 pass / 0 fail / 81 skip. `git diff 82052af0 39e79d7f -- src` is empty. Fresh compiler: that worktree's `work/reference/s0/ashes`; full runtime dependencies are now linked. |
+| Current source preflight | `work/r10pre/seed-native-input/`: explicit `ok`, 12,747 items / 283 modules. Preserved inputs contain 242 backend cases, 96 semantics groups and 95 IR fixtures. |
+| Current native backend | `work/r10pre/split-backend-seed/`: build 8:49.29, peak 19,103,672 KiB; **241/242 normal and 241/242 poison**. Every non-leak case passes, including raw/numbered recursive Show, async Show, result-directed Seed, enclosing eager Seed, custom method, original TMC and ownership controls. Only the annotation-loop leak fails. Fresh `annotation-check/results.tsv` confirms exit 0, correct 12/36 stdout and live 14/40 in both modes. |
+| Semantics and IR | `work/r10pre/split-semantics-seed/`: build **9:06.26**, peak **20,202,524 KiB**; **96/96 groups pass**. **32/95** IR differences remain, with all generated dumps byte-identical to `named-native5/actual` at `1a0b4944`, whose differences were previously audited. `previous-ir-comparison.exit` is 0; no new IR differences. |
+| No-reuse validation | `split-semantics-seed-no-reuse`: build **9:53.93**, peak **20,377,448 KiB**; **96/96 semantics pass**, 32/95 IR differences, all dumps byte-identical to the normal build (`normal-ir-comparison.exit=0`). `split-backend-seed-no-reuse`: build **8:46.99**, peak **19,334,944 KiB**; **241/242 normal and 241/242 poison**. Fresh `annotation-check/results.tsv` again confirms only the known leak, correct output and exit 0. All integration validation readers have ended. |
+| Historical compiler host | `work/r10pre/original-backedge3/`: original three prechecks and original lowering run pass, 1,597 IR lines. Build 5:32.98, peak 14,197,820 KiB. Only the missing direct `CoreLowering.Model.CoreLoweringResult` import was added; stripping it restores archived Main byte-for-byte. All 87 previous diagnostics disappeared. |
+| HTTP and REST originals | Earlier backend-native8 HTTP replay passed 720 requests plus warmups, zero connected retries and no EBADF. Current backend compiles the HTTP server in both modes. Stage-0 REST offline mock passed 12 assertions in `work/r10pre/rest-mock-reference/`; fresh S1/S2 real example/mock/alias/selector checks remain required. |
+
+**Integrated corrections.** Async `46f33d13` → `4f68dbdc` and internal historical-fixture adapter `d6627990` → `bc6d90cf` pass native checks. Public-name commits `d1252a5d`, `adbe3bce`, `82052af0` → `1194c512`, `c2f52225`, `3d29ea5c` are integrated and reference-validated; stage 1 already enforces the import boundaries. Seed `5a311429`, `6a4f39d2` → `b5332c2e`, `37777548` is integrated and natively verified. Strict ambiguous eager evidence must still reject with ASH010; the enclosing function may supply its own dictionary. No test witness was rewritten to avoid a defect.
+
+**Measurement issue remains unresolved.** `work/r10pre/split-measurement/measure` built at `db54fdb9` in 5:28.16, peak 13,958,208 KiB, debug/O0 with RC poisoning. Both modes then read frozen `r10-measurement-baseline` / `fix/r10-measurement-baseline` at `db54fdb9`; outputs there are `work/legacy/` and `work/typed/`. Both reached their original one-hour bounds at 12:09: inner exit 124, wrapper exit 1, zero TSV rows, stderr ending `inference start`. Both handles are terminal. This does not prove an infinite loop or provide counters. The old 65-second source checker predates the new recursive evidence analysis, so it cannot separate source regressions from debug/poison overhead.
+
+The controlled optimized/unpoisoned build passed in **5:35.53**, peak **15,264,412 KiB**. Output is `r10-measurement-baseline/work/optimized-measurement/`; source remains `db54fdb9`, and stage-0 executable/assembly hashes match the prior build. It uses `-O2`, no debug/poison/leakcheck. Its legacy run started at 12:26 with 12 GiB/no swap/3,600 seconds; output is `work/optimized-legacy/` in that frozen worktree. At 12:27 it remained in inference. If inference still stalls, diagnostic-only `4c1d782a` on `fix/r10-inference-progress-diag` provides identification, per-unit and sparse recursive-pass markers. It is formatted/pushed but uncompiled, not intended for integration, and also applies to `db54fdb9`. Exact commands and timing caveats are in that worktree's `work/PROGRESS.md` and `r10-measurement-inference-cost/work/PROGRESS.md`. Do not cap the solver, drop evidence or weaken source input to pass.
+
+At 12:32 the optimized run was still in inference, so main started a matched diagnostic build without cancelling it. Coordinator-owned `r10-inference-progress-frozen` / `fix/r10-inference-progress-frozen` is `db54fdb9` plus only diagnostic patch `4c1d782a`, cherry-picked as **`fb7857e0` and pushed**. `measurement-diagnostic-build.sh` writes `work/diagnostic-build/` there, using the same stage 0, `-O2`, no debug/poison/leakcheck, **16 GiB/no swap/5,400 seconds**. The uninstrumented optimized build peaked at 14.56 GiB; the diagnostic cap leaves total admitted caps at 24+12+16=52 GiB. No uncapped retry is allowed. On success, run the diagnostic binary against the unchanged CLI input from `r10-measurement-baseline` at `db54fdb9`, recording compiler-source and input-source commits separately; this deliberately instrumented run is for localization, not acceptance or timing comparison. All workers remain handed back; this load is coordinator-owned.
+
+**Inference localization, 12:40.** Diagnostic build passed in **5:42.60**, peak **14,516,420 KiB**. Main's `measurement-diagnostic-run.sh` runs it against unchanged `db54fdb9` CLI input with 12 GiB/no swap and a 600-second bound, outputs `r10-inference-progress-frozen/work/diagnostic-run/`. Identification completes and units 0–18 advance. Unit 19 is `TypeInference`; its large recursive group `__ashes_private_value_AshesCompiler_Semantics_TypeInference_inferExpressions` reports pass 2 with **33 prior summaries / 3,138 prior direct parameter and capture uses**. No infinite loop is proved. `imports_diagnostics` now investigates algorithm cost and convergence against the C# counterpart in `r10-recursive-evidence-cost` / `fix/r10-recursive-evidence-cost` from `78325617`, budget 5,000 tokens, static work and at most 4 GiB formatting, no inference/build/suite. Preserve all evidence and demand stages; no production pass cap or dropped requirements. The optimized uninstrumented control continues (14+ minutes in inference at that checkpoint), and stage 1 still builds. Current main caps are 24+12+12=48 GiB.
+
+**Cost batch handed back, `d30df401` (pushed, not integrated).** `fix/r10-recursive-evidence-cost` replaces repeated exact whole-list membership scans in callback-use collection and recursive-summary union with balanced-tree membership, preserving encounter order and all five identity fields. Stage 0 already uses a HashSet in the corresponding collection path. The change does not alter widening, demand stages, solver termination or requirements. A regression distinguishes parameter, applied count, stage, returned flag and projection path, including equal-prefix paths. Formatting and static patch checks pass; no source inference, native or speedup proof yet. Exact matched-input validation and finer per-member diagnostic commands are in `r10-recursive-evidence-cost/work/PROGRESS.md`. All workers are handed back again. The 3,138-use observation establishes substantial work, not nonconvergence; performance remains unresolved until measured.
+
+**Matched optimization check started at 12:50.** The diagnostic control ended at its 600-second bound (exit 124), still at the large group's pass-2 marker. Main created `r10-evidence-index-frozen` / `fix/r10-evidence-index-frozen` from `fb7857e0` and applied only `d30df401` as **`54ba78bc`**, pushed. Its matched diagnostic build is running at 16 GiB/no swap, using `measurement-diagnostic-build.sh` with `ASHES_DIAGNOSTIC_CHECKOUT` set to that worktree and `ASHES_DIAGNOSTIC_REVISION=54ba78bc`. On success run `measurement-diagnostic-run.sh` with the same checkout variable; it keeps the input at unchanged `db54fdb9` and writes `work/diagnostic-run/` beside that build. Compare the same markers and 600-second bound with the control before claiming improvement. Native semantics, full uninstrumented counters and heap impact still need validation; neither the original cost fix nor either diagnostic branch is integrated. Stage 1 and the optimized uninstrumented legacy measurement remain active. Latest checked quota was **97% used at 11:43:09 UTC**; the revised stop threshold is **98%**, so work continues.
+
+**Separate next optimization.** `36d8dbe1` on `fix/r10-typed-lowering-next` is clean/pushed and passed CLI source inference (10,265 items / 188 modules). It uses recorded concrete source-copy call types and records actual shortcut/fallback counts. It is not integrated; native correctness, lifetime and performance proof remain pending. Keep it separate from the current correctness gate.
+
+**Coordinator scripts:** `r10-fixture-candidates/work/`, all machine-local. Use `shared-native-prepare.sh` only to render/source-check, then `split-native-build.sh` and `split-native-run.sh` for backend and semantics/parity in normal/no-reuse configurations. The all-in-one combined native builds both OOMed at their individual 24 GiB caps; preserve their exact inputs, do not retry that oversized harness. Split copies retain every module/case and compare source bytes. `ASHES_CASE_BASELINE` may prioritize new backend cases without changing the set. `annotation-leak-check.sh` reruns the exact leaking children. `original-backedge-check-imports.sh` preserves the original host input; `original-cli-checks.sh` checks fresh S1/S2 real REST compilation, mock stdout and module alias/selector results. `round10-bootstrap.sh` requires a clean matching `nonleak-gate.commit`; stage 3 must have swap allowed in both parent and child scopes. The full round-10 sequence below remains unrun. Start it without further approval once the non-leak gate is met.
+
+The latest weekly quota snapshot is **96% used at 11:30:37 UTC**; check current session data again rather than relying on this dated value. The user revised the stop threshold to **98% used / 2% remaining**. At 98%, stop jobs/workers, save and push the final handoff, pause the goal and give the user the fresh-agent prompt.
+
+**Active shared build.** The checkpoint was fast-forwarded and pushed to integration as `78325617`. `work/r10pre/round10-bootstrap55/nonleak-gate.commit`, `nonleak-gate.md` and `validated-source-difference.txt` record the gate and documentation-only difference from `39e79d7f`. `round10-bootstrap.sh stage1` is running with `r10-original-tmc-resolution/work/reference/s0/ashes`, tag `bootstrap55`, coordinator slot, 24 GiB/no swap, 7,200-second compiler bound, `--debug -O2` and leak checking. Freeze integration throughout the phase chain; its scripts require the same source head for stage 2/3 and behavior. Use this checkpoint branch for live handoff updates. On stage-1 success, stage 2 and stage-1 behavior may overlap within caps; serialize network-conflicting checks. Stage 3 needs swap allowed in its parent scope too. This gate does not claim completed bootstrap, performance, zero replay or leak acceptance. The frozen `db54fdb9` comparison cannot substitute for current-source round-10 counters.
+
+
+## Post-pause repository cleanup (2026-11-21)
+
+The user explicitly requested cleanup after the quota pause, always preserving `main` and `release/*`. Compiler work remained paused; no builds, suites or agents were started. An origin fetch and PR lookup found no open PRs. The audit examined 121 remote-tracking refs (including origin HEAD), 503 local branches and 176 worktrees under `.claude/worktrees/`; the main checkout was excluded from worktree removal.
+
+Removed 6 remote branches atomically with expected-head leases, 21 local branches and 7 worktrees. Every deleted branch was already contained in, or had all its non-merge patches represented in, integration `673ab70e`; no unmatched merge commits were present. Every removed worktree had no tracked modifications, untracked files or ignored files, and its head was reachable from origin. Branches with unique work were retained even when their empty worktrees were removed. All protected local and remote refs were compared before and after and were unchanged. All worktrees with artifacts and all 12 dirty worktrees were retained; pending compiler and diagnostic branches remain available.
+
+Remote branches removed (their local copies were removed too):
+
+- `fix/parity-bugs-2`
+- `fix/parity-bugs-3`
+- `fix/r10-typed-consumer-audit`
+- `fix/strict-imports`
+- `fix/typecheck-decisions`
+- `fix/r10-handoff-queue`
+
+Complete local branch removal inventory:
+
+| Branch | Former head |
+| --- | --- |
+| `chore/llvm-23` | `7ce8d73111547f8b3a424a96489b594f980bb5d4` |
+| `chore/update-dotnet-packages` | `0dd8ba8f16d9f3abc88abeffe35aa02d986be32f` |
+| `fix/parity-bugs-2` | `5178d12e48056511de65ad7754e0c5f824168567` |
+| `fix/parity-bugs-3` | `aecb6a41bc3bb1eb108e017ba235449623a2f70c` |
+| `fix/r10-typed-consumer-audit` | `617eb374a20bdf4243b32279a7fd1736648e8017` |
+| `fix/strict-imports` | `27a7e439f6609497924a38c052e7bb2d2a6644c6` |
+| `fix/typecheck-decisions` | `2977e4ec896db48c4dd9293f6a593f474f1d263c` |
+| `selfhost/loop-parameter-placement` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `selfhost/patternwalk-callee-side` | `a112ed3734417049a6f88beba1f4909df5782eaf` |
+| `worktree-agent-a00df73c416cf50d9` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a069eb239e1a10625` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a21e070faa3f541fb` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a244a3fe6d6c35b66` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a26cad26c6f331875` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a5c0a6f781353b0e1` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-a9ee5e83b457df88f` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-aadc205a50bb8a10e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ab060c61577f65791` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ad2d4687886452f58` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `worktree-agent-ae40c710d2b96377e` | `3f33fe2e0d0f959aedfa1e152827e8552a06a988` |
+| `fix/r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+
+Removed worktrees (relative to `.claude/worktrees/`):
+
+| Worktree | Former head |
+| --- | --- |
+| `r10-handoff-queue` | `e5596f616091f3afb83361967ef250cce8203190` |
+| `r10-live-checkpoints` | `09fe581f93f648840a4e4e18911d2b50cce10fb3` |
+| `round10` | `e0d8362220aed17b5aa589f37b40c4dce603aa4b` |
+| `step-f-s2-b47src` | `62f20a00ef0fad09e6c54a96eddc62c9df64c41a` |
+| `step-f-s2-crash-2-base` | `a2586d4f43b5ed569066052f3aa7c7b360fb58a4` |
+| `step-f-s2-crash-base` | `67e4588d122b04903a0d38017d2656765bf4ad41` |
+| `step-f-typed-program-docs` | `446d40faa4ac795e60dad3dd3a23f2c93a82d8ca` |
+
+The remaining remote branches and unattached local branches were checked for patch inclusion; branches with unmatched patches were retained. Among artifact-bearing worktrees, branch inclusion alone does not justify deleting tools or evidence. Further cleanup requires preserving their local content and checking current script dependencies. Full before/after refs, worktree inventories, patch-inclusion results and protected-ref comparisons are in integration `work/coord/cleanup-20261121/`.
+
+## Single-branch consolidation and draft PR 1160 (2026-11-21)
+
+The user requested relevance review of the twelve dirty older worktrees, deletion of obsolete
+branches, one development branch for a PR, updated restart documentation, and no development
+Git tags. No tags were created. Compiler jobs and agents remain paused.
+
+- Integrated `d30df401` as `fa0a1247` and `36d8dbe1` as `a898abc2`, pushing each commit. Both
+  cherry-picks completed without conflicts. Prior worker checks remain recorded; no new native,
+  compiler, suite, performance or leak acceptance was run.
+- Archived 85 remote branch file trees and 12 dirty worktree file trees in
+  `docs/selfhost-archive/2026-11-21/source-snapshots.tar.gz`. Every patch reconstructs its original
+  tree from a base on integration, verified using temporary indexes. Original indexes and source
+  files were preserved. The obsolete generated ELF `stage1-post-guards/shape2` was excluded.
+  The manifest, relevance review and retained investigation notes are committed alongside it.
+- Pushed the archive and updated handoff as `96816de1` before deleting any additional branches.
+- Atomically deleted 85 remote branches using expected-head leases, then deleted 97 local branch
+  names. Retained artifact worktrees are detached at their unchanged commits. Only `main`,
+  `release/*` and `selfhost/round10` remain on origin. Protected local and remote refs compare
+  byte-for-byte with the pre-consolidation inventory.
+- Removed eight obsolete older worktrees after verifying their archived source again. Their
+  ignored `work/` evidence directories were moved into the integration audit directory. Four
+  older worktrees retain useful leak/ownership work; see the source archive's review table.
+- Opened [draft PR #1160](https://github.com/MattiasHognas/Ashes/pull/1160), targeting main from
+  selfhost/round10. It explicitly records REST capability errors, recursive summary growth,
+  missing S2/S3 byte identity and the need to validate the newly consolidated source.
+
+Exact before/after refs, retirement logs, source checks and the verified full-history local Git
+bundle are in `work/coord/consolidation-20261121/`. Remote-backed patches preserve source states;
+the local bundle additionally preserves original histories. This consolidation follows the
+initial 6-remote / 21-local / 7-worktree cleanup above. The current-round handoff and fresh-agent
+prompt supersede historical references to retired branch names or pending cherry-picks.
