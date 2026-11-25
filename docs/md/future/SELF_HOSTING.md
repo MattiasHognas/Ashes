@@ -468,6 +468,12 @@ Order of work. Each step lands separately and is useful if the later ones are de
    operator for); 5 23 / 0 / 27 on the corpus and 244 / 14 / 0 on the compiler (the compiler's 14,
    below, are what `4176b44c` changes in the compiler's own IR).
 
+   The corpus sweep with the driver at `35b883ee` (all four entries switched) gives the same
+   `ir_hash` as the driver at `ea730801` for all 1,149 programs, with the same shadow totals: rules
+   1, 2, 3 and 5 leave the corpus's lowered IR unchanged, and rule 5 moves only the compiler's 12
+   sites below. (The hash first depended on where a sweep copied the sources, since the IR names
+   the entry file; the driver now hashes with the entry path replaced by its base name.)
+
    Re-lowering cost. The typed lowering of the compiler is one pass of 224 s (inference 80.8 s)
    with 2,657 body re-lowerings, the sum of entries 4 and 10. The driver counts re-lowerings but
    has no timer inside lowering: reading the clock there puts the `TimeRead` capability on every
