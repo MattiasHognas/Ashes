@@ -1770,6 +1770,11 @@ let observeDeferredOperator operator (operandType: SemanticType) (state: CoreLow
                             | None -> "unspanned:" + traitName + ":" + methodName
                     in observeDeferredOperatorGoal(key)(operandType)(state)
 
+// A binary operator lowered from its prepared operands. Two operands still open take the body's
+// evidence, an earlier pass's proof or the type the table records; without a table the operator
+// is emitted in its speculative integer form for the finalization rewrite. Lowered from the table,
+// two operands the table answers nothing for are refused: the type checker settles every
+// operator, so no lowering from it emits the integer form.
 let emitPreparedCoreBinary operator lower binary =
     match (coreOrderedOperatorName(operator), binary) with
         | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
@@ -1803,13 +1808,20 @@ let emitPreparedCoreBinary operator lower binary =
                                         |> resolvedCoreBinary
                                         |> emitResolvedCoreBinary(operator)(lower)
                                     | None ->
-                                        binary
-                                        |> withCoreBinaryState(state
-                                        |> observeLoweringEvent(1)
-                                        |> observeDeferredOperator(operator)(SemVariable(leftId))
-                                        |> shadowDeferredOperator
-                                        |> shadowEqualityEvidence(operator)(false))
-                                        |> emitDeferred
+                                        match stateNodeTypes(state) with
+                                            | Some(_table) ->
+                                                operator
+                                                |> operatorTraitOf
+                                                |> CoreUnrecordedOperatorType
+                                                |> failure(state)
+                                            | None ->
+                                                binary
+                                                |> withCoreBinaryState(state
+                                                |> observeLoweringEvent(1)
+                                                |> observeDeferredOperator(operator)(SemVariable(leftId))
+                                                |> shadowDeferredOperator
+                                                |> shadowEqualityEvidence(operator)(false))
+                                                |> emitDeferred
                 | (_emitter, resolvedLeft, resolvedRight) ->
                     match recordedPartlyOpenOperands(operator)(resolvedLeft)(resolvedRight)(state) with
                         | Some(recordedState) ->
