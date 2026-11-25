@@ -285,9 +285,12 @@ Order of work. Each step lands separately and is useful if the later ones are de
    type already binds its parameter first. Replacing those entry decisions with rules over the
    final type is step 8 work.
 
-   The switch, **2026-11-25**: lowering from the table is the default of `compile` and `run` (the
-   only commands of the stage-1 CLI that lower); `ASHES_TYPED_LOWERING=0` selects the stitched-program
-   lowering for one more round, as the comparison. The preconditions held:
+   **Complete, 2026-11-25.** Lowering from the table was made the default of `compile` and `run`
+   (the only commands of the stage-1 CLI that lower) at `329ae3d2`, with `ASHES_TYPED_LOWERING=0`
+   kept for one round as the comparison. That round (`0e72ed89`): behaviour with the default 1,065
+   same, 188 leak-only, no non-leak row; stage 2 built by the typed stage 1 in 14:40 at 10.5 GiB
+   resident peak (16:20 at 16.2 GiB on the old path); stage 3 in 13:08, byte-identical to stage 2;
+   semantics 96/96. The preconditions that held at the switch:
    1. A flag-on bootstrap at `5c8434ec`: stage 2 (13:08, 14.1 GiB) and stage 3 (11:30) built with
       the flag, stage 3 byte-identical to stage 2.
    2. The flag-on behaviour check no worse than flag-off on any row, and the typed sweep at zero
@@ -305,28 +308,23 @@ Order of work. Each step lands separately and is useful if the later ones are de
       (`recordedClosedNodeType`) retries without the expected type when lowering against it fails;
       the scheme readers check the binding name and value type (`recordedSchemeForValue`) or read
       the declaration at the value's own node.
-   4. `ASHES_SKIP_INFERENCE_CHECK=1`: without the check there is no table, so that mode lowers the
-      stitched program whatever `ASHES_TYPED_LOWERING` says. Stage 0 has no such mode (its lowering
-      is its type checker); once the stitched-program lowering is deleted the mode goes with it,
-      since lowering then needs the table and the inference that builds it is the check.
-   The raw (un-numbered) lowering then remains for the comparison setting, the skipped check, the
-   selfhost tests and the lowered-IR parity fixtures; it reads operator schemes by name, top-level
-   and nested (`rawOperatorSchemesWithNestedLets`).
-   fixtures and the inference-check escape; it reads operator schemes by name, top-level and nested
-   (`rawOperatorSchemesWithNestedLets`).
 
-   Deletion order after the switch, each step its own batch keeping stage 2 == stage 3 and the
-   behaviour check: (1) the default flipped, the default path kept behind an opt-out for one round;
-   (2) a replay under typed lowering becomes an internal error, then the replay pass and proven
-   goals go (`replayProgramWithProofs`, `validatedReplayItems`, the retained traversal,
-   `emitProgramWithProofs`, `pinProvenTraitGoal`, `stateTraitGoalsPinned`); (3) pending trait goals
-   become site errors, then `deferTraitGoal`, `deferMethodGoal`, `deferConstrainedGoals`,
-   `unprovenTraitGoalKey` and `openDictionaryGoalKey` go; (4) the per-binding plan (lowering's
-   speculative inference of lambda lets and constrained calls) is replaced by the recorded schemes,
-   requirements and instantiations, and the requirement reduction goes with it; (5) the deferred
-   operator machinery (`emitDeferredCoreAdd`, `emitDeferredCoreEquality`, pending operator defaults,
-   the sealing rewrite); (6) body re-lowering and the order-dependent rules (step 8), one at a time;
-   (7) raw lowering and the lowered-IR parity fixtures (step 9).
+   Then removed: the stitched-program lowering of the compile command, with `ASHES_TYPED_LOWERING`
+   and `ASHES_SKIP_INFERENCE_CHECK` (`e0df21b6`); the measurement driver's legacy mode (`ae13c17e`);
+   and the replay under typed lowering, where a goal left is now refused at its site
+   (`70e0151b`). What stays, and why: the raw (un-numbered) lowering with its discovery and replay
+   passes, pending and proven goals, deferred operators and the per-binding plan is still the path
+   of the selfhost test suites (about forty files lower raw programs through `lowerCoreProgram*`
+   and `lowerCoreExpression*`) and of the diagnostic wording of a program the inference rejects
+   with a bare unification error (`rejectedProgramText`). That machinery, and the raw operator
+   schemes (`rawOperatorSchemesWithNestedLets`, which also carry the deferred-evaluation marks raw
+   tests read), go when those tests lower from the table and the wording comes from the inference;
+   the lowered-IR parity fixtures against stage 0 go with step 9.
+   Under typed lowering the per-binding plan and the speculative operator form still run: the
+   former decides which bindings are constrained bodies (with the table rules above), the latter is
+   reached only where the table has no answer, which the corpus and the compiler no longer hit.
+   Replacing the plan by the recorded schemes, and the integer form by an error, are the next
+   deletions once the tests are migrated.
 
    Re-lowering is not driven by calls to settled callees. It is driven by self and sibling calls of
    a recursive group whose result lowering keeps open on purpose, because stage 0 sees it open at
@@ -360,6 +358,11 @@ Order of work. Each step lands separately and is useful if the later ones are de
      replay pass, which pins what the first pass proved.
    - `activeEvidenceCoversOperator` and `traitPlanLacksActiveEvidence`: an open operand dispatches
      through a generic body's own evidence only when that body carries it.
+   - `normalizesAlwaysReturnedParameter` (entry argument normalization) and the arena result
+     boundary of a function whose parameter reaches its result: taken only when the parameter's
+     type is known at entry, which with the table it can be for every closed parameter; binding
+     parameters from the table before the body switched them on in eleven programs that then
+     leaked, so the rule over the final type needs its release with it.
 
    What the table gives lowering, re-checked against the code on **2026-11-23**:
    - Partly in place: the prefix and resume references of the strict partial-stage scheduling carry
@@ -404,7 +407,8 @@ fails with stage 0's code and message (`InferenceDiagnostics.ash` maps every err
 raises), and an accepted program is lowered from the types it recorded (since the 2026-11-25 switch;
 before it, only with `ASHES_TYPED_LOWERING=1`). A bare unification error carries no call, argument or
 operator site, so for it lowering's own diagnostic is printed when lowering words one.
-`ASHES_SKIP_INFERENCE_CHECK=1` skips the check. This gives stage 1 the checks lowering lacks
+`ASHES_SKIP_INFERENCE_CHECK=1` skipped the check until it was removed with the stitched-program
+lowering on 2026-11-25. This gives stage 1 the checks lowering lacks
 (capability rows, providers, handlers, written requirements, type alias cycles) and costs about
 57 s on the whole compiler and a few milliseconds on a test.
 
