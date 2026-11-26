@@ -28,14 +28,14 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage; replace step 8's rules that pay for themselves | A worker that calls into libc no longer corrupts the heap; no function body is lowered twice | Parallel runtime done. Step 8 entries 1–3, 5–9 and the copy-out port (8c) done. Remaining here: the double lowering of function bodies (entries 11 and 4), about half of lowering time |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage; replace step 8's rules that pay for themselves | A worker that calls into libc no longer corrupts the heap; no function body is lowered twice | Parallel runtime done. Step 8 entries 1–3, 5–9 and the copy-out port (8c) done. Double lowering: 2,422 body re-lowerings down to 291 (entry 4). Done; what is left of it is in task 5 |
 | 4 | All workers on leaks, highest impact first, measured and merged per batch: first the known wrong-output bugs, then what the exit census of a stage-1-built compiler shows by type and allocation site, then the test rows | The behaviour check reports no program differing in live cells, plain and under `ASHES_RC_POISON=1`, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
 ### Next
 
 | # | Task | Done when | State |
 | --- | --- | --- | --- |
-| 5 | The step 8 rules skipped for now (table below): entry 10's remaining re-lowerings, results closed only by a generic body's single use (8b), copy-out results inside coroutine bodies and other heap shapes (8c remainder), general reference-counted self results in loop bodies | Every row of the step 8 table is Done or records why it stays | Not started |
+| 5 | The step 8 rules skipped for now (table below): entry 10's remaining re-lowerings, results closed only by a generic body's single use (8b), copy-out results inside coroutine bodies and other heap shapes (8c remainder), general reference-counted self results in loop bodies | Every row of the step 8 table is Done or records why it stays | Not started. Also here: entry 11 (held: the caller's argument release must follow the adoption flag first) and the 238 entry 4 sites still lowered twice |
 | 6 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started; needs task 5 |
 | 7 | Close the remaining stage-1/stage-0 differences: the diagnostics whose text or position differs, and the 32 of 95 whole-program IR parity fixtures if step 9 has not retired them | The behaviour check, plain and under `ASHES_RC_POISON=1`, reports every program as same, and no compile-error test prints a different diagnostic | Not started. Includes: programs built by the self-hosted compiler link `libc.so.6` once they allocate (a never-taken `malloc`/`free` fallback and the memory helpers), where the C# compiler emits them static; low priority, the fix is sized on `fix/r16-static-images` |
 | 8 | CLI parity: port the commands `test`, `repl`, `login`, `publish`, `yank`, `search` and `info`, the options `--target`, `--target-cpu`, `-O0`–`-O3`, `--expr`, `--emit-ir`, `--parallel-workers` and `--parallel-stack-size`, and `restore` beyond path dependencies (`Dispatch.ash` and `Compile.ash` in `selfhost/packages/cli` against [the CLI reference](../reference/cli.md)) | Every command and flag in the CLI reference works from the self-hosted binary, or the reference says it is not provided | Not started |
@@ -48,17 +48,17 @@ starts.
 
 ## Where the compiler stands
 
-Measured at round 15: main with the copy-out port.
+Measured at round 16: main with scope types closed from the table at entry.
 
 | Measure | Value |
 | --- | --- |
 | Stage 1 built by stage 0 | 27 min, 20 GiB |
 | Stage-1 behaviour against stage 0 (1,294 programs) | 1,172 same, 122 differ only in live cells at exit, 0 other |
 | The same under `ASHES_RC_POISON=1` | 1,166 same, 122 live cells only, 6 wrong output or crash (below) |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 605 s, 18.2 GiB |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 500 s, 17.0 GiB |
 | Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
-| Stage 3 built by stage 2 | 601 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 25.0 GiB (40.4 GiB before step 8 stopped arena requests and copy-outs from pinning the caller's arena window) |
+| Stage 3 built by stage 2 | 516 s, byte-identical to stage 2 |
+| Stage 3 memory, resident plus swap | 22.9 GiB (40.4 GiB before step 8 stopped arena requests and copy-outs from pinning the caller's arena window) |
 | Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident (round 12; not remeasured) |
 | The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
 | Semantics suite | 98 of 99 groups (whole-program IR parity 32 of 95 differing) |
