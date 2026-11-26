@@ -139,7 +139,7 @@ let transferLoopExitFieldResult (request: ConsumerRequest) (body: Expr) (temp: I
 // An `if` branch's result as the join stores it (`transferIfBranchResult`), or, at the loop's
 // exit, a heap field of a loop parameter with a reference of its own.
 let transferIfBranchOrExitField (request: ConsumerRequest) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match transferIfBranchResult(request.tailCall)(branch)(temp)(semanticType)(state) with
+    match transferIfBranchResult(branch)(temp)(semanticType)(state) with
         | (transferred, branchTemp) ->
             if branchTemp != temp
             then (transferred, branchTemp)
