@@ -1496,10 +1496,29 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
             |> emitRequestWord(argumentFlagTemp)
         else (state, argumentFlagTemp)
 
-// The request with the step-8 shadow comparison recorded first; the comparison changes nothing the
-// call emits.
+// Step 8, entry 8: lowered from the type table, a call whose result layout is still open here
+// takes the result type the table records for the call, closed by the body's own instantiation,
+// before its arena request is decided; the request then follows that type. A self call whose result
+// is deferred and a call to a group member whose arrow was open keep their own rules (entries 6
+// and 7), and a type only the program's uses settle (a generic body lowered once, which stage 0
+// lowers with its variables open) keeps today's request. A record that does not bind leaves the
+// call as it was.
+let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) ->
+            if selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            then state
+            else
+                match bindType(resultType)(recorded)(state) with
+                    | (bound, None) -> bound
+                    | (_failed, Some(_error)) -> state
+        | _ -> state
+
+// The request, after entry 8 pins the recorded result type, with the step-8 shadow comparison
+// recorded before it is emitted; the comparison changes nothing the call emits.
 let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     state
+    |> pinRecordedCallResult(context)(resultType)
     |> shadowArenaRequest(context)(resultType)
     |> arenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)
 
