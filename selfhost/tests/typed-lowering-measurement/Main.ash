@@ -166,6 +166,8 @@ type DriverOptions =
     | goalDetails: Bool
     | shadowDetails: Bool
     | irHash: Bool
+    // Where `--ir-file` writes the lowered IR text the hash is taken over.
+    | irFile: Maybe(Str)
     | singleLowering: Bool
 
 let recursive countShadowSites (rule: Int) (sites: List(ShadowSite)) (differ: Int) (unrecorded: Int) =
@@ -228,13 +230,24 @@ let withEntryBaseName (path: Str) (line: Str) =
 
 // The lowered IR the compile command produces for the program, as one hash and a line count, so two
 // sweeps compare program by program with one diff.
-let reportIrHash path source (stitched: StitchedSyntaxProject) (identified: IdentifiedStitchedProject) nodeTypes =
+let reportIrHash (irFile: Maybe(Str)) path source (stitched: StitchedSyntaxProject) (identified: IdentifiedStitchedProject) nodeTypes =
     match nodeTypes |> lowerCoreNumberedProgramWithRegionsAndReuse(true)(stitchedSourceRegions(stitched)(path)(source))(identifiedProgramSyntax(identified.program)) with
         | CoreLoweringResult { program = Some(lowered), error = None } ->
-            match hashLines(None
-            |> formatIr(lowered)(LoweredIr)
-            |> Ashes.Collection.List.map(withEntryBaseName(path)))(17)(0) with
-                | (hash, count) -> Ashes.IO.writeErrorLine("ir_hash=" + Ashes.Text.fromInt(hash) + " ir_lines=" + Ashes.Text.fromInt(count))
+            let lines =
+                None
+                |> formatIr(lowered)(LoweredIr)
+                |> Ashes.Collection.List.map(withEntryBaseName(path))
+            in
+                let _ =
+                    match irFile with
+                        | Some(file) ->
+                            match Ashes.IO.File.writeText(file)(Ashes.Text.join("\n")(lines) + "\n") with
+                                | Ok(_) -> Unit
+                                | Error(message) -> Ashes.IO.writeErrorLine("ir_file=error " + message)
+                        | None -> Unit
+                in
+                    match hashLines(lines)(17)(0) with
+                        | (hash, count) -> Ashes.IO.writeErrorLine("ir_hash=" + Ashes.Text.fromInt(hash) + " ir_lines=" + Ashes.Text.fromInt(count))
         | CoreLoweringResult { error = error } -> Ashes.IO.writeErrorLine("ir_hash=error " + Ashes.Trait.Show.show(error))
 
 let firstPassShadowAgree (measurement: CoreLoweringMeasurement) =
@@ -315,7 +328,7 @@ let measureStitched (options: DriverOptions) path source mode stitchMillis (stit
                                                                         in
                                                                             let _ =
                                                                                 if options.irHash
-                                                                                then reportIrHash(path)(source)(stitched)(identified)(nodeTypes)
+                                                                                then reportIrHash(options.irFile)(path)(source)(stitched)(identified)(nodeTypes)
                                                                                 else Unit
                                                                             in printMeasurement(mode)(stitchMillis)(inferMillis)(measured))
 
@@ -358,7 +371,7 @@ let runPath options path mode =
     then runFile(options)(path)(mode)
     else run(options)(path)(mode)
 
-let usage = "usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--single-lowering] (the stitched-program lowering the legacy mode measured is gone)"
+let usage = "usage: typed-lowering-measurement <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--ir-file <path>] [--single-lowering] (the stitched-program lowering the legacy mode measured is gone)"
 
 let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
     match arguments with
@@ -367,6 +380,7 @@ let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
         | "--goal-details" :: rest -> parseOptions(rest)((options with goalDetails = true))
         | "--shadow-details" :: rest -> parseOptions(rest)((options with shadowDetails = true))
         | "--ir-hash" :: rest -> parseOptions(rest)((options with irHash = true))
+        | "--ir-file" :: file :: rest -> parseOptions(rest)((options with irHash = true, irFile = Some(file)))
         | "--single-lowering" :: rest -> parseOptions(rest)((options with singleLowering = true))
         | _other -> None
 
@@ -374,7 +388,7 @@ let recursive parseOptions (arguments: List(Str)) (options: DriverOptions) =
 // its command line (an optional `typed`, then the report options). The shared native test build
 // calls it with the same arguments.
 let runWithFlags (path: Str) (flags: List(Str)) =
-    match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false, singleLowering = false)) with
+    match parseOptions(flags)(DriverOptions(goalDetails = false, shadowDetails = false, irHash = false, irFile = None, singleLowering = false)) with
         | Some(options) -> runPath(options)(path)("typed")
         | None -> Ashes.IO.panic(usage)
 
