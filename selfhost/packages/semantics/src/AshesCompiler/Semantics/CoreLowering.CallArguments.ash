@@ -1495,6 +1495,20 @@ let callsUnknownCallee (context: CoreCallContext) =
         | (None, None) -> true
         | _ -> false
 
+let maybeName (name: Maybe(Str)) =
+    match name with
+        | Some(known) -> known
+        | None -> "-"
+
+// Whether the call being lowered sits in a loop body, and if so whether it is in tail position.
+let loopPlacementText (context: CoreCallContext) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) ->
+            if context.tailCall
+            then "loop body, tail"
+            else "loop body"
+        | None -> "no loop"
+
 // Step-8 shadow comparison, rules 6, 7 and 8: whether the call asks for an arena result, against
 // the same request judged on the call's recorded result type. The decision is filed under the rule
 // that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
@@ -1533,7 +1547,7 @@ let shadowArenaRequest (context: CoreCallContext) (readsResult: Bool) (resultTyp
                                         observeShadowUnrecorded(rule)(requestText(current))("request kept through the unsettled-callee rule")(state)
                                     else
                                         observeShadow(rule)(requestText(current))(if current && rule != 8 && requestsArenaResult(recorded)(state) == false
-                                        then Some("no-arena (" + unknownCalleeResultKind(recorded)(state) + ")")
+                                        then Some("no-arena (" + unknownCalleeResultKind(recorded)(state) + "; callee " + maybeName(context.calleeName) + "; " + loopPlacementText(context)(state) + ")")
                                         else
                                             state
                                             |> requestsArenaResult(recorded)
