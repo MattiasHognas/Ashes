@@ -1481,7 +1481,7 @@ let callsUnknownCallee (context: CoreCallContext) =
 // the same request judged on the call's recorded result type. The decision is filed under the rule
 // that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
 // self result its consumer names (7), or the result layout itself (8).
-let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+let shadowArenaRequest (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
     if shadowing(state)
     then
         let requestText =
@@ -1510,10 +1510,17 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                                 then
                                     observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
                                 else
-                                    observeShadow(rule)(requestText(current))(state
-                                    |> requestsArenaResult(recorded)
-                                    |> requestText
-                                    |> Some)(state)
+                                    if rule != 8 && requestsArenaResult(recorded)(state) == false && requestsArenaResultFromUnknownCallee(context)(readsResult)(recorded)(state)
+                                    then
+                                        observeShadowUnrecorded(rule)(requestText(current))("request kept through the unsettled-callee rule")(state)
+                                    else
+                                        observeShadow(rule)(requestText(current))(if current && rule != 8 && requestsArenaResult(recorded)(state) == false
+                                        then Some("no-arena (" + unknownCalleeResultKind(recorded)(state) + ")")
+                                        else
+                                            state
+                                            |> requestsArenaResult(recorded)
+                                            |> requestText
+                                            |> Some)(state)
                             | (None, Some(settled), _resolved) ->
                                 observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
                             | (None, None, _resolved) ->
@@ -1610,7 +1617,7 @@ let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) 
 let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     state
     |> pinRecordedCallResult(context)(resultType)
-    |> shadowArenaRequest(context)(resultType)
+    |> shadowArenaRequest(context)(readsResult)(resultType)
     |> arenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)
 
 // Stage 0's `_borrowedArgumentCalls`: a call that only borrows its argument, recorded by the
