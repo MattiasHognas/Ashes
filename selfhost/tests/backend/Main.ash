@@ -10,6 +10,7 @@ import NativeFfiFixtures
 import ElfRelocatableMergeCases
 import ElfRelocatableMergeLink
 import PartitionedObjectsCases
+import ParallelWorkerThreadsCases
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -6638,6 +6639,7 @@ let run shipped =
     |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testAnnotatedCallbacksReleaseRecursiveResults(shipped)
+    |> runParallelWorkerThreadsCases(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

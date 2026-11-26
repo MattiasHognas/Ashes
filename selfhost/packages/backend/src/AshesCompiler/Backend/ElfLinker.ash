@@ -45,6 +45,7 @@ export (
     value linkLinuxExecutable,
     value linkLinuxExecutableWithImports,
     value linuxObjectLoadsSharedLibraries,
+    value objectWithWorkerThreads,
     value linuxLinkMapText,
 )
 
@@ -357,6 +358,19 @@ let linuxObjectLoadsSharedLibraries objectBytes (declaredLibraries: List((Str, S
                                     strtabSection.sectionOffset
                                     |> collectLinuxDynamicImports(knownLibraries)(objectBytes)(symtabSection.sectionOffset)(symtabSection.sectionSize / 24)
                                     |> anyImportBesides(workerThreadImports))
+
+// Stage 0's `CompileLinuxObjectWithWorkerThreads`: `build(libcThreads)` builds a program that starts
+// worker threads, answering its object (read with `objectOf`) and whatever else the caller needs.
+// The program is built with the `likely` choice, and built again with the other one when the
+// object's imports say otherwise (`linuxObjectLoadsSharedLibraries`), so the thread kind depends on
+// the program alone.
+let objectWithWorkerThreads build objectOf (likely: Bool) (declaredLibraries: List((Str, Str))) =
+    match build(likely) with
+        | Error(message) -> Error(message)
+        | Ok(built) ->
+            if linuxObjectLoadsSharedLibraries(objectOf(built))(declaredLibraries) == likely
+            then Ok(built)
+            else build(!likely)
 
 type TextRelocationPatch =
     | patchOffset: Int
