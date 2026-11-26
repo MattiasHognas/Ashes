@@ -5,7 +5,7 @@
 // elements; keeping only their spines leaked every record and string once per iteration
 // (32.8 MB at 200000 iterations against 8.2 MB at 20000, 20.5 MB with the deep release). The
 // remaining growth is the owned copy of `toEntry`'s always-returned parameter orphaned in its
-// arena record, tracked under OPT-41 in the self-hosting plan.
+// arena record.
 import Ashes.Collection.List as list
 type Item =
     | name: Str

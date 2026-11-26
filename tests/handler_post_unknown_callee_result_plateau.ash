@@ -1,7 +1,7 @@
 // expect: ok
 // A function that calls an unknown closure parameter inside `handle ... with` (so it may execute
 // under a live handler post) reads that callee's returns bit and adopts a reference-counted
-// result the same way a perform site does (OPT-49a), instead of copying it at the arena call
+// result the same way a perform site does, instead of copying it at the arena call
 // boundary and leaking the callee's original. The resident set plateaus over two hundred
 // thousand calls instead of growing by one copy per call.
 

@@ -1,9 +1,9 @@
 // expect: ok
 // A handler arm that resumes with a fresh constructor application wrapping its own entry-normalized
 // parameter (`resume(Just(text))`) places that result on the reference-counted heap the same way an
-// ordinary function body would (OPT-51's placement half), and the perform site that dispatches to it
+// ordinary function body would, and the perform site that dispatches to it
 // requests the arena form of that result so the arm's own deep-copy-and-release epilogue reclaims the
-// reference-counted original instead of leaking it (OPT-51's perform-site half). The resident set
+// reference-counted original instead of leaking it. The resident set
 // plateaus over two hundred thousand calls instead of growing by one string per call.
 
 type Wrapped =

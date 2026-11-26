@@ -1,5 +1,5 @@
 // expect: 17 6 7 207
-// CO-2d closure / function-valued seed copy elision + capture-aware result-reach — soundness discriminator.
+// Closure / function-valued seed copy elision + capture-aware result-reach — soundness discriminator.
 //
 // A reuse-fold seed produced by a CLOSURE the currying did not statically flatten: `makeFresh`,
 // `makeCap` and `makeId` each return a lambda from behind an `if`, so they are 1-arg functions whose
