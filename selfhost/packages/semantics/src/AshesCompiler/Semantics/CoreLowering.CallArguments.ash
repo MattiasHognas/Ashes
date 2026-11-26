@@ -1419,6 +1419,43 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
                         | FreshTemp { state = wordState, temp = wordTemp } ->
                             (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
 
+// The kind of result a call through an unknown closure returns, for the shadow comparison: the
+// recorded type closed by the instantiation, else by the settled variables, else lowering's own.
+let unknownCalleeResultKind (resultType: SemanticType) (state: CoreLoweringState) =
+    (let known =
+        match (recordedInstantiatedSiteType(state), shadowSiteType(state)) with
+            | (Some(recorded), _settled) -> recorded
+            | (None, Some(settled)) -> settled
+            | (None, None) -> resolveType(state)(resultType)
+    in
+        let head =
+            match known with
+                | SemNamed(_symbol, name, _arguments) -> " " + name
+                | SemList(_element) -> " List"
+                | SemTuple(_elements) -> " tuple"
+                | SemString -> " Str"
+                | _ -> ""
+        in
+            match known with
+                | SemFunction(_argument, _result, _row) -> "function"
+                | SemVariable(_id) -> "open"
+                | SemInt -> "scalar"
+                | SemBool -> "scalar"
+                | SemFloat -> "scalar"
+                | _ ->
+                    if containsUnresolvedLayout(known)(state)
+                    then "partly open" + head
+                    else
+                        if hasCallCopyOut(known)(state)
+                        then "copy-out" + head
+                        else
+                            if isGeneralRcValueType(known)(state)
+                            then "general-rc" + head
+                            else
+                                if resultSurvivesReset(known)(state)
+                                then "survives-reset" + head
+                                else "other" + head)
+
 // A call through a closure no let-bound function or applied lambda names: a function parameter, or
 // a value a call returned.
 let callsUnknownCallee (context: CoreCallContext) =
@@ -1451,7 +1488,7 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                 in
                     if rule == 8 && callsUnknownCallee(context)
                     then
-                        observeShadowUnrecorded(rule)(requestText(current))("unknown callee: the request stays")(state)
+                        observeShadowUnrecorded(rule)(requestText(current))("unknown callee: the request stays; " + unknownCalleeResultKind(resultType)(state))(state)
                     else
                         match (recordedInstantiatedSiteType(state), shadowSiteType(state), resolveType(state)(resultType)) with
                             | (Some(recorded), _settled, resolved) ->
