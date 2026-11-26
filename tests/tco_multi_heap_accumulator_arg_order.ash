@@ -1,5 +1,5 @@
 // expect: 11 15
-// CO-9 regression: a TCO loop threading two heap accumulators of DIFFERENT kinds must store each
+// Regression: a TCO loop threading two heap accumulators of DIFFERENT kinds must store each
 // back-edge argument into its own parameter slot regardless of parameter order.
 //
 // The loop's param slots were built in capture-DISCOVERY order (the order free variables first appear

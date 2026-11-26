@@ -1,15 +1,15 @@
 // expect: 5 40
-// CO-2c: admit a Map.set RESULT as a move seed. `Ashes.Collection.Map.set(k)(v)(m)` returns its accumulator `m`,
+// A Map.set RESULT is admitted as a move seed. `Ashes.Collection.Map.set(k)(v)(m)` returns its accumulator `m`,
 // rebuilt/rebalanced in place on the reuse path, so seeding a reuse fold from `Ashes.Collection.Map.set(...)(m)` —
 // where `m` is itself a move — yields a uniquely-owned map and the fold's entry deep-copy is ELIDED.
 // The result-reachability summary computes Map.set's reach as {map, newKey, newValue} (not poisoned):
 // the accumulator plus the inserted key and value, each of which must independently be a move at the
-// seed site (here integer literals, which are moves). Before CO-2c, Map.set's reach was poisoned (it
+// seed site (here integer literals, which are moves). Before this rule, Map.set's reach was poisoned (it
 // returns a nested recursive `go`, and its `balance`/rotate helpers falsely reported internal sharing
 // when destructuring and rebuilding a node), so the seed was never admitted and the copy stayed.
 //
 // `outer` threads a growing map, re-seeding the inner reuse fold `inner` from `Ashes.Collection.Map.set(...)(m)`
-// on every re-entry — exactly the O(re-entries * map-size) redundant-copy shape CO-2c removes. This
+// on every re-entry — exactly the O(re-entries * map-size) redundant-copy shape this rule removes. This
 // asserts CORRECTNESS at small sizes (the peak-RSS win is measured out-of-band): after 3 rounds the
 // map has 5 keys (0..4) and key 4 maps to 40.
 import Ashes.Collection.Map
