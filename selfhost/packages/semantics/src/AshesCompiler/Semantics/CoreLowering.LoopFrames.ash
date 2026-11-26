@@ -1313,26 +1313,30 @@ let expectedLambdaResultType (state: CoreLoweringState) =
 
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin expectedResult fresh =
     match fresh with
-        | FreshType { state = typedOuter, semanticType = parameterType } ->
-            typedOuter
-            |> takeRuntimeClosureRequest
-            |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-            |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
-            |> enterLambdaAtNode(match typedOuter.currentNode with
-                | Some(node) -> node
-                | None -> -1)(parameter)
-            |> noteLetBoundFunction("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)
-            |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
-                entered
-                |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
-                |> enterLambdaTcoLoop(parameterType)
-                |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-                |> withStateLoweringBodyLabel("lambda_" + Ashes.Text.fromInt(lambdaId))
-                |> enterPendingCoroutineBody
-                |> withPassthroughParameter(parameter)(body)(parameterType)
-                |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
-                |> beginCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(body)
-                |> withLambdaBodyRequest(body)(expectedResult))(given (first: LoweredCoreValue) -> first)(lower)
-            |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
-            |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
-            |> finishLambdaBody(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
+        | FreshType { state = markedOuter, semanticType = parameterType } ->
+            let typedOuter = withStateResultPipeMapper(false)(markedOuter)
+            in
+                let fromTable = stateResultPipeMapper(markedOuter) == false
+                in
+                    typedOuter
+                    |> takeRuntimeClosureRequest
+                    |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
+                    |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
+                    |> enterLambdaAtNode(match typedOuter.currentNode with
+                        | Some(node) -> node
+                        | None -> -1)(parameter)
+                    |> noteLetBoundFunction("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)
+                    |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
+                        entered
+                        |> withNormalizedAlwaysReturnedParameter(fromTable)(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
+                        |> enterLambdaTcoLoop(parameterType)
+                        |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
+                        |> withStateLoweringBodyLabel("lambda_" + Ashes.Text.fromInt(lambdaId))
+                        |> enterPendingCoroutineBody
+                        |> withPassthroughParameter(parameter)(body)(parameterType)
+                        |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
+                        |> beginCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(body)
+                        |> withLambdaBodyRequest(body)(expectedResult))(given (first: LoweredCoreValue) -> first)(lower)
+                    |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
+                    |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
+                    |> finishLambdaBody(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)

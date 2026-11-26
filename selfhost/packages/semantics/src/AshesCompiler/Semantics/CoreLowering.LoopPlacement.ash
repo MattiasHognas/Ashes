@@ -236,10 +236,13 @@ let entryNormalizationType parameter parameterType (state: CoreLoweringState) =
 
 // The entry-normalized parameter (if any) made visible to the body's placement decisions, with
 // the type its normalization was decided on; the direct argument lives in local slot 1.
-let withNormalizedAlwaysReturnedParameter parameter body label openParameterType (unshadowed: CoreLoweringState) =
+let withNormalizedAlwaysReturnedParameter (fromTable: Bool) parameter body label openParameterType (unshadowed: CoreLoweringState) =
     (let state = shadowEntryNormalization(parameter)(body)(label)(openParameterType)(unshadowed)
     in
-        let parameterType = entryNormalizationType(parameter)(openParameterType)(state)
+        let parameterType =
+            if fromTable
+            then entryNormalizationType(parameter)(openParameterType)(state)
+            else openParameterType
         in
             if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
             then

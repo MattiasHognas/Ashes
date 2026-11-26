@@ -686,6 +686,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 normalizedParameterCloned = false,
                 entryLambdaNode = -1,
                 recordedParameterScope = [],
+                resultPipeMapper = false,
                 runtimeNormalizedArgumentLabels = [],
                 recursiveGroupNames = [],
                 tcoLoop = None,
