@@ -136,11 +136,13 @@ export (
     value codegenEntryFunction,
     value codegenProgram,
     value codegenProgramWith,
+    value codegenProgramWithThreads,
     value codegenProgramPartition,
     value programUsesLibm,
     value programUsesRegex,
     value programUsesTls,
     value externalLibraries,
+    value programSpawnsParallelWorkers,
 )
 
 let externalLibraries (program: IrProgram) = collectExternalLibraries(program.externalFunctions)
@@ -1789,9 +1791,12 @@ let codegenInstructionKind cx builder kind state =
                                         | ParallelJoin(resultTarget, descTemp) ->
                                             (bindTemp(resultTarget)(emitParallelJoin(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("t" + Ashes.Text.fromInt(resultTarget)))(tempEnv), terminated)
                                         | ParallelCleanup(descTemp) ->
-                                            let _ =
-                                                emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
-                                            in (tempEnv, terminated)
+                                            match parallelRuntime with
+                                                | Some(runtime) ->
+                                                    let _ =
+                                                        emitParallelCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(runtime)(lookupTemp(cx)(descTemp)(tempEnv))("par_cleanup")
+                                                    in (tempEnv, terminated)
+                                                | None -> Ashes.IO.panic("codegen: ParallelCleanup without the parallel runtime")
                                         | LoadParallelWorkerOverride(target) ->
                                             match parallelRuntime with
                                                 | Some(runtime) ->
@@ -2367,6 +2372,11 @@ let recursive functionsForkParallel functions =
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsForkParallel(instructions) || functionsForkParallel(rest)
 
+// Whether the program starts worker threads: a `both` fork or a work-conserving queue.
+let programSpawnsParallelWorkers (program: IrProgram) =
+    match program with
+        | IrProgram { entryFunction = entryFunction, functions = functions } -> functionsForkParallel(entryFunction :: functions)
+
 let recursive functionsUseBigInt functions =
     match functions with
         | [] -> false
@@ -2678,7 +2688,7 @@ let exportPartitionSymbols (partition: CodegenPartition) module_ (entryName: Str
 // `.text` offset `0`; its body is emitted LAST, after every lifted function, purely so the
 // lifted-function lookups it needs (`MakeClosure`/`CallKnown` naming a label) resolve the same
 // way a lifted body's own do.
-let codegenFunctionsIn (partition: CodegenPartition) name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) =
+let codegenFunctionsIn (partition: CodegenPartition) name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) (libcThreads: Bool) =
     (let module_ = createModule(name)(context)
     in
         let types = coreLlvmTypes(context)
@@ -2755,7 +2765,7 @@ let codegenFunctionsIn (partition: CodegenPartition) name context entryFunction 
                                                                                         then
                                                                                             entryFunction :: functions
                                                                                             |> functionsForkParallel
-                                                                                            |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)(needsForkWorkers)
+                                                                                            |> defineParallelRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)(closureFnType)(needsForkWorkers)(libcThreads)
                                                                                             |> Some
                                                                                         else None
                                                                                     in
@@ -2833,16 +2843,19 @@ let codegenFunctionsIn (partition: CodegenPartition) name context entryFunction 
                                                                                                             let _ = exportPartitionSymbols(partition)(module_)(name)(liftedFunctions)(prologueGlobals)
                                                                                                             in (module_, mc.moduleBuilder))
 
-let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) = codegenFunctionsIn(WholeProgram)(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobalCount)(leakCheck)
+let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) = codegenFunctionsIn(WholeProgram)(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobalCount)(leakCheck)(false)
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)
 
 // A whole lowered program: its entry function plus every lifted helper it contains. With
-// `leakCheck` the program counts its reference-counted cells and reports the live ones at its end.
-let codegenProgramWith (leakCheck: Bool) name context program =
+// `leakCheck` the program counts its reference-counted cells and reports the live ones at its end;
+// with `libcThreads` the parallel runtime starts libc worker threads (the image loads libc).
+let codegenProgramWithThreads (leakCheck: Bool) (libcThreads: Bool) name context program =
     match program with
-        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)
+        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctionsIn(WholeProgram)(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)(libcThreads)
+
+let codegenProgramWith (leakCheck: Bool) name context program = codegenProgramWithThreads(leakCheck)(false)(name)(context)(program)
 
 let codegenProgram name context program = codegenProgramWith(false)(name)(context)(program)
 
@@ -2850,7 +2863,7 @@ let codegenProgram name context program = codegenProgramWith(false)(name)(contex
 // `index` under `assignment` (every lifted label mapped to the partition defining it). It declares
 // every lifted function, defines its own, and partition 0 alone defines the entry function and the
 // shared globals; see `exportPartitionSymbols`.
-let codegenProgramPartition (leakCheck: Bool) (index: Int) (assignment: MapTree(Str, Int)) name context program =
+let codegenProgramPartition (leakCheck: Bool) (libcThreads: Bool) (index: Int) (assignment: MapTree(Str, Int)) name context program =
     match program with
         | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } ->
-            codegenFunctionsIn(ProgramPartition(index)(assignment))(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)
+            codegenFunctionsIn(ProgramPartition(index)(assignment))(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)(libcThreads)

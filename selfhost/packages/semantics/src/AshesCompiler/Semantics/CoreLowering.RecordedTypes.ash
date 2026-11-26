@@ -52,6 +52,7 @@ export (
     value recordedSettledType,
     value recordedSettledTypeAt,
     value shadowSiteType,
+    value recordedInstantiatedSiteType,
     value shadowSiteTypeText,
     value recordedSiteInstance,
     value shadowSiteOperandText,
@@ -535,6 +536,29 @@ let recordedSettledType (recorded: SemanticType) (state: CoreLoweringState) =
             then Some(translated)
             else None
         | Error(_message) -> None
+
+// A recorded type read through the instantiation of the body being lowered alone, as lowering
+// writes it, when that leaves no variable: the type a body lowered at one instantiation knows,
+// without the variables only the program's uses settle (a generic body stage 0 also lowers with
+// its variables open).
+let recordedInstantiatedType (recorded: SemanticType) (state: CoreLoweringState) =
+    match recorded
+    |> instantiatedRecordedType(state)
+    |> translateRecordedTypeAsIs(state) with
+        | Ok(translated) ->
+            if freeTypeVariables(translated) == []
+            then Some(translated)
+            else None
+        | Error(_message) -> None
+
+// The type recorded for the node being lowered, closed by the body's instantiation alone.
+let recordedInstantiatedSiteType (state: CoreLoweringState) =
+    match (stateNodeTypes(state), state.currentNode) with
+        | (Some(table), Some(node)) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) -> recordedInstantiatedType(recorded)(state)
+                | None -> None
+        | _ -> None
 
 let recursive settledRecordedRequirements (requirements: List(TraitConstraint)) (state: CoreLoweringState) =
     match requirements with

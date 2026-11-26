@@ -3523,4 +3523,4 @@ let withSingleLoweringMeasurement (single: Bool) (state: CoreLoweringState) =
             | Some(observation) -> state with programState = (group with typeObservation = Some((observation with singleLowering = single))))
 
 // A decision of rule 9 whose final answer is known only once every body is lowered.
-let observeShadowPending (entry: Int) (current: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = "settled after lowering", calleeFacts = facts))(state)
+let observeShadowPending (entry: Int) (current: Str) (reason: Str) (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) = recordShadowSite(ShadowSite(entry = entry, region = stateCurrentItem(state), node = state.currentNode, span = state.currentSpan, current = current, final = None, reason = reason, calleeFacts = facts))(state)

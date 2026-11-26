@@ -47,6 +47,7 @@ internal static partial class LlvmCodegen
     private const long SyscallPipe2 = 293;
     private const long SyscallClockGettime = 228;
     private const long SyscallExit = 60;
+    private const long SyscallExitGroup = 231;
     private const long SyscallGetpid = 39;
     private const long SyscallGetppid = 110;
     private const long SyscallClone = 56;
@@ -109,6 +110,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallRead = 63;
     private const long Arm64SyscallWrite = 64;
     private const long Arm64SyscallExit = 93;
+    private const long Arm64SyscallExitGroup = 94;
     private const long Arm64SyscallGetpid = 172;
     private const long Arm64SyscallGetppid = 173;
     private const long Arm64SyscallSocket = 198;
@@ -302,14 +304,25 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
+        IReadOnlyDictionary<string, string> externalLibraries = GetExternalLibraries(program);
+        byte[] objectBytes = CompileLinuxObjectWithWorkerThreads(program, externalLibraries,
+            libcThreads => CompileLinuxX64Object(program, options, libcThreads));
+        return CompilePhaseTiming.Measure("backend.link", () =>
+            LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, externalLibraries));
+    }
+
+    private static byte[] CompileLinuxX64Object(IrProgram program, BackendCompileOptions options, bool libcThreads)
+    {
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
         int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.LinuxX64);
         if (partitions > 1)
         {
-            return CompileParallelObjects(program, options, Backends.TargetIds.LinuxX64, LlvmCodegenFlavor.LinuxX64, usesTlsRuntime, partitions);
+            return CompileMergedParallelObjects(program, options, Backends.TargetIds.LinuxX64, LlvmCodegenFlavor.LinuxX64, usesTlsRuntime, partitions, libcThreads);
         }
 
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap)
+            with
+        { ParallelWorkersUseLibcThreads = libcThreads };
         CompilePhaseTiming.Measure("backend.emit-module", () =>
             EmitLinuxX64ProgramModule(target, program, options, usesTlsRuntime));
 
@@ -332,21 +345,29 @@ internal static partial class LlvmCodegen
             LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
             LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
         });
-        byte[] objectBytes = CompilePhaseTiming.Measure("backend.object-code", () => EmitObjectCode(target));
-        return CompilePhaseTiming.Measure("backend.link", () =>
-            LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, GetExternalLibraries(program)));
+        return CompilePhaseTiming.Measure("backend.object-code", () => EmitObjectCode(target));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
+    {
+        IReadOnlyDictionary<string, string> externalLibraries = GetExternalLibraries(program);
+        byte[] objectBytes = CompileLinuxObjectWithWorkerThreads(program, externalLibraries,
+            libcThreads => CompileLinuxArm64Object(program, options, libcThreads));
+        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", null, externalLibraries);
+    }
+
+    private static byte[] CompileLinuxArm64Object(IrProgram program, BackendCompileOptions options, bool libcThreads)
     {
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
         int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.LinuxArm64);
         if (partitions > 1)
         {
-            return CompileParallelObjects(program, options, Backends.TargetIds.LinuxArm64, LlvmCodegenFlavor.LinuxArm64, usesTlsRuntime, partitions);
+            return CompileMergedParallelObjects(program, options, Backends.TargetIds.LinuxArm64, LlvmCodegenFlavor.LinuxArm64, usesTlsRuntime, partitions, libcThreads);
         }
 
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap)
+            with
+        { ParallelWorkersUseLibcThreads = libcThreads };
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, usesTlsRuntime);
 
         VerifyModule(target);
@@ -364,9 +385,35 @@ internal static partial class LlvmCodegen
         LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
         LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
         LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxArm64);
-        byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxArm64Executable(objectBytes, "entry", null, GetExternalLibraries(program));
+        return EmitObjectCode(target);
     }
+
+    // `Ashes.Task.Parallel` workers on linux are raw `clone` threads when the executable is static
+    // and libc threads when it loads shared libraries. A static Ashes image has no libc: its runtime
+    // makes system calls directly and keeps its per-thread state in its own control block, so a raw
+    // thread is complete. Once the dynamic loader runs, glibc's thread pointer, malloc caches and
+    // errno are live, and a thread glibc did not create would share the starting thread's; only
+    // `pthread_create` gives a thread its own. Which case applies is read from the object itself,
+    // as the linker reads it: it is compiled with the likely choice, and compiled again with the
+    // other one when its imports say otherwise, so the choice depends on the program alone.
+    private static byte[] CompileLinuxObjectWithWorkerThreads(
+        IrProgram program,
+        IReadOnlyDictionary<string, string> externalLibraries,
+        Func<bool, byte[]> compileObject)
+    {
+        if (!ProgramSpawnsParallelWorkers(program))
+        {
+            return compileObject(false);
+        }
+
+        bool likely = program.ExternalFunctions.Count > 0 || ProgramUsesTlsRuntimeAbi(program) || ProgramUsesRegexRuntimeAbi(program);
+        byte[] objectBytes = compileObject(likely);
+        bool loadsLibc = LlvmImageLinker.LinuxObjectLoadsSharedLibraries(objectBytes, externalLibraries);
+        return loadsLibc == likely ? objectBytes : compileObject(loadsLibc);
+    }
+
+    private static bool ProgramSpawnsParallelWorkers(IrProgram program)
+        => ProgramUsesInstruction<IrInst.ParallelFork>(program) || ProgramUsesInstruction<IrInst.ParallelQueueStart>(program);
 
     private static void VerifyModule(LlvmTargetContext target)
     {
@@ -3127,6 +3174,7 @@ internal static partial class LlvmCodegen
             SyscallNanosleep => Arm64SyscallNanosleep,
             SyscallClockGettime => Arm64SyscallClockGettime,
             SyscallExit => Arm64SyscallExit,
+            SyscallExitGroup => Arm64SyscallExitGroup,
             SyscallGetpid => Arm64SyscallGetpid,
             SyscallGetppid => Arm64SyscallGetppid,
             SyscallFutex => Arm64SyscallFutex,

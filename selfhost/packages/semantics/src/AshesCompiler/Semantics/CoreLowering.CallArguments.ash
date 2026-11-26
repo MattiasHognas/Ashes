@@ -28,6 +28,7 @@ import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedInstantiatedSiteType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1418,6 +1419,64 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
                         | FreshTemp { state = wordState, temp = wordTemp } ->
                             (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
 
+// Stage 0's contract for a general reference-counted value (`IsGeneralRcValueType`): passed
+// borrowed, returned owned, so a caller owns it through the callee's returns bit even when the
+// callee is a closure no name resolves, and stage 0 asks no arena result for it
+// (`RequestsArenaResultFromUnknownCallee` leaves it out). A result with a fixed copy-out (a string,
+// a list of strings or scalars) and every other heap shape keep the request: stage 0 normalizes
+// those after the call, which this lowering does not port yet.
+let ownedFromUnknownCallee (recorded: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
+
+// Whether the recorded result of the unknown-closure call being lowered is such a value.
+let unknownCalleeResultOwned (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) -> ownedFromUnknownCallee(recorded)(state)
+        | _ -> false
+
+// The kind of result a call through an unknown closure returns, for the shadow comparison: the
+// recorded type closed by the instantiation, else by the settled variables, else lowering's own.
+let unknownCalleeResultKind (resultType: SemanticType) (state: CoreLoweringState) =
+    (let known =
+        match (recordedInstantiatedSiteType(state), shadowSiteType(state)) with
+            | (Some(recorded), _settled) -> recorded
+            | (None, Some(settled)) -> settled
+            | (None, None) -> resolveType(state)(resultType)
+    in
+        let head =
+            match known with
+                | SemNamed(_symbol, name, _arguments) -> " " + name
+                | SemList(_element) -> " List"
+                | SemTuple(_elements) -> " tuple"
+                | SemString -> " Str"
+                | _ -> ""
+        in
+            match known with
+                | SemFunction(_argument, _result, _row) -> "function"
+                | SemVariable(_id) -> "open"
+                | SemInt -> "scalar"
+                | SemBool -> "scalar"
+                | SemFloat -> "scalar"
+                | _ ->
+                    if containsUnresolvedLayout(known)(state)
+                    then "partly open" + head
+                    else
+                        if hasCallCopyOut(known)(state)
+                        then "copy-out" + head
+                        else
+                            if isGeneralRcValueType(known)(state)
+                            then "general-rc" + head
+                            else
+                                if resultSurvivesReset(known)(state)
+                                then "survives-reset" + head
+                                else "other" + head)
+
+// A call through a closure no let-bound function or applied lambda names: a function parameter, or
+// a value a call returned.
+let callsUnknownCallee (context: CoreCallContext) =
+    match (context.facts, context.appliedLambdaLabel) with
+        | (None, None) -> true
+        | _ -> false
+
 // Step-8 shadow comparison, rules 6, 7 and 8: whether the call asks for an arena result, against
 // the same request judged on the call's recorded result type. The decision is filed under the rule
 // that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
@@ -1441,18 +1500,24 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                         then 7
                         else 8
                 in
-                    match (shadowSiteType(state), resolveType(state)(resultType)) with
-                        | (Some(recorded), resolved) ->
-                            if freeTypeVariables(resolved) == [] && recorded != resolved
-                            then
-                                observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
-                            else
-                                observeShadow(rule)(requestText(current))(state
-                                |> requestsArenaResult(recorded)
-                                |> requestText
-                                |> Some)(state)
-                        | (None, _resolved) ->
-                            observeShadow(rule)(requestText(current))(None)(state)
+                    if rule == 8 && callsUnknownCallee(context) && unknownCalleeResultOwned(state) == false
+                    then
+                        observeShadowUnrecorded(rule)(requestText(current))("unknown callee: the request stays; " + unknownCalleeResultKind(resultType)(state))(state)
+                    else
+                        match (recordedInstantiatedSiteType(state), shadowSiteType(state), resolveType(state)(resultType)) with
+                            | (Some(recorded), _settled, resolved) ->
+                                if freeTypeVariables(resolved) == [] && recorded != resolved
+                                then
+                                    observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
+                                else
+                                    observeShadow(rule)(requestText(current))(state
+                                    |> requestsArenaResult(recorded)
+                                    |> requestText
+                                    |> Some)(state)
+                            | (None, Some(settled), _resolved) ->
+                                observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
+                            | (None, None, _resolved) ->
+                                observeShadow(rule)(requestText(current))(None)(state)
     else state
 
 // Step-8 shadow comparison, rule 9: a known callee asked for an arena result because its body was
@@ -1460,9 +1525,34 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
 // the program's lowering.
 let shadowUnsettledCallee (context: CoreCallContext) (state: CoreLoweringState) =
     match context.facts with
-        | Some(_facts) ->
+        | Some(CoreCalleeFacts { label = label, argumentCount = count }) ->
             if shadowing(state)
-            then observeShadowPending(9)("arena")(context.facts)(state)
+            then
+                let inGroup =
+                    match context.calleeName with
+                        | Some(name) ->
+                            state
+                            |> stateRecursiveGroupNames
+                            |> containsLabel(name)
+                        | None -> false
+                in
+                    let chained =
+                        match label with
+                            | Some(known) ->
+                                innermostStageLabel(count - 1)(known)(stateFunctionReturnedClosureLabels(state)) != None
+                            | None -> false
+                    in
+                        let reason =
+                            if context.selfCallee
+                            then "cycle: self call"
+                            else
+                                if inGroup
+                                then "cycle: recursive group member"
+                                else
+                                    if chained
+                                    then "forward: callee body not lowered yet"
+                                    else "stage chain not recorded yet"
+                        in observeShadowPending(9)("arena")(reason)(context.facts)(state)
             else state
         | None -> state
 
@@ -1493,10 +1583,33 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
             |> emitRequestWord(argumentFlagTemp)
         else (state, argumentFlagTemp)
 
-// The request with the step-8 shadow comparison recorded first; the comparison changes nothing the
-// call emits.
+// Step 8, entry 8: lowered from the type table, a call whose result layout is still open here
+// takes the result type the table records for the call, closed by the body's own instantiation,
+// before its arena request is decided; the request then follows that type. A self call whose result
+// is deferred and a call to a group member whose arrow was open keep their own rules (entries 6
+// and 7), and a type only the program's uses settle (a generic body lowered once, which stage 0
+// lowers with its variables open) keeps today's request. So does a call through a closure no name
+// or applied lambda resolves (a function parameter, `given (f) -> f(x)`): its caller cannot own what
+// an unknown callee returns, and stage 0 asks the arena there and copies the result out after the
+// call, which this lowering does through the same request, unless the result is a general
+// reference-counted value (`ownedFromUnknownCallee`). A record that does not bind leaves the
+// call as it was.
+let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) ->
+            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            then state
+            else
+                match bindType(resultType)(recorded)(state) with
+                    | (bound, None) -> bound
+                    | (_failed, Some(_error)) -> state
+        | _ -> state
+
+// The request, after entry 8 pins the recorded result type, with the step-8 shadow comparison
+// recorded before it is emitted; the comparison changes nothing the call emits.
 let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     state
+    |> pinRecordedCallResult(context)(resultType)
     |> shadowArenaRequest(context)(resultType)
     |> arenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)
 
