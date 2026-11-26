@@ -442,8 +442,6 @@ export (
     value withStateEntryLambdaNode,
     value stateRecordedParameterScope,
     value withStateRecordedParameterScope,
-    value stateResultPipeMapper,
-    value withStateResultPipeMapper,
     value stateRuntimeNormalizedArgumentLabels,
     value withStateRuntimeNormalizedArgumentLabels,
     value stateConcreteRegistry,
@@ -1361,8 +1359,6 @@ type CoreTcoState =
     | entryLambdaNode: Int
     // The recorded types of the enclosing lambdas' parameters, innermost first.
     | recordedParameterScope: List((Str, SemanticType))
-    // The lambda about to be lowered is a `|?>` or `|!>` mapper (stage 0 never normalizes its entry).
-    | resultPipeMapper: Bool
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -3269,13 +3265,6 @@ let stateRecordedParameterScope (state: CoreLoweringState) =
 let withStateRecordedParameterScope (scope: List((Str, SemanticType))) (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with recordedParameterScope = scope))
-let stateResultPipeMapper (state: CoreLoweringState) =
-    (let group = state.tcoState
-    in group.resultPipeMapper)
-
-let withStateResultPipeMapper (value: Bool) (state: CoreLoweringState) =
-    (let group = state.tcoState
-    in state with tcoState = (group with resultPipeMapper = value))
 
 let stateRuntimeNormalizedArgumentLabels (state: CoreLoweringState) =
     (let group = state.tcoState

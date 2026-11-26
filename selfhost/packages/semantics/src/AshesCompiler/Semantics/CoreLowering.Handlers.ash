@@ -1145,13 +1145,6 @@ let lowerHandle body arms lower state =
     |> consumerRequestOf
     |> branchRequest)(lower)
 
-// A lambda written as a `|?>` or `|!>` mapper is marked for its own entry: stage 0 decides its
-// entry normalization on the type in effect there, never on a recorded one (step 8, entry 11).
-let markResultPipeMapper (mapper: Expr) (state: CoreLoweringState) =
-    if letValueIsLambda(mapper)
-    then withStateResultPipeMapper(true)(state)
-    else state
-
 // Stage 0's `LowerResultPipe`: the left operand is unified with `Result(e, s)` before the mapper
 // is lowered against `s -> r`; a mapper returning `Result(e, s2)` makes the pipe a flat map whose
 // value is stored as it is, any other mapper result is rewrapped in `Ok`. Neither operand inherits
@@ -1205,7 +1198,6 @@ let lowerResultPipe left right lower state =
                                         | (boundState, None) ->
                                             match boundState
                                             |> clearConsumerRequest
-                                            |> markResultPipeMapper(right)
                                             |> lower(right) with
                                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                 | LoweredCoreValue { state = rightState, temp = funcTemp, semanticType = funcType, error = None } -> lowerResultPipeMapper(leftTemp)(funcTemp)(funcType)(successType)(errorType)(okLayout)(rightState)
@@ -1253,7 +1245,6 @@ let lowerResultMapErrorPipe left right lower state =
                                         | (boundState, None) ->
                                             match boundState
                                             |> clearConsumerRequest
-                                            |> markResultPipeMapper(right)
                                             |> lower(right) with
                                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                 | LoweredCoreValue { state = rightState, temp = funcTemp, semanticType = funcType, error = None } -> lowerResultMapErrorMapper(leftTemp)(funcTemp)(funcType)(successType)(errorType)(errorLayout)(rightState)

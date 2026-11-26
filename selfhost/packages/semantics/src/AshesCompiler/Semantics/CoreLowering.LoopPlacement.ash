@@ -22,7 +22,6 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowLambdaParameterType
-import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedLambdaParameterType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -226,57 +225,32 @@ let shadowEntryNormalization parameter body label parameterType (state: CoreLowe
                     | Error(reason) -> observeShadowUnrecorded(11)(current)(reason)(state)
     else state
 
-// Step 8, entry 11: the type the entry normalization is decided on. Lowered from the type table,
-// a lambda whose own node records its parameter's settled type is decided on that type, whether
-// or not the parameter has resolved at entry; otherwise on the type in effect at entry.
-let entryNormalizationType parameter parameterType (state: CoreLoweringState) =
-    match recordedLambdaParameterType(parameter)(state) with
-        | Some(recorded) -> recorded
-        | None -> parameterType
-
-// The entry-normalized parameter (if any) made visible to the body's placement decisions, with
-// the type its normalization was decided on; the direct argument lives in local slot 1.
-let withNormalizedAlwaysReturnedParameter (fromTable: Bool) parameter body label openParameterType (unshadowed: CoreLoweringState) =
-    (let state = shadowEntryNormalization(parameter)(body)(label)(openParameterType)(unshadowed)
+// The entry-normalized parameter (if any) made visible to the body's placement decisions; the
+// direct argument lives in local slot 1.
+let withNormalizedAlwaysReturnedParameter parameter body label parameterType (unshadowed: CoreLoweringState) =
+    (let state = shadowEntryNormalization(parameter)(body)(label)(parameterType)(unshadowed)
     in
-        let parameterType =
-            if fromTable
-            then entryNormalizationType(parameter)(openParameterType)(state)
-            else openParameterType
-        in
-            if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
-            then
-                state
-                |> withStateNormalizedParameterCloned(false)
-                |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
-            else
-                state
-                |> withStateNormalizedParameterCloned(false)
-                |> withStateNormalizedAlwaysReturnedParameter(None))
+        if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
+        then
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
+        else
+            state
+            |> withStateNormalizedParameterCloned(false)
+            |> withStateNormalizedAlwaysReturnedParameter(None))
 
-// The type the decision after the body reads: the one the decision ahead of it normalized on, else
-// the parameter's type as the body resolved it.
-let normalizedParameterTypeAfterBody parameter parameterType (state: CoreLoweringState) =
-    match stateNormalizedAlwaysReturnedParameter(state) with
-        | Some((normalized, _slot, decided)) ->
-            if normalized == parameter
-            then decided
-            else parameterType
-        | _ -> parameterType
-
-let normalizeAlwaysReturnedParameter parameter body label openParameterType lowered =
+let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = bodyState } ->
-            let parameterType = normalizedParameterTypeAfterBody(parameter)(openParameterType)(bodyState)
-            in
-                match entryNormalizationPlanOf(parameterType)(bodyState) with
-                    | None -> lowered
-                    | Some(plan) ->
-                        if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(bodyState)
-                        then
-                            lowered with state = emitEntryArgumentNormalization(entryCopyPlanOf(parameterType)(plan)(bodyState))(label)(bodyState)
-                        else lowered
+            match entryNormalizationPlanOf(parameterType)(bodyState) with
+                | None -> lowered
+                | Some(plan) ->
+                    if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(bodyState)
+                    then
+                        lowered with state = emitEntryArgumentNormalization(entryCopyPlanOf(parameterType)(plan)(bodyState))(label)(bodyState)
+                    else lowered
 
 // A TCO loop parameter's runtime-managed placement (stage 0's `TcoContext` slot placement,
 // narrowed to the one shape this port covers): a `Str`-typed parameter the affine self-append
