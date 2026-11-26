@@ -1296,7 +1296,7 @@ let defineQueueCleanupFunction module_ context builder i64 i8 ptrType (threads: 
 
 // The parallel runtime of a program that uses `Ashes.Task.Parallel`; `threads` when it forks or
 // starts a queue, with libc worker threads when `libcThreads` (the image loads libc).
-let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (needsWorkerCap: Bool) (threads: Bool) (libcThreads: Bool) =
+let defineParallelRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) closureFnType (needsWorkerCap: Bool) (libcThreads: Bool) (threads: Bool) =
     (let overrideGlobal = parZeroGlobal(module_)(i64)("__ashes_parallel_override")
     in
         if threads

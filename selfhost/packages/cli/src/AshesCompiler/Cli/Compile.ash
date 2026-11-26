@@ -931,21 +931,16 @@ let preparedProgramOf optimized =
 // built again with the other one when the object's imports say otherwise, so the choice depends on
 // the program alone.
 let compileWithWorkerThreads outputPath optimized =
-    (let likely = externalLibraries(optimized) != [] || runtimePayloadsFor(optimized) != []
-    in
-        match optimized
-        |> preparedBuild(likely)
-        |> preparedObject with
-            | Error(message) -> Error(message)
-            | Ok((objectBytes, libraries, linkNames)) ->
-                if linuxObjectLoadsSharedLibraries(objectBytes)(libraries) == likely
-                then linkObjectToExecutable(outputPath)((objectBytes, libraries, linkNames))
-                else
-                    match optimized
-                    |> preparedBuild(!likely)
-                    |> preparedObject with
-                        | Error(message) -> Error(message)
-                        | Ok(built) -> linkObjectToExecutable(outputPath)(built))
+    match optimized
+    |> externalLibraries
+    |> objectWithWorkerThreads(given (libcThreads: Bool) ->
+        optimized
+        |> preparedBuild(libcThreads)
+        |> preparedObject)(given (built) ->
+        match built with
+            | (objectBytes, _libraries, _linkNames) -> objectBytes)(externalLibraries(optimized) != [] || runtimePayloadsFor(optimized) != []) with
+        | Error(message) -> Error(message)
+        | Ok(built) -> linkObjectToExecutable(outputPath)(built)
 
 let compileProgramToExecutable outputPath program =
     match program with
