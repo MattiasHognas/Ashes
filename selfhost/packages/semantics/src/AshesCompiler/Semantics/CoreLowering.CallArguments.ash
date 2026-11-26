@@ -1428,14 +1428,22 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
 let ownedFromUnknownCallee (recorded: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
 
 // Step 8, entry 6: a self call whose result is deferred takes its recorded result type when that
-// result is a scalar: there is nothing to own, so only the arena request and the body's second
-// lowering for it go. Other results keep the deferral and its request.
-let pinsSelfResult (recorded: SemanticType) =
+// result is a scalar (6a: there is nothing to own, so only the arena request and the body's second
+// lowering for it go) or a general reference-counted value outside a loop body (6b: the caller owns
+// it through the returns bit, as it owns any call's result of the contract's types). Inside a loop
+// body a general reference-counted self result keeps the deferral: the deferred path keeps the
+// copy-out of a call a back edge follows, and the owned slot of an undeferred call has not been
+// shown released at a back edge. Results with a fixed copy-out and other heap shapes keep the
+// deferral and its request.
+let pinsSelfResult (recorded: SemanticType) (state: CoreLoweringState) =
     match recorded with
         | SemInt -> true
         | SemBool -> true
         | SemFloat -> true
-        | _ -> false
+        | _ ->
+            match stateTcoLoopFrame(state) with
+                | Some(_frame) -> false
+                | None -> ownedFromUnknownCallee(recorded)(state)
 
 // Whether the recorded result of the unknown-closure call being lowered is such a value.
 let unknownCalleeResultOwned (state: CoreLoweringState) =
@@ -1615,7 +1623,7 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
         | (Some(_table), Some(recorded)) ->
-            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) && pinsSelfResult(recorded) == false || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) && pinsSelfResult(recorded)(state) == false || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
             then state
             else
                 match bindType(resultType)(recorded)(state) with
