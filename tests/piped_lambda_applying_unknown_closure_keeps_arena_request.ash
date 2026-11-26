@@ -3,9 +3,10 @@ import Ashes.Text
 import Ashes.IO
 import Ashes.Collection.List
 // A pipeline stage `given (f) -> f(x)` applies the partial application it receives. Lowering meets
-// the call before anything in the stage fixes its result type, so the result layout is open there,
-// while the type checker recorded it closed (a list of text, an integer, a record): the call takes
-// its result by the callee's returns bit instead of asking for an arena result.
+// the call before anything in the stage fixes its result type, while the type checker recorded it
+// closed (a list of text, an integer, a record). The callee is a closure no name resolves, so the
+// call still asks for an arena result and copies the result out after the call: taking it by the
+// callee's returns bit left the list and its strings unreleased.
 type Labelled =
     | label: Str
     | count: Int

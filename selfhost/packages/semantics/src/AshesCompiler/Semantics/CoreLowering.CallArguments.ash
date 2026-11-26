@@ -1419,6 +1419,13 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
                         | FreshTemp { state = wordState, temp = wordTemp } ->
                             (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
 
+// A call through a closure no let-bound function or applied lambda names: a function parameter, or
+// a value a call returned.
+let callsUnknownCallee (context: CoreCallContext) =
+    match (context.facts, context.appliedLambdaLabel) with
+        | (None, None) -> true
+        | _ -> false
+
 // Step-8 shadow comparison, rules 6, 7 and 8: whether the call asks for an arena result, against
 // the same request judged on the call's recorded result type. The decision is filed under the rule
 // that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
@@ -1442,20 +1449,24 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                         then 7
                         else 8
                 in
-                    match (recordedInstantiatedSiteType(state), shadowSiteType(state), resolveType(state)(resultType)) with
-                        | (Some(recorded), _settled, resolved) ->
-                            if freeTypeVariables(resolved) == [] && recorded != resolved
-                            then
-                                observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
-                            else
-                                observeShadow(rule)(requestText(current))(state
-                                |> requestsArenaResult(recorded)
-                                |> requestText
-                                |> Some)(state)
-                        | (None, Some(settled), _resolved) ->
-                            observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
-                        | (None, None, _resolved) ->
-                            observeShadow(rule)(requestText(current))(None)(state)
+                    if rule == 8 && callsUnknownCallee(context)
+                    then
+                        observeShadowUnrecorded(rule)(requestText(current))("unknown callee: the request stays")(state)
+                    else
+                        match (recordedInstantiatedSiteType(state), shadowSiteType(state), resolveType(state)(resultType)) with
+                            | (Some(recorded), _settled, resolved) ->
+                                if freeTypeVariables(resolved) == [] && recorded != resolved
+                                then
+                                    observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
+                                else
+                                    observeShadow(rule)(requestText(current))(state
+                                    |> requestsArenaResult(recorded)
+                                    |> requestText
+                                    |> Some)(state)
+                            | (None, Some(settled), _resolved) ->
+                                observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
+                            | (None, None, _resolved) ->
+                                observeShadow(rule)(requestText(current))(None)(state)
     else state
 
 // Step-8 shadow comparison, rule 9: a known callee asked for an arena result because its body was
@@ -1526,12 +1537,15 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 // before its arena request is decided; the request then follows that type. A self call whose result
 // is deferred and a call to a group member whose arrow was open keep their own rules (entries 6
 // and 7), and a type only the program's uses settle (a generic body lowered once, which stage 0
-// lowers with its variables open) keeps today's request. A record that does not bind leaves the
+// lowers with its variables open) keeps today's request. So does a call through a closure no name
+// or applied lambda resolves (a function parameter, `given (f) -> f(x)`): its caller cannot own what
+// an unknown callee returns, and stage 0 asks the arena there and copies the result out after the
+// call, which this lowering does through the same request. A record that does not bind leaves the
 // call as it was.
 let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
         | (Some(_table), Some(recorded)) ->
-            if selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            if callsUnknownCallee(context) || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
             then state
             else
                 match bindType(resultType)(recorded)(state) with
