@@ -2086,31 +2086,66 @@ let markPromotedRetainJoin (bodyTemp: Int) (state: CoreLoweringState) =
                     | _ -> state
             | _ -> state
 
-let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    state
-    |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
-    |> (given (candidates: List(TcoManagedCandidate)) ->
-        frame.listActiveSlots
-        |> tcoRuntimeManagedStrSlotsOf(candidates)
-        |> ((given (managedLists: List((Int, Int, SemanticType))) ->
-            given (managedAdts: List((Int, Int, SemanticType, Str))) ->
-                given (managedStrs: List((Int, Int))) ->
-                    state
-                    |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
-                    |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
-                    |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
-                    |> finalizeAccessorResultRetains(managedLists)(managedAdts)(candidates)
-                    |> markPromotedRetainJoin(bodyTemp)
-                    |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
-                    |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
-                    |> withdrawLetCellTailDuplicatesOf(state
-                    |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
-                    |> patternOwnerSiteSlots)(frame.parameterSlots)(managedAdts)
-                    |> (given (withdrawn: CoreLoweringState) ->
-                        settleCellMarkerSlots(stateCellMarkerSlots(withdrawn))(withdrawn))
-                    |> finishTcoManagedPlacement(label)(state
-                    |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
-                    |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
+// Diagnostic only: per loop parameter, the placement inputs at the loop's resolved finalize, one
+// decimal digit each in a `LoadConstInt` of 7 followed by: the ordinal, ordinary placement
+// allowed, linear reuse root, in the runtime-managed Str ordinals, in the affine ordinals, the slot
+// is a runtime-managed Str slot by type, pass-through shape, placed as Str, placed as list, placed
+// as copied ADT.
+let placementDigit (holds: Bool) (number: Int) =
+    if holds
+    then number * 10 + 1
+    else number * 10
+
+let recursive emitPlacementConditions (loop: CoreTcoLoop) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> state
+        | candidate :: rest ->
+            let digits =
+                7 * 10 + candidate.ordinal
+                |> placementDigit(ordinaryRcPlacementAllowed(state))
+                |> placementDigit(loopParameterIsLinearReuseRoot(candidate.ordinal)(loop)(state))
+                |> placementDigit(containsInt(candidate.ordinal)(loop.runtimeManagedOrdinals))
+                |> placementDigit(containsInt(candidate.ordinal)(loop.affineOrdinals))
+                |> placementDigit(isTcoRuntimeManagedStrSlot(candidate.slot)(state))
+                |> placementDigit(candidate.shape == TcoPassThroughShape)
+                |> placementDigit(candidate.strManaged)
+                |> placementDigit(candidateListManaged(candidate))
+                |> placementDigit(candidateAdtManaged(candidate))
+            in
+                match freshTemp(state) with
+                    | FreshTemp { state = withTemp, temp = digitTemp } ->
+                        withTemp
+                        |> emit(LoadConstInt(digitTemp)(digits))
+                        |> emitPlacementConditions(loop)(rest)
+
+let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (unobserved: CoreLoweringState) =
+    (let state =
+        emitPlacementConditions(loop)(tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)(unobserved))(unobserved)
+    in
+        state
+        |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
+        |> (given (candidates: List(TcoManagedCandidate)) ->
+            frame.listActiveSlots
+            |> tcoRuntimeManagedStrSlotsOf(candidates)
+            |> ((given (managedLists: List((Int, Int, SemanticType))) ->
+                given (managedAdts: List((Int, Int, SemanticType, Str))) ->
+                    given (managedStrs: List((Int, Int))) ->
+                        state
+                        |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
+                        |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
+                        |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
+                        |> finalizeAccessorResultRetains(managedLists)(managedAdts)(candidates)
+                        |> markPromotedRetainJoin(bodyTemp)
+                        |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
+                        |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
+                        |> withdrawLetCellTailDuplicatesOf(state
+                        |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
+                        |> patternOwnerSiteSlots)(frame.parameterSlots)(managedAdts)
+                        |> (given (withdrawn: CoreLoweringState) ->
+                            settleCellMarkerSlots(stateCellMarkerSlots(withdrawn))(withdrawn))
+                        |> finishTcoManagedPlacement(label)(state
+                        |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
+                        |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))))
 
 // Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
 // the back edges left without one, ahead of the entry normalization's own locals.
