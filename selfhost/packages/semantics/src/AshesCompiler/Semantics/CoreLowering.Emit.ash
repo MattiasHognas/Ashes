@@ -682,6 +682,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 recursiveProducerResultSlots = [],
                 normalizedAlwaysReturnedParameter = None,
                 normalizedParameterCloned = false,
+                resultPipeMapper = false,
                 runtimeNormalizedArgumentLabels = [],
                 recursiveGroupNames = [],
                 tcoLoop = None,

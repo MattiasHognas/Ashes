@@ -438,6 +438,8 @@ export (
     value withStateNormalizedAlwaysReturnedParameter,
     value stateNormalizedParameterCloned,
     value withStateNormalizedParameterCloned,
+    value stateResultPipeMapper,
+    value withStateResultPipeMapper,
     value stateRuntimeNormalizedArgumentLabels,
     value withStateRuntimeNormalizedArgumentLabels,
     value stateConcreteRegistry,
@@ -1350,6 +1352,8 @@ type CoreTcoState =
     // Whether an escaping arena tuple of the function being lowered stored an independent copy of
     // its entry-normalized string parameter (stage 0's `_normalizedParameterClonedIntoArenaTuple`).
     | normalizedParameterCloned: Bool
+    // The lambda about to be lowered is a `|?>` or `|!>` mapper (stage 0 never normalizes its entry).
+    | resultPipeMapper: Bool
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -3240,6 +3244,14 @@ let stateNormalizedParameterCloned (state: CoreLoweringState) =
 let withStateNormalizedParameterCloned value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with normalizedParameterCloned = value))
+
+let stateResultPipeMapper (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.resultPipeMapper)
+
+let withStateResultPipeMapper (value: Bool) (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with resultPipeMapper = value))
 
 let stateRuntimeNormalizedArgumentLabels (state: CoreLoweringState) =
     (let group = state.tcoState
