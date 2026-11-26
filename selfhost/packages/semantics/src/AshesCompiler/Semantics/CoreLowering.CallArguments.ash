@@ -1348,6 +1348,22 @@ let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLow
         | Some(expected) -> containsUnresolvedLayout(expected)(state) == false
         | None -> false)
 
+// Step 8, entry 7: lowered from the type table, a call to a group member whose recorded result,
+// closed by the body's own instantiation, is a scalar or a general reference-counted value is no
+// longer an open sibling result: the call takes that type (`pinRecordedCallResult`) and its arena
+// request follows it, the caller owning a general reference-counted result through the returns bit.
+// A result with a fixed copy-out or another heap shape keeps the open-sibling rules and their pinned
+// and proven sibling results (entry 8c).
+let siblingResultSettledByTable (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) ->
+            match recorded with
+                | SemInt -> true
+                | SemBool -> true
+                | SemFloat -> true
+                | _ -> containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
+        | _ -> false
+
 // A call to another member of the recursive group whose arrow was still open when this body began
 // asks for an arena result as stage 0's does, also when the body is lowered again against the
 // result the first lowering resolved.
@@ -1355,7 +1371,7 @@ let siblingResultOpen (context: CoreCallContext) (resultType: SemanticType) (sta
     match (context.calleeName, resolveType(state)(resultType)) with
         | (_name, SemFunction(_argument, _result, _row)) -> false
         | (Some(name), _resolved) ->
-            context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state))
+            context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state)) && siblingResultSettledByTable(state) == false
         | (None, _resolved) -> false
 
 let siblingCallSiteKey (context: CoreCallContext) =
@@ -1427,6 +1443,24 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
 // those after the call, which this lowering does not port yet.
 let ownedFromUnknownCallee (recorded: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
 
+// Step 8, entry 6: a self call whose result is deferred takes its recorded result type when that
+// result is a scalar (6a: there is nothing to own, so only the arena request and the body's second
+// lowering for it go) or a general reference-counted value outside a loop body (6b: the caller owns
+// it through the returns bit, as it owns any call's result of the contract's types). Inside a loop
+// body a general reference-counted self result keeps the deferral: the deferred path keeps the
+// copy-out of a call a back edge follows, and the owned slot of an undeferred call has not been
+// shown released at a back edge. Results with a fixed copy-out and other heap shapes keep the
+// deferral and its request.
+let pinsSelfResult (recorded: SemanticType) (state: CoreLoweringState) =
+    match recorded with
+        | SemInt -> true
+        | SemBool -> true
+        | SemFloat -> true
+        | _ ->
+            match stateTcoLoopFrame(state) with
+                | Some(_frame) -> false
+                | None -> ownedFromUnknownCallee(recorded)(state)
+
 // Whether the recorded result of the unknown-closure call being lowered is such a value.
 let unknownCalleeResultOwned (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
@@ -1477,11 +1511,25 @@ let callsUnknownCallee (context: CoreCallContext) =
         | (None, None) -> true
         | _ -> false
 
+let maybeName (name: Maybe(Str)) =
+    match name with
+        | Some(known) -> known
+        | None -> "-"
+
+// Whether the call being lowered sits in a loop body, and if so whether it is in tail position.
+let loopPlacementText (context: CoreCallContext) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) ->
+            if context.tailCall
+            then "loop body, tail"
+            else "loop body"
+        | None -> "no loop"
+
 // Step-8 shadow comparison, rules 6, 7 and 8: whether the call asks for an arena result, against
 // the same request judged on the call's recorded result type. The decision is filed under the rule
 // that made it open: a deferred self result (6), a sibling's open or pinned result or a deferred
 // self result its consumer names (7), or the result layout itself (8).
-let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+let shadowArenaRequest (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
     if shadowing(state)
     then
         let requestText =
@@ -1510,10 +1558,17 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                                 then
                                     observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
                                 else
-                                    observeShadow(rule)(requestText(current))(state
-                                    |> requestsArenaResult(recorded)
-                                    |> requestText
-                                    |> Some)(state)
+                                    if rule != 8 && requestsArenaResult(recorded)(state) == false && requestsArenaResultFromUnknownCallee(context)(readsResult)(recorded)(state)
+                                    then
+                                        observeShadowUnrecorded(rule)(requestText(current))("request kept through the unsettled-callee rule")(state)
+                                    else
+                                        observeShadow(rule)(requestText(current))(if current && rule != 8 && requestsArenaResult(recorded)(state) == false
+                                        then Some("no-arena (" + unknownCalleeResultKind(recorded)(state) + "; callee " + maybeName(context.calleeName) + "; " + loopPlacementText(context)(state) + ")")
+                                        else
+                                            state
+                                            |> requestsArenaResult(recorded)
+                                            |> requestText
+                                            |> Some)(state)
                             | (None, Some(settled), _resolved) ->
                                 observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
                             | (None, None, _resolved) ->
@@ -1586,8 +1641,9 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 // Step 8, entry 8: lowered from the type table, a call whose result layout is still open here
 // takes the result type the table records for the call, closed by the body's own instantiation,
 // before its arena request is decided; the request then follows that type. A self call whose result
-// is deferred and a call to a group member whose arrow was open keep their own rules (entries 6
-// and 7), and a type only the program's uses settle (a generic body lowered once, which stage 0
+// is deferred keeps the deferral unless entry 6 pins it (`pinsSelfResult`), a call to a group member
+// whose arrow was open keeps its own rule (entry 7),
+// and a type only the program's uses settle (a generic body lowered once, which stage 0
 // lowers with its variables open) keeps today's request. So does a call through a closure no name
 // or applied lambda resolves (a function parameter, `given (f) -> f(x)`): its caller cannot own what
 // an unknown callee returns, and stage 0 asks the arena there and copies the result out after the
@@ -1597,7 +1653,7 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
         | (Some(_table), Some(recorded)) ->
-            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) && pinsSelfResult(recorded)(state) == false || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
             then state
             else
                 match bindType(resultType)(recorded)(state) with
@@ -1610,7 +1666,7 @@ let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) 
 let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     state
     |> pinRecordedCallResult(context)(resultType)
-    |> shadowArenaRequest(context)(resultType)
+    |> shadowArenaRequest(context)(readsResult)(resultType)
     |> arenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)
 
 // Stage 0's `_borrowedArgumentCalls`: a call that only borrows its argument, recorded by the

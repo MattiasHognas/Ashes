@@ -27,7 +27,7 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code; entries 6, 7, 10, 11 and 4 remain |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code, entries 6 and 7 are done for scalar and general reference-counted results (round 14); entries 10, 11 and 4 remain, with 8b and 8c |
 | 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
 | 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
@@ -46,17 +46,17 @@ starts.
 
 ## Where the compiler stands
 
-Measured at round 13: main with the parallel runtime fix, step 8 entry 8 and the unknown-closure change.
+Measured at round 14: main with step 8 entries 6 and 7.
 
 | Measure | Value |
 | --- | --- |
 | Stage 1 built by stage 0 | 27 min, 20 GiB |
-| Stage-1 behaviour against stage 0 (1,291 programs) | 1,170 same, 121 differ only in live cells at exit, 0 other |
-| The same under `ASHES_RC_POISON=1` | 1,163 same, 122 live cells only, 6 wrong output or crash (below) |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 601 s, 18.5 GiB |
+| Stage-1 behaviour against stage 0 (1,293 programs) | 1,171 same, 122 differ only in live cells at exit, 0 other |
+| The same under `ASHES_RC_POISON=1` | 1,165 same, 122 live cells only, 6 wrong output or crash (below) |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 561 s, 18.1 GiB |
 | Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
-| Stage 3 built by stage 2 | 615 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 32.4 GiB (40.4 GiB before the unknown-closure change: seven call sites in the compiler stopped asking their callback for an arena result) |
+| Stage 3 built by stage 2 | 580 s, byte-identical to stage 2 |
+| Stage 3 memory, resident plus swap | 31.1 GiB (40.4 GiB before step 8 stopped asking callbacks, self calls and sibling calls for arena results) |
 | Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident (round 12; not remeasured) |
 | The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
 | Semantics suite | 98 of 99 groups (whole-program IR parity 32 of 95 differing) |
@@ -121,11 +121,11 @@ node, or settled only (entry 8b).
 | 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
 | 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
 | 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
-| 8c | an unknown closure's result with a fixed copy-out (a string, a list of strings or scalars) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | | 6 `List`, 1 `Unit` sites keep the request |
+| 8c | a result with a fixed copy-out (a string, a list of strings or scalars) or another heap shape outside the contract, of an unknown closure (entry 8) or a self or sibling call (entries 6, 7) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | self calls: copy-out 3, other 10; sibling calls (after entry 7): copy-out 11, other 5 | unknown closures: 6 `List`, 1 `Unit`; self calls: copy-out 148, other 23; sibling calls (after entry 7): copy-out 229, other 45; group-member self calls: copy-out 148, other 23 |
 | 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
 | 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
-| 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 14 / 215 / 2,786, 117 programs (258 of the unrecorded closed only by settled variables) | 250 / 975 / 97 |
-| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | the group member's recorded result layout decides; the largest IR change | Deferred | 0 / 69 / 5, 36 programs | 0 / 1,851 / 51 |
+| 6 | `selfResultDeferred` | a deferred self call takes its recorded result type when the result is a scalar (6a, `5e134ff3`) or a general reference-counted value outside a loop body (6b, `2d158e72`); copy-out and other shapes are 8c, and a general reference-counted result inside a loop body keeps the deferral | In review | 14 / 215 / 2,786, 117 programs; after 6a: 199 / 29; after 6b: 206 / 23 | 250 / 975 / 97; after 6a: 289 / 921; after 6b: 358 / 852 |
+| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | a call to a group member (a sibling, or the member itself) whose recorded result is a scalar or a general reference-counted value is no longer an open sibling result (`siblingResultSettledByTable`, `9cb7c1df`): it takes the recorded type and the contract's ownership; copy-out and other shapes keep the open-sibling rules, the pinned and proven sibling results stay for them (8c) | In review | 0 / 68 / 6, 36 programs; after: 0 / 16, 13 programs (IR changes in 23 programs) | rule 7: 0 / 1,745 / 128; after: 0 / 274; rule 6 after: 1,017 / 193 |
 | 9 | `calleeResultUnsettled` | none under callee-first order: every differing site is a cycle (see below) | Deferred | 37 / 237 / 0, 234 programs | 113 / 22 / 0 |
 | 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs | 0 / 353 / 0; after entry 8: 0 / 348 / 0 |
 | 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 32,838 / 8 / 9,005, 7 programs | 27,021 / 8 / 2,881 |
@@ -142,6 +142,28 @@ caller reads the callee's returns bit for every result shape. A general referenc
 `05b82e35` takes it owned through the returns bit where its type is closed by the instantiation (7
 of the 11 compiler sites, four of them `LoweredCoreValue` lowering callbacks; three corpus programs). The copy-out kinds
 are entry 8c.
+
+Entry 6 (`5e134ff3`, `2d158e72`). 6a pins 47 compiler and 185 corpus scalar self results (96
+programs); their IR loses only the request word and the temporaries after it, and no body is lowered
+once more or less (re-lowerings unchanged: 9,400 corpus, 2,626 compiler). The compiler's other 286
+scalar self results are self calls in a recursive group, decided by entry 7's rule. 6b pins 69
+compiler and 6 corpus general reference-counted self results (six programs:
+`loop_releases_earlier_pair_whose_parts_it_matched`, `pattern_owner_in_call_argument_cell`,
+`unnamed_predecessor_in_arena_loop` and the three `worklist_*` regressions) outside loop bodies;
+inside a loop body 394 compiler and 6 corpus sites keep the deferral, because the owned slot of an
+undeferred self call has not been shown released at a back edge that follows it (no corpus site has
+that shape: in every changed loop the back edge is lowered in an earlier arm). Re-lowerings rise
+slightly with 6b (9,435 corpus, 2,635 compiler).
+
+Entry 7 (`9cb7c1df`). The 659 compiler self calls entry 6 left (286 scalar, 373 general reference
+counted) are calls of recursive-group members, which the open-sibling rule governs; settling a
+member's scalar or general reference-counted result from the table covers them with the 1,471
+sibling sites. A general reference-counted sibling result is then taken owned by the contract
+(`calleeReturnsGeneralRcOwned`: the member normalizes its result at its return), no longer read
+through the returns bit as a pinned sibling result was; that is the decision most likely to go wrong,
+if a member returns such a result without normalizing it, and it would show as a use-after-free
+under POISON or a crash in the behaviour check. Body re-lowerings fall from 2,635 to 2,418 on the
+compiler (entry 10's from 312 to 95) and from 9,435 to 9,427 on the corpus.
 
 Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
 closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
