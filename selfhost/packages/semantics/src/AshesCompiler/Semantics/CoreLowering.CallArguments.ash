@@ -1427,6 +1427,16 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
 // those after the call, which this lowering does not port yet.
 let ownedFromUnknownCallee (recorded: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
 
+// Step 8, entry 6: a self call whose result is deferred takes its recorded result type when that
+// result is a scalar: there is nothing to own, so only the arena request and the body's second
+// lowering for it go. Other results keep the deferral and its request.
+let pinsSelfResult (recorded: SemanticType) =
+    match recorded with
+        | SemInt -> true
+        | SemBool -> true
+        | SemFloat -> true
+        | _ -> false
+
 // Whether the recorded result of the unknown-closure call being lowered is such a value.
 let unknownCalleeResultOwned (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
@@ -1593,8 +1603,9 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 // Step 8, entry 8: lowered from the type table, a call whose result layout is still open here
 // takes the result type the table records for the call, closed by the body's own instantiation,
 // before its arena request is decided; the request then follows that type. A self call whose result
-// is deferred and a call to a group member whose arrow was open keep their own rules (entries 6
-// and 7), and a type only the program's uses settle (a generic body lowered once, which stage 0
+// is deferred keeps the deferral unless entry 6 pins it (`pinsSelfResult`), a call to a group member
+// whose arrow was open keeps its own rule (entry 7),
+// and a type only the program's uses settle (a generic body lowered once, which stage 0
 // lowers with its variables open) keeps today's request. So does a call through a closure no name
 // or applied lambda resolves (a function parameter, `given (f) -> f(x)`): its caller cannot own what
 // an unknown callee returns, and stage 0 asks the arena there and copies the result out after the
@@ -1604,7 +1615,7 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
         | (Some(_table), Some(recorded)) ->
-            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) && pinsSelfResult(recorded) == false || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
             then state
             else
                 match bindType(resultType)(recorded)(state) with
