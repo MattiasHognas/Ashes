@@ -226,7 +226,7 @@ let convertExternalArgument context builder types value (abiType: ExternalAbiTyp
         | ExternalAbiPointer(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_ptr")
         | ExternalAbiBuffer(element) -> emitExternalBuffer(context)(builder)(types)(value)(element)
         | ExternalAbiOut(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_out_argument")
-        | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string parameter needs CopyFfiString, the native-string slice of CG-11")
+        | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string parameter needs CopyFfiString")
         | _ -> value
 
 let recursive convertExternalArguments context builder types values (abiTypes: List(ExternalAbiType)) =
