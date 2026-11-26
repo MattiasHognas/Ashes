@@ -66,6 +66,7 @@ export (
     value enterLambdaAtNode,
     value enterRecursiveMemberAtNode,
     value recordedSelfScopeKey,
+    value recordedLambdaParameterType,
     value shadowDictionaryGoalTypeText,
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
@@ -992,3 +993,14 @@ let recordedNestedOperatorGenericScheme (node: Int) (name: Str) (valueNode: Int)
                         | Some(recorded) -> operatorGenericScheme(recorded)(state)
                         | None -> None
                 | None -> None
+
+// Step 8, entry 11: the settled type the table records for a lambda's parameter at the node in
+// effect (the lambda's own), None when that node binds no parameter of that name or its type
+// stays open.
+let recordedLambdaParameterType (parameter: Str) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match nodeBindingNamed(parameter)(table)(state.currentNode) with
+                | Some(TypeScheme { body = body }) -> recordedSettledType(body)(state)
+                | None -> None
+        | None -> None
