@@ -121,10 +121,10 @@ node, or settled only (entry 8b).
 | 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
 | 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
 | 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
-| 8c | an unknown closure's result with a fixed copy-out (a string, a list of strings or scalars) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | | 6 `List`, 1 `Unit` sites keep the request |
+| 8c | a result with a fixed copy-out (a string, a list of strings or scalars) or another heap shape outside the contract, of an unknown closure (entry 8) or a self or sibling call (entries 6, 7) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | self calls: copy-out 3, other 10; sibling calls: copy-out 11, other 5 | unknown closures: 6 `List`, 1 `Unit`; self calls: copy-out 148, other 23; sibling calls: copy-out 229, other 45 |
 | 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
 | 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
-| 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 14 / 215 / 2,786, 117 programs (258 of the unrecorded closed only by settled variables) | 250 / 975 / 97 |
+| 6 | `selfResultDeferred` | a deferred self call takes its recorded result type when the result is a scalar (6a, `5e134ff3`) or a general reference-counted value outside a loop body (6b, `2d158e72`); copy-out and other shapes are 8c, and a general reference-counted result inside a loop body keeps the deferral | In review | 14 / 215 / 2,786, 117 programs; after 6a: 199 / 29; after 6b: 206 / 23 | 250 / 975 / 97; after 6a: 289 / 921; after 6b: 358 / 852 |
 | 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | the group member's recorded result layout decides; the largest IR change | Deferred | 0 / 69 / 5, 36 programs | 0 / 1,851 / 51 |
 | 9 | `calleeResultUnsettled` | none under callee-first order: every differing site is a cycle (see below) | Deferred | 37 / 237 / 0, 234 programs | 113 / 22 / 0 |
 | 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs | 0 / 353 / 0; after entry 8: 0 / 348 / 0 |
@@ -142,6 +142,18 @@ caller reads the callee's returns bit for every result shape. A general referenc
 `05b82e35` takes it owned through the returns bit where its type is closed by the instantiation (7
 of the 11 compiler sites, four of them `LoweredCoreValue` lowering callbacks; three corpus programs). The copy-out kinds
 are entry 8c.
+
+Entry 6 (`5e134ff3`, `2d158e72`). 6a pins 47 compiler and 185 corpus scalar self results (96
+programs); their IR loses only the request word and the temporaries after it, and no body is lowered
+once more or less (re-lowerings unchanged: 9,400 corpus, 2,626 compiler). The compiler's other 286
+scalar self results are self calls in a recursive group, decided by entry 7's rule. 6b pins 69
+compiler and 6 corpus general reference-counted self results (six programs:
+`loop_releases_earlier_pair_whose_parts_it_matched`, `pattern_owner_in_call_argument_cell`,
+`unnamed_predecessor_in_arena_loop` and the three `worklist_*` regressions) outside loop bodies;
+inside a loop body 394 compiler and 6 corpus sites keep the deferral, because the owned slot of an
+undeferred self call has not been shown released at a back edge that follows it (no corpus site has
+that shape: in every changed loop the back edge is lowered in an earlier arm). Re-lowerings rise
+slightly with 6b (9,435 corpus, 2,635 compiler).
 
 Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
 closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
