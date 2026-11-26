@@ -437,6 +437,60 @@ let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree
                                                             |> (given (_) -> buildCall(builder)(freeType)(libcFree)([block])(1u32)(""))
                                                             |> (given (_) -> buildRetVoid(builder)))
 
+// With `ASHES_RC_SITES=1` at compile time, `__ashes_rc_alloc` records where each block was
+// allocated: it calls the allocator proper and writes its own return address (the code that
+// asked for the block) into the free-list link word of the block's prefix, which a live block
+// never uses. A dump of the region at exit then attributes every live cell to the function that
+// allocated it, read through the link map. The wrapper is never inlined, so the return address is
+// its caller's.
+let allocationSitesRequested unit =
+    match Ashes.IO.Environment.get("ASHES_RC_SITES") with
+        | Ok(Some("1")) -> true
+        | _ -> false
+
+let emitSiteRecordingAlloc module_ context builder i64 ptrType (runtime: RcRegionRuntime) (inner: LLVMValueRef) mallocType =
+    (let function_ = runtime.allocFn
+    in
+        let entryBlock = appendBasicBlock(context)(function_)("entry")
+        in
+            let recordBlock = appendBasicBlock(context)(function_)("rc_site_record")
+            in
+                let doneBlock = appendBasicBlock(context)(function_)("rc_site_done")
+                in
+                    let i32 = int32Type(context)
+                    in
+                        let returnAddressType = functionType(ptrType)([i32])(1u32)(false)
+                        in
+                            let returnAddress = addFunction(module_)("llvm.returnaddress")(returnAddressType)
+                            in
+                                let _ = addFunctionEnumAttribute(context)(function_)("noinline")
+                                in
+                                    let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                    in
+                                        let block = buildCall(builder)(mallocType)(inner)([getParam(function_)(0u32)])(1u32)("rc_site_block")
+                                        in
+                                            let address = buildPtrToInt(builder)(block)(i64)("rc_site_address")
+                                            in
+                                                let _ =
+                                                    buildCondBr(builder)(emitInRegion(builder)(i64)(runtime)(address)("rc_site"))(recordBlock)(doneBlock)
+                                                in
+                                                    let _ = positionBuilderAtEnd(builder)(recordBlock)
+                                                    in
+                                                        let site =
+                                                            buildPtrToInt(builder)(buildCall(builder)(returnAddressType)(returnAddress)([constInt(i32)(0u64)(false)])(1u32)("rc_site_caller"))(i64)("rc_site_word")
+                                                        in
+                                                            let _ =
+                                                                "rc_site_slot"
+                                                                |> buildIntToPtr(builder)(buildSub(builder)(address)(regionConst(i64)(8))("rc_site_slot_address"))(ptrType)
+                                                                |> buildStore(builder)(site)
+                                                            in
+                                                                let _ = buildBr(builder)(doneBlock)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                    in
+                                                                        let _ = buildRet(builder)(block)
+                                                                        in Unit)
+
 // `IsReferenceCounted`: whether a value's address lies inside the reserved range, as this
 // codegen's canonical 0/1 `i64` Bool.
 let emitIsReferenceCountedIn builder i64 (runtime: RcRegionRuntime) name valueRef =
@@ -473,7 +527,16 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
         )
     in
         mallocType
-        |> emitAllocBody(context)(builder)(i64)(ptrType)(runtime)(libcMalloc)
+        |> (given (allocType) ->
+            if allocationSitesRequested(Unit)
+            then
+                let inner = internalFunction(module_)("__ashes_rc_alloc_inner")(allocType)
+                in
+                    let _ = emitAllocBody(context)(builder)(i64)(ptrType)((runtime with allocFn = inner))(libcMalloc)(allocType)
+                    in emitSiteRecordingAlloc(module_)(context)(builder)(i64)(ptrType)(runtime)(inner)(allocType)
+            else
+                let _ = emitAllocBody(context)(builder)(i64)(ptrType)(runtime)(libcMalloc)(allocType)
+                in Unit)
         |> (given (_) -> emitFreeBody(context)(builder)(i64)(ptrType)(runtime)(libcFree)(freeType)(runtime.freeFn)(false))
         |> (given (_) ->
             match runtime.poisonReleaseFn with
