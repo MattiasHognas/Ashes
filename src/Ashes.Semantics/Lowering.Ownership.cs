@@ -3029,7 +3029,7 @@ public sealed partial class Lowering
             bool supported = fieldType switch
             {
                 // A read of the arm/function's own entry-normalized "always-returned" parameter
-                // (OPT-51's resume(Just(text)) shape) is exactly as safe as a fresh producer: entry
+                // (the resume(Just(text)) shape) is exactly as safe as a fresh producer: entry
                 // normalization already forces it onto the RC heap unconditionally before this
                 // constructor ever reads it, regardless of what the caller originally passed
                 // (IsNormalizedAlwaysReturnedStringParameterRead's own doc). This is narrower than

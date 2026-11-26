@@ -12,9 +12,8 @@
 //   `Dictionary<string, object?>` rebuild in `RunAdd`/`ReadProjectJson`/`WriteProjectJson`
 //   (`src/Ashes.Cli/Program.cs`) — but by updating the parsed key/value list in place rather than
 //   stripping and re-appending a field, this port does NOT reproduce stage 0's incidental quirk of
-//   relocating `dependencies`/`devDependencies` to the end of the object on every write (see
-//   `docs/md/future/SELF_HOSTING.md`'s `add`/`remove` entry for why that's a deliberate deviation,
-//   not a gap).
+//   relocating `dependencies`/`devDependencies` to the end of the object on every write; that is a
+//   deliberate deviation, not a gap.
 // - Re-serializes with a private 2-space indented writer matching `System.Text.Json`'s
 //   `WriteIndented = true` default (used by stage 0's `WriteProjectJson`): compact `{}`/`[]` for
 //   empty collections, one member per line otherwise. Deliberately deferred: `System.Text.Json`'s

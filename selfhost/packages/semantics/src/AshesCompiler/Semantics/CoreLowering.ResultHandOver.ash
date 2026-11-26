@@ -232,13 +232,49 @@ let cancelArenaResultRequest (resultTemp: Int) (state: CoreLoweringState) = stat
 // `LowerGeneralRcCallResult` block: the result slot is an owned slot of the function, the window
 // is reset and reclaimed around it, and the arena-result request is withdrawn. A self call's
 // result is handed over owned, so no normalization follows.
-let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+let resolveDeferredCallCopyOutUnobserved (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
     if pending.deferredOwned
     then
         (state
         |> cancelArenaResultRequest(pending.deferredResultTemp)
         |> emitGuardedRestoreAndReclaimBy(unlocatedInstruction)(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot), true)
     else resolveDeferredCallCopyOutByKind(pending)(state)
+
+// Step-8 shadow comparison, entry 8c: how a deferred call copy-out resolved once its type settled:
+// its result owned by the contract (the window reset at the call), copied out at the call, or left
+// in the arena window with no copy-out, with the resolved type's head and whether the call sat in a
+// loop body.
+let shadowDeferredOutcome (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let outcome =
+            if pending.deferredOwned
+            then "owned by the contract"
+            else
+                match callCopyOutOf(pending.deferredType)(state) with
+                    | Some(_copyOut) -> "copied out at the call"
+                    | None -> "no copy-out: window left open"
+        in
+            let head =
+                match resolveType(state)(pending.deferredType) with
+                    | SemNamed(_symbol, name, _arguments) -> name
+                    | SemList(_element) -> "List"
+                    | SemTuple(_elements) -> "tuple"
+                    | SemFunction(_argument, _result, _row) -> "function"
+                    | SemVariable(_id) -> "open"
+                    | other -> Ashes.Trait.Show.show(other)
+            in
+                let placement =
+                    if pending.deferredInLoopBody
+                    then "loop body"
+                    else "no loop"
+                in observeShadowUnrecorded(13)("deferred")(outcome + "; " + head + "; " + placement)(state)
+    else state
+
+let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    state
+    |> shadowDeferredOutcome(pending)
+    |> resolveDeferredCallCopyOutUnobserved(pending)
 
 // The store a deferred result travelled through, the instruction just re-emitted, when its block
 // resolved to nothing: removed, so the reload's temp reads the result itself.

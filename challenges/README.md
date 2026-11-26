@@ -37,7 +37,7 @@ a trivial program measures ~8 MB — so figures at or near that are the floor, n
 | Challenge | Standard workload | Time | Peak RSS | Note |
 |---|---|---|---|---|
 | [pidigits](pidigits/README.md) | N=10,000 | 2.13 s | 12.3 MB | Algorithm D bignum division (was O(N^3) bit-division; N=1000 went 3.46 s -> 0.017 s) |
-| [binary-trees](binary-trees/README.md) | N=21 | 1.25 s | 196 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree (was regressed to 2.34 s / 7.3 GB before CO-38) |
+| [binary-trees](binary-trees/README.md) | N=21 | 1.25 s | 196 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree (was regressed to 2.34 s / 7.3 GB before the fix below) |
 | [mandelbrot](mandelbrot/README.md) | N=16,000 | 11.9 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
 | [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 31.7 s | 8.0 MB | correct `556355 / 51` output at the resident floor; the retained-but-never-released successor state is fixed (below) |
 | [n-body](n-body/README.md) | N=50,000,000 | 1.80 s | 8.0 MB | fixed five-body record, each pair evaluated once; the `List(Body)` formulation is kept as `n-body-list.ash` |
@@ -49,20 +49,20 @@ a trivial program measures ~8 MB — so figures at or near that are the floor, n
 
 Two compiler bugs were found and fixed during this very benchmark rerun — the suite doing its job:
 
-- **Large-list copy-out stack overflow (CO-37):** the scope-exit list copier cached heads in an
+- **Large-list copy-out stack overflow:** the scope-exit list copier cached heads in an
   unbounded dynamic stack alloca; mandelbrot's packed-bitmap list (N^2/8 cells, then reversed —
   two copies in one entry frame) segfaulted at N >= 2500. Large caches now spill to OS memory.
-- **Whole-list DeepAdt clone gating:** the `List(ADT)` back-edge clone (CO-32) was licensed by
+- **Whole-list DeepAdt clone gating:** the `List(ADT)` back-edge clone was licensed by
   TYPE, so 1brc's merge loops — which walk a `List(tuple)` by pattern tails — deep-copied the
   remainder every iteration (~400x time, ~27x memory, OOM on the full file). The clone is now
   licensed per argument, only for freshly rebuilt lists (n-body's shape).
 
-A third bug (CO-38, below) was found in a **later** regression sweep, after these two had already
-shipped: **binary-trees** and **fannkuch-redux** — both untouched by CO-37/CO-32 above — had each
+A third bug (below) was found in a **later** regression sweep, after these two had already
+shipped: **binary-trees** and **fannkuch-redux** — both untouched by the two fixes above — had each
 independently regressed to gigabytes of peak RSS on a build that otherwise passed every gate.
 Both regressions are fixed; their roots were separate.
 
-- **Self-recursive ADT mixed arena/RC representation (CO-38):** `binary-trees`' `make`/`check`
+- **Self-recursive ADT mixed arena/RC representation:** `binary-trees`' `make`/`check`
   regressed from 192 MB to 7.3 GB peak RSS at N=21 (fixed; see the changelog for the full
   root-cause). `fannkuch-redux`'s `loop`/`nextPerm` independently regressed from 0.2 MB to 47 GB at
   N=11 in the same sweep. A complete heap census later corrected the initial free-list diagnosis:

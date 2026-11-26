@@ -259,8 +259,7 @@ and addTopLevelNames (added: List(Str)) (names: MapTree(Str, Bool)) =
 // program), the first slice of Perceus/region lifetime placement ported to the self-hosted
 // lowerer. Only reached once the whole remaining top-level sequence has been proven, by
 // topLevelItemsProvablyArenaSafe, to contain no heap value that could cross the restore boundary —
-// the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
-// (see docs/md/future/SELF_HOSTING.md).
+// the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported.
 // The rest of the program is lowered between opening a declaration's bracket and closing it, so the
 // flat chain is walked in two halves: `openArenaBracketedTopLevelLet` opens the bracket, lowers the
 // value and stores it, and records the close still owed as a PendingTopLevelClose;

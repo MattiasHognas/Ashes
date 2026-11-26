@@ -1,7 +1,7 @@
 # Single Ownership Pass
 
-Status: proposed milestone, after the self-hosting fixpoint (step J) and ideally after the .NET
-toolchain is retired (step T). Not started.
+Status: proposed milestone, after the self-hosting fixpoint and ideally after the .NET
+toolchain is retired. Not started.
 
 Baseline: static reading of `selfhost/step-e-leaks` at `e5d782d9`, 2026-10-28. No measurements were
 taken for this proposal.
@@ -64,7 +64,7 @@ handler's pending post and the parallel TLS arena become escape barriers for the
    updates those sections first for the part it changes.
 
 Doing this after the fixpoint gives a leak-free baseline, so a regression of the new pass is visible
-at once, and stage 1 compiling stage 2 as the correctness check. Doing it after step T means it is
+at once, and stage 1 compiling stage 2 as the correctness check. Doing it after the .NET toolchain is retired means it is
 written once, in the self-hosted compiler, instead of in both compilers in lockstep.
 
 ## Effects and risks

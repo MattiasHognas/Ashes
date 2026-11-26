@@ -932,7 +932,7 @@ public sealed partial class Lowering
                 || (PromotesOverStringSiblings && Prune(element.Type) is TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt)
                 || (Prune(element.Type) is TypeRef.TList list && CanRuntimeManageTcoListElement(list.Element)));
 
-    // Stage 2 of the arena-aggregate ownership design (SELF_HOSTING.md): an aggregate holding an
+    // Stage 2 of the arena-aggregate ownership design: an aggregate holding an
     // owned element is promoted over string-like siblings, which are retained or copied like a string.
     private static bool PromotesOverStringSiblings => Environment.GetEnvironmentVariable("GRC_PROMOTE_SIBLINGS") is not null;
 

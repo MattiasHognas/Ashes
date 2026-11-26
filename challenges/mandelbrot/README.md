@@ -78,5 +78,5 @@ That is inherent to emitting the real image as a list; the earlier count-only ve
 Re-running this benchmark surfaced (and fixed) a real compiler bug — exactly what the suite is
 for: the scope-exit list copier cached head values in an **unbounded dynamic stack alloca** (8
 bytes per cell), and the entry frame never pops allocas, so the packed-bitmap list plus its
-reversed copy overflowed the 8 MB stack at `N >= 2500` (changelog CO-37). Large head caches now
+reversed copy overflowed the 8 MB stack at `N >= 2500`. Large head caches now
 spill to OS memory; `N=16000` (a 32M-cell list) runs on all three targets.

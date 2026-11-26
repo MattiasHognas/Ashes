@@ -8,8 +8,7 @@
 //   already own.
 // - Only `add`, `compile` (single linux-x64 file), `fmt`, `init`, `remove`, `restore` (path
 //   dependencies only), `run` (single file), `tree`, and `why` are implemented so far; the other
-//   subcommands remain unported (see
-//   docs/md/future/SELF_HOSTING.md's CLI checklist). Dispatch itself lives in
+//   subcommands remain unported. Dispatch itself lives in
 //   `AshesCompiler.Cli.Dispatch` (`runCli`), not here, so it stays directly testable the same way
 //   every other command is.
 

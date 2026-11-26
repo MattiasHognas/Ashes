@@ -61,6 +61,8 @@ export (
     value observeShadowPending,
     value observeShadowUnrecorded,
     value withSingleLoweringMeasurement,
+    value withShadowLambdaNode,
+    value stateShadowLambdaNode,
     value stateSingleLowering,
     value withPendingGoalObservation,
     value observePendingGoal,
@@ -787,6 +789,8 @@ type CorePendingCallCopyOut =
     // How many of the loop's back edges were lowered before the call: a call no back edge follows
     // in lowering order is never followed by one at run time.
     | deferredBackEdgesBefore: Int
+    // Whether the call sits in a loop body, for the step-8 shadow comparison only.
+    | deferredInLoopBody: Bool
 
 // What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
 // result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
@@ -925,7 +929,7 @@ type CoreTypeObservation =
     // Concrete source-copy calls whose argument tree was skipped or inferred.
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
-    // The step-8 shadow comparison: per order-dependent rule (1 to 11), how many sites the rule
+    // The step-8 shadow comparison: per order-dependent rule (1 to 11, and 12 and 13 for entry 8c), how many sites the rule
     // decided as the rule over the final type would, and every other site.
     | shadowAgree: List(Int)
     | shadowSites: List(ShadowSite)
@@ -933,6 +937,9 @@ type CoreTypeObservation =
     // lowering left open, so the time of a lowering without rules 4 and 10 can be set against the
     // ordinary one. The lowered program is not meant to be used.
     | singleLowering: Bool
+    // The node of a lambda applied where it is written, whose own node the call spine passes over:
+    // the step-8 shadow comparison reads its parameter bindings there.
+    | shadowLambdaNode: Maybe(Int)
 
 type CoreTraitGoalAnswer =
     | ProvenOperandType(SemanticType)
@@ -1074,7 +1081,7 @@ type CoreProgramState =
     // The standard trait environment with the program's own implementations registered, the
     // evidence a trait-mapped operator at a concrete operand type resolves against.
     | traitEnvironment: TypeEnvironment
-    // Stage 0's compiled-instance cache (TRT-16): each implementation method already lowered as
+    // Stage 0's compiled-instance cache: each implementation method already lowered as
     // a capture-free closure helper, by trait, method, and operand type, with its label and
     // type, so a later site rebuilds the closure from the label instead of lowering the body
     // again.
@@ -1489,7 +1496,7 @@ type CoreLoweringState =
     | currentNode: Maybe(Int)
     | consumerRequest: ConsumerRequest
     | runtimeTemps: MapTree(Int, RuntimeTempState)
-    // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
+    // The live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
     // for a same-name rebuild in its own arm, most recently produced first.
     | reuseTokens: List(CoreReuseToken)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
@@ -1523,7 +1530,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false, shadowLambdaNode = None))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
@@ -3514,6 +3521,21 @@ let stateSingleLowering (state: CoreLoweringState) =
         match group.typeObservation with
             | Some(CoreTypeObservation { singleLowering = single }) -> single
             | None -> false)
+
+// The node of an applied lambda, kept only while the lowering observes its types.
+let withShadowLambdaNode (node: Int) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | None -> state
+            | Some(observation) -> state with programState = (group with typeObservation = Some((observation with shadowLambdaNode = Some(node)))))
+
+let stateShadowLambdaNode (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match group.typeObservation with
+            | Some(CoreTypeObservation { shadowLambdaNode = node }) -> node
+            | None -> None)
 
 let withSingleLoweringMeasurement (single: Bool) (state: CoreLoweringState) =
     (let group = state.programState

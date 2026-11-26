@@ -1,4 +1,4 @@
-// Unit tests for OPT-42's reset-safety gate (`AshesCompiler.Semantics.ReuseResetSafety`): the
+// Unit tests for the reuse reset-safety gate (`AshesCompiler.Semantics.ReuseResetSafety`): the
 // verdict stage 0's `IsFullyReusing` reaches on a specialized body before its driving loop is
 // allowed to reclaim its arena, plus the two accumulator-shape predicates that decide whether a
 // call may be routed to a specialization at all. Exercised against hand-built instruction lists,

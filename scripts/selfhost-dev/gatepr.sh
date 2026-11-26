@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: gatepr.sh [changed .ash files...] ; the landing gate for a step C pull request, run once per PR:
+# usage: gatepr.sh [changed .ash files...] ; the landing gate for a self-hosting pull request, run once per PR:
 # build, C# format, canonical .ash formatting, the six selfhost suites, whole-program IR parity, Ashes.Tests
 # (failing names listed, none expected on a branch cut from main), LSP, e2e plain and under ASHES_RC_POISON=1.
 . "$(dirname "$0")/env.sh"

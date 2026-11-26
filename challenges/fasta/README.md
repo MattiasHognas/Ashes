@@ -45,7 +45,7 @@ math lib needed. (`fasta`'s output is the input for **reverse-complement** and
 ALU, weighted-random IUB and homo sapiens) with the specified LCG, 60-column wrapped, in the
 natural accumulator style: each sequence's output is built by a tail-recursive fold appending to a
 growing `Str` accumulator. That shape used to be O(N^2) time (every `out + ch` copied the whole
-accumulator); reservation-based affine string growth (changelog CO-36) made it amortized O(1) per
+accumulator); reservation-based affine string growth made it amortized O(1) per
 appended byte, which is what unlocked benchmark-scale N here.
 
 ## Build & run

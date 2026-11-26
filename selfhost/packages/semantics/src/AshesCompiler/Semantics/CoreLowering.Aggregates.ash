@@ -1960,7 +1960,7 @@ let isRecursiveProducerTail (tail: Expr) (state: CoreLoweringState) = recursiveP
 
 // A live arena list-cell reuse token beats the rule above: it rebuilds this exact cell in place,
 // for zero allocation, where the reuse rule exists precisely for the case a reuse token is NOT
-// available — OPT-42's specialized body still rebuilds its accumulator's spine in place, not on
+// available — the reuse-specialized body still rebuilds its accumulator's spine in place, not on
 // the reference-counted heap, and `consumeListCellReuseToken` itself declines a token whenever
 // the request already asks for a runtime-managed cell, so forcing one here would silently defeat
 // the reuse this exact program shape is the reason `f$reuse` specialization exists for.
@@ -2253,7 +2253,7 @@ let recursive emitAdtFields baseTemp index tagless temps state =
             |> emit(SetAdtField(baseTemp)(index)(temp)(tagless))
             |> emitAdtFields(baseTemp)(index + 1)(tagless)(rest)
 
-// OPT-42 consumer: a same-name rebuild of a dead matched cell reuses it in place instead of
+// In-place reuse consumer: a same-name rebuild of a dead matched cell reuses it in place instead of
 // allocating fresh, when a compatible token is live and the consumer's own placement request
 // already asked for a reference-counted cell (`runtimeManaged`) — `AshesCompiler.Semantics.
 // ReuseSpecialization`'s `reuseCaseSafe` is the sole gate deciding whether that token exists at

@@ -592,7 +592,7 @@ let recursive schemesOfType (typeName: Str) (definitions: List(ConstructorInfere
             then scheme :: schemesOfType(typeName)(rest)
             else schemesOfType(typeName)(rest)
 
-// Whether the named type's cell carries no tag word, decided by the OPT-24 rule over the
+// Whether the named type's cell carries no tag word, decided by the tagless-cell rule over the
 // constructors in scope: a sole constructor with fields that is neither compiler-provided nor a
 // resource handle nor resource-bearing (a user-declared resource or zero-cost type is not visible
 // here and stays tagged).

@@ -1,5 +1,5 @@
 // expect: 12 1 201
-// CO-2 richer-aliasing increment — a let-bound (not call-site-syntactic) fresh seed is a move.
+// Richer aliasing — a let-bound (not call-site-syntactic) fresh seed is a move.
 //
 // `grow` is a DIRECT-reuse fold; `outer` threads its accumulator into `grow` once per batch. Unlike
 // tests/reuse_direct_move_elision.ash (which seeds `outer` with an INLINE fresh construction at the

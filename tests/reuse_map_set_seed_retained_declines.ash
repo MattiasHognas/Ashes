@@ -1,8 +1,8 @@
 // expect: 100 999
-// CO-2c soundness discriminator: a Map.set RESULT that is RETAINED must NOT be moved into a reuse fold.
+// Soundness discriminator for the Map.set move seed: a Map.set RESULT that is RETAINED must NOT be moved into a reuse fold.
 //
 // `w = Ashes.Collection.Map.set(0)(100)(empty)` is a Map.set result — an admissible move seed IN ISOLATION under
-// CO-2c. But here it is RETAINED: `keep = w` reads it after `bump(3)(w)`. Because `w` is used twice it
+// the Map.set seed rule. But here it is RETAINED: `keep = w` reads it after `bump(3)(w)`. Because `w` is used twice it
 // is not move-linear, so the analysis DECLINES to elide `bump`'s entry deep-copy (the move admission is
 // gated on move-linearity, not merely on the seed being a Map.set result). The kept copy makes `bump`'s
 // accumulator independent, so `bump` overwriting key 0's value to 999 in place cannot corrupt `w`, and

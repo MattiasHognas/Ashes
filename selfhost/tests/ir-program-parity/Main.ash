@@ -169,7 +169,7 @@ let recursive printEach (lines: List(Str)) =
 // list. lambda_returns_record (a lambda returning a fresh record tree, owned by a top-level `let`
 // and released through its field walk) stays out of the runner: its `_start_main` still copies
 // the match result out at the scope exit where stage 0 knows every arm produced a runtime value.
-// reuse_record_update and reuse_list_map add OPT-42's runtime reuse: the `let`-owned scrutinee
+// reuse_record_update and reuse_list_map add runtime reuse: the `let`-owned scrutinee
 // released into each arm's reuse token, the same-constructor rebuild consuming it in place with
 // its transferred pointer child guarded by the token's uniqueness, and the nullary rebuild reusing
 // the dead cell; reuse_shared_falls_back keeps a scrutinee aliased by a second `let` on the arena

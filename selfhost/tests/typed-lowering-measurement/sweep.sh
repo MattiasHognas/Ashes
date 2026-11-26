@@ -37,7 +37,7 @@ for file in "$tests"/*.ash; do
         fi
         printf '%s\t%s\n' "$name" "$(tail -n 1 "$out/$name.tsv")" >> "$out/rows.tsv"
         rm -f "$out/$name.tsv"
-        # One shadow row per program: rule, agree, differ and unrecorded for each of the eleven rules.
+        # One shadow row per program: rule, agree, differ and unrecorded for each of the thirteen rules.
         awk -v program="$name" '/^shadow rule=/ { split($0, f, /[ =]/); printf "%s\t%s\t%s\t%s\t%s\n", program, f[3], f[5], f[7], f[9] }' "$out/$name.err" >> "$out/shadow.tsv"
         awk -v program="$name" -F '\t' '/^shadow-site\t/ { printf "%s\t%s\t%s\t%s\t%s\n", program, $2, $3, $4, $5 }' "$out/$name.err" >> "$out/shadow-sites.tsv"
         printf '%s\t%s\n' "$name" "$(grep '^ir_hash=' "$out/$name.err" | head -n 1)" >> "$out/ir.tsv"
@@ -56,4 +56,4 @@ done
 # rows.tsv fields: 7 replayed, 8 pending_traits, 9 equality_goals, 11 first_deferred_operators.
 awk -F '\t' '{ programs++; if ($7 == "yes") replays++; pending += $8; equality += $9; deferred += $11 } END { printf "programs=%d replays=%d pending_traits=%d equality_goals=%d first_deferred_operators=%d\n", programs, replays, pending, equality, deferred }' "$out/rows.tsv" | tee "$out/summary.txt"
 # Per rule: agreeing sites, differing sites, unrecorded sites, and programs with a differing site.
-awk -F '\t' '{ agree[$2] += $3; differ[$2] += $4; unrecorded[$2] += $5; if ($4 > 0) programs[$2]++ } END { for (rule = 1; rule <= 11; rule++) printf "shadow rule=%d agree=%d differ=%d unrecorded=%d programs_differing=%d\n", rule, agree[rule], differ[rule], unrecorded[rule], programs[rule] }' "$out/shadow.tsv" | tee -a "$out/summary.txt"
+awk -F '\t' '{ agree[$2] += $3; differ[$2] += $4; unrecorded[$2] += $5; if ($4 > 0) programs[$2]++ } END { for (rule = 1; rule <= 13; rule++) printf "shadow rule=%d agree=%d differ=%d unrecorded=%d programs_differing=%d\n", rule, agree[rule], differ[rule], unrecorded[rule], programs[rule] }' "$out/shadow.tsv" | tee -a "$out/summary.txt"

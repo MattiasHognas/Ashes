@@ -12,7 +12,8 @@ Done means:
 - stage 1's behaviour matches stage 0's, diagnostics and execution included;
 - typed lowering is the only lowering (step 8's remaining entries and step 9 below);
 - code generation and linking run in parallel;
-- no leaks remain, in either compiler.
+- no leaks remain, in either compiler;
+- the self-hosted compiler compiles faster than the C# compiler.
 
 A successful stage-1 build or a focused test is never a substitute for these gates.
 
@@ -27,36 +28,37 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code, entries 6 and 7 are done for scalar and general reference-counted results (round 14); entries 10, 11 and 4 remain, with 8b and 8c |
-| 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
-| 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage; replace step 8's rules that pay for themselves | A worker that calls into libc no longer corrupts the heap; no function body is lowered twice | Parallel runtime done. Step 8 entries 1–3, 5–9 and the copy-out port (8c) done. Remaining here: the double lowering of function bodies (entries 11 and 4), about half of lowering time |
+| 4 | All workers on leaks, highest impact first, measured and merged per batch: first the known wrong-output bugs, then what the exit census of a stage-1-built compiler shows by type and allocation site, then the test rows | The behaviour check reports no program differing in live cells, plain and under `ASHES_RC_POISON=1`, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
 ### Next
 
 | # | Task | Done when | State |
 | --- | --- | --- | --- |
-| 6 | Close the remaining stage-1/stage-0 differences: the diagnostics whose text or position differs, and the 32 of 95 whole-program IR parity fixtures if step 9 has not retired them | The behaviour check, plain and under `ASHES_RC_POISON=1`, reports every program as same, and no compile-error test prints a different diagnostic | Not started |
-| 7 | CLI parity: port the commands `test`, `repl`, `login`, `publish`, `yank`, `search` and `info`, the options `--target`, `--target-cpu`, `-O0`–`-O3`, `--expr`, `--emit-ir`, `--parallel-workers` and `--parallel-stack-size`, and `restore` beyond path dependencies (`Dispatch.ash` and `Compile.ash` in `selfhost/packages/cli` against [the CLI reference](../reference/cli.md)) | Every command and flag in the CLI reference works from the self-hosted binary, or the reference says it is not provided | Not started |
-| 8 | Port linux-arm64, win-x64 and win-arm64 code generation and linking (`Compile.ash` hard-codes `x86_64-unknown-linux-gnu`; the linker writes ELF only) | Binaries built by the self-hosted compiler pass the cross-target validation the C# compiler passes: qemu for linux-arm64, wine for win-x64, structural checks for win-arm64 | Not started |
-| 9 | Debug information: emit DWARF and accept `--debug`/`-g` (the self-hosted backend has no debug-info builder) | The [debugging guide](../guide/debugging.md)'s workflow works on a self-hosted build | Not started |
-| 10 | Tooling: decide the test runner, the language server and the debug adapter, which exist only in C# (`src/Ashes.TestRunner`, `src/Ashes.Lsp`, `src/Ashes.Dap`; the C# CLI and LSP also use `src/Ashes.Formatter`) | Each runs on the self-hosted compiler's phases or is recorded here as staying in C# with the reason | Formatter: self-hosted (`selfhost/packages/formatter`, wired to `fmt`); the other three not started |
-| 11 | Performance and memory: stage 3 needs 37–48 GiB where stage 2 needs 13–17 GiB; the compiler's 2,657 body re-lowerings if step 3 has not removed them; and the borrowed-result copy: a call whose result is a borrowed part of its argument (a `Str` or `Bytes` field, a pattern binding, a list head, a tuple component) copies the part in both compilers, where only the trivial field accessor retains it | Stage 3 builds within stage 2's memory, and a time and memory gate is recorded in this document | Not started |
-| 12 | Decide what layout an unconstrained element type gets (a loop parameter whose element type stays a free type variable is never released, in both compilers) | The language reference states the rule and both compilers implement it | Not started |
-| 13 | Make the self-hosted compiler the default toolchain and retire the C# compiler | Releases for all four targets are built by the self-hosted compiler from a pinned, reproducible stage-0 input; CI builds, bootstraps and checks it (no job in `ci/` or `.github/` mentions `selfhost` today); the `src/` compiler projects are removed | Not started |
+| 5 | The step 8 rules skipped for now (table below): entry 10's remaining re-lowerings, results closed only by a generic body's single use (8b), copy-out results inside coroutine bodies and other heap shapes (8c remainder), general reference-counted self results in loop bodies | Every row of the step 8 table is Done or records why it stays | Not started |
+| 6 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started; needs task 5 |
+| 7 | Close the remaining stage-1/stage-0 differences: the diagnostics whose text or position differs, and the 32 of 95 whole-program IR parity fixtures if step 9 has not retired them | The behaviour check, plain and under `ASHES_RC_POISON=1`, reports every program as same, and no compile-error test prints a different diagnostic | Not started |
+| 8 | CLI parity: port the commands `test`, `repl`, `login`, `publish`, `yank`, `search` and `info`, the options `--target`, `--target-cpu`, `-O0`–`-O3`, `--expr`, `--emit-ir`, `--parallel-workers` and `--parallel-stack-size`, and `restore` beyond path dependencies (`Dispatch.ash` and `Compile.ash` in `selfhost/packages/cli` against [the CLI reference](../reference/cli.md)) | Every command and flag in the CLI reference works from the self-hosted binary, or the reference says it is not provided | Not started |
+| 9 | Port linux-arm64, win-x64 and win-arm64 code generation and linking (`Compile.ash` hard-codes `x86_64-unknown-linux-gnu`; the linker writes ELF only) | Binaries built by the self-hosted compiler pass the cross-target validation the C# compiler passes: qemu for linux-arm64, wine for win-x64, structural checks for win-arm64 | Not started |
+| 10 | Debug information: emit DWARF and accept `--debug`/`-g` (the self-hosted backend has no debug-info builder) | The [debugging guide](../guide/debugging.md)'s workflow works on a self-hosted build | Not started |
+| 11 | Replace every .NET tool with one built in Ashes on the self-hosted compiler: the test runner (`src/Ashes.TestRunner`), the language server (`src/Ashes.Lsp`), the debug adapter (`src/Ashes.Dap`), the fuzzers (`src/Ashes.Fuzzing`), the registry server (`src/Ashes.Registry`) and the API docs generator (`tools/docs-api-gen`); port or replace their C# test suites as each moves | Each tool runs from Ashes sources with its tests, the VS Code extension and the docs build use the Ashes-built ones, and nothing in the default build needs .NET | Formatter done (`selfhost/packages/formatter`, wired to `fmt`); the rest not started |
+| 12 | Performance and memory: the self-hosted compiler must compile faster than the C# compiler on every target program, and stage 3 must build within stage 2's memory. Known items: heap results with no copy-out keep the caller's arena window open (about 2,500 call sites in the compiler, 370 in loop bodies; a copy rule beyond stage 0), and the borrowed-result copy (a `Str` or `Bytes` returned out of a function from borrowed data is copied in both compilers, where only the trivial field accessor retains it) | The self-hosted compiler builds itself in under 25 s and under 2 GiB (what `dotnet build` of the C# compiler takes: about 25 s, 1.9 GiB), is faster than the C# compiler on ordinary programs, and stage 3 builds within stage 2's memory; the gate is recorded in this document | Not started. Today the self-hosted compiler builds itself in 561 s at 18 GiB (about 60 to 80 s of that is LLVM on six processes); stage 0 takes 27 min at 20 GiB for the same source. Likely needs a per-module cache and an unoptimized development mode besides faster phases |
+| 13 | Decide what layout an unconstrained element type gets (a loop parameter whose element type stays a free type variable is never released, in both compilers) | The language reference states the rule and both compilers implement it | Not started |
+| 14 | Make the self-hosted compiler the default toolchain; keep the C# compiler, its tools and its tests in the repository as an archive | Tasks 4, 11 and 12 are done (no leaks, every tool built in Ashes, and faster than the C# compiler); releases for all four targets are built by the self-hosted compiler from a pinned, reproducible stage-0 input; CI builds, bootstraps and checks it (no job in `ci/` or `.github/` mentions `selfhost` today); the C# compiler, tools and tests are moved to an archive location and no longer part of the default build | Not started; far off |
 
 ## Where the compiler stands
 
-Measured at round 14: main with step 8 entries 6 and 7.
+Measured at round 15: main with the copy-out port.
 
 | Measure | Value |
 | --- | --- |
 | Stage 1 built by stage 0 | 27 min, 20 GiB |
-| Stage-1 behaviour against stage 0 (1,293 programs) | 1,171 same, 122 differ only in live cells at exit, 0 other |
-| The same under `ASHES_RC_POISON=1` | 1,165 same, 122 live cells only, 6 wrong output or crash (below) |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 561 s, 18.1 GiB |
+| Stage-1 behaviour against stage 0 (1,294 programs) | 1,172 same, 122 differ only in live cells at exit, 0 other |
+| The same under `ASHES_RC_POISON=1` | 1,166 same, 122 live cells only, 6 wrong output or crash (below) |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 605 s, 18.2 GiB |
 | Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
-| Stage 3 built by stage 2 | 580 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 31.1 GiB (40.4 GiB before step 8 stopped asking callbacks, self calls and sibling calls for arena results) |
+| Stage 3 built by stage 2 | 601 s, byte-identical to stage 2 |
+| Stage 3 memory, resident plus swap | 25.0 GiB (40.4 GiB before step 8 stopped arena requests and copy-outs from pinning the caller's arena window) |
 | Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident (round 12; not remeasured) |
 | The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
 | Semantics suite | 98 of 99 groups (whole-program IR parity 32 of 95 differing) |
@@ -105,83 +107,31 @@ record.
 
 ### Step 8: rules over the final type
 
-Each entry is a lowering decision keyed on whether a type is still open at a site, replaced by a
-rule over the recorded final type. A replacement with differing sites gets, per changed program, a
-per-function diff of `--emit-ir lowered`, the behaviour check with `ASHES_RC_LEAKCHECK=1`, and a
-lifetime regression in `tests/`. Shadow counts are agree / differ / unrecorded on main after the
-leak merge (driver at `3629bf19`, which separates arena-request sites closed by the body's
-instantiation from sites closed only by the variables the program's uses settle). Every unrecorded
-site carries its reason; for entry 8 they are recorded types still open (the request is kept), no
-node, or settled only (entry 8b).
+Each entry replaces a lowering decision keyed on whether a type is still open at a site by a rule
+over the recorded final type. Counts are shadow sites (driver `--shadow-details`, see its README),
+compiler unless marked; each change gets a lowered-IR diff, the behaviour check with
+`ASHES_RC_LEAKCHECK=1` and a regression test.
 
-| Entry | Rules | Replacement | State | Corpus, 1,184 programs | Whole compiler |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `emitDeferredCoreAdd`, `emitDeferredCoreEquality` | an open operand is an error, never the integer form | Done | | |
-| 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done | | |
-| 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
-| 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
-| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
-| 8c | a result with a fixed copy-out (a string, a list of strings or scalars) or another heap shape outside the contract, of an unknown closure (entry 8) or a self or sibling call (entries 6, 7) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | self calls: copy-out 3, other 10; sibling calls (after entry 7): copy-out 11, other 5 | unknown closures: 6 `List`, 1 `Unit`; self calls: copy-out 148, other 23; sibling calls (after entry 7): copy-out 229, other 45; group-member self calls: copy-out 148, other 23 |
-| 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
-| 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
-| 6 | `selfResultDeferred` | a deferred self call takes its recorded result type when the result is a scalar (6a, `5e134ff3`) or a general reference-counted value outside a loop body (6b, `2d158e72`); copy-out and other shapes are 8c, and a general reference-counted result inside a loop body keeps the deferral | In review | 14 / 215 / 2,786, 117 programs; after 6a: 199 / 29; after 6b: 206 / 23 | 250 / 975 / 97; after 6a: 289 / 921; after 6b: 358 / 852 |
-| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | a call to a group member (a sibling, or the member itself) whose recorded result is a scalar or a general reference-counted value is no longer an open sibling result (`siblingResultSettledByTable`, `9cb7c1df`): it takes the recorded type and the contract's ownership; copy-out and other shapes keep the open-sibling rules, the pinned and proven sibling results stay for them (8c) | In review | 0 / 68 / 6, 36 programs; after: 0 / 16, 13 programs (IR changes in 23 programs) | rule 7: 0 / 1,745 / 128; after: 0 / 274; rule 6 after: 1,017 / 193 |
-| 9 | `calleeResultUnsettled` | none under callee-first order: every differing site is a cycle (see below) | Deferred | 37 / 237 / 0, 234 programs | 113 / 22 / 0 |
-| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs | 0 / 353 / 0; after entry 8: 0 / 348 / 0 |
-| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 32,838 / 8 / 9,005, 7 programs | 27,021 / 8 / 2,881 |
+| Entry | Decision | Replacement | State |
+| --- | --- | --- | --- |
+| 1 | `emitDeferredCoreAdd`, `emitDeferredCoreEquality` | an open operand is refused, never the integer form | Done |
+| 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done |
+| 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done |
+| 5 | `lowerInternalDeepCopy` | the copy at the recorded type | Done |
+| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call result pinned to its recorded type (closed by the body's instantiation) before the request; an unknown closure keeps its request except for a general reference-counted result (stage 0's `RequestsArenaResultFromUnknownCallee`) | Done (#1163; stage 3 40.4 to 32.4 GiB) |
+| 9 | `calleeResultUnsettled` | none: every differing site (22; corpus 237) is a self call, already callee-first | Closed |
+| 6 | `selfResultDeferred` | a deferred self call's scalar or general reference-counted result pinned; inside a loop body the general one keeps its deferral (21 sites; corpus 3) | Done (#1164) |
+| 7 | `siblingResultOpen` and the pinned and proven sibling results | a group member's scalar or general reference-counted result settled from the table (1,471 sibling and 659 group-member self sites); re-lowerings 2,635 to 2,418 | Done (#1164) |
+| 8c | a group-member call's copy-out result left in its window (47 sites, 31 in loop bodies) | the call reads the callee's returns bit on the type its consumer names, as stage 0's pruned arrow does, and copies the result out on the arena branch (`LowerCallConditionalCopyOutResult`); an unconditional copy (`LowerCallCopyOutResult`) where no bit is read. Compiler sites left open 47 to 0 | In review |
+| 8c-async | the same in a coroutine body (corpus 42 sites, the `async_*` programs) | needs the copy's release across an await first | Later |
+| 8c-other | self and sibling copy-out and other-shape results keeping their request (copy-out 148 + 229, other 23 + 45; unknown closures 7 + 4) | stage 0's post-call copy-out per kind | Later |
+| 8d | about 2,500 heap results with no copy-out whose window stays open, as in stage 0 (`LowerUncoveredCallResultCopyOut`; about 370 in loop bodies) | a copy-plan rule beyond stage 0 | Not planned |
+| 8b | results closed only by the variables a generic body's single use settles (128; corpus 560) | the same pin, beyond stage 0 | Deferred |
+| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | decided on the parameter type the lambda's node records (9; corpus 6 programs change IR). A `\|?>` mapper call passes no ownership word, so a mapper normalized this way keeps its payload's reference: that call must hand the payload over first | Held |
+| 4 | `bodyEncounteredRequirementClosedScope` | scope types from the table at entry, no closed-scope re-lowering (2,323 re-lowerings, 55% of the lowering time with entry 10). 1,480 of them have no node in effect at entry (parameter lambdas of a `let`), and closing types at entry moves entry 11's decision on generic library bodies | Needs the declaration node |
+| 10 | `lowerFunctionBodyResolvingCalls`, `anyCallResultResolved` | none once 4 and 6 to 9 hold (95 re-lowerings left) | After 4 |
 
-Entry 8 first pinned every open call result, including calls through a closure no name resolves
-(`given (f) -> f(x)`). The round showed why stage 0 asks the arena there: the caller cannot own
-what an unknown callee returns, and stage 0 copies the result out after the call. Taking a list
-result by the callee's returns bit left the list and its strings unreleased (7 and 13 live cells
-against stage 0's 1). The pin now leaves those calls alone (`56564990`), which covers all four corpus
-sites and leaves their IR as before; on the compiler body re-lowerings fall from 2,667 to 2,662
-and entry 10's sites from 353 to 348. An unknown closure's result becomes ownable only when the
-caller reads the callee's returns bit for every result shape. A general reference-counted result
-(a record or ADT outside the fixed copy-outs) already is, as in stage 0, which asks no arena for it:
-`05b82e35` takes it owned through the returns bit where its type is closed by the instantiation (7
-of the 11 compiler sites, four of them `LoweredCoreValue` lowering callbacks; three corpus programs). The copy-out kinds
-are entry 8c.
-
-Entry 6 (`5e134ff3`, `2d158e72`). 6a pins 47 compiler and 185 corpus scalar self results (96
-programs); their IR loses only the request word and the temporaries after it, and no body is lowered
-once more or less (re-lowerings unchanged: 9,400 corpus, 2,626 compiler). The compiler's other 286
-scalar self results are self calls in a recursive group, decided by entry 7's rule. 6b pins 69
-compiler and 6 corpus general reference-counted self results (six programs:
-`loop_releases_earlier_pair_whose_parts_it_matched`, `pattern_owner_in_call_argument_cell`,
-`unnamed_predecessor_in_arena_loop` and the three `worklist_*` regressions) outside loop bodies;
-inside a loop body 394 compiler and 6 corpus sites keep the deferral, because the owned slot of an
-undeferred self call has not been shown released at a back edge that follows it (no corpus site has
-that shape: in every changed loop the back edge is lowered in an earlier arm). Re-lowerings rise
-slightly with 6b (9,435 corpus, 2,635 compiler).
-
-Entry 7 (`9cb7c1df`). The 659 compiler self calls entry 6 left (286 scalar, 373 general reference
-counted) are calls of recursive-group members, which the open-sibling rule governs; settling a
-member's scalar or general reference-counted result from the table covers them with the 1,471
-sibling sites. A general reference-counted sibling result is then taken owned by the contract
-(`calleeReturnsGeneralRcOwned`: the member normalizes its result at its return), no longer read
-through the returns bit as a pinned sibling result was; that is the decision most likely to go wrong,
-if a member returns such a result without normalizing it, and it would show as a use-after-free
-under POISON or a crash in the behaviour check. Body re-lowerings fall from 2,635 to 2,418 on the
-compiler (entry 10's from 312 to 95) and from 9,435 to 9,427 on the corpus.
-
-Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
-closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
-reason each site now names (driver at `350b7717`): of the 237 corpus sites and the 22 compiler
-sites, 235 and 22 are a function's call to itself and 2 (`Text.Json`'s `parseValue` called from
-the `parseArr` nested in its own body) are a call into the body still being lowered. None is a
-forward reference to another top-level body: top-level scoping already lowers every callee
-before its callers (a binding is visible only to later declarations, and imported modules are
-stitched before their importers). So callee-first order changes nothing, the entry closes with
-no code under that decision, and lowering order, lambda and label numbering stay as they are.
-The fact a self call lacks is its own body's result placement, which only predicting it before
-lowering (the other option, beyond stage 0) could supply.
-
-Planned order: 8 and 9, then 6 and 7 with 10, then 11, then 4. Replacing the per-binding plan
-(`constrainedBindingPlan`) by the recorded schemes follows entry 3. Entries 6 to 9 mirror rules
-stage 0 has on its live types (`RequestsArenaResult`, `ContainsUnresolvedLayoutType`,
-`CalleeResultUnsettled`, `EmitRuntimeManagedTcoArgumentNormalization`), so they change generated
-code by design.
+Order: 8c, 11, 4, 10, then 8c-async and 8c-other; 8b and 8d go beyond stage 0 and wait.
 
 ### Step 9: delete the raw lowering
 

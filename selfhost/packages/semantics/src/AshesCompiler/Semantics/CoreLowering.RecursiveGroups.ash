@@ -50,7 +50,7 @@ let recursive innermostResultType (semanticType: SemanticType) (state: CoreLower
 // as the body begins: a self call to it takes a fresh result type, the way stage 0's
 // lowering-local self arrow stays unresolved until the member's body is done. A sibling of a
 // recursive group is left alone: stage 0 reaches its siblings through the group's merged
-// dispatch, whose shape is OPT-19's.
+// dispatch.
 let recursive deferredResultNames (selfName: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
     match bindings with
         | [] -> []

@@ -417,7 +417,7 @@ let testResourceBearingAdtIsRejectedWithResourceFlag unit =
 
 // A reference-counted closure releases its own environment through the dropper its own
 // construction attached, so a closure field is a self-contained owned child regardless of what
-// places it there (OPT-52, stage 0's `CanDropAdtGraph`/`DropKindForType`'s `TypeRef.TFun` cases) —
+// places it there (stage 0's `CanDropAdtGraph`/`DropKindForType`'s `TypeRef.TFun` cases) —
 // droppable, with its own `DropClosure` kind, unlike an opaque handle (see
 // `testAdtContainingOpaqueTypeHasUnsupportedChild` just above). This single-constructor type still
 // does not qualify as an owned-child ADT (that layout needs at least two constructors) or a TCO

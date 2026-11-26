@@ -639,6 +639,12 @@ let markFlaggedDeepCopyOwned (flagTemp: Int) (resultTemp: Int) (state: CoreLower
 
 let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool) (lowered: LoweredCoreValue) = stage with lowered = lowered, resultNormalized = normalized, resultDeepCopied = deepCopied
 
+// Whether the body being lowered is a loop body.
+let inLoopBody (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) -> true
+        | None -> false
+
 // Stage 0's `DeferCallResultCopyOut`: a result whose type still holds an unresolved layout is
 // routed through a local slot and read back out of it, and the copy-out block that belongs
 // between the store and the reload is emitted by `resolvePendingTcoResets` once the body is
@@ -667,7 +673,8 @@ let deferCallCopyOut (selfCall: Bool) cursorSlot endSlot preRestoreSlot (resultT
                                 deferredLetReleaseSlots = [],
                                 deferredBackEdgesBefore = stored
                                 |> statePendingTcoResets
-                                |> length
+                                |> length,
+                                deferredInLoopBody = inLoopBody(stored)
                             )
                         in
                             (stored
@@ -1419,6 +1426,40 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
     |> cancelArenaResultRequest(temp)
     |> lowerGeneralRcCallResultOwned(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
 
+// Step-8 shadow comparison, entry 8c: a call after which this lowering leaves the callee's result
+// in the caller's arena window, where stage 0 restores the window, copies the result out and
+// reclaims the chunks for a result with a copy-out. The site names the kind of call (self, sibling,
+// unknown closure, other known), the result's kind, whether the call is in tail position, and
+// whether the copy-out was deferred to the body's end or the window left open.
+let shadowWindowLeftOpen (context: CoreCallContext) (semanticType: SemanticType) (how: Str) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let callKind =
+            if callsUnknownCallee(context)
+            then "unknown closure"
+            else
+                if context.selfCallee
+                then
+                    match context.calleeName with
+                        | Some(name) ->
+                            if state
+                            |> stateRecursiveGroupNames
+                            |> containsLabel(name)
+                            then "group member"
+                            else "self"
+                        | None -> "self"
+                else "known"
+        in
+            let tail =
+                if context.tailCall
+                then "tail"
+                else "not tail"
+            in
+                observeShadowUnrecorded(12)("window open")(how + "; " + callKind + "; " + unknownCalleeResultKind(semanticType)(state) + "; " + tail + "; " + (if inLoopBody(state)
+                then "loop body"
+                else "no loop"))(state)
+    else state
+
 let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
@@ -1451,9 +1492,12 @@ let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage
                                             closed
                                             |> success(resultTemp)(semanticType)
                                             |> closedCallStage(stage)(true)(false)
-                                // Stage 0's `LowerCallCopyOutResult`: a call that asked for an arena result holds the
-                                // callee's arena copy, copied out of the window before it is reset.
-                                | (Some(copyOut), false) when callRequestsArenaResult(temp)(allocated.reversedInstructions) ->
+                                // Stage 0's `LowerCallCopyOutResult`: a result with a copy-out and no returns flag is
+                                // copied out of the window before it is reset, whatever the call asked for (entry 8c).
+                                // A coroutine body, or a function that may run inside one, copies it out only when it
+                                // asked for an arena result: its other results stay in the arena until the copy's
+                                // release across an await exists.
+                                | (Some(copyOut), false) when callRequestsArenaResult(temp)(allocated.reversedInstructions) || asyncIndependentRcPlacementAllowed(allocated) ->
                                     match emitPlainCallCopyOut(copyOut)(temp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
                                         | (closed, resultTemp) ->
                                             closed
@@ -1477,13 +1521,18 @@ let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(true)(true)
                                         | _ ->
-                                            match deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
+                                            match allocated
+                                            |> shadowWindowLeftOpen(context)(semanticType)(if containsUnresolvedLayout(semanticType)(allocated)
+                                            then "deferred"
+                                            else "kept: no copy-out (resolved, as stage 0)")
+                                            |> deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType) with
                                                 | (deferred, resultTemp) ->
                                                     deferred
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(false)(false)
                                 | _ ->
                                     allocated
+                                    |> shadowWindowLeftOpen(context)(semanticType)("left open")
                                     |> success(temp)(semanticType)
                                     |> closedCallStage(stage)(false)(false)
 
@@ -1627,10 +1676,13 @@ let recursive lowerCallSpineCallee expression (context: CoreCallContext) expecte
                     |> preconstrainCallResult(expected)(site)(arity)
                     |> preconstrainKnownArguments(context)
                     |> callStageOf
-        | ExprNode(_node, inner) ->
+        | ExprNode(node, inner) ->
             match unspanArgument(inner) with
                 | ExprCall(_function, _argument, _isSugar, _layout) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
-                | ExprLambda(_parameter, _body, _annotation) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | ExprLambda(_parameter, _body, _annotation) ->
+                    state
+                    |> withShadowLambdaNode(node)
+                    |> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)
                 | _ ->
                     state
                     |> lower(expression)

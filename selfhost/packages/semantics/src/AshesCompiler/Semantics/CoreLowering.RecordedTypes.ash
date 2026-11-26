@@ -685,22 +685,36 @@ let recursive boundSchemeNamed (name: Str) (bindings: List((Str, TypeScheme))) =
             then Some(scheme)
             else boundSchemeNamed(name)(rest)
 
+// The scheme a node notes for a binding of this name, if any.
+let nodeBindingNamed (parameter: Str) (table: NodeTypeTable) (node: Maybe(Int)) =
+    match node with
+        | Some(identity) ->
+            table
+            |> nodeBindingsAt(identity)
+            |> boundSchemeNamed(parameter)
+        | None -> None
+
 // The type the table records for a lambda's parameter: the binding the inference notes at the
-// lambda's own node, closed as shadowSiteType closes a type. Ok(None) when the node in effect
-// binds no parameter of that name (it is not the lambda's node: an applied lambda is lowered
-// under its call's node), Ok(Some) with the type, Error when the binding's type stays open.
+// lambda's own node, which is the node in effect or, for a lambda applied where it is written
+// (a pipeline stage, whose node the call spine passes over), the node the spine remembered for the
+// shadow comparison; closed as shadowSiteType closes a type. Ok(None) when neither binds a
+// parameter of that name, Ok(Some) with the type, Error when the binding's type stays open.
 let shadowLambdaParameterType (parameter: Str) (state: CoreLoweringState) =
-    match (stateNodeTypes(state), state.currentNode) with
-        | (Some(table), Some(node)) ->
-            match table
-            |> nodeBindingsAt(node)
-            |> boundSchemeNamed(parameter) with
-                | Some(TypeScheme { body = body }) ->
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match (nodeBindingNamed(parameter)(table)(state.currentNode), state
+            |> stateShadowLambdaNode
+            |> nodeBindingNamed(parameter)(table)) with
+                | (Some(TypeScheme { body = body }), _applied) ->
                     match recordedSettledType(body)(state) with
                         | Some(settled) -> Ok(Some(settled))
                         | None -> Error("open or untranslatable type")
-                | None -> Ok(None)
-        | _ -> Ok(None)
+                | (None, Some(TypeScheme { body = body })) ->
+                    match recordedSettledType(body)(state) with
+                        | Some(settled) -> Ok(Some(settled))
+                        | None -> Error("open or untranslatable type")
+                | (None, None) -> Ok(None)
+        | None -> Ok(None)
 
 // The name and scheme the standalone inference gave the top-level binding whose value is the node
 // with this identity, as lowering writes it. The scheme keeps the inference's quantified variable

@@ -4146,21 +4146,21 @@ let testRunSharedTcoRuntimeManagedStrAccumulatorPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedListAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_list_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedListAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_list_accumulator_plateau_e2e")("200000|1088895|200000")
 
-// A list head forwarded by name to a different loop parameter (stage 0's OPT-38 shape): the
+// A list head forwarded by name to a different loop parameter (a stage-0 shape): the
 // pattern owner's protective retain and back-edge release keep the string alive across the
 // runtime-managed `keep` parameter's predecessor drop; without them the strings of the list were
 // freed while the list still held them, and the churn below reused their cells.
 let testRunSharedTcoPatternHeadForwardedToOtherParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_pattern_head_forwarded_to_other_parameter.ash"))("selfhostBackendRunSharedTcoPatternHeadForwardedToOtherParameter")("selfhost_backend_shared_tco_pattern_head_forwarded_to_other_parameter_e2e")("110288|174288|2000200020002000200020002000200020002000200020002000200020002000")
 
-// A read-only builtin consuming a fresh reference-counted call result (OPT-39): released right
+// A read-only builtin consuming a fresh reference-counted call result: released right
 // after the read straight from the call and through an if join of fresh branches, kept when one
 // branch is the loop's borrowed parameter or when a let scope owns the result, each for 20000
 // iterations so a double release shows up as a crash or a wrong total.
 let testRunSharedRcReleaseReadBuiltinJoinResult shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/rc_release_read_builtin_join_result.ash"))("selfhostBackendRunSharedRcReleaseReadBuiltinJoinResult")("selfhost_backend_shared_rc_release_read_builtin_join_result_e2e")("5689216|4266976|7964736|11378432")
 
-// A large string threaded through an arena-shell state tuple (OPT-34): the helper rebuilding the
+// A large string threaded through an arena-shell state tuple: the helper rebuilding the
 // tuple carries the borrowed parameter's string as is, and a let-owned fresh string placed into the
 // same shape survives its owner's release, each for 20000 steps.
 let testRunSharedEscapingTupleBorrowedStateString shipped unit =
@@ -4169,13 +4169,13 @@ let testRunSharedEscapingTupleBorrowedStateString shipped unit =
 // A runtime-managed string loop parameter consed into a sibling accumulator at the tail
 // self-call: the cell retains it before the back edge releases the parameter's old reference,
 // and a churn loop reuses freed cells so a missing retain shows up as a wrong total or a crash.
-// A single-constructor record loop parameter on the reference-counted heap (OPT-25): the entry
+// A single-constructor record loop parameter on the reference-counted heap: the entry
 // copy under the ownership flag, the back-edge copy-out and predecessor release, and the exit
 // transfer, run for three million iterations at a flat plateau.
 let testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_record_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedRecordAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_record_accumulator_plateau_e2e")("4500004500000")
 
-// A tuple of scalars as a loop parameter on the reference-counted heap (OPT-25), the record's
+// A tuple of scalars as a loop parameter on the reference-counted heap, the record's
 // placement under the type name `Tuple`, run for three million iterations at a flat plateau.
 let testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_tuple_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedTupleAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_tuple_accumulator_plateau_e2e")("4500001500003")
@@ -5795,7 +5795,7 @@ let testArenaAllocReusing unit = assertProgramPrintsLines(buildArenaAllocReusing
 
 let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
 
-// A reference-counted closure's `RcDrop` is count-aware and calls its dropper (OPT-52): a shared
+// A reference-counted closure's `RcDrop` is count-aware and calls its dropper: a shared
 // reference (a second live `RcDup` of the same closure) decrements only the closure's own count
 // and calls no dropper; only the drop of the last reference does both, exactly once. The wired
 // dropper (stored at closure+24 via a plain `StoreMemOffset`, exactly as lowering does) prints 99
