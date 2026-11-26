@@ -2613,6 +2613,23 @@ let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (stat
         | Some(name) -> canRuntimeManageRecursiveCopyAdt(resultType)(state) && isFreshConstructorTree(expression)(name)(state)
         | None -> false
 
+// Stage 0's `IsReferenceCountedOwnerPartRead`: a pattern binding aliased to the reference-counted
+// scrutinee it was taken from (a tuple element, `| (moduleName, name) -> ExprVar(name)`). The owner
+// releases the string with itself at the end of the arm, so a parent that outlives the arm keeps a
+// string of its own. The parent is then built reference-counted and the string copied into it
+// (`materializeStringChildArgument`), both from this one predicate. Stage 0 excludes a Perceus
+// pattern owner, which only a loop has, so a pattern owner counts only outside a loop, where its
+// marker is never promoted to a retain.
+let isReferenceCountedOwnerPartRead (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot), patternFact = fact, letBound = false }) ->
+            (patternOwnerFlag(fact) == false || (match stateTcoLoopFrame(state) with
+                | Some(_frame) -> false
+                | None -> true)) && runtimeOwnerStateOf(slot)(state) == None && (match liveRuntimeOwnerSlot(name)(state) with
+                | Some(ownerSlot) -> ownerSlot != slot
+                | None -> false)
+        | _ -> false
+
 // Stage 0's `IsMaterializableStringChildRead`: a borrowed string a runtime-managed parent copies
 // into an owned child of its own: a field read out of a local record binding, or a read of a
 // name the arm around the literal binds later or of a local binding that owns no
@@ -2628,7 +2645,7 @@ let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | None -> true
-                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact, letBound = false }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact, letBound = false }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None || isReferenceCountedOwnerPartRead(name)(state)
                 | _ -> false
         | _ -> false
 
