@@ -28,6 +28,7 @@ import AshesCompiler.Semantics.TypeSchemes.freeTypeVariables
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowSiteType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedInstantiatedSiteType
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
@@ -1441,8 +1442,8 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                         then 7
                         else 8
                 in
-                    match (shadowSiteType(state), resolveType(state)(resultType)) with
-                        | (Some(recorded), resolved) ->
+                    match (recordedInstantiatedSiteType(state), shadowSiteType(state), resolveType(state)(resultType)) with
+                        | (Some(recorded), _settled, resolved) ->
                             if freeTypeVariables(resolved) == [] && recorded != resolved
                             then
                                 observeShadowUnrecorded(rule)(requestText(current))("the node in effect records " + Ashes.Trait.Show.show(recorded) + ", not the call's result " + Ashes.Trait.Show.show(resolved))(state)
@@ -1451,7 +1452,9 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                                 |> requestsArenaResult(recorded)
                                 |> requestText
                                 |> Some)(state)
-                        | (None, _resolved) ->
+                        | (None, Some(settled), _resolved) ->
+                            observeShadowUnrecorded(rule)(requestText(current))("closed only by settled variables, " + requestText(requestsArenaResult(settled)(state)))(state)
+                        | (None, None, _resolved) ->
                             observeShadow(rule)(requestText(current))(None)(state)
     else state
 
