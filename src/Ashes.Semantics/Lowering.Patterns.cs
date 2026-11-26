@@ -934,6 +934,7 @@ public sealed partial class Lowering
         }
         bodyTemp = NormalizeParameterPassthroughBranch(cases[i].Body, bodyTemp);
         bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp, savedTailPos, matchArm: true);
+        bodyTemp = NormalizeArmResultBorrowingArmOwner(cases[i].Body, bodyTemp, bodyType, savedTailPos, request);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         IrInst.StoreLocal armStore = (IrInst.StoreLocal)_inst[^1];
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
@@ -953,6 +954,32 @@ public sealed partial class Lowering
                 bodyType));
         }
         Emit(new IrInst.Jump(endLabel));
+    }
+
+    // An arm whose result is an arena aggregate built from parts of a reference-counted owner the
+    // arm's own scope releases at its exit (`| (moduleName, local) -> Qualified(moduleName)(local)`
+    // over a fresh tuple, the match an argument of a call) would hand the join cells that point
+    // into the released owner. Outside a transferring context nothing retains those parts, so the
+    // result is copied onto the reference-counted heap first, with references of its own to every
+    // reference-counted part, as an `if` branch borrowing a live owner is
+    // (NormalizeBranchResultBorrowingRuntimeOwner). A transferring or tail arm retains the parts
+    // itself.
+    private int NormalizeArmResultBorrowingArmOwner(Expr body, int bodyTemp, TypeRef bodyType, bool tailPosition, LoweredValueRequest request)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARMRESULTOWNERCOPY") is not null
+            || tailPosition
+            || request.TransfersRuntimeManagedChildren
+            || IsRuntimeManagedResultTemp(bodyTemp)
+            || CanArenaReset(Prune(bodyType))
+            || _ownershipScopes.Count == 0
+            || CollectBorrowedRuntimeOwners(body) is not { Count: > 0 } owners)
+        {
+            return bodyTemp;
+        }
+
+        Dictionary<string, OwnershipInfo> armScope = _ownershipScopes.Peek();
+        bool borrowsArmOwner = owners.Exists(owner => armScope.Values.Any(scoped => ReferenceEquals(scoped, owner)));
+        return borrowsArmOwner ? NormalizeBranchResultBorrowingRuntimeOwner(bodyTemp) : bodyTemp;
     }
 
     private (int Temp, TypeRef Type) LowerMatchArmExpressionWithReuseContext(
