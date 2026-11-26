@@ -127,7 +127,7 @@ match Ashes.IO.args with
     | "backend" :: root :: name :: [] -> let _ = BackendSuite.runNamed(root)(name) in Unit
     | "parity" :: root :: output :: [] -> let _ = ParitySuite.run(root)(output) in Unit
     | "measure" :: path :: flags -> let _ = MeasurementSuite.runWithFlags(path)(flags) in Unit
-    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory> | measure <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--single-lowering]")
+    | _ -> Ashes.IO.panic("usage: shared-native semantics [case] | backend <shipped-library-root> [case] | parity <fixtures> <output-directory> | measure <project/ashes.json | file.ash> [typed] [--goal-details] [--shadow-details] [--ir-hash] [--ir-file <path>] [--single-lowering]")
 ASH
 mkdir "$project/actual"
 trap - EXIT
