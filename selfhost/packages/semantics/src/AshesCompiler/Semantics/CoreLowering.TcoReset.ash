@@ -1342,20 +1342,56 @@ let isBorrowedBindingChild (expression: Maybe(Expr)) (stored: Maybe(Int)) (state
                 | _ -> false
         | _ -> false
 
-let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
-    if isBorrowedBindingChild(expression)(stored)(state)
-    then state
-    else
-        match expression with
-            | Some(literal) ->
-                if storedInOwnedSlot(stored)(state)
-                then state
-                else
-                    if isFreshAggregateLiteral(literal)(state)
-                    then
-                        emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
-                    else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
-            | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+// Diagnostic only: the decisions of `emitSourceChildRelease` for one child, one decimal digit each
+// (1 true, 0 false) in a `LoadConstInt` of 8 followed by the digits: borrowed binding child, has an
+// expression, stored in an owned slot, expression is a fresh aggregate literal, has a stored temp,
+// stored temp is an unrealized construction retain, stored temp is a bare field read.
+let sourceChildDigit (holds: Bool) (number: Int) =
+    if holds
+    then number * 10 + 1
+    else number * 10
+
+let emitSourceChildConditions (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
+    (let digits =
+        8
+        |> sourceChildDigit(isBorrowedBindingChild(expression)(stored)(state))
+        |> sourceChildDigit(match expression with
+            | Some(_child) -> true
+            | None -> false)
+        |> sourceChildDigit(storedInOwnedSlot(stored)(state))
+        |> sourceChildDigit(match expression with
+            | Some(child) -> isFreshAggregateLiteral(child)(state)
+            | None -> false)
+        |> sourceChildDigit(match stored with
+            | Some(_temp) -> true
+            | None -> false)
+        |> sourceChildDigit(match stored with
+            | Some(temp) -> isUnrealizedConstructionRetain(temp)(state.reversedInstructions)
+            | None -> false)
+        |> sourceChildDigit(match stored with
+            | Some(temp) -> isBareFieldRead(temp)(state.reversedInstructions)
+            | None -> false)
+    in
+        match freshTemp(state) with
+            | FreshTemp { state = withTemp, temp = digitTemp } ->
+                emit(LoadConstInt(digitTemp)(digits))(withTemp))
+
+let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (stored: Maybe(Int)) (unobserved: CoreLoweringState) =
+    (let state = emitSourceChildConditions(expression)(stored)(unobserved)
+    in
+        if isBorrowedBindingChild(expression)(stored)(state)
+        then state
+        else
+            match expression with
+                | Some(literal) ->
+                    if storedInOwnedSlot(stored)(state)
+                    then state
+                    else
+                        if isFreshAggregateLiteral(literal)(state)
+                        then
+                            emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
+                        else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+                | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state))
 and emitStoredSourceChildRelease (childTemp: Int) (childType: SemanticType) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match stored with
         | Some(storedTemp) ->
