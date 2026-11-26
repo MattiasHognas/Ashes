@@ -644,14 +644,14 @@ let requestedLinkMapPath unit =
 // runtime payloads, its external libraries, and, when a link map was requested, the origin text of
 // every function. The program itself is not part of the result, so a caller that took the program
 // from a call's result releases it before the module is optimized and emitted.
-let preparedEmission optimized =
+let preparedEmissionWith (libcThreads: Bool) optimized =
     (let _ = initializeX86Target(Unit)
     in
         let context = contextCreate(Unit)
         in
             let _ = reportDiagnosticPhase("codegen-start")
             in
-                match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(optimized) with
+                match codegenProgramWithThreads(leakCheckRequested(Unit))(libcThreads)(entrySymbolName)(context)(optimized) with
                     | (module_, builder) ->
                         let _ = reportDiagnosticPhase("codegen-done")
                         in
@@ -692,7 +692,7 @@ let objectPartitionsSetting unit =
         | Ok(Some(value)) when value != "" -> Some(value)
         | _ -> None
 
-// A program prepared for emission: one module (`preparedEmission`'s tuple), or the partition
+// A program prepared for emission: one module (`preparedEmissionWith`'s tuple), or the partition
 // modules of a partitioned build with the payload files partition 0 links, the external libraries
 // and the link-map names.
 type PreparedBuild(W, P) =
@@ -701,9 +701,9 @@ type PreparedBuild(W, P) =
 
 // The program built into `partitions` partition modules, every one built while the program is
 // read, with the payload files resolved and what linking still needs read up front. Like
-// `preparedEmission`, the program is not part of the result, so it is released before the first
+// `preparedEmissionWith`, the program is not part of the result, so it is released before the first
 // partition is optimized; the unoptimized partition modules are then all alive together.
-let preparedPartitionedEmission (partitions: Int) optimized =
+let preparedPartitionedEmission (libcThreads: Bool) (partitions: Int) optimized =
     (let _ = initializeX86Target(Unit)
     in
         match resolveRuntimePayloadPaths(runtimePayloadsFor(optimized))([]) with
@@ -712,7 +712,7 @@ let preparedPartitionedEmission (partitions: Int) optimized =
                 let _ = reportDiagnosticPhase("codegen-start")
                 in
                     let modules =
-                        buildPartitionModules(leakCheckRequested(Unit))(entrySymbolName)(partitions)(optimized)
+                        buildPartitionModulesWithThreads(leakCheckRequested(Unit))(libcThreads)(entrySymbolName)(partitions)(optimized)
                     in
                         let _ = reportDiagnosticPhase("codegen-done")
                         in
@@ -728,16 +728,16 @@ let preparedPartitionedEmission (partitions: Int) optimized =
 // The program prepared as one module when its plan is one partition (`ASHES_LLVM_JOBS=1`, or a
 // program below two partitions' worth of functions), otherwise as partition modules. The plan
 // depends on the program and the setting alone; the machine decides only how many partitions are
-// built at once.
-let preparedBuild optimized =
+// built at once. `libcThreads` chooses the worker threads (`WorkerThreads` in the backend).
+let preparedBuild (libcThreads: Bool) optimized =
     (let partitions =
         requestedObjectPartitions(objectPartitionsSetting(Unit))(optimized)
     in
         if partitions > 1
-        then preparedPartitionedEmission(partitions)(optimized)
+        then preparedPartitionedEmission(libcThreads)(partitions)(optimized)
         else
             optimized
-            |> preparedEmission
+            |> preparedEmissionWith(libcThreads)
             |> WholeModuleBuild
             |> Ok)
 
@@ -787,22 +787,14 @@ let writeRequestedLinkMap (linkNames: Maybe(Str)) objectBytes =
         | (Some(path), Some(namesText)) -> writeLinkMapFiles(path)(namesText)(objectBytes)
         | _ -> Ok(Unit)
 
-// Optimizes and emits a prepared module, writes the requested link map, and links and writes the
-// executable to `outputPath`, returning the written byte count.
-let emitAndLinkPrepared outputPath prepared =
+// Optimizes and emits a prepared module into its relocatable object, with what linking reads: the
+// external libraries and the link-map names.
+let emitPreparedModuleObject prepared =
     match prepared with
         | (module_, builder, context, payloads, libraries, linkNames) ->
             match emitPreparedObject(module_)(builder)(context)(payloads) with
                 | Error(message) -> Error(message)
-                | Ok(objectBytes) ->
-                    match writeRequestedLinkMap(linkNames)(objectBytes) with
-                        | Error(message) -> Error(message)
-                        | Ok(_) ->
-                            match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
-                                | Error(message) -> Error(message)
-                                | Ok(executableBytes) ->
-                                    let _ = reportDiagnosticPhase("linked")
-                                    in writeExecutable(outputPath)(executableBytes)
+                | Ok(objectBytes) -> Ok((objectBytes, libraries, linkNames))
 
 // How many partitions are optimized and emitted at once, in child processes:
 // `ASHES_LLVM_PROCESSES` when set, else the backend's default capped by the online processors, at
@@ -822,10 +814,9 @@ let partitionTemporaryRoot unit =
         | Ok(directory) -> directory
         | Error(_) -> "/tmp"
 
-// Optimizes and emits the partition modules, up to `partitionProcessesRequested` at once, merges
-// their objects, writes the requested link map of the merged object, and links and writes the
-// executable to `outputPath`.
-let emitAndLinkPartitioned outputPath prepared =
+// Optimizes and emits the partition modules, up to `partitionProcessesRequested` at once, and
+// merges their objects, with what linking reads.
+let emitPartitionedObjectOf prepared =
     match prepared with
         | (modules, payloadPaths, libraries, linkNames) ->
             let processes =
@@ -837,15 +828,28 @@ let emitAndLinkPartitioned outputPath prepared =
                     | Error(message) -> Error(message)
                     | Ok(objectBytes) ->
                         let _ = reportDiagnosticPhase("emitted")
-                        in
-                            match writeRequestedLinkMap(linkNames)(objectBytes) with
-                                | Error(message) -> Error(message)
-                                | Ok(_) ->
-                                    match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
-                                        | Error(message) -> Error(message)
-                                        | Ok(executableBytes) ->
-                                            let _ = reportDiagnosticPhase("linked")
-                                            in writeExecutable(outputPath)(executableBytes)
+                        in Ok((objectBytes, libraries, linkNames))
+
+// The relocatable object of a prepared build.
+let preparedObject prepared =
+    match prepared with
+        | Error(message) -> Error(message)
+        | Ok(WholeModuleBuild(emission)) -> emitPreparedModuleObject(emission)
+        | Ok(PartitionedBuild(partitioned)) -> emitPartitionedObjectOf(partitioned)
+
+// Writes the requested link map of a built object, and links and writes the executable to
+// `outputPath`, returning the written byte count.
+let linkObjectToExecutable outputPath built =
+    match built with
+        | (objectBytes, libraries, linkNames) ->
+            match writeRequestedLinkMap(linkNames)(objectBytes) with
+                | Error(message) -> Error(message)
+                | Ok(_) ->
+                    match linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)(libraries) with
+                        | Error(message) -> Error(message)
+                        | Ok(executableBytes) ->
+                            let _ = reportDiagnosticPhase("linked")
+                            in writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded
@@ -900,10 +904,53 @@ let optimizedStitchedProgram (explain: ExplainRequest) (reuseEnabled: Bool) inpu
 
 // Emits and links a prepared module to `outputPath`, returning the written byte count.
 let compilePreparedToExecutable outputPath prepared =
-    match prepared with
+    match preparedObject(prepared) with
         | Error(message) -> Error(message)
-        | Ok(WholeModuleBuild(emission)) -> emitAndLinkPrepared(outputPath)(emission)
-        | Ok(PartitionedBuild(partitioned)) -> emitAndLinkPartitioned(outputPath)(partitioned)
+        | Ok(built) -> linkObjectToExecutable(outputPath)(built)
+
+// A program ready to build: prepared once, or, when it starts worker threads, kept whole for a
+// build per thread kind (stage 0's `CompileLinuxObjectWithWorkerThreads`).
+type PreparedProgram(B, O) =
+    | PreparedOnce(B)
+    | WithWorkerThreads(O)
+
+// The optimized program prepared once, or kept when it starts worker threads. The program is held
+// by this frame alone, so a program prepared once is released when this returns.
+let preparedProgramOf optimized =
+    if programSpawnsParallelWorkers(optimized)
+    then WithWorkerThreads(optimized)
+    else
+        optimized
+        |> preparedBuild(false)
+        |> PreparedOnce
+
+// `Ashes.Task.Parallel` workers are raw `clone` threads when the executable is static and libc
+// threads when it loads shared libraries: once the dynamic loader runs, glibc's per-thread state is
+// live, and a thread glibc did not create would share the starting thread's. Which case applies is
+// read from the object, as the linker reads it: the program is built with the likely choice, and
+// built again with the other one when the object's imports say otherwise, so the choice depends on
+// the program alone.
+let compileWithWorkerThreads outputPath optimized =
+    (let likely = externalLibraries(optimized) != [] || runtimePayloadsFor(optimized) != []
+    in
+        match optimized
+        |> preparedBuild(likely)
+        |> preparedObject with
+            | Error(message) -> Error(message)
+            | Ok((objectBytes, libraries, linkNames)) ->
+                if linuxObjectLoadsSharedLibraries(objectBytes)(libraries) == likely
+                then linkObjectToExecutable(outputPath)((objectBytes, libraries, linkNames))
+                else
+                    match optimized
+                    |> preparedBuild(!likely)
+                    |> preparedObject with
+                        | Error(message) -> Error(message)
+                        | Ok(built) -> linkObjectToExecutable(outputPath)(built))
+
+let compileProgramToExecutable outputPath program =
+    match program with
+        | PreparedOnce(prepared) -> compilePreparedToExecutable(outputPath)(prepared)
+        | WithWorkerThreads(optimized) -> compileWithWorkerThreads(outputPath)(optimized)
 
 let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
     match constructors with
@@ -1025,19 +1072,20 @@ let optimizedFileProgram inputPath (explain: ExplainRequest) (reuseEnabled: Bool
                             |> Error
                         | Ok(stitched) -> optimizedStitchedProgram(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
-// The file `inputPath` built into an LLVM module. The optimized program is held by this frame
-// alone, so it is released when this returns, before the module is optimized and emitted.
+// The file `inputPath` built into an LLVM module, or kept for a build per worker thread kind. The
+// optimized program is held by this frame alone, so a program built once is released when this
+// returns, before the module is optimized and emitted.
 let preparedFileEmission inputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match optimizedFileProgram(inputPath)(explain)(reuseEnabled) with
-        | Error(message) -> Error(message)
-        | Ok(optimized) -> preparedBuild(optimized)
+        | Error(message) -> PreparedOnce(Error(message))
+        | Ok(optimized) -> preparedProgramOf(optimized)
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
 let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     reuseEnabled
     |> preparedFileEmission(inputPath)(explain)
-    |> compilePreparedToExecutable(outputPath)
+    |> compileProgramToExecutable(outputPath)
 
 // The optimized program of the project at `layout`: its modules, its dependencies' modules, and
 // the shipped modules they reach stitched into one program and lowered against the entry module's
@@ -1060,15 +1108,15 @@ let optimizedProjectProgram (layout: ProjectLayout) (explain: ExplainRequest) (r
 // `preparedFileEmission` is.
 let preparedProjectEmission (layout: ProjectLayout) (explain: ExplainRequest) (reuseEnabled: Bool) =
     match optimizedProjectProgram(layout)(explain)(reuseEnabled) with
-        | Error(message) -> Error(message)
-        | Ok(optimized) -> preparedBuild(optimized)
+        | Error(message) -> PreparedOnce(Error(message))
+        | Ok(optimized) -> preparedProgramOf(optimized)
 
 // Compiles the project at `layout` to the executable at `outputPath`, printing the `explain`
 // reports to stderr on the way, and returns the written byte count.
 let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     reuseEnabled
     |> preparedProjectEmission(layout)(explain)
-    |> compilePreparedToExecutable(outputPath)
+    |> compileProgramToExecutable(outputPath)
 
 let compileResolvedInput resolved outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match resolved with

@@ -79,6 +79,11 @@ internal static partial class LlvmImageLinker
             ["gmtime_r"] = "libc.so.6",
             ["inet_pton"] = "libc.so.6",
             ["printf"] = "libc.so.6",
+            ["pthread_attr_destroy"] = "libc.so.6",
+            ["pthread_attr_init"] = "libc.so.6",
+            ["pthread_attr_setstacksize"] = "libc.so.6",
+            ["pthread_create"] = "libc.so.6",
+            ["pthread_join"] = "libc.so.6",
             ["readlink"] = "libc.so.6",
             ["readdir"] = "libc.so.6",
             ["closedir"] = "libc.so.6",
@@ -1254,6 +1259,36 @@ internal static partial class LlvmImageLinker
         }
 
         return result;
+    }
+
+    // The libc thread functions the parallel runtime imports when its workers are libc threads.
+    // They follow from that choice, so they never count toward making it.
+    private static readonly HashSet<string> LinuxWorkerThreadImports = new(StringComparer.Ordinal)
+    {
+        "pthread_attr_destroy",
+        "pthread_attr_init",
+        "pthread_attr_setstacksize",
+        "pthread_create",
+        "pthread_join",
+    };
+
+    /// <summary>
+    /// Whether the executable linked from <paramref name="objectBytes"/> imports anything from a
+    /// shared library besides the parallel runtime's own thread functions: then the dynamic loader
+    /// runs, every loaded library reaches libc, and libc's per-thread state is live in the process.
+    /// </summary>
+    internal static bool LinuxObjectLoadsSharedLibraries(byte[] objectBytes, IReadOnlyDictionary<string, string>? externalLibraries)
+    {
+        ParsedElfObject parsed = ParseElfObject(objectBytes, "entry");
+        foreach (LinuxDynamicImport import in CollectLinuxDynamicImports(objectBytes, parsed, externalLibraries))
+        {
+            if (!LinuxWorkerThreadImports.Contains(import.SymbolName))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryGetLinuxDynamicImportLibrary(string symbolName, IReadOnlyDictionary<string, string>? externalLibraries, out string? libraryName)

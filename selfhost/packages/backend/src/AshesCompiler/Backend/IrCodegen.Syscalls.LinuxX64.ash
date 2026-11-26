@@ -49,16 +49,16 @@ export (
 // the syscall number going in and doubles as the return-value register `LLVMGetInlineAsm` still
 // declares, whether or not a given syscall — `exit` never does — actually returns to use it),
 // `rdi`/`rsi`/`rdx` as the three syscall arguments, `rcx`/`r11` clobbered (the `syscall`
-// instruction itself overwrites them) alongside memory. Shared by `exit` (`60`) and `write` (`1`)
-// — the only two syscalls this codegen needs so far.
+// instruction itself overwrites them) alongside memory. Shared by every system call this codegen
+// emits.
 let emitLinuxSyscallCall builder i64 nr arg1 arg2 arg3 name =
     (let syscallType = functionType(i64)([i64, i64, i64, i64])(4u32)(false)
     in
         let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}")(true)(false)
         in buildCall(builder)(syscallType)(syscallAsm)([nr, arg1, arg2, arg3])(4u32)(name))
 
-// `exit` (not `exit_group`) terminates only the calling thread — the right choice for a
-// single-threaded program, matching what the real compiler emits here too. A `syscall` that
+// `exit_group` ends the process, every thread with it, as stage 0's `EmitExit` does: a worker thread
+// that ends the program must not end only itself and leave its parent waiting. A `syscall` that
 // terminates the process never returns, so the block ends with `buildUnreachable`, never a `ret`.
 // `exitCode` is an already-built `i64` value, not a compile-time literal, so both the entry
 // function's own always-`0` `Return` and `PanicStr`'s always-`1` exit share this one helper.
@@ -66,7 +66,7 @@ let emitLinuxProcessExitWithCode builder i64 exitCode =
     (let zero = constInt(i64)(0u64)(false)
     in
         let _ =
-            emitLinuxSyscallCall(builder)(i64)(constInt(i64)(60u64)(false))(exitCode)(zero)(zero)("sys_exit")
+            emitLinuxSyscallCall(builder)(i64)(constInt(i64)(231u64)(false))(exitCode)(zero)(zero)("sys_exit")
         in buildUnreachable(builder))
 
 let emitLinuxProcessExit builder i64 =

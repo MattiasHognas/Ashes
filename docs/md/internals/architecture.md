@@ -2814,8 +2814,26 @@ recursion depth is bounded by these sizes:
   overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
   environment variable read by the PE linker.
 - **Parallel workers.** `Ashes.Task.Parallel` workers get 1 MiB by default —
-  `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
-  the `--parallel-stack-size` CLI flag.
+  `mmap`'d on Linux for a static executable, given to `pthread_create` for one
+  that loads libc (glibc adds a guard page), passed to `CreateThread` on
+  win-x64 — configurable with the `--parallel-stack-size` CLI flag.
+
+How a linux worker thread is made depends on the executable. A static Ashes
+image loads no libc: its runtime makes system calls directly and keeps every
+per-thread value in its own control block (GS on x86-64, the arm64 TLS block),
+so a worker is a raw `clone` thread on a mapped stack, joined through the
+kernel-cleared exit word. An image with any shared-library import runs under the
+dynamic loader, and glibc's thread pointer, malloc caches and `errno` are live;
+a raw thread would share the starting thread's, so every worker is started with
+`pthread_create` and reaped with `pthread_join`. The x86-64 worker still points
+GS at the control block its starter prepared; an arm64 worker uses its glibc
+static TLS copy, which holds the image's arena cursors. The compiler reads which
+case applies from the object, as the linker reads it: it compiles with the
+likely choice and again with the other when the object's imports say otherwise,
+so the choice depends on the program alone (`CompileLinuxObjectWithWorkerThreads`;
+stage 1's `compileWithWorkerThreads`). Windows workers are `CreateThread`
+threads either way. A program ends with `exit_group`, so a worker that ends it
+takes every thread with it.
 
 ---
 

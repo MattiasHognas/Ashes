@@ -814,9 +814,11 @@ internal static partial class LlvmCodegen
         return true;
     }
 
+    // Ends the process: `exit_group`, so a worker thread that ends the program takes every thread
+    // with it instead of ending only itself and leaving its parent waiting on its result.
     private static void EmitExit(LlvmCodegenState state, LlvmValueHandle exitCode)
     {
-        EmitLinuxSyscall(state, SyscallExit, exitCode, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sys_exit");
+        EmitLinuxSyscall(state, SyscallExitGroup, exitCode, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sys_exit");
         LlvmApi.BuildUnreachable(state.Target.Builder);
     }
 

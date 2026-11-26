@@ -88,6 +88,21 @@ internal static partial class LlvmCodegen
         bool usesTlsRuntime,
         int partitions)
     {
+        byte[] merged = CompileMergedParallelObjects(program, options, targetId, flavor, usesTlsRuntime, partitions, libcThreads: false);
+        return CompilePhaseTiming.Measure("backend.link", () => LinkMergedObject(targetId, merged, GetExternalLibraries(program)));
+    }
+
+    // The program built as `partitions` modules, each optimized and emitted on its own thread, and
+    // their objects merged into one relocatable object.
+    private static byte[] CompileMergedParallelObjects(
+        IrProgram program,
+        Backends.BackendCompileOptions options,
+        string targetId,
+        LlvmCodegenFlavor flavor,
+        bool usesTlsRuntime,
+        int partitions,
+        bool libcThreads)
+    {
         Dictionary<string, int> assignment = AssignParallelObjectPartitions(program, partitions);
         var targets = new LlvmTargetContext[partitions];
         try
@@ -100,7 +115,7 @@ internal static partial class LlvmCodegen
                         targetId, options.OptimizationLevel, options.TargetCpu,
                         options.ParallelWorkerStackBytes, options.ParallelWorkerCap)
                         with
-                    { Partition = new ProgramPartition(partition, assignment) };
+                    { Partition = new ProgramPartition(partition, assignment), ParallelWorkersUseLibcThreads = libcThreads };
                     EmitProgramModule(targets[partition], program, "entry", flavor, options, usesTlsRuntime);
                 }
             });
@@ -122,8 +137,7 @@ internal static partial class LlvmCodegen
                     partition => objects[partition] = EmitPartitionObject(targets[partition], program, options, targetId, partition)));
 
             DumpPartitionObjects(objects);
-            return CompilePhaseTiming.Measure("backend.link", () =>
-                LinkPartitionObjects(targetId, objects, GetExternalLibraries(program)));
+            return CompilePhaseTiming.Measure("backend.merge", () => MergePartitionObjects(targetId, objects));
         }
         finally
         {
@@ -134,9 +148,8 @@ internal static partial class LlvmCodegen
         }
     }
 
-    // Merges the partitions' objects into one relocatable object and links that into the target's
-    // executable through the target's ordinary single-object linker.
-    private static byte[] LinkPartitionObjects(string targetId, byte[][] objects, IReadOnlyDictionary<string, string>? externalLibraries)
+    // Merges the partitions' objects into one relocatable object.
+    private static byte[] MergePartitionObjects(string targetId, byte[][] objects)
     {
         byte[] merged = targetId switch
         {
@@ -145,6 +158,13 @@ internal static partial class LlvmCodegen
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
         DumpObject("merged.o", merged);
+        return merged;
+    }
+
+    // Links the merged object into the target's executable through the target's ordinary
+    // single-object linker.
+    private static byte[] LinkMergedObject(string targetId, byte[] merged, IReadOnlyDictionary<string, string>? externalLibraries)
+    {
         return targetId switch
         {
             Backends.TargetIds.LinuxX64 => LlvmImageLinker.LinkLinuxExecutable(merged, "entry", null, externalLibraries),
