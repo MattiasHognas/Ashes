@@ -36,6 +36,7 @@ export (
     value adoptNormalizedParameterResult,
     value tcoListElementSupported,
     value isPassthroughNormalizableParameterType,
+    value emitOwnedPassthroughCopy,
     value withPassthroughParameter,
     value isConsChainOntoSelfCall,
     value nestedJoinConsesOntoSelfResult,

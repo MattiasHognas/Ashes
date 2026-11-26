@@ -1294,6 +1294,63 @@ let retainsSuccessorJoinLetOwner (body: Expr) (outerBindings: List(CoreBinding))
                 | None -> true
         | _ -> false
 
+let recursive armOwnedSlots (owners: List(ArmOwner)) =
+    match owners with
+        | [] -> []
+        | ArmScrutineeOwner(slot, _typeName, _isList, _valueTemp, _scrutineeType) :: rest -> slot :: armOwnedSlots(rest)
+        | ArmHeapOwner(slot, _typeName) :: rest -> slot :: armOwnedSlots(rest)
+        | _owner :: rest -> armOwnedSlots(rest)
+
+// Whether an aggregate literal reads, at any depth of its tuple, record, list and constructor
+// children, a binding whose live runtime owner is one of the arm's own (stage 0's
+// `CollectBorrowedRuntimeOwners` with an owner of the arm's scope among them). A pattern owner
+// is not one (stage 0's collector skips a Perceus pattern owner).
+let recursive readsArmOwnerPart (expression: Expr) (slots: List(Int)) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprTuple(elements) -> anyReadsArmOwnerPart(elements)(slots)(state)
+        | ExprRecord(_name, fields, _isMultiline) -> anyFieldReadsArmOwnerPart(fields)(slots)(state)
+        | ExprList(elements, _isMultiline) -> anyReadsArmOwnerPart(elements)(slots)(state)
+        | ExprCons(head, tail) -> readsArmOwnerPart(head)(slots)(state) || readsArmOwnerPart(tail)(slots)(state)
+        | ExprVar(name) -> readOfArmOwner(name)(slots)(state)
+        | ExprQualifiedVar(owner, _field) -> readOfArmOwner(owner)(slots)(state)
+        | other ->
+            match constructorApplicationOf(other)([])(state) with
+                | Some((_layout, arguments)) -> anyReadsArmOwnerPart(arguments)(slots)(state)
+                | None -> false
+and anyReadsArmOwnerPart (expressions: List(Expr)) (slots: List(Int)) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyReadsArmOwnerPart(rest)(slots)(state)
+and anyFieldReadsArmOwnerPart (fields: List((Str, Expr))) (slots: List(Int)) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (_field, expression) :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyFieldReadsArmOwnerPart(rest)(slots)(state)
+and readOfArmOwner (name: Str) (slots: List(Int)) (state: CoreLoweringState) =
+    if state
+    |> patternOwnerBinding(name)
+    |> patternOwnerFlag
+    then false
+    else
+        match liveRuntimeOwnerSlot(name)(state) with
+            | Some(slot) -> containsInt(slot)(slots)
+            | None -> false
+
+// Stage 0's `NormalizeArmResultBorrowingArmOwner`: an arm whose result is an arena aggregate built
+// from parts of a reference-counted owner the arm releases at its exit (`| (moduleName, local) ->
+// Qualified(moduleName)(local)` over a fresh tuple, the match an argument of a call) copies the
+// result onto the reference-counted heap with references of its own first. A transferring or tail
+// arm retains the parts itself.
+let normalizeArmResultBorrowingArmOwner (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyType: SemanticType) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+    if request.tailPosition || request.transfersRuntimeManagedChildren || isRuntimeTemp(temp)(state) || resultSurvivesReset(resolveType(state)(bodyType))(state) || !isPassthroughNormalizableParameterType(bodyType)(state)
+    then (state, temp)
+    else
+        match armOwnedSlots(owners) with
+            | [] -> (state, temp)
+            | slots ->
+                if readsArmOwnerPart(body)(slots)(state)
+                then emitOwnedPassthroughCopy(temp)(bodyType)(state)
+                else (state, temp)
+
 // Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
 // owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
 // loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
@@ -1331,18 +1388,20 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
                             match normalizeParameterPassthroughBranch(body)(temp)(typedState) with
                                 | (normalizedState, normalizedTemp) ->
                                     match transferArmResult(request)(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
-                                        | (transferredState, resultTemp) ->
-                                            match transferredState
-                                            |> emit(StoreLocal(resultSlot)(resultTemp))
-                                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
-                                                | (closed, finalTemp) ->
-                                                    LoweredMatchArm(
-                                                        lowered = closed
-                                                        |> emit(Jump(endLabel))
-                                                        |> restoreBindings(outerBindings)
-                                                        |> success(resultTemp)(resultType),
-                                                        armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
-                                                    )
+                                        | (armState, armTemp) ->
+                                            match normalizeArmResultBorrowingArmOwner(request)(body)(armTemp)(bodyType)(owners)(armState) with
+                                                | (transferredState, resultTemp) ->
+                                                    match transferredState
+                                                    |> emit(StoreLocal(resultSlot)(resultTemp))
+                                                    |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
+                                                        | (closed, finalTemp) ->
+                                                            LoweredMatchArm(
+                                                                lowered = closed
+                                                                |> emit(Jump(endLabel))
+                                                                |> restoreBindings(outerBindings)
+                                                                |> success(resultTemp)(resultType),
+                                                                armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
+                                                            )
 
 let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List(CoreBinding)) =
     match bindings with
