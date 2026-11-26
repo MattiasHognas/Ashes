@@ -1463,9 +1463,34 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
 // the program's lowering.
 let shadowUnsettledCallee (context: CoreCallContext) (state: CoreLoweringState) =
     match context.facts with
-        | Some(_facts) ->
+        | Some(CoreCalleeFacts { label = label, argumentCount = count }) ->
             if shadowing(state)
-            then observeShadowPending(9)("arena")(context.facts)(state)
+            then
+                let inGroup =
+                    match context.calleeName with
+                        | Some(name) ->
+                            state
+                            |> stateRecursiveGroupNames
+                            |> containsLabel(name)
+                        | None -> false
+                in
+                    let chained =
+                        match label with
+                            | Some(known) ->
+                                innermostStageLabel(count - 1)(known)(stateFunctionReturnedClosureLabels(state)) != None
+                            | None -> false
+                    in
+                        let reason =
+                            if context.selfCallee
+                            then "cycle: self call"
+                            else
+                                if inGroup
+                                then "cycle: recursive group member"
+                                else
+                                    if chained
+                                    then "forward: callee body not lowered yet"
+                                    else "stage chain not recorded yet"
+                        in observeShadowPending(9)("arena")(reason)(context.facts)(state)
             else state
         | None -> state
 

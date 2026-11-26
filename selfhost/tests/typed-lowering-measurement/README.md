@@ -50,7 +50,7 @@ The driver always reports, on stderr, one `shadow rule=<n> agree=<a> differ=<d> 
 | 4 | a body lowered again because its first lowering closed a scope type | `relower` | `once` |
 | 5 | an internal deep copy | `pass-through` or `copy <type>` | `copy <recorded type>` |
 | 6, 7, 8 | the arena-result request of a call, filed under a deferred self result (6), a sibling's open or pinned result (7) or the result layout (8) | `arena` or `no-arena` | the request judged on the call's recorded result type |
-| 9 | a known callee asked for an arena result because its body was not lowered yet | `arena` | `no-arena` when the callee's result fact is known once every body is lowered, otherwise agreeing |
+| 9 | a known callee asked for an arena result because its body was not lowered yet | `arena` | `no-arena` when the callee's result fact is known once every body is lowered, otherwise agreeing; a differing site names why the fact was missing (a self call, a recursive group member, a callee body not lowered yet, or a stage chain not recorded yet) |
 | 10 | a body lowered again because a call result resolved | `relower` | `once` |
 | 11 | entry normalization of a parameter that reaches the result | `normalize` or `keep` | the same decision on the parameter type recorded for the lambda |
 

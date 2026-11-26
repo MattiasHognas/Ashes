@@ -204,7 +204,10 @@ let recursive reportShadowSites regions (sites: List(ShadowSite)) =
         | ShadowSite { entry = entry, region = region, node = node, span = span, current = current, final = final, reason = reason } :: rest ->
             let finalText =
                 match final with
-                    | Some(answer) -> answer
+                    | Some(answer) ->
+                        if entry == 9
+                        then answer + " (" + reason + ")"
+                        else answer
                     | None -> "unrecorded: " + reason
             in
                 let nodeText =
