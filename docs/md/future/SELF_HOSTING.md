@@ -108,22 +108,46 @@ record.
 Each entry is a lowering decision keyed on whether a type is still open at a site, replaced by a
 rule over the recorded final type. A replacement with differing sites gets, per changed program, a
 per-function diff of `--emit-ir lowered`, the behaviour check with `ASHES_RC_LEAKCHECK=1`, and a
-lifetime regression in `tests/`. Shadow counts are agree / differ / unrecorded at `ea730801`; the
-unrecorded column of 6, 8 and 11 is not broken down, so their differ counts are a lower bound.
+lifetime regression in `tests/`. Shadow counts are agree / differ / unrecorded on main after the
+leak merge (driver at `3629bf19`, which separates arena-request sites closed by the body's
+instantiation from sites closed only by the variables the program's uses settle). Every unrecorded
+site carries its reason; for entry 8 they are recorded types still open (the request is kept), no
+node, or settled only (entry 8b).
 
-| Entry | Rules | Replacement | State | Corpus, 1,149 programs | Whole compiler |
+| Entry | Rules | Replacement | State | Corpus, 1,184 programs | Whole compiler |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `emitDeferredCoreAdd`, `emitDeferredCoreEquality` | an open operand is an error, never the integer form | Done | | |
 | 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done | | |
 | 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
 | 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
-| 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,644 / 0, 801 programs | 0 / 2,287 / 0 |
-| 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 8 / 461 / 2,469, 210 programs | 214 / 1,039 / 31 |
-| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | the group member's recorded result layout decides; the largest IR change | Deferred | 0 / 71 / 3, 37 programs | 0 / 1,833 / 50 |
-| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the recorded result type closed by the instantiation; still open keeps the request | Deferred | 27,418 / 546 / 4,865, 203 programs | 44,203 / 146 / 153 |
-| 9 | `calleeResultUnsettled` | a callee result summary computed before any body is lowered (first settle whether the result-reach summaries can carry it) | Deferred | 36 / 231 / 0, 228 programs | 109 / 22 / 0 |
-| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 493 / 0, 243 programs | 0 / 370 / 0 |
-| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 31,738 / 6 / 9,370, 5 programs | 26,895 / 8 / 2,542 |
+| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`) | In review | 25,747 / 4 / 5,643, 4 programs; after: 0 differ | 43,934 / 15 / 265; after: 0 differ |
+| 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
+| 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
+| 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 14 / 215 / 2,786, 117 programs (258 of the unrecorded closed only by settled variables) | 250 / 975 / 97 |
+| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | the group member's recorded result layout decides; the largest IR change | Deferred | 0 / 69 / 5, 36 programs | 0 / 1,851 / 51 |
+| 9 | `calleeResultUnsettled` | see below; not settled yet | Deferred | 37 / 236 / 0, 233 programs | 113 / 22 / 0 |
+| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs; after entry 8: 0 / 22 / 0, 19 programs | 0 / 353 / 0; after entry 8: 0 / 291 / 0 |
+| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 32,838 / 8 / 9,005, 7 programs | 27,021 / 8 / 2,881 |
+
+Entry 8 changed the lowered IR of exactly the four corpus programs it names (`ir.tsv` of the two
+sweeps) and the compiler's 15 sites. Pinning a call's result also keeps an open call out of the
+body's unresolved results in a first lowering, so it removes most of entry 10: body re-lowerings
+fall from 9,341 to 8,890 on the corpus and from 2,667 to 2,605 on the compiler, and the re-lowerings
+entry 10 counts from 502 to 22 on the corpus and from 353 to 291 on the compiler; the IR of every
+other program is unchanged, so the re-lowerings removed were IR-neutral.
+
+Entry 9 needs a decision. `calleeResultUnsettled` asks a known callee whose body is not lowered yet
+for an arena result, because `compiledResultRuntimeManaged` reads `bodyRuntimeManagedByLabel`, the
+result placement each body ended with. The result-reach summaries cannot carry that fact: they
+record which parameters reach a result (provenance), not whether the body's result ends up
+reference-counted. Two replacements: (a) predict each body's result placement before lowering, a
+second ownership pass over the declarations with their recorded types, which no current pass
+does (`predictRuntimeManagedResult` covers passthrough parameters only); (b) lower bodies callee
+first, in dependency order, so a callee's fact exists when its caller is lowered, with the members
+of a recursive group, and a callee reached through a closure, staying unsettled. Stage 0 lowers
+bodies in declaration order and asks the arena of every callee it has not lowered yet
+(`CalleeResultUnsettled`), so (b) keeps its rule for cycles and removes only the forward
+references, while (a) goes beyond stage 0 everywhere.
 
 Planned order: 8 and 9, then 6 and 7 with 10, then 11, then 4. Replacing the per-binding plan
 (`constrainedBindingPlan`) by the recorded schemes follows entry 3. Entries 6 to 9 mirror rules
