@@ -14,6 +14,12 @@ export (
     value runCoreTraitDispatchLoweringTests,
 )
 
+// An assertion that names the case it belongs to, so a failing run says which case failed.
+let expectEqual (name: Str) expected actual =
+    if expected == actual
+    then Unit
+    else test.fail(name + ": assertion failed")
+
 let parsedProgram source =
     match parseProgram(source) with
         | ProgramParseResult { program = program, diagnostics = [] } -> program
@@ -33,8 +39,9 @@ let loweredDump source =
             |> (given (text) -> test.fail("program lowering failed: " + text))
         | _ -> test.fail("program lowering produced no program")
 
-// The lowering a parity fixture takes, with the program's source beside its syntax. A call routed to
-// a constrained function's concrete copy is only routed there when the source is given.
+// The lowering a parity fixture takes, with the program's source beside its syntax: the dump the
+// concrete-copy case was checked against (the copy `recgroup_N_setAssociation` is called, and the
+// caller releases its reference-counted list).
 let loweredDumpWithSource source =
     match source
     |> parsedProgram
@@ -73,11 +80,11 @@ let expectDerivedEqualityDispatchesThroughOneHelper unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> test.assertEqual(6))
+                |> expectEqual("expectDerivedEqualityDispatchesThroughOneHelper")(6))
             |> (given (_) ->
                 dump
                 |> occurrences("\nfunction ")
-                |> test.assertEqual(5))
+                |> expectEqual("expectDerivedEqualityDispatchesThroughOneHelper")(5))
 
 // The operands are unified before the dispatch is chosen, as stage 0's `Unify(leftType,
 // rightType)`: a parameter whose type is still a variable takes the annotated side's type and
@@ -86,7 +93,7 @@ let expectEqualityUnifiesAVariableOperandWithTheOtherSide unit =
     shapeSource + "let same (a: Shape) b = a == b\n\nsame(Circle)(Square)"
     |> loweredDump
     |> occurrences("CallClosure")
-    |> test.assertEqual(4)
+    |> expectEqual("expectEqualityUnifiesAVariableOperandWithTheOtherSide")(4)
 
 // `!=` on a derived type has no supplied `notEqual`: the derived `equal` is called and its result
 // negated, the default method's `!Eq.equal(left)(right)` without a lambda around it.
@@ -97,11 +104,11 @@ let expectNotEqualNegatesTheDerivedEquality unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> test.assertEqual(4))
+                |> expectEqual("expectNotEqualNegatesTheDerivedEquality")(4))
             |> (given (_) ->
                 "LoadConstBool"
                 |> Ashes.Text.contains(dump)
-                |> test.assertEqual(true))
+                |> expectEqual("expectNotEqualNegatesTheDerivedEquality")(true))
 
 // A derived record equality compares the fields through `Eq.equal(left)(right)` calls; at a
 // primitive field type those lower to the direct comparison of the operator they stand for.
@@ -109,7 +116,7 @@ let expectDerivedRecordEqualityComparesFieldsDirectly unit =
     "type Live =\n    | lb: Int\n    | li: Bool\n    deriving {Eq}\n\nlet same (a: Live) (b: Live) = a == b\n\nsame(Live(lb = 1, li = true))(Live(lb = 1, li = false))"
     |> loweredDump
     |> occurrences("CmpIntEq")
-    |> (given (count) -> test.assertEqual(true)(count >= 2))
+    |> (given (count) -> expectEqual("expectDerivedRecordEqualityComparesFieldsDirectly")(true)(count >= 2))
 
 // A written implementation supplies its own methods: `!=` calls the supplied `notEqual` rather
 // than negating `equal`, and the closure helper carries the implementation's own body.
@@ -120,11 +127,11 @@ let expectSuppliedNotEqualIsCalled unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> test.assertEqual(4))
+                |> expectEqual("expectSuppliedNotEqualIsCalled")(4))
             |> (given (_) ->
                 "CmpIntEq"
                 |> Ashes.Text.contains(dump)
-                |> test.assertEqual(false))
+                |> expectEqual("expectSuppliedNotEqualIsCalled")(false))
 
 // A recursive type's derived equality compares the subtrees through the same `equal`: the
 // method is remembered under its predicted label before its body is lowered, so the two subtree
@@ -138,20 +145,20 @@ let expectRecursiveDerivedEqualityCallsItselfThroughTheCache unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> test.assertEqual(8))
+                |> expectEqual("expectRecursiveDerivedEqualityCallsItselfThroughTheCache")(8))
             |> (given (_) ->
                 dump
                 |> occurrences("\nfunction ")
-                |> test.assertEqual(5))
+                |> expectEqual("expectRecursiveDerivedEqualityCallsItselfThroughTheCache")(5))
 
 // A type with neither a derived nor a written `Eq` has no evidence to dispatch through.
 let expectMissingEqualityEvidenceIsReported unit =
     match loweringErrorFor("type Plain =\n    | Plain\n\nPlain == Plain") with
         | MissingCoreTraitEvidence(traitName, operandType) ->
             Unit
-            |> (given (_) -> test.assertEqual("Eq")(traitName))
+            |> (given (_) -> expectEqual("expectMissingEqualityEvidenceIsReported")("Eq")(traitName))
             |> (given (_) ->
-                test.assertEqual(SemNamed(0)("Plain")([]))(operandType))
+                expectEqual("expectMissingEqualityEvidenceIsReported")(SemNamed(0)("Plain")([]))(operandType))
         | other -> test.fail("expected MissingCoreTraitEvidence, got " + Ashes.Trait.Show.show(other))
 
 // The standard implementations live in `Ashes.Trait`, which the stitcher always loads; a bare
@@ -161,7 +168,7 @@ let expectListEqualityWithoutTheTraitModuleNamesThePlaceholder unit =
         | UnknownLoweringBinding(name) ->
             "__ashes_standard_trait_Eq_equal_list"
             |> Ashes.Text.startsWith(name)
-            |> test.assertEqual(true)
+            |> expectEqual("expectListEqualityWithoutTheTraitModuleNamesThePlaceholder")(true)
         | other -> test.fail("expected UnknownLoweringBinding, got " + Ashes.Trait.Show.show(other))
 
 let standardTraitSource unit =
@@ -185,11 +192,11 @@ let expectListEqualityDispatchesThroughTheStandardImplementation unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> (given (count) -> test.assertEqual(true)(count >= 8)))
+                |> (given (count) -> expectEqual("expectListEqualityDispatchesThroughTheStandardImplementation")(true)(count >= 8)))
             |> (given (_) ->
                 dump
                 |> occurrences("[ClosureHelper from empty]")
-                |> (given (count) -> test.assertEqual(true)(count >= 2)))
+                |> (given (count) -> expectEqual("expectListEqualityDispatchesThroughTheStandardImplementation")(true)(count >= 2)))
 
 // A derived implementation of a parameterized type requires the parameter's `Eq`: comparing two
 // `Box(Shape)` values applies the generic `Box` equality to the derived `Shape` methods.
@@ -197,7 +204,7 @@ let expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence unit =
     shapeSource + "type Box(a) =\n    | Box(a)\n    | Empty\n    deriving {Eq}\n\nlet same (a: Box(Shape)) (b: Box(Shape)) = a == b\n\nsame(Box(Circle))(Empty)"
     |> loweredDump
     |> occurrences("CallClosure")
-    |> (given (count) -> test.assertEqual(true)(count >= 6))
+    |> (given (count) -> expectEqual("expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence")(true)(count >= 6))
 
 // The requirement dictionaries nest: a list of lists applies the generic list equality to the
 // generic list equality applied to the element's methods.
@@ -206,7 +213,7 @@ let expectNestedListEqualityNestsTheEvidence unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("CallClosure")
-    |> (given (count) -> test.assertEqual(true)(count >= 8))
+    |> (given (count) -> expectEqual("expectNestedListEqualityNestsTheEvidence")(true)(count >= 8))
 
 // `!=` inside a generic body reaches the requirement's `notEqual` through the active evidence.
 let expectNotEqualInAGenericBodyUsesTheActiveEvidence unit =
@@ -214,7 +221,7 @@ let expectNotEqualInAGenericBodyUsesTheActiveEvidence unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("CallClosure")
-    |> (given (count) -> test.assertEqual(true)(count >= 4))
+    |> (given (count) -> expectEqual("expectNotEqualInAGenericBodyUsesTheActiveEvidence")(true)(count >= 4))
 
 // `Ord` requires `Eq`, so its evidence plan always carries a supertrait plan. Those are ignored
 // rather than rejected: a comparison at a concrete head resolves whatever it needs from the
@@ -231,11 +238,11 @@ let expectUnaryTraitMethodCallDispatchesAtAConcreteType unit =
             |> (given (_) ->
                 dump
                 |> occurrences("CallClosure")
-                |> (given (count) -> test.assertEqual(true)(count >= 1)))
+                |> (given (count) -> expectEqual("expectUnaryTraitMethodCallDispatchesAtAConcreteType")(true)(count >= 1)))
             |> (given (_) ->
                 dump
                 |> occurrences("Ashes_Trait_Show.show")
-                |> test.assertEqual(0))
+                |> expectEqual("expectUnaryTraitMethodCallDispatchesAtAConcreteType")(0))
 
 // The operand's own type selects the implementation, so a second type reaches a second one rather
 // than pinning the first.
@@ -244,7 +251,7 @@ let expectUnaryTraitMethodCallSelectsPerOperandType unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("CallClosure")
-    |> (given (count) -> test.assertEqual(true)(count >= 2))
+    |> (given (count) -> expectEqual("expectUnaryTraitMethodCallSelectsPerOperandType")(true)(count >= 2))
 
 let lookupSource (annotation: Str) = "let recursive lookupIn" + annotation + " env =\n    match env with\n        | [] -> Ashes.Trait.Show.show(key)\n        | (boundKey, value) :: rest ->\n            if boundKey == key\n            then value\n            else lookupIn(key)(rest)\n\nAshes.IO.print(lookupIn(1)([(1, \"one\")]))"
 
@@ -279,16 +286,16 @@ let expectUnaryTraitMethodCallResolvedByALaterUseDispatches unit =
                 let _ =
                     deferred
                     |> concreteMethod
-                    |> test.assertEqual(concreteMethod(annotated))
+                    |> expectEqual("expectUnaryTraitMethodCallResolvedByALaterUseDispatches")(concreteMethod(annotated))
                 in
                     let _ =
                         deferred
                         |> occurrences("TextFromInt")
-                        |> test.assertEqual(1)
+                        |> expectEqual("expectUnaryTraitMethodCallResolvedByALaterUseDispatches")(1)
                     in
                         "FuncLabel=recgroup_"
                         |> Ashes.Text.contains(deferred)
-                        |> test.assertEqual(true)
+                        |> expectEqual("expectUnaryTraitMethodCallResolvedByALaterUseDispatches")(true)
 
 // A deferred site is never lowered against a guess: the type settled on here has no `Show`, so
 // the pass that lowers with the proofs reports that type rather than emitting the constant the
@@ -299,9 +306,9 @@ let expectUnprovenUnaryTraitMethodCallIsReported unit =
     |> loweringErrorFor with
         | MissingCoreTraitEvidence(traitName, operandType) ->
             Unit
-            |> (given (_) -> test.assertEqual("Show")(traitName))
+            |> (given (_) -> expectEqual("expectUnprovenUnaryTraitMethodCallIsReported")("Show")(traitName))
             |> (given (_) ->
-                test.assertEqual(SemNamed(0)("Plain")([]))(operandType))
+                expectEqual("expectUnprovenUnaryTraitMethodCallIsReported")(SemNamed(0)("Plain")([]))(operandType))
         | other -> test.fail("expected MissingCoreTraitEvidence, got " + Ashes.Trait.Show.show(other))
 
 let expectComparisonAtAConcreteHeadDispatchesThroughOrd unit =
@@ -309,7 +316,7 @@ let expectComparisonAtAConcreteHeadDispatchesThroughOrd unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("CallClosure")
-    |> (given (count) -> test.assertEqual(true)(count >= 2))
+    |> (given (count) -> expectEqual("expectComparisonAtAConcreteHeadDispatchesThroughOrd")(true)(count >= 2))
 
 // The four comparison methods are trait defaults whose bodies call the sibling `Ord.compare`, a
 // name lowering cannot resolve. They are emitted instead as a dispatch of `compare` followed by a
@@ -323,11 +330,11 @@ let expectComparisonReadsTheOrderingTag unit =
             |> (given (_) ->
                 dump
                 |> occurrences("GetAdtTag")
-                |> (given (count) -> test.assertEqual(true)(count >= 1)))
+                |> (given (count) -> expectEqual("expectComparisonReadsTheOrderingTag")(true)(count >= 1)))
             |> (given (_) ->
                 dump
                 |> occurrences("Ord.compare")
-                |> test.assertEqual(0))
+                |> expectEqual("expectComparisonReadsTheOrderingTag")(0))
 
 // `lessOrEqual` accepts `Less` or `Equal` and `greaterOrEqual` accepts `Greater` or `Equal`, so
 // each ors two tag tests together while `<` and `>` need only one. `Unordered` is why the second
@@ -343,11 +350,11 @@ let expectInclusiveComparisonsTestTwoTags unit =
             |> (given (_) ->
                 inclusive
                 |> occurrences("OrInt")
-                |> test.assertEqual(2))
+                |> expectEqual("expectInclusiveComparisonsTestTwoTags")(2))
             |> (given (_) ->
                 strict
                 |> occurrences("OrInt")
-                |> test.assertEqual(1))
+                |> expectEqual("expectInclusiveComparisonsTestTwoTags")(1))
 
 let memberSource = "let recursive member key entries =\n    match entries with\n        | [] -> false\n        | head :: tail ->\n            if head == key\n            then true\n            else member(key)(tail)\n\n"
 
@@ -360,7 +367,7 @@ let expectConcreteCallInAFunctionBodyRoutesToACopy unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("[SourceFunction from member]")
-    |> test.assertEqual(2)
+    |> expectEqual("expectConcreteCallInAFunctionBodyRoutesToACopy")(2)
 
 // A parameter named like the constrained function is not that function: its call stays a call
 // to the parameter.
@@ -369,7 +376,7 @@ let expectAShadowingParameterIsNotRoutedToACopy unit =
     |> withStandardTraits
     |> loweredDump
     |> occurrences("[SourceFunction from member]")
-    |> test.assertEqual(1)
+    |> expectEqual("expectAShadowingParameterIsNotRoutedToACopy")(1)
 
 // The function section of `dump` whose header names `origin`, up to the next function.
 let functionSectionFrom (origin: Str) (dump: Str) =
@@ -387,7 +394,7 @@ let expectComparedBindingGetsNoDuplicate unit =
     |> loweredDump
     |> functionSectionFrom("[SourceFunction from score]")
     |> occurrences("RcDup")
-    |> test.assertEqual(0)
+    |> expectEqual("expectComparedBindingGetsNoDuplicate")(0)
 
 // A call routed to a concrete copy is a known callee like a call to the binding it copies: the
 // list the copy returns is reference-counted, so the caller releases it with its own release
@@ -398,8 +405,8 @@ let expectConcreteCopyResultIsReleasedByTheCaller unit =
     |> withStandardTraits
     |> loweredDumpWithSource
     |> functionSectionFrom("[SourceFunction from probe]")
-    |> Ashes.Text.contains("TypeName=List RuntimeManaged=true")
-    |> test.assertEqual(true)
+    |> (given (section: Str) -> Ashes.Text.contains(section)("TypeName=List RuntimeManaged=true"))
+    |> expectEqual("expectConcreteCopyResultIsReleasedByTheCaller")(true)
 
 let runCoreTraitDispatchLoweringTests unit =
     Unit
