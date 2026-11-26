@@ -44,6 +44,7 @@ import Ashes.Collection.List.sortBy as sortList
 export (
     value linkLinuxExecutable,
     value linkLinuxExecutableWithImports,
+    value linuxObjectLoadsSharedLibraries,
     value linuxLinkMapText,
 )
 
@@ -276,7 +277,12 @@ let linuxDynamicImportLibraries =
         ("__errno_location", "libc.so.6"),
         ("getenv", "libc.so.6"),
         ("getcwd", "libc.so.6"),
-        ("readlink", "libc.so.6")
+        ("readlink", "libc.so.6"),
+        ("pthread_attr_destroy", "libc.so.6"),
+        ("pthread_attr_init", "libc.so.6"),
+        ("pthread_attr_setstacksize", "libc.so.6"),
+        ("pthread_create", "libc.so.6"),
+        ("pthread_join", "libc.so.6")
     ]
 
 let recursive lookupImportLibrary symbolName knownLibraries =
@@ -310,6 +316,47 @@ let recursive collectLinuxDynamicImportsGo knownLibraries bytes symtabOffset sym
                             )
 
 let collectLinuxDynamicImports knownLibraries bytes symtabOffset symbolCount strtabOffset = collectLinuxDynamicImportsGo(knownLibraries)(bytes)(symtabOffset)(symbolCount)(strtabOffset)(0)(1)([])
+
+// The libc thread functions the parallel runtime imports when its workers are libc threads. They
+// follow from that choice, so they never count toward making it.
+let workerThreadImports = ["pthread_attr_destroy", "pthread_attr_init", "pthread_attr_setstacksize", "pthread_create", "pthread_join"]
+
+let recursive containsImportName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == name || containsImportName(name)(rest)
+
+let recursive anyImportBesides (names: List(Str)) (imports: List(LinuxDynamicImport)) =
+    match imports with
+        | [] -> false
+        | LinuxDynamicImport { symbolName = name } :: rest -> !containsImportName(name)(names) || anyImportBesides(names)(rest)
+
+// Stage 0's `LinuxObjectLoadsSharedLibraries`: whether the executable linked from `objectBytes`
+// imports anything from a shared library besides the parallel runtime's own thread functions. Then
+// the dynamic loader runs, every loaded library reaches libc, and libc's per-thread state is live
+// in the process.
+let linuxObjectLoadsSharedLibraries objectBytes (declaredLibraries: List((Str, Str))) =
+    (let knownLibraries = appendList(declaredLibraries)(linuxDynamicImportLibraries)
+    in
+        let shoff = getU64(objectBytes)(40)
+        in
+            let shentsize = getU16(objectBytes)(58)
+            in
+                let shnum = getU16(objectBytes)(60)
+                in
+                    let shstrtabHeader =
+                        62
+                        |> getU16(objectBytes)
+                        |> readSectionHeader(objectBytes)(shoff)(shentsize)
+                    in
+                        match findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabHeader.sectionOffset)(".symtab")(0) with
+                            | None -> false
+                            | Some((_, symtabSection)) ->
+                                let strtabSection = readSectionHeader(objectBytes)(shoff)(shentsize)(symtabSection.sectionLink)
+                                in
+                                    strtabSection.sectionOffset
+                                    |> collectLinuxDynamicImports(knownLibraries)(objectBytes)(symtabSection.sectionOffset)(symtabSection.sectionSize / 24)
+                                    |> anyImportBesides(workerThreadImports))
 
 type TextRelocationPatch =
     | patchOffset: Int

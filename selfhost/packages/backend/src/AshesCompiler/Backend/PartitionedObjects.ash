@@ -26,6 +26,7 @@ export (
     value emitPartitionedObject,
     value emitPartitionObjects,
     value buildPartitionModules,
+    value buildPartitionModulesWithThreads,
     value mergePartitionModules,
     value mergePartitionModulesWith,
     value emitPartitionedObjectWith,
@@ -100,27 +101,30 @@ let reportPartitionBuilt (index: Int) module_ =
     then reportPartitionPhase(partitionText(index) + " built " + partitionModuleSizeText(module_))
     else Unit
 
-let recursive buildPartitionModulesFrom (leakCheck: Bool) (entryName: Str) (assignment: MapTree(Str, Int)) (program: IrProgram) (index: Int) (count: Int) (acc: List(PartitionModule)) =
+let recursive buildPartitionModulesFrom (leakCheck: Bool) (libcThreads: Bool) (entryName: Str) (assignment: MapTree(Str, Int)) (program: IrProgram) (index: Int) (count: Int) (acc: List(PartitionModule)) =
     if index >= count
     then Ashes.Collection.List.reverse(acc)
     else
         let context = contextCreate(Unit)
         in
-            match codegenProgramPartition(leakCheck)(index)(assignment)(entryName)(context)(program) with
+            match codegenProgramPartition(leakCheck)(libcThreads)(index)(assignment)(entryName)(context)(program) with
                 | (module_, builder) ->
                     let _ = reportPartitionBuilt(index)(module_)
-                    in buildPartitionModulesFrom(leakCheck)(entryName)(assignment)(program)(index + 1)(count)(PartitionModule(partitionModuleIndex = index, partitionModuleContext = context, partitionModuleRef = module_, partitionModuleBuilder = builder) :: acc)
+                    in buildPartitionModulesFrom(leakCheck)(libcThreads)(entryName)(assignment)(program)(index + 1)(count)(PartitionModule(partitionModuleIndex = index, partitionModuleContext = context, partitionModuleRef = module_, partitionModuleBuilder = builder) :: acc)
 
 // Every partition's module of `partitions` partitions of `program`, partition 0 first, each in its
-// own context. This is the only step that reads the program: once it returns, a caller holding
-// the program in a frame of its own can release it before the modules are optimized.
-let buildPartitionModules (leakCheck: Bool) (entryName: Str) (partitions: Int) (program: IrProgram) =
+// own context, with libc worker threads when `libcThreads`. This is the only step that reads the
+// program: once it returns, a caller holding the program in a frame of its own can release it
+// before the modules are optimized.
+let buildPartitionModulesWithThreads (leakCheck: Bool) (libcThreads: Bool) (entryName: Str) (partitions: Int) (program: IrProgram) =
     (let count = clampObjectPartitions(partitions)
     in
         let assignment = assignObjectPartitions(program)(count)
         in
             let _ = reportPartitionPhase("partition plan " + Ashes.Text.fromInt(count) + " partitions")
-            in buildPartitionModulesFrom(leakCheck)(entryName)(assignment)(program)(0)(count)([]))
+            in buildPartitionModulesFrom(leakCheck)(libcThreads)(entryName)(assignment)(program)(0)(count)([]))
+
+let buildPartitionModules (leakCheck: Bool) (entryName: Str) (partitions: Int) (program: IrProgram) = buildPartitionModulesWithThreads(leakCheck)(false)(entryName)(partitions)(program)
 
 // A partition with its own target machine, its module set to the machine's triple and data layout.
 type PartitionJob =

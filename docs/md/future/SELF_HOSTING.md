@@ -27,7 +27,7 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | Not started |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | Libc threads written on `fix/r13-parallel-tls`, awaiting a round; step 8 entries not started |
 | 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
 | 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
@@ -79,7 +79,8 @@ Wrong output, found by the behaviour check under `ASHES_RC_POISON=1` in round 12
 | `rc_escaping_view_backing_released` prints garbage | 1 | Not written |
 | `mixed_tuple_join_taken_apart_into_constructor` segfaults | 1 | Not written |
 | A deep copy in a generic helper lowered before its type settles hands the caller's string over uncopied | 0 | Not written (stage 1 is right since step 8 entry 5) |
-| `Ashes.Task.Parallel` workers share the caller's libc thread-local storage (`clone` without `CLONE_SETTLS`); a worker that calls into libc corrupts the heap | runtime, both | Step 3 |
+| `Ashes.Task.Parallel` workers share the caller's libc thread-local storage (`clone` without `CLONE_SETTLS`); a worker that calls into libc corrupts the heap | runtime, both | Fixed on `fix/r13-parallel-tls` (both stages, not yet through a round): a linux image that loads libc starts libc threads (`pthread_create`), a static one keeps raw `clone` threads; test `parallel_workers_call_libc_malloc_concurrently` |
+| Regular expressions used by several `Ashes.Task.Parallel` workers at once crash or answer wrongly: the PCRE2 payload's `malloc` is a bump allocator over one region whose cursor is a plain global every thread shares | runtime, both | Not written; reproduction: `Ashes.Text.Regex.compile` and `isMatch` in a loop inside `Ashes.Task.Parallel.map` over eight elements |
 
 Leaks, as known:
 

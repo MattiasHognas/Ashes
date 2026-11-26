@@ -110,6 +110,11 @@ internal static partial class LlvmCodegen
 
         EmitWorkerCapInfrastructure(target, flavor, nounwindAttr);
         EmitParallelWorkerTrampoline(target, flavor, nounwindAttr);
+        if (UsesLibcWorkerThreads(target, flavor))
+        {
+            EmitParallelStartThreadFn(target, flavor, nounwindAttr);
+            EmitParallelThreadEntry(target, ParallelWorkerFnName, nounwindAttr);
+        }
     }
 
     /// <summary>
@@ -319,7 +324,11 @@ internal static partial class LlvmCodegen
         LlvmTargetContext target = state.Target;
         LlvmTypeHandle i64 = state.I64;
         LlvmValueHandle armTlsBlock = LoadMemory(state, desc, ParallelDescWorkerTcb, "worker_tls_block");
-        EmitArm64SetThreadPointer(state, armTlsBlock);
+        if (!UsesLibcWorkerThreads(state))
+        {
+            EmitArm64SetThreadPointer(state, armTlsBlock);
+        }
+
         state = WithArm64ThreadLocalArenaSlots(state);
         EmitHeapChunkInit(state);
 
@@ -472,7 +481,7 @@ internal static partial class LlvmCodegen
         // The worker's per-thread control region: on x64/win it's the TCB (parent pre-writes cursor/end
         // from a fresh chunk); on arm64 it's a zeroed TLS block the worker msr's into TPIDR_EL0 and then
         // initializes its own chunk against. mmap/VirtualAlloc zero-fill, so the arm64 block starts clean.
-        LlvmValueHandle workerTcb = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)MainTcbSizeBytes, 0), "par_tcb");
+        LlvmValueHandle workerTcb = EmitAllocateWorkerControlRegion(state, "par_tcb");
         if (state.Flavor != LlvmCodegenFlavor.LinuxArm64)
         {
             LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_chunk");
@@ -489,14 +498,7 @@ internal static partial class LlvmCodegen
 
         if (state.Flavor == LlvmCodegenFlavor.LinuxX64 || state.Flavor == LlvmCodegenFlavor.LinuxArm64)
         {
-            long parallelStackBytes = ParallelStackBytesFor(state);
-            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack");
-            StoreMemory(state, desc, ParallelDescWorkerStack, stack, "par_desc_stack");
-            // Mark the ctid/exited word running (1); the kernel zeroes it + futex-wakes on true thread
-            // exit (CLONE_CHILD_CLEARTID). Must be set before clone so the kernel's clear can't be missed.
-            StoreMemory(state, desc, ParallelDescExited, LlvmApi.ConstInt(state.I64, 1, 0), "par_desc_exited1");
-            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), "par_stack_top");
-            EmitCloneWorker(state, desc, stackTop, ParallelWorkerFnName); // EmitCloneWorker branches on flavor (x86 vs aarch64 asm)
+            EmitStartLinuxWorker(state, desc, ParallelWorkerFnName, "par");
         }
         else
         {
@@ -604,15 +606,14 @@ internal static partial class LlvmCodegen
         // cleanup only reclaims the exited worker's OS resources.
 
         // linux: the result (Done word) is published before the worker returns, but the worker still
-        // runs its return epilogue on its stack afterwards. Wait for true thread exit — the kernel zeroes
-        // the ctid/exited word and futex-wakes it in mm_release, after the stack is no longer used — before
-        // reclaiming the stack/TCB/arena. Non-private FUTEX_WAIT to match the kernel's clear_child_tid wake.
-        // (win-x64 reclaims via CloseHandle after WaitForSingleObject, which already waits for full exit.)
+        // runs its return epilogue on its stack afterwards. Wait for true thread exit before reclaiming
+        // the stack/TCB/arena (EmitReapLinuxWorker). (win-x64 reclaims via CloseHandle after
+        // WaitForSingleObject, which already waits for full exit.)
         if (state.Flavor == LlvmCodegenFlavor.LinuxX64 || state.Flavor == LlvmCodegenFlavor.LinuxArm64)
         {
-            EmitParallelCleanupWaitExit(state, desc);
+            EmitReapLinuxWorker(state, desc, "par_cleanup");
         }
-        // Reclaim the worker thread's memory. linux: free the mmap'd stack; win-x64: close the thread
+        // Reclaim the worker thread's memory. linux: the reap above released the stack; win-x64: close the thread
         // HANDLE (the OS frees the CreateThread stack). Then free the worker's arena chunks + TCB/TLS
         // block. The arena end comes from the TCB on x64/win (parent-written), or from the descriptor
         // on arm64 (the worker wrote it — its end lives in the TLS block at a link-time tprel offset).
@@ -627,7 +628,6 @@ internal static partial class LlvmCodegen
         }
         else
         {
-            EmitFreeOsMemory(state, LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_stack"), ParallelStackBytesFor(state), "par_cleanup_stack");
             arenaEnd = state.Flavor == LlvmCodegenFlavor.LinuxArm64
                 ? LoadMemory(state, desc, ParallelDescWorkerArenaEnd, "par_cleanup_arena_end")
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "par_cleanup_arena_end");
@@ -638,7 +638,7 @@ internal static partial class LlvmCodegen
             : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "par_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
         EmitFreeWorkerArenaChunks(state, rcArenaEnd);
-        EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "par_cleanup_tcb");
+        EmitFreeWorkerControlRegion(state, workerTcb, "par_cleanup_tcb");
         LlvmApi.BuildBr(builder, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
@@ -857,6 +857,149 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, (ulong)ParallelCloneFlags, 0)], "");
     }
 
+    // libc worker threads (linux, when the image loads libc)
+    //
+    // A raw `clone` thread runs on the starting thread's glibc thread pointer: glibc's malloc
+    // caches, its arena pointer and errno would be shared between threads without a lock. When the
+    // image loads libc (LlvmTargetContext.ParallelWorkersUseLibcThreads), every worker is started
+    // with `pthread_create` instead, so glibc gives it its own thread control block, static TLS
+    // (on arm64 that copy holds this image's arena cursors) and a stack with a guard page, and
+    // `pthread_join` waits for it to exit and frees that stack. The Ashes control block stays this
+    // runtime's own: an x64 worker still points GS at the block its starter prepared.
+    private const string ParallelStartThreadFnName = "__ashes_parallel_start_thread";
+    private const string ParallelThreadEntrySuffix = ".thread_entry";
+
+    private static readonly byte[] ParallelThreadStartFailedMessage =
+        "Ashes.Task.Parallel: a worker thread could not be started\n"u8.ToArray();
+
+    private static bool UsesLibcWorkerThreads(LlvmCodegenState state)
+        => state.Target.ParallelWorkersUseLibcThreads && IsLinuxFlavor(state.Flavor);
+
+    private static bool UsesLibcWorkerThreads(LlvmTargetContext target, LlvmCodegenFlavor flavor)
+        => target.ParallelWorkersUseLibcThreads && IsLinuxFlavor(flavor);
+
+    // The control region a worker's starter allocates: on x64 the GS control block, on arm64 the
+    // block a raw thread points TPIDR_EL0 at. An arm64 libc thread has glibc's TLS instead, so it
+    // gets none (0), and its trampoline and cleanup skip the block.
+    private static LlvmValueHandle EmitAllocateWorkerControlRegion(LlvmCodegenState state, string prefix)
+        => state.Flavor == LlvmCodegenFlavor.LinuxArm64 && UsesLibcWorkerThreads(state)
+            ? LlvmApi.ConstInt(state.I64, 0, 0)
+            : EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)MainTcbSizeBytes, 0), prefix);
+
+    private static void EmitFreeWorkerControlRegion(LlvmCodegenState state, LlvmValueHandle region, string prefix)
+    {
+        if (state.Flavor == LlvmCodegenFlavor.LinuxArm64 && UsesLibcWorkerThreads(state))
+        {
+            return;
+        }
+
+        EmitFreeOsMemory(state, region, MainTcbSizeBytes, prefix);
+    }
+
+    // Starts the linux worker for <paramref name="record"/> (a both descriptor or a queue worker
+    // record) running <paramref name="workerFnName"/>: a raw clone on a mapped stack, or a libc
+    // thread through the start function.
+    private static void EmitStartLinuxWorker(LlvmCodegenState state, LlvmValueHandle record, string workerFnName, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        if (UsesLibcWorkerThreads(state))
+        {
+            LlvmTypeHandle startType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64, state.I8Ptr]);
+            LlvmApi.BuildCall2(builder, startType,
+                LlvmApi.GetNamedFunction(state.Target.Module, ParallelStartThreadFnName),
+                [record, LlvmApi.GetNamedFunction(state.Target.Module, workerFnName + ParallelThreadEntrySuffix)], "");
+            return;
+        }
+
+        long parallelStackBytes = ParallelStackBytesFor(state);
+        LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), prefix + "_stack");
+        StoreMemory(state, record, ParallelDescWorkerStack, stack, prefix + "_desc_stack");
+        // Mark the ctid/exited word running (1); the kernel zeroes it + futex-wakes on true thread
+        // exit (CLONE_CHILD_CLEARTID). Must be set before clone so the kernel's clear can't be missed.
+        StoreMemory(state, record, ParallelDescExited, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_desc_exited1");
+        LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(state.I64, (ulong)parallelStackBytes, 0), prefix + "_stack_top");
+        EmitCloneWorker(state, record, stackTop, workerFnName);
+    }
+
+    // Waits until the linux worker for <paramref name="record"/> has fully exited and releases its
+    // stack: the exit-cleared word and munmap for a raw thread, `pthread_join` for a libc thread
+    // (glibc frees the stack it allocated).
+    private static void EmitReapLinuxWorker(LlvmCodegenState state, LlvmValueHandle record, string prefix)
+    {
+        if (UsesLibcWorkerThreads(state))
+        {
+            LlvmTypeHandle joinType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr]);
+            EmitLinuxImportedCall(state, "pthread_join", joinType,
+                [LoadMemory(state, record, ParallelDescWorkerStack, prefix + "_thread"), LlvmApi.ConstNull(state.I8Ptr)], prefix + "_join");
+            return;
+        }
+
+        EmitParallelCleanupWaitExit(state, record);
+        EmitFreeOsMemory(state, LoadMemory(state, record, ParallelDescWorkerStack, prefix + "_stack"), ParallelStackBytesFor(state), prefix + "_stack");
+    }
+
+    // The libc entry of a worker trampoline, `void *entry(void *record)`: runs the trampoline on the
+    // record and returns NULL, which ends the thread through glibc.
+    private static void EmitParallelThreadEntry(LlvmTargetContext target, string workerFnName, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, workerFnName + ParallelThreadEntrySuffix, LlvmApi.FunctionType(ptr, [ptr]));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction, nounwindAttr);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry"));
+        LlvmValueHandle record = LlvmApi.BuildPtrToInt(target.Builder, LlvmApi.GetParam(fn, 0), i64, "thread_record");
+        LlvmApi.BuildCall2(target.Builder, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [i64]),
+            LlvmApi.GetNamedFunction(target.Module, workerFnName), [record], "");
+        LlvmApi.BuildRet(target.Builder, LlvmApi.ConstNull(ptr));
+    }
+
+    // `__ashes_parallel_start_thread(record, entry)`: starts a libc thread running `entry(record)`
+    // with the configured worker stack size, its `pthread_t` stored in the record's stack word. A
+    // thread that cannot be started ends the program with a message, as an allocation failure does.
+    private static void EmitParallelStartThreadFn(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
+    {
+        LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+        LlvmTypeHandle ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, ParallelStartThreadFnName,
+            LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [i64, ptr]));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction, nounwindAttr);
+        LlvmBuilderHandle builder = target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry"));
+        LlvmCodegenState state = CreateBareRuntimeState(target, fn, flavor);
+
+        // pthread_attr_t is 56 bytes on x86-64 and 64 on aarch64.
+        LlvmValueHandle attr = LlvmApi.BuildAlloca(builder, LlvmApi.ArrayType2(state.I8, 64), "thread_attr");
+        LlvmValueHandle record = LlvmApi.GetParam(fn, 0);
+        EmitLinuxImportedCall(state, "pthread_attr_init", LlvmApi.FunctionType(i32, [ptr]), [attr], "thread_attr_init");
+        EmitLinuxImportedCall(state, "pthread_attr_setstacksize", LlvmApi.FunctionType(i32, [ptr, i64]),
+            [attr, LlvmApi.ConstInt(i64, (ulong)ParallelStackBytesFor(state), 0)], "thread_attr_stack");
+        LlvmValueHandle threadSlot = LlvmApi.BuildIntToPtr(builder,
+            LlvmApi.BuildAdd(builder, record, LlvmApi.ConstInt(i64, ParallelDescWorkerStack, 0), "thread_slot_addr"), ptr, "thread_slot");
+        LlvmValueHandle status = EmitLinuxImportedCall(state, "pthread_create", LlvmApi.FunctionType(i32, [ptr, ptr, ptr, ptr]),
+            [threadSlot, attr, LlvmApi.GetParam(fn, 1), LlvmApi.BuildIntToPtr(builder, record, ptr, "thread_arg")], "thread_create");
+        EmitLinuxImportedCall(state, "pthread_attr_destroy", LlvmApi.FunctionType(i32, [ptr]), [attr], "thread_attr_destroy");
+
+        LlvmBasicBlockHandle failed = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "thread_failed");
+        LlvmBasicBlockHandle started = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "thread_started");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, status, LlvmApi.ConstInt(i32, 0, 0), "thread_ok"), started, failed);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failed);
+        LlvmValueHandle message = EmitStackByteArray(state, ParallelThreadStartFailedMessage);
+        EmitLinuxSyscall(state, SyscallWrite,
+            LlvmApi.ConstInt(i64, 2, 0),
+            LlvmApi.BuildPtrToInt(builder, message, i64, "thread_failed_msg"),
+            LlvmApi.ConstInt(i64, (ulong)ParallelThreadStartFailedMessage.Length, 0),
+            "thread_failed_write");
+        EmitExit(state, LlvmApi.ConstInt(i64, 1, 0));
+
+        LlvmApi.PositionBuilderAtEnd(builder, started);
+        LlvmApi.BuildRetVoid(builder);
+    }
+
     // Queued reduce runtime
 
     /// <summary>
@@ -905,6 +1048,11 @@ internal static partial class LlvmCodegen
     {
         EmitParallelQueueDrainFn(target, flavor, nounwindAttr);
         EmitParallelQueueWorkerTrampoline(target, flavor, nounwindAttr);
+        if (UsesLibcWorkerThreads(target, flavor))
+        {
+            EmitParallelThreadEntry(target, ParallelQueueWorkerFnName, nounwindAttr);
+        }
+
         EmitParallelQueueStartFn(target, flavor, nounwindAttr);
         EmitParallelQueueAwaitFn(target, flavor, nounwindAttr);
         EmitParallelQueueCleanupFn(target, flavor, nounwindAttr);
@@ -1211,7 +1359,11 @@ internal static partial class LlvmCodegen
         if (flavor == LlvmCodegenFlavor.LinuxArm64)
         {
             LlvmValueHandle tlsBlock = LoadMemory(state, rec, ParallelDescWorkerTcb, "parq_worker_tls");
-            EmitArm64SetThreadPointer(state, tlsBlock);
+            if (!UsesLibcWorkerThreads(state))
+            {
+                EmitArm64SetThreadPointer(state, tlsBlock);
+            }
+
             state = WithArm64ThreadLocalArenaSlots(state);
             EmitHeapChunkInit(state);
         }
@@ -1476,7 +1628,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle i64 = state.I64;
         LlvmValueHandle zero = LlvmApi.ConstInt(i64, 0, 0);
-        LlvmValueHandle workerTcb = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)MainTcbSizeBytes, 0), "parq_tcb");
+        LlvmValueHandle workerTcb = EmitAllocateWorkerControlRegion(state, "parq_tcb");
         if (flavor != LlvmCodegenFlavor.LinuxArm64)
         {
             LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), "parq_chunk");
@@ -1488,12 +1640,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, recordAddr, ParallelDescWorkerTcb, workerTcb, "parq_rec_tcb");
         if (IsLinuxFlavor(flavor))
         {
-            long parallelStackBytes = ParallelStackBytesFor(state);
-            LlvmValueHandle stack = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack");
-            StoreMemory(state, recordAddr, ParallelDescWorkerStack, stack, "parq_rec_stack");
-            StoreMemory(state, recordAddr, ParallelDescExited, LlvmApi.ConstInt(i64, 1, 0), "parq_rec_exited1");
-            LlvmValueHandle stackTop = LlvmApi.BuildAdd(builder, stack, LlvmApi.ConstInt(i64, (ulong)parallelStackBytes, 0), "parq_stack_top");
-            EmitCloneWorker(state, recordAddr, stackTop, ParallelQueueWorkerFnName);
+            EmitStartLinuxWorker(state, recordAddr, ParallelQueueWorkerFnName, "parq");
         }
         else
         {
@@ -1631,33 +1778,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle arenaEnd;
         if (IsLinuxFlavor(flavor))
         {
-            // Wait for true thread exit (the kernel zeroes the ctid/exited word and futex-wakes it
-            // in mm_release, after the worker stack is no longer used) before reclaiming the stack.
-            // Non-private FUTEX_WAIT to match the kernel's clear_child_tid wake.
-            var exitCheck = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "parq_cleanup_exit_check");
-            var exitWait = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "parq_cleanup_exit_wait");
-            var exitDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "parq_cleanup_exited");
-            LlvmValueHandle exitedAddr = LlvmApi.BuildAdd(builder, recordAddr, LlvmApi.ConstInt(i64, ParallelDescExited, 0), "parq_cleanup_exited_addr");
-            LlvmApi.BuildBr(builder, exitCheck);
-
-            LlvmApi.PositionBuilderAtEnd(builder, exitCheck);
-            LlvmValueHandle exited = LoadMemory(state, recordAddr, ParallelDescExited, "parq_cleanup_exited_val");
-            LlvmValueHandle stillRunning = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, exited, zero, "parq_cleanup_still_running");
-            LlvmApi.BuildCondBr(builder, stillRunning, exitWait, exitDone);
-
-            LlvmApi.PositionBuilderAtEnd(builder, exitWait);
-            EmitLinuxSyscall6(state, SyscallFutex,
-                exitedAddr,
-                zero,
-                LlvmApi.ConstInt(i64, 1, 0),
-                zero,
-                zero,
-                zero,
-                "parq_cleanup_exit_wait_call");
-            LlvmApi.BuildBr(builder, exitCheck);
-
-            LlvmApi.PositionBuilderAtEnd(builder, exitDone);
-            EmitFreeOsMemory(state, LoadMemory(state, recordAddr, ParallelDescWorkerStack, "parq_cleanup_stack"), ParallelStackBytesFor(state), "parq_cleanup_stack");
+            EmitReapLinuxWorker(state, recordAddr, "parq_cleanup");
             arenaEnd = flavor == LlvmCodegenFlavor.LinuxArm64
                 ? LoadMemory(state, recordAddr, ParallelDescWorkerArenaEnd, "parq_cleanup_arena_end")
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
@@ -1678,7 +1799,7 @@ internal static partial class LlvmCodegen
             : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "parq_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
         EmitFreeWorkerArenaChunks(state, rcArenaEnd);
-        EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "parq_cleanup_tcb");
+        EmitFreeWorkerControlRegion(state, workerTcb, "parq_cleanup_tcb");
     }
 
     /// <summary>Looks up a queued-reduce runtime function, asserting it was emitted (the module

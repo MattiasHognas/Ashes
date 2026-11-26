@@ -218,6 +218,13 @@ internal sealed record LlvmTargetContext(
     /// </summary>
     public ProgramPartition? Partition { get; init; }
 
+    /// <summary>
+    /// Whether `Ashes.Task.Parallel` workers on linux are libc threads (`pthread_create`) rather
+    /// than raw `clone` threads: true when the linked image loads libc, whose per-thread state a raw
+    /// thread would share with the thread that started it.
+    /// </summary>
+    public bool ParallelWorkersUseLibcThreads { get; init; }
+
     private readonly Dictionary<string, LlvmValueHandle> _stringLiteralGlobals = new(StringComparer.Ordinal);
 
     private readonly Dictionary<string, LlvmValueHandle> _namedGlobals = new(StringComparer.Ordinal);
