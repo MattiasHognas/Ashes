@@ -1348,6 +1348,22 @@ let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLow
         | Some(expected) -> containsUnresolvedLayout(expected)(state) == false
         | None -> false)
 
+// Step 8, entry 7: lowered from the type table, a call to a group member whose recorded result,
+// closed by the body's own instantiation, is a scalar or a general reference-counted value is no
+// longer an open sibling result: the call takes that type (`pinRecordedCallResult`) and its arena
+// request follows it, the caller owning a general reference-counted result through the returns bit.
+// A result with a fixed copy-out or another heap shape keeps the open-sibling rules and their pinned
+// and proven sibling results (entry 8c).
+let siblingResultSettledByTable (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) ->
+            match recorded with
+                | SemInt -> true
+                | SemBool -> true
+                | SemFloat -> true
+                | _ -> containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
+        | _ -> false
+
 // A call to another member of the recursive group whose arrow was still open when this body began
 // asks for an arena result as stage 0's does, also when the body is lowered again against the
 // result the first lowering resolved.
@@ -1355,7 +1371,7 @@ let siblingResultOpen (context: CoreCallContext) (resultType: SemanticType) (sta
     match (context.calleeName, resolveType(state)(resultType)) with
         | (_name, SemFunction(_argument, _result, _row)) -> false
         | (Some(name), _resolved) ->
-            context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state))
+            context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state)) && siblingResultSettledByTable(state) == false
         | (None, _resolved) -> false
 
 let siblingCallSiteKey (context: CoreCallContext) =
