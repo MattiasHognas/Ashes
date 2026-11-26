@@ -1419,6 +1419,20 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
                         | FreshTemp { state = wordState, temp = wordTemp } ->
                             (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
 
+// Stage 0's contract for a general reference-counted value (`IsGeneralRcValueType`): passed
+// borrowed, returned owned, so a caller owns it through the callee's returns bit even when the
+// callee is a closure no name resolves, and stage 0 asks no arena result for it
+// (`RequestsArenaResultFromUnknownCallee` leaves it out). A result with a fixed copy-out (a string,
+// a list of strings or scalars) and every other heap shape keep the request: stage 0 normalizes
+// those after the call, which this lowering does not port yet.
+let ownedFromUnknownCallee (recorded: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(recorded)(state) == false && hasCallCopyOut(recorded)(state) == false && isGeneralRcValueType(recorded)(state)
+
+// Whether the recorded result of the unknown-closure call being lowered is such a value.
+let unknownCalleeResultOwned (state: CoreLoweringState) =
+    match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
+        | (Some(_table), Some(recorded)) -> ownedFromUnknownCallee(recorded)(state)
+        | _ -> false
+
 // The kind of result a call through an unknown closure returns, for the shadow comparison: the
 // recorded type closed by the instantiation, else by the settled variables, else lowering's own.
 let unknownCalleeResultKind (resultType: SemanticType) (state: CoreLoweringState) =
@@ -1486,7 +1500,7 @@ let shadowArenaRequest (context: CoreCallContext) (resultType: SemanticType) (st
                         then 7
                         else 8
                 in
-                    if rule == 8 && callsUnknownCallee(context)
+                    if rule == 8 && callsUnknownCallee(context) && unknownCalleeResultOwned(state) == false
                     then
                         observeShadowUnrecorded(rule)(requestText(current))("unknown callee: the request stays; " + unknownCalleeResultKind(resultType)(state))(state)
                     else
@@ -1577,12 +1591,13 @@ let arenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argum
 // lowers with its variables open) keeps today's request. So does a call through a closure no name
 // or applied lambda resolves (a function parameter, `given (f) -> f(x)`): its caller cannot own what
 // an unknown callee returns, and stage 0 asks the arena there and copies the result out after the
-// call, which this lowering does through the same request. A record that does not bind leaves the
+// call, which this lowering does through the same request, unless the result is a general
+// reference-counted value (`ownedFromUnknownCallee`). A record that does not bind leaves the
 // call as it was.
 let pinRecordedCallResult (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match (stateNodeTypes(state), recordedInstantiatedSiteType(state)) with
         | (Some(_table), Some(recorded)) ->
-            if callsUnknownCallee(context) || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
+            if callsUnknownCallee(context) && ownedFromUnknownCallee(recorded)(state) == false || selfResultDeferred(context)(state) || siblingResultOpen(context)(resultType)(state) || containsUnresolvedLayout(resultType)(state) == false
             then state
             else
                 match bindType(resultType)(recorded)(state) with
