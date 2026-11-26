@@ -82,7 +82,7 @@ system's mere presence in the compiler, not anything k-nucleotide's own code ask
 `docs/md/internals/changelog.md`'s "Overload-generic `==` / `!=` / `+` helpers *(superseded by
 traits)*" entry for why: traits replaced an unsound generic-`==` inlining mechanism as a correctness
 fix, and recovering the lost performance needs a new dictionary-specialization optimizer feature,
-not a point patch. The time improvement is unrelated and came later, mostly from the OPT-001..017
+not a point patch. The time improvement is unrelated and came later, mostly from a later
 optimizer arc. Full trace in project memory (`project_knucleotide_regexredux_rss_root_cause.md`).
 The cost profile is otherwise the expected one: every
 k-mer count is an immutable `Map` update (O(log n) + path allocation), where the reference uses a

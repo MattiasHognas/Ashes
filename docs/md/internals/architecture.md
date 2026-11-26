@@ -2425,7 +2425,7 @@ mapped expressions inside a wrapper pinned to the implementation head; otherwise
 preserved. Structural heads with available requirement evidence dispatch without deferral.
 Missing evidence and unresolved goals at non-replaying entry points fail closed.
 This does not generalize ordinary constrained bindings at multiple concrete types: mixed `Int`
-and `Str` uses of the same such binding remain unsupported in stage 1 (TRT13/SEM22).
+and `Str` uses of the same such binding remain unsupported in stage 1.
 
 Imported modules can contribute unused constrained functions, such as `List.sort` or
 `Map.get`. After a successful discovery pass validates every body, final replay builds a
