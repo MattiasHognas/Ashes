@@ -2065,33 +2065,42 @@ let capturesScopeViews (resultType: SemanticType) (state: CoreLoweringState) =
         | SemFunction(_argument, _result, _row) -> true
         | _ -> false
 
-// Stage 0's `MarkOwnerViewedByResult` and `MaterializeScopeResultViews`: a `let` owning a
-// reference-counted string or bytes value whose result may name its bytes materializes the result
-// before the binding is released. A result the arena deep copy reproduces is copied into the
-// arena; one of the contract's types is copied onto the reference-counted heap when it is still in
-// the arena and retained when it is already reference-counted, holding no view, and the scope's
-// result is then a value just produced, owned by whoever takes it (stage 0's
-// `NormalizeViewingResultBeforeBackings`); for anything
-// else the binding is kept alive rather than released, a leak being the safe side of a
-// view left pointing into freed memory. Returns the state, the result temp, and whether the
-// binding's release is withheld.
+// Stage 0's `MarkOwnerViewedByResult`: a `let` owning a reference-counted string or bytes value
+// whose body may return something a callee read out of it.
+let ownerViewedByResult (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (state: CoreLoweringState) = runtimeOwnerStateOf(ownerSlot)(state) == Some(true) && typeCarriesTextBytes([])(valueType)(state) && resultMayViewCallArgument(name)(0)(body)
+
+// Stage 0's `MaterializeScopeResultViews`: such a binding's result is materialized before the
+// binding is released. A result the arena deep copy reproduces is copied into the arena; one of the
+// contract's types is copied onto the reference-counted heap when it is still in the arena and
+// retained when it is already reference-counted, holding no view, and the scope's result is then a
+// value just produced, owned by whoever takes it (stage 0's `NormalizeViewingResultBeforeBackings`);
+// for anything else the binding is kept alive rather than released, a leak being the safe side of
+// a view left pointing into freed memory. A result of the contract's types that is already
+// reference-counted needs nothing: its string and bytes children were retained or copied when it was
+// built. A reference-counted result of any other type is copied like an arena one, since its
+// children were stored as they are. Returns the state, the result temp, whether the binding's
+// release is withheld, and whether its release stays at the scope exit, after the copy, rather
+// than moving to the binding's last read.
 let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isRuntimeTemp(resultTemp)(state)
-    then (state, resultTemp, false)
+    if !ownerViewedByResult(name)(body)(valueType)(ownerSlot)(state)
+    then (state, resultTemp, false, false)
     else
-        if canNormalizeResultIntoArena(resultType)(state)
-        then
-            match emitArenaResultDeepCopy(resultTemp)(resultType)(state) with
-                | (copied, copyTemp) -> (copied, copyTemp, false)
+        if !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isGeneralRcValueType(resultType)(state) && isRuntimeTemp(resultTemp)(state)
+        then (state, resultTemp, false, true)
         else
-            if isGeneralRcValueType(resultType)(state)
+            if canNormalizeResultIntoArena(resultType)(state)
             then
-                match generalCopyPlanOf(resultType)(state) with
-                    | Some(plan) ->
-                        match emitGuardedDeepCopy(resultTemp)(plan)(state) with
-                            | (copied, normalizedTemp) -> (markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)(copied), normalizedTemp, false)
-                    | None -> (state, resultTemp, true)
-            else (state, resultTemp, true)
+                match emitArenaResultDeepCopy(resultTemp)(resultType)(state) with
+                    | (copied, copyTemp) -> (copied, copyTemp, false, true)
+            else
+                if isGeneralRcValueType(resultType)(state)
+                then
+                    match generalCopyPlanOf(resultType)(state) with
+                        | Some(plan) ->
+                            match emitGuardedDeepCopy(resultTemp)(plan)(state) with
+                                | (copied, normalizedTemp) -> (markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)(copied), normalizedTemp, false, true)
+                        | None -> (state, resultTemp, true, true)
+                else (state, resultTemp, true, true)
 
 // The instructions a `let` body emitted, oldest first, and the instructions before the store of
 // the binding's slot, newest first.
@@ -2230,12 +2239,12 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                                     match bodyState
                                     |> emitDeferredLetReleasePlaceholder(loweredValue.temp)(ownerSlot)(bodyTemp)
                                     |> materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType) with
-                                        | (viewState, resultTemp, keepsOwner) ->
+                                        | (viewState, resultTemp, keepsOwner, pinsRelease) ->
                                             match (if keepsOwner
                                             then retireRuntimeOwner(ownerSlot)(viewState)
                                             else viewState)
                                             |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
-                                            |> closeOwnedLetBracket(if keepsOwner
+                                            |> closeOwnedLetBracketPinned(pinsRelease)(if keepsOwner
                                             then None
                                             else letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
                                                 | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
