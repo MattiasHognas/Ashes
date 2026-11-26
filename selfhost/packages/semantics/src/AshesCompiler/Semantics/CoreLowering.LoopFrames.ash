@@ -38,6 +38,8 @@ import AshesCompiler.Semantics.CoreLowering.TcoReset
 import AshesCompiler.Semantics.CoreLowering.ResultHandOver
 import AshesCompiler.Semantics.CoreLowering.Bindings
 import AshesCompiler.Semantics.CoreLowering.LoopPlacement
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedLambdaParameterType
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedSettledTypeAt
 export (
     value constructorNamesOf,
     value unwrapPatternSpan,
@@ -1089,6 +1091,69 @@ let recursive scopeTypesClosedByBody (bindings: List(CoreBinding)) (entered: Cor
                     scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved || containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(entered))(entered))
             else scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved)
 
+let recursive innermostArrowResult (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemFunction(_argument, result, _row) -> innermostArrowResult(result)(state)
+        | other -> other
+
+// Step 8, entry 4: the type the table records for a scope binding open at entry, at the lambda's
+// own node: a parameter by the binding the node notes for its name, the recursive binding whose
+// body this is by the innermost result of the lambda's recorded arrow. None for any other binding
+// (a capture or an enclosing local the node does not note) and for a type the table leaves open.
+let recordedScopeBindingType (binding: CoreBinding) (state: CoreLoweringState) =
+    match binding.location with
+        | CoreSelf(_label, _environmentSize) ->
+            match state.currentNode with
+                | Some(node) ->
+                    match recordedSettledTypeAt(node)(state) with
+                        | Some(recorded) ->
+                            state
+                            |> innermostArrowResult(recorded)
+                            |> Some
+                        | None -> None
+                | None -> None
+        | _ -> recordedLambdaParameterType(binding.name)(state)
+
+let recursive closeScopeBindingsFromTable (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> state
+        | (CoreBinding { scheme = TypeScheme { body = bindingType } } as binding) :: rest ->
+            if isMonomorphicScopeBinding(binding) && containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(state))(state)
+            then
+                match recordedScopeBindingType(binding)(state) with
+                    | Some(recorded) ->
+                        match bindType(judgedScopeType(binding)(bindingType)(state))(recorded)(state) with
+                            | (bound, None) -> closeScopeBindingsFromTable(rest)(bound)
+                            | (_failed, Some(_error)) -> closeScopeBindingsFromTable(rest)(state)
+                    | None -> closeScopeBindingsFromTable(rest)(state)
+            else closeScopeBindingsFromTable(rest)(state)
+
+// Stage 0 lowers a body that encounters a trait requirement against its binding's closed inferred
+// type. Lowered from the type table, such a body (one applying a mapped operator) takes the scope
+// types the table records at entry, so its single lowering sees them closed and is not lowered
+// again for them; a scope type the table does not record at the lambda's node still closes by the
+// body and is lowered again as before.
+let scopeTypesFromTableAtEntry (body: Expr) (entered: CoreLoweringState) =
+    match stateNodeTypes(entered) with
+        | Some(_table) ->
+            if exprAppliesMappedOperator(body)
+            then closeScopeBindingsFromTable(entered.bindings)(entered)
+            else entered
+        | None -> entered
+
+// The scope bindings a requirement-closed lowering again is for: open at entry, closed by the body.
+let recursive scopeBindingsClosedByBody (bindings: List(CoreBinding)) (entered: CoreLoweringState) (finished: CoreLoweringState) =
+    match bindings with
+        | [] -> []
+        | (CoreBinding { name = name, scheme = TypeScheme { body = bindingType } } as binding) :: rest ->
+            if isMonomorphicScopeBinding(binding) && containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(entered))(entered) && !containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(finished))(finished)
+            then
+                name + (match binding.location with
+                    | CoreLocal(_slot) -> " (local)"
+                    | CoreEnvironment(_index) -> " (capture)"
+                    | CoreSelf(_label, _size) -> " (self result)") :: scopeBindingsClosedByBody(rest)(entered)(finished)
+            else scopeBindingsClosedByBody(rest)(entered)(finished)
+
 // Stage 0 lowers a binding that encountered a trait requirement against the type its discovery
 // pass inferred for it (`ElaborateInferredTraitBindings` rewrites the binding with the closed
 // inferred type as its annotation), so such a body sees its scope's resolved types from the
@@ -1111,6 +1176,20 @@ let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
     |> withSubstitution(lowered.substitution)
     |> withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))
 
+let recursive joinedBindingNames (names: List(Str)) =
+    match names with
+        | [] -> "none"
+        | name :: [] -> name
+        | name :: rest -> name + ", " + joinedBindingNames(rest)
+
+// The shadow answer of a lowering again: for a requirement-closed scope, the scope bindings the
+// body closed, which the table did not give it at entry.
+let relowerAnswerText (rule: Int) (entered: CoreLoweringState) (first: CoreLoweringState) =
+    if rule == 4
+    then
+        "once; closed by the body: " + joinedBindingNames(scopeBindingsClosedByBody(entered.bindings)(entered)(first))
+    else "once"
+
 // The second lowering of a body, from a state whose substitution already resolves its calls. The
 // closures nested in it are lowered once (see `resolvingCallsAgain`); the flag is put back to what
 // the enclosing lowering had before the result is handed on. `rule` is the step-8 rule the body is
@@ -1121,7 +1200,9 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
     |> restartedAgainst(entered)
     |> withStateResolvingCallsAgain(true)
     |> observeLoweringEvent(2)
-    |> observeShadow(rule)("relower")(Some("once"))
+    |> observeShadow(rule)("relower")(first
+    |> relowerAnswerText(rule)(entered)
+    |> Some)
     |> prepare
     |> lower(body) with
         | LoweredCoreValue { state = againState } as result ->
@@ -1180,48 +1261,52 @@ let lowerBodyProvisionally (body: Expr) (prepare: CoreLoweringState -> CoreLower
         |> prepare
         |> lower(body)
 
-let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
-    match if stateResolvingCallsAgain(entered)
-    then
-        entered
-        |> prepare
-        |> lower(body)
-    else lowerBodyProvisionally(body)(prepare)(lower)(entered) with
-        | LoweredCoreValue { error = Some(_error) } as failed -> failed
-        | LoweredCoreValue { state = firstState } as first ->
-            if stateResolvingCallsAgain(entered)
-            then first
-            else
-                match close(first) with
-                    | LoweredCoreValue { state = closedState } ->
-                        if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then
-                            keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)(4)(entered))
-                        else
-                            if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
+let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (unclosed: CoreLoweringState) =
+    (let entered = scopeTypesFromTableAtEntry(body)(unclosed)
+    in
+        match if stateResolvingCallsAgain(entered)
+        then
+            entered
+            |> prepare
+            |> lower(body)
+        else lowerBodyProvisionally(body)(prepare)(lower)(entered) with
+            | LoweredCoreValue { error = Some(_error) } as failed -> failed
+            | LoweredCoreValue { state = firstState } as first ->
+                if stateResolvingCallsAgain(entered)
+                then first
+                else
+                    match close(first) with
+                        | LoweredCoreValue { state = closedState } ->
+                            if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
                             then
-                                keepFirstWhenMeasuring(entered)(first)(given (_) ->
-                                    firstState |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)(10)(entered))
-                            else first
+                                keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)(4)(entered))
+                            else
+                                if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
+                                then
+                                    keepFirstWhenMeasuring(entered)(first)(given (_) ->
+                                        firstState |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)(10)(entered))
+                                else first)
 
 // A recursive member nested in a body that is being lowered again takes fresh type variables for
 // its own arrow, which the enclosing body's resolved substitution does not cover: stage 0 seeds
 // such a binding with the closed type its discovery pass inferred, wherever it is nested. So a
 // member whose body applies a mapped operator and closes its scope is lowered again here too; the
 // closures nested in it are still lowered once.
-let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
-    if stateResolvingCallsAgain(entered)
-    then
-        match lowerBodyProvisionally(body)(prepare)(lower)(entered) with
-            | LoweredCoreValue { error = Some(_error) } as failed -> failed
-            | first ->
-                match close(first) with
-                    | LoweredCoreValue { state = closedState } ->
-                        if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then
-                            keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)(4)(entered))
-                        else first
-    else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered)
+let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (unclosed: CoreLoweringState) =
+    (let entered = scopeTypesFromTableAtEntry(body)(unclosed)
+    in
+        if stateResolvingCallsAgain(entered)
+        then
+            match lowerBodyProvisionally(body)(prepare)(lower)(entered) with
+                | LoweredCoreValue { error = Some(_error) } as failed -> failed
+                | first ->
+                    match close(first) with
+                        | LoweredCoreValue { state = closedState } ->
+                            if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
+                            then
+                                keepFirstWhenMeasuring(entered)(first)(given (_) -> closedState |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)(4)(entered))
+                            else first
+        else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered))
 
 // A lambda lowered against an expected function type hands the expected result type on to its
 // body, as a recursive member does: a nested lambda of a curried chain then pins its own
