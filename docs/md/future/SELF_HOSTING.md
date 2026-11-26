@@ -12,7 +12,8 @@ Done means:
 - stage 1's behaviour matches stage 0's, diagnostics and execution included;
 - typed lowering is the only lowering (step 8's remaining entries and step 9 below);
 - code generation and linking run in parallel;
-- no leaks remain, in either compiler.
+- no leaks remain, in either compiler;
+- the self-hosted compiler compiles faster than the C# compiler.
 
 A successful stage-1 build or a focused test is never a substitute for these gates.
 
@@ -27,36 +28,37 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code, entries 6 and 7 are done for scalar and general reference-counted results (round 14); entries 10, 11 and 4 remain, with 8b and 8c |
-| 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
-| 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage; replace step 8's rules that pay for themselves | A worker that calls into libc no longer corrupts the heap; no function body is lowered twice | Parallel runtime done. Step 8 entries 1–3, 5–9 and the copy-out port (8c) done. Remaining here: the double lowering of function bodies (entries 11 and 4), about half of lowering time |
+| 4 | All workers on leaks, highest impact first, measured and merged per batch: first the known wrong-output bugs, then what the exit census of a stage-1-built compiler shows by type and allocation site, then the test rows | The behaviour check reports no program differing in live cells, plain and under `ASHES_RC_POISON=1`, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
 ### Next
 
 | # | Task | Done when | State |
 | --- | --- | --- | --- |
-| 6 | Close the remaining stage-1/stage-0 differences: the diagnostics whose text or position differs, and the 32 of 95 whole-program IR parity fixtures if step 9 has not retired them | The behaviour check, plain and under `ASHES_RC_POISON=1`, reports every program as same, and no compile-error test prints a different diagnostic | Not started |
-| 7 | CLI parity: port the commands `test`, `repl`, `login`, `publish`, `yank`, `search` and `info`, the options `--target`, `--target-cpu`, `-O0`–`-O3`, `--expr`, `--emit-ir`, `--parallel-workers` and `--parallel-stack-size`, and `restore` beyond path dependencies (`Dispatch.ash` and `Compile.ash` in `selfhost/packages/cli` against [the CLI reference](../reference/cli.md)) | Every command and flag in the CLI reference works from the self-hosted binary, or the reference says it is not provided | Not started |
-| 8 | Port linux-arm64, win-x64 and win-arm64 code generation and linking (`Compile.ash` hard-codes `x86_64-unknown-linux-gnu`; the linker writes ELF only) | Binaries built by the self-hosted compiler pass the cross-target validation the C# compiler passes: qemu for linux-arm64, wine for win-x64, structural checks for win-arm64 | Not started |
-| 9 | Debug information: emit DWARF and accept `--debug`/`-g` (the self-hosted backend has no debug-info builder) | The [debugging guide](../guide/debugging.md)'s workflow works on a self-hosted build | Not started |
-| 10 | Tooling: decide the test runner, the language server and the debug adapter, which exist only in C# (`src/Ashes.TestRunner`, `src/Ashes.Lsp`, `src/Ashes.Dap`; the C# CLI and LSP also use `src/Ashes.Formatter`) | Each runs on the self-hosted compiler's phases or is recorded here as staying in C# with the reason | Formatter: self-hosted (`selfhost/packages/formatter`, wired to `fmt`); the other three not started |
-| 11 | Performance and memory: stage 3 needs 37–48 GiB where stage 2 needs 13–17 GiB; the compiler's 2,657 body re-lowerings if step 3 has not removed them; and the borrowed-result copy: a call whose result is a borrowed part of its argument (a `Str` or `Bytes` field, a pattern binding, a list head, a tuple component) copies the part in both compilers, where only the trivial field accessor retains it | Stage 3 builds within stage 2's memory, and a time and memory gate is recorded in this document | Not started |
-| 12 | Decide what layout an unconstrained element type gets (a loop parameter whose element type stays a free type variable is never released, in both compilers) | The language reference states the rule and both compilers implement it | Not started |
-| 13 | Make the self-hosted compiler the default toolchain and retire the C# compiler | Releases for all four targets are built by the self-hosted compiler from a pinned, reproducible stage-0 input; CI builds, bootstraps and checks it (no job in `ci/` or `.github/` mentions `selfhost` today); the `src/` compiler projects are removed | Not started |
+| 5 | The step 8 rules skipped for now (table below): entry 10's remaining re-lowerings, results closed only by a generic body's single use (8b), copy-out results inside coroutine bodies and other heap shapes (8c remainder), general reference-counted self results in loop bodies | Every row of the step 8 table is Done or records why it stays | Not started |
+| 6 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started; needs task 5 |
+| 7 | Close the remaining stage-1/stage-0 differences: the diagnostics whose text or position differs, and the 32 of 95 whole-program IR parity fixtures if step 9 has not retired them | The behaviour check, plain and under `ASHES_RC_POISON=1`, reports every program as same, and no compile-error test prints a different diagnostic | Not started |
+| 8 | CLI parity: port the commands `test`, `repl`, `login`, `publish`, `yank`, `search` and `info`, the options `--target`, `--target-cpu`, `-O0`–`-O3`, `--expr`, `--emit-ir`, `--parallel-workers` and `--parallel-stack-size`, and `restore` beyond path dependencies (`Dispatch.ash` and `Compile.ash` in `selfhost/packages/cli` against [the CLI reference](../reference/cli.md)) | Every command and flag in the CLI reference works from the self-hosted binary, or the reference says it is not provided | Not started |
+| 9 | Port linux-arm64, win-x64 and win-arm64 code generation and linking (`Compile.ash` hard-codes `x86_64-unknown-linux-gnu`; the linker writes ELF only) | Binaries built by the self-hosted compiler pass the cross-target validation the C# compiler passes: qemu for linux-arm64, wine for win-x64, structural checks for win-arm64 | Not started |
+| 10 | Debug information: emit DWARF and accept `--debug`/`-g` (the self-hosted backend has no debug-info builder) | The [debugging guide](../guide/debugging.md)'s workflow works on a self-hosted build | Not started |
+| 11 | Replace every .NET tool with one built in Ashes on the self-hosted compiler: the test runner (`src/Ashes.TestRunner`), the language server (`src/Ashes.Lsp`), the debug adapter (`src/Ashes.Dap`), the fuzzers (`src/Ashes.Fuzzing`), the registry server (`src/Ashes.Registry`) and the API docs generator (`tools/docs-api-gen`); port or replace their C# test suites as each moves | Each tool runs from Ashes sources with its tests, the VS Code extension and the docs build use the Ashes-built ones, and nothing in the default build needs .NET | Formatter done (`selfhost/packages/formatter`, wired to `fmt`); the rest not started |
+| 12 | Performance and memory: the self-hosted compiler must compile faster than the C# compiler on every target program, and stage 3 must build within stage 2's memory. Known items: heap results with no copy-out keep the caller's arena window open (about 2,500 call sites in the compiler, 370 in loop bodies; a copy rule beyond stage 0), and the borrowed-result copy (a `Str` or `Bytes` returned out of a function from borrowed data is copied in both compilers, where only the trivial field accessor retains it) | The self-hosted compiler builds itself in under 25 s and under 2 GiB (what `dotnet build` of the C# compiler takes: about 25 s, 1.9 GiB), is faster than the C# compiler on ordinary programs, and stage 3 builds within stage 2's memory; the gate is recorded in this document | Not started. Today the self-hosted compiler builds itself in 561 s at 18 GiB (about 60 to 80 s of that is LLVM on six processes); stage 0 takes 27 min at 20 GiB for the same source. Likely needs a per-module cache and an unoptimized development mode besides faster phases |
+| 13 | Decide what layout an unconstrained element type gets (a loop parameter whose element type stays a free type variable is never released, in both compilers) | The language reference states the rule and both compilers implement it | Not started |
+| 14 | Make the self-hosted compiler the default toolchain; keep the C# compiler, its tools and its tests in the repository as an archive | Tasks 4, 11 and 12 are done (no leaks, every tool built in Ashes, and faster than the C# compiler); releases for all four targets are built by the self-hosted compiler from a pinned, reproducible stage-0 input; CI builds, bootstraps and checks it (no job in `ci/` or `.github/` mentions `selfhost` today); the C# compiler, tools and tests are moved to an archive location and no longer part of the default build | Not started; far off |
 
 ## Where the compiler stands
 
-Measured at round 14: main with step 8 entries 6 and 7.
+Measured at round 15: main with the copy-out port.
 
 | Measure | Value |
 | --- | --- |
 | Stage 1 built by stage 0 | 27 min, 20 GiB |
-| Stage-1 behaviour against stage 0 (1,293 programs) | 1,171 same, 122 differ only in live cells at exit, 0 other |
-| The same under `ASHES_RC_POISON=1` | 1,165 same, 122 live cells only, 6 wrong output or crash (below) |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 561 s, 18.1 GiB |
+| Stage-1 behaviour against stage 0 (1,294 programs) | 1,172 same, 122 differ only in live cells at exit, 0 other |
+| The same under `ASHES_RC_POISON=1` | 1,166 same, 122 live cells only, 6 wrong output or crash (below) |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 605 s, 18.2 GiB |
 | Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
-| Stage 3 built by stage 2 | 580 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 31.1 GiB (40.4 GiB before step 8 stopped asking callbacks, self calls and sibling calls for arena results) |
+| Stage 3 built by stage 2 | 601 s, byte-identical to stage 2 |
+| Stage 3 memory, resident plus swap | 25.0 GiB (40.4 GiB before step 8 stopped arena requests and copy-outs from pinning the caller's arena window) |
 | Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident (round 12; not remeasured) |
 | The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
 | Semantics suite | 98 of 99 groups (whole-program IR parity 32 of 95 differing) |
