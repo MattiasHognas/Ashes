@@ -105,83 +105,31 @@ record.
 
 ### Step 8: rules over the final type
 
-Each entry is a lowering decision keyed on whether a type is still open at a site, replaced by a
-rule over the recorded final type. A replacement with differing sites gets, per changed program, a
-per-function diff of `--emit-ir lowered`, the behaviour check with `ASHES_RC_LEAKCHECK=1`, and a
-lifetime regression in `tests/`. Shadow counts are agree / differ / unrecorded on main after the
-leak merge (driver at `3629bf19`, which separates arena-request sites closed by the body's
-instantiation from sites closed only by the variables the program's uses settle). Every unrecorded
-site carries its reason; for entry 8 they are recorded types still open (the request is kept), no
-node, or settled only (entry 8b).
+Each entry replaces a lowering decision keyed on whether a type is still open at a site by a rule
+over the recorded final type. Counts are shadow sites (driver `--shadow-details`, see its README),
+compiler unless marked; each change gets a lowered-IR diff, the behaviour check with
+`ASHES_RC_LEAKCHECK=1` and a regression test.
 
-| Entry | Rules | Replacement | State | Corpus, 1,184 programs | Whole compiler |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `emitDeferredCoreAdd`, `emitDeferredCoreEquality` | an open operand is an error, never the integer form | Done | | |
-| 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done | | |
-| 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
-| 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
-| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
-| 8c | a result with a fixed copy-out (a string, a list of strings or scalars) or another heap shape outside the contract, of an unknown closure (entry 8) or a self or sibling call (entries 6, 7) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | self calls: copy-out 3, other 10; sibling calls (after entry 7): copy-out 11, other 5 | unknown closures: 6 `List`, 1 `Unit`; self calls: copy-out 148, other 23; sibling calls (after entry 7): copy-out 229, other 45; group-member self calls: copy-out 148, other 23 |
-| 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
-| 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
-| 6 | `selfResultDeferred` | a deferred self call takes its recorded result type when the result is a scalar (6a, `5e134ff3`) or a general reference-counted value outside a loop body (6b, `2d158e72`); copy-out and other shapes are 8c, and a general reference-counted result inside a loop body keeps the deferral | In review | 14 / 215 / 2,786, 117 programs; after 6a: 199 / 29; after 6b: 206 / 23 | 250 / 975 / 97; after 6a: 289 / 921; after 6b: 358 / 852 |
-| 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | a call to a group member (a sibling, or the member itself) whose recorded result is a scalar or a general reference-counted value is no longer an open sibling result (`siblingResultSettledByTable`, `9cb7c1df`): it takes the recorded type and the contract's ownership; copy-out and other shapes keep the open-sibling rules, the pinned and proven sibling results stay for them (8c) | In review | 0 / 68 / 6, 36 programs; after: 0 / 16, 13 programs (IR changes in 23 programs) | rule 7: 0 / 1,745 / 128; after: 0 / 274; rule 6 after: 1,017 / 193 |
-| 9 | `calleeResultUnsettled` | none under callee-first order: every differing site is a cycle (see below) | Deferred | 37 / 237 / 0, 234 programs | 113 / 22 / 0 |
-| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs | 0 / 353 / 0; after entry 8: 0 / 348 / 0 |
-| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 32,838 / 8 / 9,005, 7 programs | 27,021 / 8 / 2,881 |
+| Entry | Decision | Replacement | State |
+| --- | --- | --- | --- |
+| 1 | `emitDeferredCoreAdd`, `emitDeferredCoreEquality` | an open operand is refused, never the integer form | Done |
+| 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done |
+| 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done |
+| 5 | `lowerInternalDeepCopy` | the copy at the recorded type | Done |
+| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call result pinned to its recorded type (closed by the body's instantiation) before the request; an unknown closure keeps its request except for a general reference-counted result (stage 0's `RequestsArenaResultFromUnknownCallee`) | Done (#1163; stage 3 40.4 to 32.4 GiB) |
+| 9 | `calleeResultUnsettled` | none: every differing site (22; corpus 237) is a self call, already callee-first | Closed |
+| 6 | `selfResultDeferred` | a deferred self call's scalar or general reference-counted result pinned; inside a loop body the general one keeps its deferral (21 sites; corpus 3) | Done (#1164) |
+| 7 | `siblingResultOpen` and the pinned and proven sibling results | a group member's scalar or general reference-counted result settled from the table (1,471 sibling and 659 group-member self sites); re-lowerings 2,635 to 2,418 | Done (#1164) |
+| 8c | a no-flag copy-out call result left in its window | copied out before the window is reset, as stage 0's `LowerCallCopyOutResult` does (47 sites, 31 in loop bodies; `e613dc1e`) | In review |
+| 8c-async | the same in a coroutine body (corpus 42 sites, the `async_*` programs) | needs the copy's release across an await first | Later |
+| 8c-other | self and sibling copy-out and other-shape results keeping their request (copy-out 148 + 229, other 23 + 45; unknown closures 7 + 4) | stage 0's post-call copy-out per kind | Later |
+| 8d | about 2,500 heap results with no copy-out whose window stays open, as in stage 0 (`LowerUncoveredCallResultCopyOut`; about 370 in loop bodies) | a copy-plan rule beyond stage 0 | Not planned |
+| 8b | results closed only by the variables a generic body's single use settles (128; corpus 560) | the same pin, beyond stage 0 | Deferred |
+| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded parameter type needs it, its release on every exit checked first (9; corpus 9 in 8 programs) | Next |
+| 4 | `bodyEncounteredRequirementClosedScope` | scope types from the table at entry, no closed-scope re-lowering (2,323 re-lowerings, 55% of the lowering time with entry 10) | After 11 |
+| 10 | `lowerFunctionBodyResolvingCalls`, `anyCallResultResolved` | none once 4 and 6 to 9 hold (95 re-lowerings left) | After 4 |
 
-Entry 8 first pinned every open call result, including calls through a closure no name resolves
-(`given (f) -> f(x)`). The round showed why stage 0 asks the arena there: the caller cannot own
-what an unknown callee returns, and stage 0 copies the result out after the call. Taking a list
-result by the callee's returns bit left the list and its strings unreleased (7 and 13 live cells
-against stage 0's 1). The pin now leaves those calls alone (`56564990`), which covers all four corpus
-sites and leaves their IR as before; on the compiler body re-lowerings fall from 2,667 to 2,662
-and entry 10's sites from 353 to 348. An unknown closure's result becomes ownable only when the
-caller reads the callee's returns bit for every result shape. A general reference-counted result
-(a record or ADT outside the fixed copy-outs) already is, as in stage 0, which asks no arena for it:
-`05b82e35` takes it owned through the returns bit where its type is closed by the instantiation (7
-of the 11 compiler sites, four of them `LoweredCoreValue` lowering callbacks; three corpus programs). The copy-out kinds
-are entry 8c.
-
-Entry 6 (`5e134ff3`, `2d158e72`). 6a pins 47 compiler and 185 corpus scalar self results (96
-programs); their IR loses only the request word and the temporaries after it, and no body is lowered
-once more or less (re-lowerings unchanged: 9,400 corpus, 2,626 compiler). The compiler's other 286
-scalar self results are self calls in a recursive group, decided by entry 7's rule. 6b pins 69
-compiler and 6 corpus general reference-counted self results (six programs:
-`loop_releases_earlier_pair_whose_parts_it_matched`, `pattern_owner_in_call_argument_cell`,
-`unnamed_predecessor_in_arena_loop` and the three `worklist_*` regressions) outside loop bodies;
-inside a loop body 394 compiler and 6 corpus sites keep the deferral, because the owned slot of an
-undeferred self call has not been shown released at a back edge that follows it (no corpus site has
-that shape: in every changed loop the back edge is lowered in an earlier arm). Re-lowerings rise
-slightly with 6b (9,435 corpus, 2,635 compiler).
-
-Entry 7 (`9cb7c1df`). The 659 compiler self calls entry 6 left (286 scalar, 373 general reference
-counted) are calls of recursive-group members, which the open-sibling rule governs; settling a
-member's scalar or general reference-counted result from the table covers them with the 1,471
-sibling sites. A general reference-counted sibling result is then taken owned by the contract
-(`calleeReturnsGeneralRcOwned`: the member normalizes its result at its return), no longer read
-through the returns bit as a pinned sibling result was; that is the decision most likely to go wrong,
-if a member returns such a result without normalizing it, and it would show as a use-after-free
-under POISON or a crash in the behaviour check. Body re-lowerings fall from 2,635 to 2,418 on the
-compiler (entry 10's from 312 to 95) and from 9,435 to 9,427 on the corpus.
-
-Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
-closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
-reason each site now names (driver at `350b7717`): of the 237 corpus sites and the 22 compiler
-sites, 235 and 22 are a function's call to itself and 2 (`Text.Json`'s `parseValue` called from
-the `parseArr` nested in its own body) are a call into the body still being lowered. None is a
-forward reference to another top-level body: top-level scoping already lowers every callee
-before its callers (a binding is visible only to later declarations, and imported modules are
-stitched before their importers). So callee-first order changes nothing, the entry closes with
-no code under that decision, and lowering order, lambda and label numbering stay as they are.
-The fact a self call lacks is its own body's result placement, which only predicting it before
-lowering (the other option, beyond stage 0) could supply.
-
-Planned order: 8 and 9, then 6 and 7 with 10, then 11, then 4. Replacing the per-binding plan
-(`constrainedBindingPlan`) by the recorded schemes follows entry 3. Entries 6 to 9 mirror rules
-stage 0 has on its live types (`RequestsArenaResult`, `ContainsUnresolvedLayoutType`,
-`CalleeResultUnsettled`, `EmitRuntimeManagedTcoArgumentNormalization`), so they change generated
-code by design.
+Order: 8c, 11, 4, 10, then 8c-async and 8c-other; 8b and 8d go beyond stage 0 and wait.
 
 ### Step 9: delete the raw lowering
 
