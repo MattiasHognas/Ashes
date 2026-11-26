@@ -383,10 +383,19 @@ public sealed partial class Lowering
         );
     }
 
+    // The key a deep copy's site takes among the pinned call result types: its argument's span with
+    // an argument count no call has.
+    private const int DeepCopySiteArgumentCount = -1;
+
+    // A copied value whose type is still a variable where the copy is lowered (a generic helper's
+    // parameter) takes the type the discovery pass settled for the site, as the self-hosted lowering
+    // copies at the recorded type; a copy left at a variable degrades to identity and hands the
+    // caller's value over uncopied.
     private (int, TypeRef) LowerInternalDeepCopy(Expr arg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (temp, type) = LowerExpr(arg);
+        RecordOrPinCallResultType(arg, DeepCopySiteArgumentCount, type);
         var pruned = Prune(type);
         if (pruned is TypeRef.TNever)
         {

@@ -281,6 +281,7 @@ public sealed partial class Lowering
     {
         InstantiatedTypeScheme instance = TraitTypeOperations.Instantiate(scheme, NewTypeVar, out IReadOnlyDictionary<int, TypeRef> renaming);
         InstantiateDemands(scheme, instance.Body, renaming);
+        RecordQuantifiedInstantiations(renaming);
         return instance;
     }
 
