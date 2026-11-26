@@ -2,6 +2,7 @@
 // part of `AshesCompiler.Semantics.CoreLowering`.
 
 import AshesCompiler.Semantics.NodeIdentity.withoutNodeIdentity
+import AshesCompiler.Semantics.NodeIdentity.nodeIdentityOf
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
@@ -20,6 +21,7 @@ import AshesCompiler.Semantics.CoreLowering.ResultHandOver
 import AshesCompiler.Semantics.CoreLowering.Bindings
 import AshesCompiler.Semantics.CoreLowering.LoopPlacement
 import AshesCompiler.Semantics.CoreLowering.LoopFrames
+import AshesCompiler.Semantics.CoreLowering.RecordedTypes.enterRecursiveMemberAtNode
 import AshesCompiler.Semantics.CoreLowering.CallArguments
 import AshesCompiler.Semantics.CoreLowering.Matches
 export (
@@ -248,7 +250,7 @@ let recursive memberDeclarationSpan (name: Str) (starts: List((Str, Int, Int))) 
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
-        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, semanticType = memberType, parameterType = parameterType, resultType = resultType } ->
+        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, semanticType = memberType, parameterType = parameterType, resultType = resultType, lambdaNode = lambdaNode } ->
             match withStateLetLambdaLabels(state
             |> stateLetLambdaLabels
             |> Ashes.Collection.Map.setStr(name)(label))(state) with
@@ -263,6 +265,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                             else frame)
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
+                        |> enterRecursiveMemberAtNode(lambdaNode)(name)(parameter)
                         |> noteLetBoundFunction(label)(origin)
                         |> lowerRecursiveBodyResolvingCalls(labeled
                         |> stateRecursiveDeclarationSpan
@@ -325,7 +328,8 @@ let finishPreparedRecursiveMember name parameter body lambdaId slot fresh =
                     slot = slot,
                     semanticType = semanticType,
                     parameterType = parameterType,
-                    resultType = resultType
+                    resultType = resultType,
+                    lambdaNode = -1
                 )),
                 error = None
             )
@@ -360,6 +364,12 @@ let allocatePreparedRecursiveMember name parameter body annotation lambdaId fres
                     )
                 | (annotated, None) -> finishPreparedRecursiveMember(name)(parameter)(body)(lambdaId)(slot)(annotated)
 
+// The prepared member remembers its lambda's source node, which lowering its parts drops.
+let withPreparedLambdaNode (node: Int) (result: PreparedCoreRecursiveMemberResult) =
+    match result with
+        | PreparedCoreRecursiveMemberResult { member = Some(member) } -> result with member = Some((member with lambdaNode = node))
+        | _ -> result
+
 let prepareRecursiveMember name value state =
     match (lambdaParts(value), state) with
         | (None, _) ->
@@ -373,6 +383,7 @@ let prepareRecursiveMember name value state =
             |> recordLetLambda(name)(value)
             |> freshLocal
             |> allocatePreparedRecursiveMember(name)(parameter)(body)(annotation)(lambdaId)
+            |> withPreparedLambdaNode(nodeIdentityOf(value))
 
 let recursive prepareRecursiveGroup bindings state reversed =
     match bindings with

@@ -58,6 +58,14 @@ export (
     value shadowSiteOperandText,
     value shadowGoalTypeText,
     value shadowLambdaParameterType,
+    value entryNodeOf,
+    value recordedParameterTypeAtEntry,
+    value recordedArrowAtEntry,
+    value recordedParameterTypeAtEntryBy,
+    value recordedArrowAtEntryBy,
+    value enterLambdaAtNode,
+    value enterRecursiveMemberAtNode,
+    value recordedSelfScopeKey,
     value shadowDictionaryGoalTypeText,
     value recordedSettledDictionariesAt,
     value recordedDeclarationAt,
@@ -694,6 +702,138 @@ let nodeBindingNamed (parameter: Str) (table: NodeTypeTable) (node: Maybe(Int)) 
             |> boundSchemeNamed(parameter)
         | None -> None
 
+// The node a lambda's entry reads the table at: the recursive member's own lambda node, which
+// lowering its parts leaves out of effect, else the node in effect.
+let entryNodeOf (state: CoreLoweringState) =
+    if stateEntryLambdaNode(state) >= 0
+    then
+        state
+        |> stateEntryLambdaNode
+        |> Some
+    else state.currentNode
+
+// The type the table records for the entered lambda's parameter, closed by the body's
+// instantiation alone (`settled` also through the variables the program's uses settle), None when
+// its node binds no parameter of that name or the type stays open.
+let recordedParameterTypeAtEntryBy (settled: Bool) (parameter: Str) (state: CoreLoweringState) =
+    match stateNodeTypes(state) with
+        | Some(table) ->
+            match state
+            |> entryNodeOf
+            |> nodeBindingNamed(parameter)(table) with
+                | Some(TypeScheme { body = body }) ->
+                    if settled
+                    then recordedSettledType(body)(state)
+                    else recordedInstantiatedType(body)(state)
+                | None -> None
+        | None -> None
+
+let recordedParameterTypeAtEntry (parameter: Str) (state: CoreLoweringState) = recordedParameterTypeAtEntryBy(false)(parameter)(state)
+
+// The arrow the table records for the entered lambda, read as its parameter is.
+let recordedArrowAtEntryBy (settled: Bool) (state: CoreLoweringState) =
+    match (stateNodeTypes(state), entryNodeOf(state)) with
+        | (Some(table), Some(node)) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) ->
+                    match if settled
+                    then recordedSettledType(recorded)(state)
+                    else recordedInstantiatedType(recorded)(state) with
+                        | Some(SemFunction(argument, result, row)) ->
+                            row
+                            |> SemFunction(argument)(result)
+                            |> Some
+                        | _ -> None
+                | None -> None
+        | _ -> None
+
+let recordedArrowAtEntry (state: CoreLoweringState) = recordedArrowAtEntryBy(false)(state)
+
+// A lambda's entry: its node is the one entry reads, and its parameter's recorded type joins the
+// scope its nested lambdas read their captured parameters from.
+let enterLambdaAtNode (node: Int) (parameter: Str) (state: CoreLoweringState) =
+    (let entered = withStateEntryLambdaNode(node)(state)
+    in
+        match recordedParameterTypeAtEntry(parameter)(entered) with
+            | Some(recorded) -> withStateRecordedParameterScope((parameter, recorded) :: stateRecordedParameterScope(entered))(entered)
+            | None -> entered)
+
+// The key a recursive member's own recorded arrow takes in the recorded parameter scope (a name
+// with a space, which no parameter has), closed by the instantiation or also by the settled
+// variables.
+let recordedSelfScopeKey (settled: Bool) (name: Str) =
+    if settled
+    then "self settled " + name
+    else "self " + name
+
+// Each variable a recorded type leaves open, renamed to a fresh lowering variable, so the type can
+// meet lowering's own: the variables of a generic body stay open while its closed parts close.
+let recursive freshenRecordedVariables (variables: List(Int)) (renaming: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match variables with
+        | [] -> (state, renaming)
+        | variable :: rest ->
+            match freshTypeVariable(state.typeSupply) with
+                | (fresh, nextSupply) -> freshenRecordedVariables(rest)((variable, fresh) :: renaming)((state with typeSupply = nextSupply))
+
+// The arrow the table records for the entered lambda, read through the body's instantiation, with
+// the variables it leaves open renamed fresh; None when it records no arrow there or a type does
+// not map.
+let recordedOpenArrowAtEntry (state: CoreLoweringState) =
+    match (stateNodeTypes(state), entryNodeOf(state)) with
+        | (Some(table), Some(node)) ->
+            match nodeTypeAt(node)(table) with
+                | Some(recorded) ->
+                    match translateRecordedType(state)(recorded) with
+                        | Ok(SemFunction(argument, result, row)) ->
+                            match freshenRecordedVariables(row
+                            |> SemFunction(argument)(result)
+                            |> freeTypeVariables)([])(state) with
+                                | (freshened, renaming) ->
+                                    Some((freshened, row
+                                    |> SemFunction(argument)(result)
+                                    |> applySubstitution(renaming)))
+                        | _ -> None
+                | None -> None
+        | _ -> None
+
+let withSelfScopeArrow (settled: Bool) (name: Str) (arrow: SemanticType) (state: CoreLoweringState) = withStateRecordedParameterScope((recordedSelfScopeKey(settled)(name), arrow) :: stateRecordedParameterScope(state))(state)
+
+// The arrow's parameters each replaced by a fresh variable, its result chain kept: the self binding
+// takes the member's arity and result from the table, and each parameter its type at its own entry,
+// where its pattern bindings meet it as they always have.
+let recursive withFreshArrowParameters (arrow: SemanticType) (state: CoreLoweringState) =
+    match arrow with
+        | SemFunction(_argument, result, row) ->
+            match freshTypeVariable(state.typeSupply) with
+                | (fresh, nextSupply) ->
+                    match withFreshArrowParameters(result)((state with typeSupply = nextSupply)) with
+                        | (resulted, freshResult) -> (resulted, SemFunction(fresh)(freshResult)(row))
+        | other -> (state, other)
+
+// The member's recorded arrow for its self binding: its result chain read through the
+// instantiation, with the variables a generic member leaves open renamed fresh and its parameters
+// left to their own entries; the settled reading, for the shadow detail only, where it closes.
+let withRecordedSelfArrow (settled: Bool) (name: Str) (state: CoreLoweringState) =
+    if settled
+    then
+        match recordedArrowAtEntryBy(true)(state) with
+            | Some(arrow) -> withSelfScopeArrow(true)(name)(arrow)(state)
+            | None -> state
+    else
+        match recordedOpenArrowAtEntry(state) with
+            | Some((freshened, arrow)) ->
+                match withFreshArrowParameters(arrow)(freshened) with
+                    | (parametered, shaped) -> withSelfScopeArrow(false)(name)(shaped)(parametered)
+            | None -> state
+
+// A recursive member's entry: as a lambda's, and its whole recorded arrow joins the scope for its
+// self binding.
+let enterRecursiveMemberAtNode (node: Int) (name: Str) (parameter: Str) (state: CoreLoweringState) =
+    state
+    |> enterLambdaAtNode(node)(parameter)
+    |> withRecordedSelfArrow(false)(name)
+    |> withRecordedSelfArrow(true)(name)
+
 // The type the table records for a lambda's parameter: the binding the inference notes at the
 // lambda's own node, which is the node in effect or, for a lambda applied where it is written
 // (a pipeline stage, whose node the call spine passes over), the node the spine remembered for the
@@ -702,7 +842,9 @@ let nodeBindingNamed (parameter: Str) (table: NodeTypeTable) (node: Maybe(Int)) 
 let shadowLambdaParameterType (parameter: Str) (state: CoreLoweringState) =
     match stateNodeTypes(state) with
         | Some(table) ->
-            match (nodeBindingNamed(parameter)(table)(state.currentNode), state
+            match (state
+            |> entryNodeOf
+            |> nodeBindingNamed(parameter)(table), state
             |> stateShadowLambdaNode
             |> nodeBindingNamed(parameter)(table)) with
                 | (Some(TypeScheme { body = body }), _applied) ->

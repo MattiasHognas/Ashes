@@ -255,6 +255,8 @@ type PreparedCoreRecursiveBinding =
     | semanticType: SemanticType
     | parameterType: SemanticType
     | resultType: SemanticType
+    // The source node of the member's lambda, or -1.
+    | lambdaNode: Int
 
 type PreparedCoreRecursiveGroup =
     | state: CoreLoweringState
@@ -682,6 +684,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 recursiveProducerResultSlots = [],
                 normalizedAlwaysReturnedParameter = None,
                 normalizedParameterCloned = false,
+                entryLambdaNode = -1,
+                recordedParameterScope = [],
                 runtimeNormalizedArgumentLabels = [],
                 recursiveGroupNames = [],
                 tcoLoop = None,

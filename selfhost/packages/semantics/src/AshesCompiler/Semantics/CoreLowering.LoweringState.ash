@@ -438,6 +438,10 @@ export (
     value withStateNormalizedAlwaysReturnedParameter,
     value stateNormalizedParameterCloned,
     value withStateNormalizedParameterCloned,
+    value stateEntryLambdaNode,
+    value withStateEntryLambdaNode,
+    value stateRecordedParameterScope,
+    value withStateRecordedParameterScope,
     value stateRuntimeNormalizedArgumentLabels,
     value withStateRuntimeNormalizedArgumentLabels,
     value stateConcreteRegistry,
@@ -1350,6 +1354,11 @@ type CoreTcoState =
     // Whether an escaping arena tuple of the function being lowered stored an independent copy of
     // its entry-normalized string parameter (stage 0's `_normalizedParameterClonedIntoArenaTuple`).
     | normalizedParameterCloned: Bool
+    // The source node of the lambda whose body is being entered, or -1: a recursive member's
+    // lambda is lowered from its parts, without its node in effect.
+    | entryLambdaNode: Int
+    // The recorded types of the enclosing lambdas' parameters, innermost first.
+    | recordedParameterScope: List((Str, SemanticType))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -3240,6 +3249,22 @@ let stateNormalizedParameterCloned (state: CoreLoweringState) =
 let withStateNormalizedParameterCloned value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with normalizedParameterCloned = value))
+
+let stateEntryLambdaNode (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.entryLambdaNode)
+
+let withStateEntryLambdaNode (node: Int) (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with entryLambdaNode = node))
+
+let stateRecordedParameterScope (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.recordedParameterScope)
+
+let withStateRecordedParameterScope (scope: List((Str, SemanticType))) (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with recordedParameterScope = scope))
 
 let stateRuntimeNormalizedArgumentLabels (state: CoreLoweringState) =
     (let group = state.tcoState
