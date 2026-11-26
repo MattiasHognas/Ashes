@@ -21,6 +21,9 @@ public sealed partial class Lowering
         return span.Length == 0 ? null : $"{span.Start}:{span.End}:{argumentCount}";
     }
 
+    private static bool IsDeepCopySiteKey(string key)
+        => key.EndsWith($":{DeepCopySiteArgumentCount}", StringComparison.Ordinal);
+
     private void RecordOrPinCallResultType(Expr rootExpr, int argumentCount, TypeRef callResultType)
     {
         if (!ContainsUnsettledVariable(callResultType)
@@ -49,9 +52,12 @@ public sealed partial class Lowering
     {
         var proven = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var conflicting = new HashSet<string>(StringComparer.Ordinal);
+        Dictionary<int, TypeRef> settled = SettledQuantifiedVariables();
         foreach ((string key, TypeRef type) in _pendingCallResultTypes)
         {
-            TypeRef resolved = PruneConstraintType(type);
+            TypeRef resolved = IsDeepCopySiteKey(key)
+                ? SettleQuantifiedVariable(PruneConstraintType(type), settled)
+                : PruneConstraintType(type);
             if (!IsPinnableType(resolved))
             {
                 conflicting.Add(key);
@@ -73,6 +79,57 @@ public sealed partial class Lowering
 
         return proven;
     }
+
+    // Each instantiation of a scheme the discovery pass made: the quantified variable and the type it
+    // took there. A generic binding the program uses at one type throughout has that type settled for
+    // its quantified variable, which a site in its body still reading the variable can take.
+    private readonly List<(int Quantified, TypeRef Instance)> _quantifiedInstantiations = [];
+
+    private void RecordQuantifiedInstantiations(IReadOnlyDictionary<int, TypeRef> renaming)
+    {
+        if (!_collectInferredTraitElaboration)
+        {
+            return;
+        }
+
+        foreach ((int quantified, TypeRef instance) in renaming)
+        {
+            _quantifiedInstantiations.Add((quantified, instance));
+        }
+    }
+
+    // The quantified variables every instantiation settled on one concrete, closure-free type.
+    private Dictionary<int, TypeRef> SettledQuantifiedVariables()
+    {
+        var settled = new Dictionary<int, TypeRef>();
+        var conflicting = new HashSet<int>();
+        foreach ((int quantified, TypeRef instance) in _quantifiedInstantiations)
+        {
+            TypeRef resolved = PruneConstraintType(instance);
+            if (!IsPinnableType(resolved)
+                || (settled.TryGetValue(quantified, out TypeRef? earlier) && !TypesStructurallyEqual(earlier, resolved)))
+            {
+                conflicting.Add(quantified);
+                continue;
+            }
+
+            settled[quantified] = resolved;
+        }
+
+        foreach (int quantified in conflicting)
+        {
+            settled.Remove(quantified);
+        }
+
+        return settled;
+    }
+
+    // A site whose recorded type is itself a quantified variable of its binding takes the type the
+    // program's uses settled for it; any other type is answered as the substitution leaves it.
+    private static TypeRef SettleQuantifiedVariable(TypeRef resolved, Dictionary<int, TypeRef> settled)
+        => resolved is TypeRef.TVar variable && settled.TryGetValue(variable.Id, out TypeRef? type)
+            ? type
+            : resolved;
 
     private bool ContainsUnsettledVariable(TypeRef type) => Prune(type) switch
     {
