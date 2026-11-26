@@ -639,6 +639,12 @@ let markFlaggedDeepCopyOwned (flagTemp: Int) (resultTemp: Int) (state: CoreLower
 
 let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool) (lowered: LoweredCoreValue) = stage with lowered = lowered, resultNormalized = normalized, resultDeepCopied = deepCopied
 
+// Whether the body being lowered is a loop body.
+let inLoopBody (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) -> true
+        | None -> false
+
 // Stage 0's `DeferCallResultCopyOut`: a result whose type still holds an unresolved layout is
 // routed through a local slot and read back out of it, and the copy-out block that belongs
 // between the store and the reload is emitted by `resolvePendingTcoResets` once the body is
@@ -667,7 +673,8 @@ let deferCallCopyOut (selfCall: Bool) cursorSlot endSlot preRestoreSlot (resultT
                                 deferredLetReleaseSlots = [],
                                 deferredBackEdgesBefore = stored
                                 |> statePendingTcoResets
-                                |> length
+                                |> length,
+                                deferredInLoopBody = inLoopBody(stored)
                             )
                         in
                             (stored
@@ -1447,7 +1454,10 @@ let shadowWindowLeftOpen (context: CoreCallContext) (semanticType: SemanticType)
                 if context.tailCall
                 then "tail"
                 else "not tail"
-            in observeShadowUnrecorded(12)("window open")(how + "; " + callKind + "; " + unknownCalleeResultKind(semanticType)(state) + "; " + tail)(state)
+            in
+                observeShadowUnrecorded(12)("window open")(how + "; " + callKind + "; " + unknownCalleeResultKind(semanticType)(state) + "; " + tail + "; " + (if inLoopBody(state)
+                then "loop body"
+                else "no loop"))(state)
     else state
 
 let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
@@ -1509,7 +1519,9 @@ let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage
                                                     |> closedCallStage(stage)(true)(true)
                                         | _ ->
                                             match allocated
-                                            |> shadowWindowLeftOpen(context)(semanticType)("deferred")
+                                            |> shadowWindowLeftOpen(context)(semanticType)(if containsUnresolvedLayout(semanticType)(allocated)
+                                            then "deferred"
+                                            else "kept: no copy-out (resolved, as stage 0)")
                                             |> deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType) with
                                                 | (deferred, resultTemp) ->
                                                     deferred

@@ -789,6 +789,8 @@ type CorePendingCallCopyOut =
     // How many of the loop's back edges were lowered before the call: a call no back edge follows
     // in lowering order is never followed by one at run time.
     | deferredBackEdgesBefore: Int
+    // Whether the call sits in a loop body, for the step-8 shadow comparison only.
+    | deferredInLoopBody: Bool
 
 // What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
 // result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
@@ -927,7 +929,7 @@ type CoreTypeObservation =
     // Concrete source-copy calls whose argument tree was skipped or inferred.
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
-    // The step-8 shadow comparison: per order-dependent rule (1 to 11, and 12 for entry 8c), how many sites the rule
+    // The step-8 shadow comparison: per order-dependent rule (1 to 11, and 12 and 13 for entry 8c), how many sites the rule
     // decided as the rule over the final type would, and every other site.
     | shadowAgree: List(Int)
     | shadowSites: List(ShadowSite)
@@ -1528,7 +1530,7 @@ let clearAdmissibilityAnswers (state: CoreLoweringState) =
 
 let withTypeObservation (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false, shadowLambdaNode = None))))
+    in state with programState = (group with typeObservation = Some(CoreTypeObservation(goalSites = None, topLevelScope = [], operators = [], tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], singleLowering = false, shadowLambdaNode = None))))
 
 let stateTypeObservation (state: CoreLoweringState) =
     (let group = state.programState

@@ -35,7 +35,7 @@ type CorePassCounts =
     | tableFallbacks: Int
     | recordedCopyCalls: Int
     | inferredCopyCalls: Int
-    // The step-8 shadow comparison of the pass: agreeing sites per rule (1 to 12, 12 being entry 8c) and every other site.
+    // The step-8 shadow comparison of the pass: agreeing sites per rule (1 to 13, 12 and 13 being entry 8c) and every other site.
     | shadowAgree: List(Int)
     | shadowSites: List(ShadowSite)
     | error: Maybe(CoreLoweringError)
@@ -53,7 +53,7 @@ type CoreLoweringMeasurement =
     | first: CorePassCounts
     | replay: CorePassCounts
 
-let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], error = None)
+let noPassCounts = CorePassCounts(tableOperators = 0, deferredOperators = 0, relowerings = 0, tableCallResults = 0, tableFallbacks = 0, recordedCopyCalls = 0, inferredCopyCalls = 0, shadowAgree = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], shadowSites = [], error = None)
 
 let recursive incrementShadowAgree (index: Int) (counts: List(Int)) =
     match counts with
