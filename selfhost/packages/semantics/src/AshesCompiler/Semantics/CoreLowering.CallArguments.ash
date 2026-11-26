@@ -81,6 +81,8 @@ export (
     value siblingResultOpen,
     value siblingCallSiteKey,
     value siblingResultPinned,
+    value callsUnknownCallee,
+    value unknownCalleeResultKind,
     value emitRequestWord,
     value isListHeadHandOverType,
     value calleeTupleResultParts,

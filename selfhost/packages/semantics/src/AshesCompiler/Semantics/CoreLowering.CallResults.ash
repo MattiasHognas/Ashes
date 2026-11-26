@@ -1419,6 +1419,37 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
     |> cancelArenaResultRequest(temp)
     |> lowerGeneralRcCallResultOwned(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
 
+// Step-8 shadow comparison, entry 8c: a call after which this lowering leaves the callee's result
+// in the caller's arena window, where stage 0 restores the window, copies the result out and
+// reclaims the chunks for a result with a copy-out. The site names the kind of call (self, sibling,
+// unknown closure, other known), the result's kind, whether the call is in tail position, and
+// whether the copy-out was deferred to the body's end or the window left open.
+let shadowWindowLeftOpen (context: CoreCallContext) (semanticType: SemanticType) (how: Str) (state: CoreLoweringState) =
+    if shadowing(state)
+    then
+        let callKind =
+            if callsUnknownCallee(context)
+            then "unknown closure"
+            else
+                if context.selfCallee
+                then
+                    match context.calleeName with
+                        | Some(name) ->
+                            if state
+                            |> stateRecursiveGroupNames
+                            |> containsLabel(name)
+                            then "group member"
+                            else "self"
+                        | None -> "self"
+                else "known"
+        in
+            let tail =
+                if context.tailCall
+                then "tail"
+                else "not tail"
+            in observeShadowUnrecorded(12)("window open")(how + "; " + callKind + "; " + unknownCalleeResultKind(semanticType)(state) + "; " + tail)(state)
+    else state
+
 let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
@@ -1477,13 +1508,16 @@ let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(true)(true)
                                         | _ ->
-                                            match deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
+                                            match allocated
+                                            |> shadowWindowLeftOpen(context)(semanticType)("deferred")
+                                            |> deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType) with
                                                 | (deferred, resultTemp) ->
                                                     deferred
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(false)(false)
                                 | _ ->
                                     allocated
+                                    |> shadowWindowLeftOpen(context)(semanticType)("left open")
                                     |> success(temp)(semanticType)
                                     |> closedCallStage(stage)(false)(false)
 
@@ -1627,10 +1661,13 @@ let recursive lowerCallSpineCallee expression (context: CoreCallContext) expecte
                     |> preconstrainCallResult(expected)(site)(arity)
                     |> preconstrainKnownArguments(context)
                     |> callStageOf
-        | ExprNode(_node, inner) ->
+        | ExprNode(node, inner) ->
             match unspanArgument(inner) with
                 | ExprCall(_function, _argument, _isSugar, _layout) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
-                | ExprLambda(_parameter, _body, _annotation) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | ExprLambda(_parameter, _body, _annotation) ->
+                    state
+                    |> withShadowLambdaNode(node)
+                    |> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)
                 | _ ->
                     state
                     |> lower(expression)
