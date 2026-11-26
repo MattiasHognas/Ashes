@@ -27,7 +27,7 @@ starts.
 | --- | --- | --- | --- |
 | 1 | Finish round 8 on `selfhost/round11`, fix what breaks, merge PR #1161 | PR #1161 is merged | Done: merged as `3432916f` |
 | 2 | Bring every leak fix written so far onto main (no new leak fixes), measure the build with them, fix only what breaks | The fixes are on main and a round with them passes every check in "How a round is run" | Done: merged from `selfhost/round12` after round 12. Left out: the pass-through loop-parameter placement (it leaked 18,000 cells on one test). Merged but not yet effective in stage 1: the matched-tail rule and the self-call hand-over |
-| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code; entries 6, 7, 10, 11 and 4 remain |
+| 3 | Give `Ashes.Task.Parallel` workers their own libc thread-local storage (one worker); replace step 8's deferred entries 4 and 6–11 (another worker) | A worker that calls into libc no longer corrupts the heap; every entry in the step 8 table is Done | In progress: the parallel runtime is done (round 13); step 8 entry 8 and the unknown-closure general-rc results are done, entry 9 closed with no code, entries 6 and 7 are done for scalar and general reference-counted results (round 14); entries 10, 11 and 4 remain, with 8b and 8c |
 | 4 | Step 9: delete the raw lowering and retire the 258 lowered-IR parity fixtures | `CoreLowering.Raw` and everything only it reaches are gone, with the fixtures and their harnesses | Not started |
 | 5 | All workers on leaks, highest impact first, measured and merged per batch; the first batch is the known wrong-output bugs | The behaviour check reports no program differing in live cells, and a compiler built by either stage leaves no live cell after compiling the compiler | Not started |
 
@@ -46,17 +46,17 @@ starts.
 
 ## Where the compiler stands
 
-Measured at round 13: main with the parallel runtime fix, step 8 entry 8 and the unknown-closure change.
+Measured at round 14: main with step 8 entries 6 and 7.
 
 | Measure | Value |
 | --- | --- |
 | Stage 1 built by stage 0 | 27 min, 20 GiB |
-| Stage-1 behaviour against stage 0 (1,291 programs) | 1,170 same, 121 differ only in live cells at exit, 0 other |
-| The same under `ASHES_RC_POISON=1` | 1,163 same, 122 live cells only, 6 wrong output or crash (below) |
-| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 601 s, 18.5 GiB |
+| Stage-1 behaviour against stage 0 (1,293 programs) | 1,171 same, 122 differ only in live cells at exit, 0 other |
+| The same under `ASHES_RC_POISON=1` | 1,165 same, 122 live cells only, 6 wrong output or crash (below) |
+| Stage 2 built by stage 1, defaults (16 partitions, 6 processes) | 561 s, 18.1 GiB |
 | Stage 2 as a single module (`ASHES_LLVM_JOBS=1`) | 875 s, 14.7 GiB |
-| Stage 3 built by stage 2 | 615 s, byte-identical to stage 2 |
-| Stage 3 memory, resident plus swap | 32.4 GiB (40.4 GiB before the unknown-closure change: seven call sites in the compiler stopped asking their callback for an arena result) |
+| Stage 3 built by stage 2 | 580 s, byte-identical to stage 2 |
+| Stage 3 memory, resident plus swap | 31.1 GiB (40.4 GiB before step 8 stopped asking callbacks, self calls and sibling calls for arena results) |
 | Live cells when a stage-1-built compiler finishes compiling the compiler | 368.0 million, 14.6 GiB resident (round 12; not remeasured) |
 | The same on the frontend test project: stage-1-built against stage-0-built | 20.6 million cells, 2.28 GB against 5.5 million, 1.21 GB |
 | Semantics suite | 98 of 99 groups (whole-program IR parity 32 of 95 differing) |
