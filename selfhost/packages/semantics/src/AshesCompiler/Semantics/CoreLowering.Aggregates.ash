@@ -1728,6 +1728,53 @@ let recursive tempStoredInSlot (temp: Int) (instructions: List(IrInstruction)) =
 // The duplicate is read from the cell's own tail store: the retain a transferring cell takes of its
 // tail (`retainConsTail`) is made after the cell's parts are duplicated, so it is the stored value,
 // not the duplicated tail.
+// Diagnostic only: the conditions of `keepArmCellTailMarkerOwned` at a cons whose cell stored a
+// tail, one decimal digit each (1 holds, 0 fails) in a `LoadConstInt` of 9 followed by the digits:
+// generalRc, tailPosition, !callArgument, !lateCopiedCellParts, !recordFieldCell, no transferSlot,
+// tco loop, !lowersBackEdgeArgument, tail is a variable, arena 16-byte cell, cell not runtime,
+// marker promotable or a runtime retain, marker not stored, retainable list, layout resolved.
+let armCellTailDigit (holds: Bool) (number: Int) =
+    if holds
+    then number * 10 + 1
+    else number * 10
+
+let emitArmCellTailConditions (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None } ->
+            match storedCellTail(cellTemp)(state.reversedInstructions) with
+                | None -> lowered
+                | Some(marker) ->
+                    let digits =
+                        9
+                        |> armCellTailDigit(generalRcEnabled(state))
+                        |> armCellTailDigit(request.tailPosition)
+                        |> armCellTailDigit(request.callArgument == false)
+                        |> armCellTailDigit(request.lateCopiedCellParts == false)
+                        |> armCellTailDigit(request.recordFieldCell == false)
+                        |> armCellTailDigit(match request.transferSlot with
+                            | Some(_slot) -> false
+                            | None -> true)
+                        |> armCellTailDigit(match stateTcoLoop(state) with
+                            | Some(_loop) -> true
+                            | None -> false)
+                        |> armCellTailDigit(!lowersBackEdgeArgument(state))
+                        |> armCellTailDigit(match unspanArgument(tailExpression) with
+                            | ExprVar(_name) -> true
+                            | _ -> false)
+                        |> armCellTailDigit(match definitionOfTemp(cellTemp)(state.reversedInstructions) with
+                            | Some(Alloc(_cell, 16, false)) -> true
+                            | _ -> false)
+                        |> armCellTailDigit(!isRuntimeTemp(cellTemp)(state))
+                        |> armCellTailDigit(isPromotableCellMarker(marker)(state) || runtimeRetainOfCell(marker)(state.reversedInstructions))
+                        |> armCellTailDigit(!tempStoredInSlot(marker)(state.reversedInstructions))
+                        |> armCellTailDigit(isBorrowedRetainableParameterType(listType)(state))
+                        |> armCellTailDigit(!containsUnresolvedLayout(listType)(state))
+                    in
+                        match freshTemp(state) with
+                            | FreshTemp { state = withTemp, temp = digitTemp } ->
+                                lowered with state = emit(LoadConstInt(digitTemp)(digits))(withTemp)
+        | _ -> lowered
+
 let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None } ->
@@ -1770,6 +1817,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
                                     |> reserveArmCellHeadSlot(cellRequest)(tailExpression)
                                     |> keepArmCellTailMarkerOwned(request)(tailExpression)
+                                    |> emitArmCellTailConditions(request)(tailExpression)
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
