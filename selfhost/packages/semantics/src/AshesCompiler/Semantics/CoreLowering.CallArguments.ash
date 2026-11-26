@@ -1249,6 +1249,11 @@ let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringS
                 | None -> false
         | _ -> false)
 
+// Stage 0's `DirectSelfListResultOwnedAtRunTime`: a function's non-tail call to itself by its own
+// name (`append(fresh)(collect(rest))`) reaches the same body still being lowered, so it reads the
+// returns bit like a call through a captured self. A loop's self call keeps the loop's protocol.
+let directSelfListResultOwnedAtRunTime (context: CoreCallContext) (state: CoreLoweringState) = (context.selfCallee && insideTcoLoop(state)) == false
+
 // Stage 0's `CapturedSelfListResultOwnedAtRunTime`: a call through a captured self (the recursive
 // binding reached through a lambda's environment) reaches a body still being lowered, so for a
 // list only the recursive deep copy expresses the call reads the callee's returns bit: a
@@ -1262,6 +1267,7 @@ let capturedSelfListResultOwnedAtRunTime (context: CoreCallContext) (resultType:
                     state
                     |> stateRecursiveGroupNames
                     |> containsLabel(name)
+                | Some(CoreBinding { location = CoreSelf(_label, _arity) }) -> directSelfListResultOwnedAtRunTime(context)(state)
                 | _ -> false
         | None -> false) && containsUnresolvedLayout(resultType)(state) == false && (match resolveType(state)(resultType) with
         | SemList(element) ->
