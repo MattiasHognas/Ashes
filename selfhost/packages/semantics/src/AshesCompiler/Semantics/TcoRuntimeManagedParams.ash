@@ -1,5 +1,5 @@
-// Runtime-managed TCO loop parameter eligibility (the tail PR #847 left open — OPT-26/OPT-27/
-// OPT-29's "the runtime-managed loop parameters" gap): which of a self-recursive function's
+// Runtime-managed TCO loop parameter eligibility (the runtime-managed loop parameters
+// gap PR #847 left open): which of a self-recursive function's
 // loop parameters are rebuilt, at every tail self-call, only through `+` on the parameter's own
 // (possibly aliased) value or passed straight through unchanged — the shape a `Str` accumulator
 // needs before `CoreLowering.ash` may place it on the reference-counted heap instead of leaving

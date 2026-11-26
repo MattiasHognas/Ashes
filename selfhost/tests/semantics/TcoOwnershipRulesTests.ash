@@ -158,7 +158,7 @@ let check (label: Str) (ok: Bool) =
 
 let ownedLetInTailArgumentRecordSource = "type Inst =\n    | Jump(Str)\n    | Other\n\ntype Wrapped =\n    | instruction: Inst\n    | location: Maybe(Int)\n\nlet mk n = Ashes.Text.fromInt(n)\n\nlet recursive loop n acc =\n    if n == 0\n    then acc\n    else\n        let label = mk(n)\n        in loop(n - 1)(Wrapped(instruction = Jump(label), location = None) :: acc)\n\nAshes.IO.print(1)"
 
-// OPT-26: `label` owns the fresh reference-counted call result; the tail self-call's argument
+// `label` owns the fresh reference-counted call result; the tail self-call's argument
 // stores it in a constructor field, so the read is retained (`Borrow`, then `RcDup`) and the
 // duplicate is what the field stores, while the owner's own release still fires. The loop
 // parameter `n` passed to `mk` takes the pending retain skeleton. The accumulator holds records of
@@ -194,7 +194,7 @@ let expectTailSelfCallArgumentRetainsOwnedBinding unit =
 
 let ownedLetInOperandSelfCallSource = "let mk n = Ashes.Text.fromInt(n)\n\nlet recursive count n acc =\n    if n == 0\n    then 0\n    else\n        let s = mk(n)\n        in\n            if n % 2 == 0\n            then 1 + count(n - 1)(s :: acc)\n            else count(n - 1)(s :: acc)\n\nAshes.IO.print(count(4)([]))"
 
-// OPT-29: the self-call under `1 + ...` is an operator operand, never a tail call, so its cons
+// The self-call under `1 + ...` is an operator operand, never a tail call, so its cons
 // argument stores the plain borrowed read; only the else branch's genuine tail self-call retains
 // `s` for the next iteration.
 let expectOperandSelfCallIsNotATailCall unit =
@@ -216,7 +216,7 @@ let expectOperandSelfCallIsNotATailCall unit =
 
 let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n    in\n        if n == 0\n        then r\n        else loop(n - 1)(r + \"x\"))\n\nAshes.IO.print(loop(5)(\"\"))"
 
-// OPT-27: `r` is bound to a plain read of the loop parameter, a borrowed read that never
+// `r` is bound to a plain read of the loop parameter, a borrowed read that never
 // retained, so `r` itself is not a runtime owner and adds neither a release at its own scope
 // exit nor a retain of its reads. The parameter `acc` it aliases is a different question — the
 // runtime-managed loop parameter placement this port now carries (`runtimeManagedStrOrdinals`)
@@ -355,7 +355,7 @@ let expectForwardedInnerListHeadKeepsListInArena unit =
 
 let copyAdtLoopSource = "type Counter =\n    | count: Int\n    | total: Int\n\nlet recursive bump (n: Int) (c: Counter) =\n    if n == 0\n    then c\n    else bump(n - 1)(Counter(count = c.count + 1, total = c.total + n))\n\nlet bumped = bump(10)(Counter(count = 0, total = 0))\n\nAshes.IO.print(bumped.count)"
 
-// OPT-25: a single-constructor record loop parameter lives on the reference-counted heap: the
+// A single-constructor record loop parameter lives on the reference-counted heap: the
 // borrowed argument is copied out under the caller's ownership flag at entry, each back edge
 // copies the fresh arena cell out before the iteration's allocations are reclaimed and releases
 // the predecessor, and the exit transfers the parameter's own value to the caller or releases it.
@@ -621,7 +621,7 @@ let expectReadReleasesConsumedFreshResult (label: Str) (source: Str) =
             |> check(label + ": the release is a runtime-managed string drop"))
         |> (given (_) -> check(label + ": the released value has no owner")(Ashes.Text.contains(line)("OwnerSlot=") == false)))
 
-// OPT-39: a read-only builtin consuming the fresh result of a call releases it right after the
+// A read-only builtin consuming the fresh result of a call releases it right after the
 // read, straight from the call and through an if join whose every branch produced a fresh value.
 let expectReadBuiltinReleasesFreshCallResult unit =
     Unit

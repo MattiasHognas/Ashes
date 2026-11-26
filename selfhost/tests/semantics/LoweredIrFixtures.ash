@@ -138,7 +138,7 @@ let renameLabels (renames: List((Str, Str))) (line: Str) =
 // Label numbers are allocated program-wide in lowering order, so a function compared on its own
 // inherits the count of every label the functions before it allocated. Where one of those
 // functions is a known cross-compiler difference (the self-hosted lowering applies
-// tail-modulo-constructor to a generic `mapAll`, which stage 0 declines; OPT-63), the compared
+// tail-modulo-constructor to a generic `mapAll`, which stage 0 declines), the compared
 // function's labels shift while its instructions stay identical. Renumbering each label by the
 // order of its definition within the function keeps the comparison about the instructions.
 let withFunctionLocalLabels (lines: List(Str)) =

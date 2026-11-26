@@ -1,6 +1,6 @@
 // Unit tests for the synthesized structural and ADT droppers, checked instruction for instruction
 // against stage 0's lowered IR text for the same types, the `GetAdtField` lines carrying the
-// OPT-24 tagless flag of a sole-constructor type as stage 0's do. Each
+// tagless flag of a sole-constructor type as stage 0's do. Each
 // synthesized function is described once, as its header line, its origin line, and its
 // instruction lines, and the whole description is compared in one assertion.
 

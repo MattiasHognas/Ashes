@@ -150,7 +150,7 @@ let testStaticProviderCall unit =
                         | _ -> test.fail("static provider call should emit single CallClosure")
                 | _ -> test.fail("static provider call emission failed"))
 
-// Confirms the SELF_HOSTING.md "generic capability evidence" gap is fixed. Stage 0 registers a
+// Confirms the generic capability evidence gap is fixed. Stage 0 registers a
 // static provider under a key built from its capability name AND its resolved type arguments
 // (`Lowering.Capabilities.cs`'s `BuildProviderKey`/`_providers`), so `provide Log(Int)` and
 // `provide Log(Str)` in the same program are two DISTINCT, individually valid registrations --

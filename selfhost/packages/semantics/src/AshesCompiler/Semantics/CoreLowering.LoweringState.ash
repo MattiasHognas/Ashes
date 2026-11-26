@@ -1081,7 +1081,7 @@ type CoreProgramState =
     // The standard trait environment with the program's own implementations registered, the
     // evidence a trait-mapped operator at a concrete operand type resolves against.
     | traitEnvironment: TypeEnvironment
-    // Stage 0's compiled-instance cache (TRT-16): each implementation method already lowered as
+    // Stage 0's compiled-instance cache: each implementation method already lowered as
     // a capture-free closure helper, by trait, method, and operand type, with its label and
     // type, so a later site rebuilds the closure from the label instead of lowering the body
     // again.
@@ -1496,7 +1496,7 @@ type CoreLoweringState =
     | currentNode: Maybe(Int)
     | consumerRequest: ConsumerRequest
     | runtimeTemps: MapTree(Int, RuntimeTempState)
-    // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
+    // The live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
     // for a same-name rebuild in its own arm, most recently produced first.
     | reuseTokens: List(CoreReuseToken)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))

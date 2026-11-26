@@ -1,5 +1,5 @@
 // Detects and tracks the arena/RC in-place-reuse opportunity a match's dead scrutinee cell offers
-// a same-shape constructor rebuild inside one of its own arms: OPT-42's top-cell freshness and
+// a same-shape constructor rebuild inside one of its own arms: the top-cell freshness and
 // uniqueness consumer for the reuse eligibility HeapLayoutClassification.ash already computes.
 // Every predicate here is structural (Expr/Pattern shape only) so CoreLowering.ash's hooks can call
 // it without exposing CoreLoweringState across the module boundary; the token itself, the emission
