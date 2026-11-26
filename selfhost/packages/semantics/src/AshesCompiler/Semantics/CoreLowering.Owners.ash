@@ -152,6 +152,7 @@ export (
     value isDuplicateMarker,
     value closeOwnedScopeForResult,
     value closeOwnedLetBracket,
+    value closeOwnedLetBracketPinned,
     value recursiveProducerResult,
     value storeLetValueInSlot,
     value finishLetValueInSlot,
@@ -1739,7 +1740,9 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
                             |> spliceInlineRelease(synthesis)
                             |> Some, queryContext)
 
-let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) =
+// `dropSlot` is the slot the release names for `PerceusLifetimePlacement`: the owner's own slot,
+// which placement moves to the binding's last use, or -1 for a release that stays where it is.
+let emitOwnerDropAt typeName ownerSlot (dropSlot: Int) loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) =
     if typeName == "Function"
     then
         emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
@@ -1749,14 +1752,16 @@ let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: Core
             | (_runtimeOwner, (_release, queryContext)) ->
                 loaded
                 |> withStateDropperContext(queryContext)
-                |> emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))
+                |> emit(RcDrop(loadTemp)(typeName)(dropSlot)(runtimeOwner)(false)(None))
+
+let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) = emitOwnerDropAt(typeName)(ownerSlot)(ownerSlot)(loadTemp)(runtimeOwner)(loaded)
 
 // The lexical release of an owned `let` binding at its scope exit, stage 0's
 // `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
 // which `PerceusLifetimePlacement` later moves to the binding's last use on each path, or with
 // the inline walk of a runtime-managed aggregate. A closure is released with `CleanupResource`
 // instead, which stays at the scope exit.
-let emitOwnedLetRelease typeName ownerSlot state =
+let emitOwnedLetReleaseAt typeName ownerSlot (dropSlot: Int) state =
     if isResourceTypeNameIn(typeName)(state)
     then emitResourceCleanup(typeName)(ownerSlot)(state)
     else
@@ -1767,7 +1772,9 @@ let emitOwnedLetRelease typeName ownerSlot state =
                     | FreshTemp { state = loadState, temp = loadTemp } ->
                         loadState
                         |> emit(LoadLocal(loadTemp)(ownerSlot))
-                        |> emitOwnerDrop(typeName)(ownerSlot)(loadTemp)(runtimeOwner == Some(true))
+                        |> emitOwnerDropAt(typeName)(ownerSlot)(dropSlot)(loadTemp)(runtimeOwner == Some(true))
+
+let emitOwnedLetRelease typeName ownerSlot state = emitOwnedLetReleaseAt(typeName)(ownerSlot)(ownerSlot)(state)
 
 let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
     state
@@ -2151,7 +2158,9 @@ let reloadLetResult (resultTemp: Int) (resultSlot: Int) (state: CoreLoweringStat
 // runtime-managed result that needed a copy-out is a genuinely new physical value, so this
 // records the copy's own temp itself before handing it back; a reload merely relocates the same
 // reference into a fresh temp to survive the reset and is deliberately left unrecorded.
-let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp resultType state =
+// `pinsRelease` keeps the binding's release at the scope exit, after a copy of the result that
+// may name its bytes, instead of letting placement move it to the binding's last read.
+let closeOwnedLetBracketPinned (pinsRelease: Bool) ownedTypeName ownerSlot cursorSlot endSlot resultTemp resultType state =
     match (ownedTypeName, runtimeOwnerStateOf(ownerSlot)(state)) with
         | (Some(_transferred), Some(false)) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
         | (Some(typeName), _owned) ->
@@ -2159,12 +2168,16 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                 | FreshLocal { state = resultAllocated, local = resultSlot } ->
                     match resultAllocated
                     |> emit(StoreLocal(resultSlot)(resultTemp))
-                    |> emitOwnedLetRelease(typeName)(ownerSlot)
+                    |> emitOwnedLetReleaseAt(typeName)(ownerSlot)(if pinsRelease
+                    then -1
+                    else ownerSlot)
                     |> retireRuntimeOwner(ownerSlot)
                     |> closeOwnedScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot) with
                         | (closed, Some(copyTemp)) -> (recordValuePlacement(copyTemp)(resultType)(closed), copyTemp)
                         | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
         | (None, _owned) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
+
+let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp resultType state = closeOwnedLetBracketPinned(false)(ownedTypeName)(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(state)
 
 // Resolve producer provenance against the defining lexical scope, before the new binding shadows
 // its name. Local slots are frame-specific; a recorded fact never confers unique ownership.
