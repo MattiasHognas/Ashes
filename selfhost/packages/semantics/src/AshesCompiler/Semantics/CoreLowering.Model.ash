@@ -278,3 +278,6 @@ type CoreBinding =
     | ownedRead: Bool
     | patternFact: Maybe(PatternBindingFact)
     | closedScheme: Bool
+    // Stage 0's `Binding.Scheme` for an ordinary `let`: a let-bound name, as opposed to a parameter,
+    // a pattern binder or a capture (stage 0's `Binding.Local`).
+    | letBound: Bool

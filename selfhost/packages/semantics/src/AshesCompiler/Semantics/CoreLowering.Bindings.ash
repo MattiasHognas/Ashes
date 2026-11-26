@@ -2,10 +2,12 @@
 // variables, and the annotation of lambda bindings. A part of
 // `AshesCompiler.Semantics.CoreLowering`.
 
+import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
+import AshesCompiler.Semantics.ValueFlowSlots.tempsReachingTemps
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TopLevelItem
@@ -611,15 +613,16 @@ let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (s
 // on. Applied right after the spine closes, before any ownership step reads the body's type.
 // The result's layout is read as the function's own return reads it, its phantoms as `Never`, so a
 // self call agrees with the return on whether the result is one of the contract's types.
-let recursive markOwnedDeferredSelfCalls (label: Str) (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+// Only a call lowered after the last of `backEdges` back edges is marked: no back edge runs after it.
+let recursive markOwnedDeferredSelfCalls (label: Str) (backEdges: Int) (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
         | [] -> []
         | copyOut :: rest ->
             (let layout = resolvePhantomResultLayout(label)(copyOut.deferredType)(state)
             in
-                if copyOut.deferredSelfCall && isGeneralRcValueType(layout)(state)
+                if copyOut.deferredSelfCall && copyOut.deferredBackEdgesBefore >= backEdges && isGeneralRcValueType(layout)(state)
                 then copyOut with deferredOwned = true, deferredType = layout
-                else copyOut) :: markOwnedDeferredSelfCalls(label)(rest)(state)
+                else copyOut) :: markOwnedDeferredSelfCalls(label)(backEdges)(rest)(state)
 
 let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
@@ -635,8 +638,11 @@ let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut))
 // body's end: each deferred self call whose result is then of the contract's types registers its
 // result slot as an owned slot there, before the function's result releases its owned slots, and
 // its deferred block becomes the owned-result block. A loop's owned slots are released at its
-// back edges as well, which are already lowered, so a loop keeps the deferred copy-out; a loop with no
-// back edge (a non-tail recursion lowered under a loop scaffold) adopts them like any other body.
+// back edges as well, which are already lowered, so a loop keeps the deferred copy-out of a call a
+// back edge follows; a call lowered after the loop's last back edge (in an exit arm, after the
+// back edges of the arms before it) is never followed by one, and a loop with no back edge (a
+// non-tail recursion lowered under a loop scaffold) has none, so their results are adopted like any
+// other body's, as stage 0 adopts them.
 // A loop whose exit already made the result its own and released the owned slots (a curried
 // stage's loop body) releases the adopted results right away, the result holding its own
 // references.
@@ -648,9 +654,9 @@ let recursive adoptedDeferredSlots (pending: List(CorePendingCallCopyOut)) (stat
             then (stateActiveFunctionOrigin(state), copyOut.deferredResultSlot, copyOut.deferredType) :: adoptedDeferredSlots(rest)(state)
             else adoptedDeferredSlots(rest)(state)
 
-let adoptMarkedDeferredSelfCalls (label: Str) (resultFinished: Bool) (state: CoreLoweringState) =
+let adoptMarkedDeferredSelfCalls (label: Str) (backEdges: Int) (resultFinished: Bool) (state: CoreLoweringState) =
     (let marked =
-        markOwnedDeferredSelfCalls(label)(statePendingCallCopyOuts(state))(state)
+        markOwnedDeferredSelfCalls(label)(backEdges)(statePendingCallCopyOuts(state))(state)
     in
         if resultFinished
         then
@@ -664,10 +670,9 @@ let adoptMarkedDeferredSelfCalls (label: Str) (resultFinished: Bool) (state: Cor
 
 let adoptDeferredSelfCallResults (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), statePendingTcoResets(state)) with
-        | (None, _) -> adoptMarkedDeferredSelfCalls(label)(false)(state)
-        | (Some(_frame), []) ->
-            adoptMarkedDeferredSelfCalls(label)(isGeneralRcFinishedResult(bodyTemp)(state))(state)
-        | (Some(_frame), _resets) -> state
+        | (None, _) -> adoptMarkedDeferredSelfCalls(label)(0)(false)(state)
+        | (Some(_frame), resets) ->
+            adoptMarkedDeferredSelfCalls(label)(length(resets))(isGeneralRcFinishedResult(bodyTemp)(state))(state)
 
 let unifySelfCallResults (lowered: LoweredCoreValue) =
     match lowered with
@@ -947,16 +952,178 @@ let taskHeaderSize =
     match taskStructLayout with
         | TaskStructLayout { headerSize = size } -> size
 
-let registerTaskFrameDropper label survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
+// Stage 0's `RetainCoroutineCapture` and `CoroutineFrameDropKind`: the type of a capture the task
+// frame takes a reference of its own to, or None. The frame outlives the expression that creates
+// the task, and the owner's scope releases its reference there, so a capture read from a live
+// reference-counted owner whose type the frame can release (a string, bytes, big integer, list,
+// tuple, or named type general reference counting admits) is retained at task creation. Any other
+// capture is stored as it was read.
+let coroutineFrameRetainedType (outer: CoreLoweringState) (binding: CoreBinding) (state: CoreLoweringState) =
+    match binding with
+        | CoreBinding { location = CoreLocal(slot), scheme = scheme } ->
+            if runtimeOwnerStateOf(slot)(outer) == Some(true)
+            then
+                let resolved = resolveType(state)(scheme.body)
+                in
+                    if containsUnresolvedLayout(resolved)(state) || isGeneralRcAdmissible(resolved)([])(state) == false
+                    then None
+                    else
+                        match resolved with
+                            | SemString -> Some(resolved)
+                            | SemBytes -> Some(resolved)
+                            | SemBigInt -> Some(resolved)
+                            | SemList(_element) -> Some(resolved)
+                            | SemTuple(_elements) -> Some(resolved)
+                            | SemNamed(_symbolId, _name, _arguments) -> Some(resolved)
+                            | _ -> None
+            else None
+        | _ -> None
+
+// The capture a coroutine's environment stores: the frame's own retained reference when it keeps
+// one, else the capture as it was read. The task copies the environment words into its frame.
+let retainCoroutineCapture (outer: CoreLoweringState) (binding: CoreBinding) (captureTemp: Int) (_captureType: SemanticType) (state: CoreLoweringState) =
+    match coroutineFrameRetainedType(outer)(binding)(state) with
+        | None -> (state, captureTemp)
+        | Some(retainedType) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = duplicate } ->
+                    (emit(retainedType
+                    |> mayBeEmptyList
+                    |> RcDup(duplicate)(captureTemp)(true))(allocated), duplicate)
+
+// The capture an environment stores: a coroutine's frame that retains its captures takes a
+// reference of its own to each, any other closure keeps an arena copy of an escaping capture.
+let environmentCaptureCopy (stackAllocate: Bool) (outer: CoreLoweringState) (retains: Bool) =
+    if retains
+    then retainCoroutineCapture(outer)
+    else copyEscapingCapture(stackAllocate)
+
+// The type a coroutine's result can share a capture through: the payload of the `Ok` the body is
+// wrapped in, else the body's own type.
+let coroutineResultReachType (body: Expr) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match (body, resolveType(state)(bodyType)) with
+        | (ExprCall(ExprVar("Ok"), _payload, _inline, _arguments), SemNamed(_symbolId, "Result", _error :: success :: [])) -> success
+        | (_body, resolved) -> resolved
+
+// Every capture the frame does not retain is stored as the closure's reference-counted copy would
+// store it: one that holds no heap value, or any capture when that copy's environment normalizer
+// copies none, so the copy keeps every capture word as it was read.
+let recursive capturesStoredAsCopied (outer: CoreLoweringState) (normalized: Bool) captures (state: CoreLoweringState) =
+    match captures with
+        | [] -> true
+        | (CoreBinding { scheme = scheme } as binding) :: rest ->
+            (match coroutineFrameRetainedType(outer)(binding)(state) with
+                | Some(_retainedType) -> true
+                | None -> !normalized || resultSurvivesReset(scheme.body)(state)) && capturesStoredAsCopied(outer)(normalized)(rest)(state)
+
+// Whether a coroutine's frame retains its captures itself (stage 0's `RetainCoroutineCapture`)
+// rather than taking them from the closure's reference-counted copy, whose environment normalizer
+// retains or copies the captures it covers and keeps the others as they were read.
+let coroutineFrameRetainsCaptures (outer: CoreLoweringState) captures (state: CoreLoweringState) =
+    match captures with
+        | [] -> false
+        | _ ->
+            statePendingCoroutineBody(outer) && capturesStoredAsCopied(outer)(closureNormalizerCopiesCaptures(captures)(state))(captures)(state)
+
+let recursive returnSources (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = Return(source) } :: rest -> source :: returnSources(rest)
+        | _ :: rest -> returnSources(rest)
+
+let recursive reachedEnvironmentIndices (instructions: List(IrInstruction)) (visited: MapTree(Int, Bool)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = LoadEnv(target, index) } :: rest ->
+            match Ashes.Collection.Map.getInt(target)(visited) with
+                | Some(_seen) -> index :: reachedEnvironmentIndices(rest)(visited)
+                | None -> reachedEnvironmentIndices(rest)(visited)
+        | _ :: rest -> reachedEnvironmentIndices(rest)(visited)
+
+// Stage 0's `CoroutineCapturesReachingResult`: the environment indices the body's returned value
+// can have been read from, through a value-flow walk back from every `Return` over the linear body
+// (most recent first).
+let capturesReachingResult (reversedInstructions: List(IrInstruction)) =
+    reversedInstructions
+    |> tempsReachingTemps(returnSources(reversedInstructions))
+    |> reachedEnvironmentIndices(reversedInstructions)
+
+let recursive containsIndexOf (index: Int) (indices: List(Int)) =
+    match indices with
+        | [] -> false
+        | candidate :: rest -> candidate == index || containsIndexOf(index)(rest)
+
+// The frame offset and type of every retained capture the frame releases at teardown, in
+// environment order. Teardown runs when the task completes, before its result is read, so a
+// capture the result can share keeps the frame's reference unreleased (stage 0's
+// `CaptureSharedWithResult`): its value flows into the returned value and the result's type can
+// hold a part of its type.
+let recursive retainedCaptureSlots (outer: CoreLoweringState) (reachType: SemanticType) (reached: List(Int)) captures (index: Int) (state: CoreLoweringState) =
+    match captures with
+        | [] -> []
+        | binding :: rest ->
+            let following = retainedCaptureSlots(outer)(reachType)(reached)(rest)(index + 1)(state)
+            in
+                match coroutineFrameRetainedType(outer)(binding)(state) with
+                    | Some(retainedType) ->
+                        if containsIndexOf(index)(reached) && resultTypeMayHoldPartOf(reachType)(retainedType)(state)
+                        then following
+                        else (taskHeaderSize + index * 8, retainedType) :: following
+                    | None -> following
+
+// Stage 0's frame-dropper slot release: the word is released when present and cleared, so a
+// second teardown of the same frame finds it zero. Temp 0 holds the task and temp 2 zero.
+let recursive emitFrameCaptureReleases (retained: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match retained with
+        | [] -> state
+        | (offset, retainedType) :: rest ->
+            match freshTempRun(2)(state) with
+                | FreshTemp { state = allocated, temp = valueTemp } ->
+                    match freshLabel("frame_slot_cleared")(allocated) with
+                        | FreshLabel { state = labelled, label = clearedLabel } ->
+                            labelled
+                            |> emit(LoadMemOffset(valueTemp)(0)(offset))
+                            |> emit(CmpIntNe(valueTemp + 1)(valueTemp)(2))
+                            |> emit(JumpIfFalse(valueTemp + 1)(clearedLabel))
+                            |> emitOwnedValueRelease(emit)(valueTemp)(retainedType)
+                            |> emit(StoreMemOffset(0)(offset)(2))
+                            |> emit(Label(clearedLabel))
+                            |> emitFrameCaptureReleases(rest)
+
+let recursive withoutLastInstruction (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | _last :: [] -> []
+        | head :: rest -> head :: withoutLastInstruction(rest)
+
+// The task frame dropper of a coroutine whose frame retained captures: the socket dropper's
+// hand-off and teardown, with the retained captures released at the end of the teardown, before
+// its return. The releases are built on a scratch frame that continues the socket dropper's temps
+// and keeps the label counter; a release may synthesize the structural dropper of its type.
+let makeRetainingFrameDropper (label: Str) (socketOffsets: List(Int)) (retained: List((Int, SemanticType))) (state: CoreLoweringState) =
+    (let socketDropper = makeSocketFrameDropper(label)(socketOffsets)
+    in
+        match withStateRetiredLocals([])((state with reversedInstructions = [], nextTemp = socketDropper.tempCount, nextLocal = socketDropper.localCount)) |> emitFrameCaptureReleases(retained) |> emit(Return(2)) with
+            | CoreLoweringState { reversedInstructions = instructions, nextTemp = tempCount, nextLocal = localCount, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState } ->
+                let dropper =
+                    socketDropper with instructions = append(withoutLastInstruction(socketDropper.instructions))(reverse(instructions)), tempCount = tempCount, localCount = localCount
+                in ((state with functions = dropper :: functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState), dropper.label))
+
+let registerTaskFrameDropper label (retains: Bool) (reachType: SemanticType) (reached: List(Int)) survivors body (outer: CoreLoweringState) (finished: CoreLoweringState) (value: LoweredCoreValue) =
     if statePendingCoroutineBody(outer)
     then
-        match localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished) with
-            | [] -> value with state = withCompletedTaskFrameDropper(None)(value.state)
-            | offsets ->
+        match (localSocketOffsets(survivors)(body)(taskHeaderSize)(outer)(finished), if retains
+        then retainedCaptureSlots(outer)(reachType)(reached)(survivors)(0)(value.state)
+        else []) with
+            | ([], []) -> value with state = withCompletedTaskFrameDropper(None)(value.state)
+            | (offsets, []) ->
                 let dropper = makeSocketFrameDropper(label)(offsets)
                 in
                     let state = value.state
                     in value with state = withCompletedTaskFrameDropper(Some(dropper.label))((state with functions = dropper :: state.functions))
+            | (offsets, retained) ->
+                match makeRetainingFrameDropper(label)(offsets)(retained)(value.state) with
+                    | (state, dropperLabel) -> value with state = withCompletedTaskFrameDropper(Some(dropperLabel))(state)
     else value
 
 // Stage 0's `IsTrivialParameterFieldAccessorBody`: the function's whole instruction stream is a
@@ -986,6 +1153,22 @@ let recordTrivialParameterFieldAccessor (label: Str) (bodyTemp: Int) bodyType (i
             | _ -> state
     else state
 
+// The closure a capturing coroutine's task is built from when its frame does not retain the
+// captures: the closure's reference-counted copy, whose environment normalizer retains (or
+// copies) every capture, so each outlives the scope that created the task.
+let copyTaskClosure (retains: Bool) survivors (outer: CoreLoweringState) (value: LoweredCoreValue) =
+    match (statePendingCoroutineBody(outer) && !retains, survivors, value) with
+        | (true, _capture :: _rest, LoweredCoreValue { state = state, temp = closureTemp, error = None }) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = copyTemp } ->
+                    value with state = emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), temp = copyTemp
+        | _ -> value
+
+// Stage 0's `Closure` runtime representation as the closure's creation site asked for it: a heap
+// closure, never a stack one, placed on the reference-counted heap with its environment. The lambda
+// takes the one-shot request: its body never sees it, and it is cleared behind the closure.
+let runtimeClosureRequested (stackAllocate: Bool) (outer: CoreLoweringState) = stateRuntimeClosureRequest(outer) && !stackAllocate
+
 let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
@@ -1014,15 +1197,19 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
                                         |> finishLiftedFunction(label)(origin)
                                     in
-                                        finishedBody
-                                        |> restoreOuterFrame(typedOuter)
-                                        |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
-                                        |> recordTrivialParameterFieldAccessor(label)(bodyTemp)(bodyType)(loweredBody)
-                                        |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
-                                        |> markCapturedResourcesMoved(survivors)
-                                        |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
-                                        |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
-                                        |> registerTaskFrameDropper(label)(survivors)(body)(typedOuter)(finishedBody)
+                                        let retains = coroutineFrameRetainsCaptures(typedOuter)(survivors)(finishedBody)
+                                        in
+                                            finishedBody
+                                            |> restoreOuterFrame(typedOuter)
+                                            |> takeRuntimeClosureRequest
+                                            |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                            |> recordTrivialParameterFieldAccessor(label)(bodyTemp)(bodyType)(loweredBody)
+                                            |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
+                                            |> markCapturedResourcesMoved(survivors)
+                                            |> allocateEnvironmentIn(runtimeClosureRequested(stackAllocate)(typedOuter))(environmentCaptureCopy(stackAllocate)(typedOuter)(retains))(captures)(survivors)(stackAllocate)
+                                            |> emitPrunedClosureIn(runtimeClosureRequested(stackAllocate)(typedOuter))(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                                            |> registerTaskFrameDropper(label)(retains)(coroutineResultReachType(body)(bodyType)(finishedBody))(capturesReachingResult(prunedInstructions))(survivors)(body)(typedOuter)(finishedBody)
+                                            |> copyTaskClosure(retains)(survivors)(typedOuter)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus

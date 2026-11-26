@@ -101,7 +101,27 @@ let expectCallArgumentDefinedBeforeTheCall unit =
                             "the self call reads temp " + Ashes.Text.fromInt(argumentTemp) + " before anything defines it:\n" + Ashes.Text.join("\n")(before) + "\n" + callLine
                         )
 
+// A list producer whose self call is bound before the cons that settles its type: the deferred
+// copy-out resolves to a copy onto the reference-counted heap, the cons takes a reference of its
+// own to the bound tail, and the binding releases the copy at its scope's exit with an inline
+// spine walk, beside the walk of the function's own arena-result boundary.
+let boundTailProducerSource = "let recursive mapText (values: List(Str)) =\n    match values with\n        | [] -> []\n        | head :: tail ->\n            let mappedTail = mapText(tail)\n            in head :: mappedTail\n\nlet recursive total values =\n    match values with\n        | [] -> 0\n        | head :: tail -> Ashes.Text.byteLength(head) + total(tail)\n\nAshes.IO.print(Ashes.Text.fromInt(total(mapText([\"a\", \"b\", \"c\"]))))\n"
+
+// Each inline spine walk ends at one `rcdrop_list_end_N` label; the jumps to it vary with how many
+// exits reach the walk, so the walks are counted by their end labels.
+let expectBoundTailReleasedAtScopeExit unit =
+    boundTailProducerSource
+    |> loweredLines
+    |> functionLines("SourceFunction from mapText")
+    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.startsWith(line)("  rcdrop_list_end_"))
+    |> Ashes.Collection.List.length
+    |> (given (walks: Int) ->
+        if walks == 2
+        then Unit
+        else test.fail("expectBoundTailReleasedAtScopeExit: expected 2 inline spine walks in mapText, got " + Ashes.Text.fromInt(walks)))
+
 let runDeferredCallCopyOutTests unit =
     Unit
     |> expectCallArgumentDefinedBeforeTheCall
+    |> expectBoundTailReleasedAtScopeExit
     |> (given (_) -> Ashes.IO.print("deferred call copy-out tests passed"))

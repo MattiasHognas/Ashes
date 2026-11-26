@@ -180,6 +180,7 @@ export (
     value isMaterializableStringChildRead,
     value allFreshOwnedChildren,
     value isFreshRuntimeManageableRecordTree,
+    value isRuntimeRcOwningClosureExpression,
     value canRuntimeManageOwnedChildAdtApplication,
     value isFreshRuntimeManageableAdtExpression,
     value callSpineRootAndArity,
@@ -196,6 +197,7 @@ export (
     value capturedBindings,
     value captureCount,
     value allocateEnvironment,
+    value allocateEnvironmentIn,
     value storeCaptureAsRead,
     value pruneDeadCaptures,
     value capturedScope,
@@ -1215,20 +1217,27 @@ and lowerUnconstrainedBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = false)
+            in state with bindings = binding :: bindings
+
+// An ordinary `let`'s binding: owned like any other, and let-bound (stage 0's `Binding.Scheme`).
+let addLetBinding name scheme location state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = true)
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = None, closedScheme = schemeIsClosed(scheme), letBound = false)
             in state with bindings = binding :: bindings
 
 // Remember the exact binder's classification even when it needs no protective reference.
 let addPatternBinding name scheme location (fact: PatternBindingFact) state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternFact = Some(fact), closedScheme = schemeIsClosed(scheme), letBound = false)
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -1451,7 +1460,7 @@ let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp
                     |> registerTopLevelFunctionRef(name)(valueTemp)(scheme)
                     |> withConsumerRequest(letBodyRequest(tailForwarded)(bodyRequest)(valueTemp)(local)(storedState))
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
-                    |> addOwnedBinding(name)(scheme)(CoreLocal(local))
+                    |> addLetBinding(name)(scheme)(CoreLocal(local))
 
 let recursive stripExprAt (expr: Expr) =
     match expr with
@@ -2210,6 +2219,21 @@ let recordBorrowedOwners (name: Str) (valueTemp: Int) (slot: Int) (state: CoreLo
                     |> withStateBorrowedOwners((slot, owners) :: stateBorrowedOwners(state))
                 | _ -> withStatePendingBorrowedOwners(remaining)(state)
 
+// Stage 0 tracks a `let` binding of a live runtime owner's read (`let nextInts = fallback`) as a
+// reference-counted value its original owner alone releases (`TrackLetOwnership` over the borrow
+// `LowerVar` marks reference-counted): a transfer of the alias, a back-edge argument or a cell's
+// field, retains it as it retains the owner's own read. The alias resolves to the owner's slot.
+let aliasLetOfRuntimeOwner (value: Expr) (ownerState: CoreLoweringState) (slot: Int) (state: CoreLoweringState) =
+    match unspanArgument(value) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(ownerState) with
+                | Some(ownerSlot) ->
+                    if runtimeOwnerStateOf(slot)(state) == None
+                    then withStateRuntimeOwnerAliases((slot, ownerSlot) :: stateRuntimeOwnerAliases(state))(state)
+                    else state
+                | None -> state
+        | _ -> state
+
 let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
@@ -2221,6 +2245,7 @@ let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindin
                     (fresh
                     |> storeLetValue(name)(tailForwarded)(bodyRequest)(outerBindings)(temp)(semanticType)
                     |> recordBorrowedOwners(name)(temp)(local)
+                    |> aliasLetOfRuntimeOwner(value)(state)(local)
                     |> success(temp)(semanticType), local)
 
 let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
@@ -2591,17 +2616,19 @@ let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (stat
 // Stage 0's `IsMaterializableStringChildRead`: a borrowed string a runtime-managed parent copies
 // into an owned child of its own: a field read out of a local record binding, or a read of a
 // name the arm around the literal binds later or of a local binding that owns no
-// reference-counted string of its own; a literal keeps the parent in the arena.
+// reference-counted string of its own; a literal keeps the parent in the arena. A local binding
+// is a parameter, a pattern binder or a capture (stage 0's `Binding.Local`): a `let`-bound name
+// (stage 0's `Binding.Scheme`) is never one, so a record built from one stays in the arena.
 let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState) =
     match unspanArgument(expression) with
         | ExprQualifiedVar(owner, _field) ->
             match lookupBinding(owner)(state.bindings) with
-                | Some(CoreBinding { location = CoreLocal(_slot) }) -> true
+                | Some(CoreBinding { location = CoreLocal(_slot), letBound = false }) -> true
                 | _ -> false
         | ExprVar(name) ->
             match lookupBinding(name)(state.bindings) with
                 | None -> true
-                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | Some(CoreBinding { location = CoreLocal(_slot), patternFact = fact, letBound = false }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
                 | _ -> false
         | _ -> false
 
@@ -2620,6 +2647,28 @@ let isLocalRecordFieldRead (expression: Expr) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// Stage 0's `IsRuntimeRcOwningClosureExpression`, its normalized-parameter half: a closure literal
+// a runtime-managed aggregate owns as a fresh child, whose environment holds the entry-normalized
+// parameter the capture moves into it beside values that survive the reset only, so the environment
+// lives on the reference-counted heap with a dropper releasing that parameter; a choice between two
+// such literals is one too.
+let recursive isRuntimeRcOwningClosureExpression (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprIf(_condition, thenBranch, elseBranch) -> isRuntimeRcOwningClosureExpression(thenBranch)(state) && isRuntimeRcOwningClosureExpression(elseBranch)(state)
+        | ExprLambda(parameter, body, _annotation) ->
+            closureFreeNamesOwnNormalizedParameter([] |> freeNames(body)([parameter]))(false)(state)
+        | _ -> false
+and closureFreeNamesOwnNormalizedParameter (names: List(Str)) (owns: Bool) (state: CoreLoweringState) =
+    match names with
+        | [] -> owns
+        | name :: rest ->
+            if isNormalizedAlwaysReturnedStringParameterRead(ExprVar(name))(state)
+            then closureFreeNamesOwnNormalizedParameter(rest)(true)(state)
+            else
+                match lookupBinding(name)(state.bindings) with
+                    | Some(CoreBinding { scheme = TypeScheme { body = bindingType } }) -> resultSurvivesReset(bindingType)(state) && closureFreeNamesOwnNormalizedParameter(rest)(owns)(state)
+                    | None -> false
+
 // Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
 // recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
 // or pattern-owner read, a list the runtime may own built fresh or read from a binding or call,
@@ -2635,6 +2684,7 @@ let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: Sem
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemTuple(_elementTypes), _expression) -> isPatternOwnerRead(expression)(state)
             | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state) || isFreshRuntimeManageableAdtExpression(expression)(state) || isPatternOwnerRead(expression)(state)
+            | (SemFunction(_parameter, _result, _row), _expression) -> isRuntimeRcOwningClosureExpression(expression)(state)
             | _ -> false
 and allFreshOwnedChildren (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (arguments, fieldTypes) with
@@ -3058,7 +3108,7 @@ let recursive captureCount captures =
 // The environment holds the surviving captures; every capture of the free-variable analysis
 // still lowers its fill, the pruned ones only to reserve their temps. `copyCapture` answers the
 // temp a surviving capture is stored from: the capture itself, or a copy the environment keeps.
-let allocateEnvironment copyCapture captures survivors stackAllocate state =
+let allocateEnvironmentIn (runtimeManaged: Bool) copyCapture captures survivors stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = environmentTemp } ->
             match captures with
@@ -3074,8 +3124,11 @@ let allocateEnvironment copyCapture captures survivors stackAllocate state =
                             then
                                 emit(AllocStack(environmentTemp)(byteCount))(tempState)
                             else
-                                emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
+                                emit(Alloc(environmentTemp)(byteCount)(runtimeManaged))(tempState)
                         in fillEnvironment(copyCapture)(environmentTemp)(captures)(survivors)(0)(allocatedState)
+
+// An environment in the arena or on the stack, as every closure but a runtime-managed one has.
+let allocateEnvironment copyCapture captures survivors stackAllocate state = allocateEnvironmentIn(false)(copyCapture)(captures)(survivors)(stackAllocate)(state)
 
 // Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
 // lowered, so a capture the lowered body never reads through LoadEnv still gets an environment
@@ -3150,7 +3203,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead, closedScheme = closedScheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme)
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternFact = None, closedScheme = closedScheme, letBound = false)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =

@@ -11,6 +11,8 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
+import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
+import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReach.resultReachesVariableOutsideCells
@@ -31,6 +33,7 @@ export (
     value functionBodyRequest,
     value constructorLayoutNames,
     value calleeSummaryOf,
+    value calleeFactsName,
     value withNormalizedAlwaysReturnedParameter,
     value normalizeAlwaysReturnedParameter,
     value tcoListSlotElement,
@@ -135,20 +138,34 @@ let recursive constructorLayoutNames (layouts: List(CoreConstructorLayout)) =
 // body's aggregates can count a read of the parameter as a fresh owned child) and again after
 // it, when the parameter's type may have resolved further; the later decision can only add the
 // normalization, never withdraw it.
+// The name a callee's whole-program facts are recorded under: a concrete copy's call answers with
+// its source function's.
+let calleeFactsName (callee: Str) =
+    if Ashes.Text.startsWith(callee)("__core_concrete_call_")
+    then
+        match Ashes.Text.indexOf(callee)("%") with
+            | -1 -> callee
+            | separator -> Ashes.Text.substring(callee)(separator + 1)(Ashes.Text.length(callee) - separator - 1)
+    else callee
+
 // Stage 0's callee resolution to a registered function: the whole-program summary of the
 // function recorded under the name (by its lambda identity, else the first of that name, a
 // top-level one preferred), `None` for a callee outside the program's registry.
+// A call to a constrained function's concrete copy answers with its source function's summary, as
+// stage 0's root resolves the copy's label to the source function's name.
 let calleeSummaryOf (callee: Str) (state: CoreLoweringState) =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { letLambdaIdentities = identities, reachByIdentity = byIdentity, reachByName = byName } } ->
-            let found =
-                match Ashes.Collection.Map.getStr(callee)(identities) with
-                    | Some(identity) -> Ashes.Collection.Map.getStr(callee + "@" + Ashes.Text.fromInt(identity))(byIdentity)
-                    | None -> None
-            in
-                match found with
-                    | Some(summary) -> Some(summary)
-                    | None -> Ashes.Collection.Map.getStr(callee)(byName)
+    (let name = calleeFactsName(callee)
+    in
+        match state with
+            | CoreLoweringState { programState = CoreProgramState { letLambdaIdentities = identities, reachByIdentity = byIdentity, reachByName = byName } } ->
+                let found =
+                    match Ashes.Collection.Map.getStr(name)(identities) with
+                        | Some(identity) -> Ashes.Collection.Map.getStr(name + "@" + Ashes.Text.fromInt(identity))(byIdentity)
+                        | None -> None
+                in
+                    match found with
+                        | Some(summary) -> Some(summary)
+                        | None -> Ashes.Collection.Map.getStr(name)(byName))
 
 // A known let-bound function as the always-reaches walk consults it: its parameter chain and the
 // parameters its result always reaches, from the reach analysis's must-reach table. Stage 0
@@ -428,14 +445,18 @@ let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop:
     then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
     else None
 
-// A single-constructor ADT loop parameter admitted to runtime-managed placement, stage 0's
+// An ADT loop parameter admitted to runtime-managed placement, stage 0's
 // `IsRcEligibleScalarTupleOrAdtType`: a copy ADT (every field a scalar, `CanCopyOutAdt`) or a
 // tuple of scalars copies its cell whole at entry and at every back edge and releases as one
 // `RcDrop` under the type's name (`Tuple` for a tuple); a record with owned children
 // (`CanRuntimeManageTcoAdt`) and a tuple whose elements a runtime-managed parent owns
 // (`CanRuntimeManageOwnedTupleType`) copy their children with the cell and release them through
 // the cell's structural walk; a parameter of the contract's own types is normalized by its helper
-// (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
+// (`tcoGeneralRcParameterPlacement`). A variant whose constructors own their children
+// (`CanRuntimeManageTcoAdt` holds for `Maybe((Str, Str))`, the result of an uncons) is copied
+// constructor by constructor: a successor viewing a string a back edge releases is copied out of
+// the view before the release, as stage 0's normalization does. Answers the resolved type and
+// that name.
 let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
     match layouts with
         | _layout :: [] ->
@@ -448,7 +469,16 @@ let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstr
                             | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
                             | _ -> None
                     else None
-        | _ -> None
+        | _first :: _second :: _rest ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild } ->
+                    if ownedChild || tcoOwnedChild
+                    then
+                        match inlineAdtCopyPlanOf(named)(state) with
+                            | Some(SwitchArgumentCopy(_plans)) -> Some((named, name))
+                            | _ -> None
+                    else None
+        | [] -> None
 
 let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
     match names with
@@ -473,6 +503,78 @@ let isSingleRecordLayout (layouts: List(CoreConstructorLayout)) =
         | CoreConstructorLayout { fieldNames = _field :: _fields } :: [] -> true
         | _ -> false
 
+let recursive genericVariantCallSpine (expression: Expr) (count: Int) =
+    match stripExprAt(expression) with
+        | ExprCall(function, _argument, _sugar, _layout) -> genericVariantCallSpine(function)(count + 1)
+        | root -> (root, count)
+
+// Stage 0's `GenericVariantReturnsOwnedRoot`: every path of the loop body ends in the parameter
+// itself, unshadowed, or in a full self-call, so the loop's result is the parameter's own root.
+let recursive genericVariantReturnsOwnedRoot (self: Str) (arity: Int) (parameter: Str) (shadowed: List(Str)) (body: Expr) =
+    match stripExprAt(body) with
+        | ExprVar(name) -> !containsName(parameter)(shadowed) && name == parameter
+        | ExprIf(_condition, thenBranch, elseBranch) -> genericVariantReturnsOwnedRoot(self)(arity)(parameter)(shadowed)(thenBranch) && genericVariantReturnsOwnedRoot(self)(arity)(parameter)(shadowed)(elseBranch)
+        | ExprMatch(_value, cases, _position) ->
+            match cases with
+                | [] -> false
+                | _ -> genericVariantArmsReturnOwnedRoot(self)(arity)(parameter)(shadowed)(cases)
+        | ExprLet(name, _value, inner, _parameters, _annotation, _requirements) -> genericVariantReturnsOwnedRoot(self)(arity)(parameter)(name :: shadowed)(inner)
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            match genericVariantCallSpine(body)(0) with
+                | (ExprVar(callee), count) -> callee == self && !containsName(self)(shadowed) && count == arity
+                | _ -> false
+        | _ -> false
+and genericVariantArmsReturnOwnedRoot (self: Str) (arity: Int) (parameter: Str) (shadowed: List(Str)) cases =
+    match cases with
+        | [] -> true
+        | (pattern, armBody, _guard) :: rest ->
+            genericVariantReturnsOwnedRoot(self)(arity)(parameter)(append(shapePatternNames(pattern)([]))(shadowed))(armBody) && genericVariantArmsReturnOwnedRoot(self)(arity)(parameter)(shadowed)(rest)
+
+let recursive appliedLoopResult (functionType: SemanticType) (count: Int) (state: CoreLoweringState) =
+    if count == 0
+    then
+        functionType
+        |> resolveType(state)
+        |> Some
+    else
+        match resolveType(state)(functionType) with
+            | SemFunction(_argument, result, _row) -> appliedLoopResult(result)(count - 1)(state)
+            | _ -> None
+
+// Stage 0's `GenericVariantHasSafeExit` result-type proof: a scalar result keeps nothing of the
+// parameter, and a result of the contract's types acquires its own graph before the loop's owners
+// are released. A result type not yet resolved proves nothing.
+let genericVariantResultKeepsNoRoot (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match lookupBinding(loop.selfName)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match appliedLoopResult(body)(loop.arity)(state) with
+                | Some(SemVariable(_id)) -> false
+                | Some(result) -> resultSurvivesReset(result)(state) || isGeneralRcValueType(result)(state)
+                | None -> false
+        | None -> false
+
+let recursive namesTraitEvidence (names: List(Str)) =
+    match names with
+        | [] -> false
+        | name :: rest -> Ashes.Text.startsWith(name)("__trait_") || namesTraitEvidence(rest)
+
+// Stage 0's `IsGeneralRcGenericVariantLoopParameter`: a changing loop parameter of a generic
+// variant the contract governs (a map's tree) needs an owned loop root like a monomorphic variant,
+// so an arena update does not borrow an iteration's reference-counted children and keep them past
+// their release. A loop carrying trait evidence, a tail-modulo-cons loop, and a parameter already
+// taken as a reuse root, a specialization accumulator or a routed one stay as they are. The exit
+// contract is the owned-root return or a result that keeps no root; stage 0's third proof (an
+// exhaustive reach summary that never reaches the parameter) is not ported, so a loop proven only
+// by it keeps its parameter in the arena and its specialization. Stage 0's
+// `ReserveGenericVariantLoopRoot` is the same rule without the exit contract, read before the
+// specialization scan admits the parameter; here the scan reads the provisional placement, which
+// holds the exit contract, so a loop whose exit is not proven yet keeps its specialization.
+let genericVariantLoopParameter (ordinal: Int) (named: SemanticType) (layouts: List(CoreConstructorLayout)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (named, loopParameterNameAt(ordinal)(loop.parameterNames)) with
+        | (SemNamed(_symbolId, _typeName, _argument :: _arguments), Some(parameter)) ->
+            generalRcEnabled(state) && stateSpecializingLinearParam(state) != Some(parameter) && !loop.tmcShapePresent && !namesTraitEvidence(loop.parameterNames) && length(layouts) >= 2 && !containsName(parameter)(stateLinearReuseNames(state)) && !containsName(parameter)(stateLinearSpecializationAccumulators(state)) && !containsName(parameter)(stateRoutedSpecializationAccumulators(state)) && !containsUnresolvedLayout(named)(state) && isGeneralRcAdmissible(named)([])(state) && isGeneralRcNamedType(named)(state) && (genericVariantReturnsOwnedRoot(loop.selfName)(loop.arity)(parameter)([])(loop.body) || genericVariantResultKeepsNoRoot(loop)(state))
+        | _ -> false
+
 // Stage 0's `IsGeneralRcTcoParameterType`: a record only the normalization helper expresses (a
 // state threaded through a loop) is placed on the reference-counted heap like any other aggregate,
 // normalized at entry and at the back edge, its predecessor released; so is a monomorphic variant
@@ -491,6 +593,10 @@ let tcoGeneralRcParameterPlacement (ordinal: Int) (named: SemanticType) (layouts
             if isGeneralRcNamedType(named)(state)
             then Some(!isSpecializationAccumulatorAt(ordinal)(loop) && !loop.tmcShapePresent)
             else None
+        | (SemNamed(_symbolId, _name, _argument :: _arguments), false) ->
+            if genericVariantLoopParameter(ordinal)(named)(layouts)(loop)(state)
+            then Some(true)
+            else None
         | _ -> None
 
 // A byte buffer every self-call hands on unchanged is placed like one the loop rebuilds (stage 0's
@@ -501,38 +607,46 @@ let tcoPassThroughSlotCopy (slot: Int) (state: CoreLoweringState) =
         | Some(SemBytes) -> Some((SemBytes, "Bytes"))
         | _ -> None
 
+// A list-only self-call shape (a choice between handing the parameter on and a call consuming it,
+// say) says nothing about a named type's cells: stage 0's `IsRcEligibleScalarTupleOrAdtType` places
+// a named loop parameter whatever its self-calls pass, short of handing it on unchanged. Every
+// other type keeps the list-shape gate.
+let tcoUnnamedSlotCopy (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (resolved: Maybe(SemanticType)) (state: CoreLoweringState) =
+    if isTcoListShape(shape) && shape != TcoRefilledFreshListShape
+    then None
+    else
+        match resolved with
+            | Some(SemTuple(elements) as tuple) ->
+                if length(elements) > 0 && allRuntimeOwnedCopyElements(elements)(state)
+                then Some((tuple, "Tuple"))
+                else None
+            | Some(SemString) -> Some((SemString, "String"))
+            | Some(SemBytes) -> Some((SemBytes, "Bytes"))
+            | Some(SemList(element) as list) ->
+                if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
+                then
+                    match argumentCopyPlanOf(list)(state) with
+                        | Some(_plan) -> Some((list, "List"))
+                        | None -> None
+                else None
+            | _ -> None
+
 let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if shape == TcoPassThroughShape
     then tcoPassThroughSlotCopy(slot)(state)
     else
-        if isTcoListShape(shape) && shape != TcoRefilledFreshListShape
-        then None
-        else
-            match slotResolvedType(slot)(state.bindings)(state) with
-                | Some(SemNamed(_symbolId, name, _arguments) as named) ->
-                    if isResourceHandle(named)(state)
-                    then None
-                    else
-                        let layouts = state |> stateConstructorsOfType(name)
-                        in
-                            match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
-                                | Some(true) -> Some((named, name))
-                                | Some(false) -> None
-                                | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
-                | Some(SemTuple(elements) as tuple) ->
-                    if length(elements) > 0 && allRuntimeOwnedCopyElements(elements)(state)
-                    then Some((tuple, "Tuple"))
-                    else None
-                | Some(SemString) -> Some((SemString, "String"))
-                | Some(SemBytes) -> Some((SemBytes, "Bytes"))
-                | Some(SemList(element) as list) ->
-                    if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
-                    then
-                        match argumentCopyPlanOf(list)(state) with
-                            | Some(_plan) -> Some((list, "List"))
-                            | None -> None
-                    else None
-                | _ -> None
+        match slotResolvedType(slot)(state.bindings)(state) with
+            | Some(SemNamed(_symbolId, name, _arguments) as named) ->
+                if isResourceHandle(named)(state)
+                then None
+                else
+                    let layouts = state |> stateConstructorsOfType(name)
+                    in
+                        match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
+                            | Some(true) -> Some((named, name))
+                            | Some(false) -> None
+                            | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
+            | resolved -> tcoUnnamedSlotCopy(slot)(shape)(loop)(resolved)(state)
 
 let tcoAdtSlotAdmitted (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match tcoAdtSlotCopy(ordinal)(slot)(shape)(loop)(state) with
@@ -1104,26 +1218,59 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
+// `(every reader is part of a reference-or-copy normalization, any reader)` of `temp`: a
+// representation test, a retain, or a copy onto the reference-counted heap.
+let recursive readersOnlyNormalize (temp: Int) (instructions: List(IrInstruction)) (anyReader: Bool) =
+    match instructions with
+        | [] -> anyReader
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getUsedTemps
+            |> containsInt(temp)
+            then
+                match kind with
+                    | IsReferenceCounted(_target, _source) -> readersOnlyNormalize(temp)(rest)(true)
+                    | RcDup(_target, _source, _runtimeManaged, _mayBeEmpty) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutList(_target, _source, _headCopy, true, _purpose) -> readersOnlyNormalize(temp)(rest)(true)
+                    | CopyOutArena(_target, _source, _size, true, _purpose, _deferred) -> readersOnlyNormalize(temp)(rest)(true)
+                    | _ -> false
+            else readersOnlyNormalize(temp)(rest)(anyReader)
+
+// The identity duplicates of a pattern owner's aliases that the lowering then only took a reference
+// or a reference-counted copy of: an arm returning the owner (`| last :: [] -> last`) duplicated it
+// while it still looked unplaced, and the arm's join normalized that duplicate. Stage 0's
+// `TransferDeferredPatternOwnerResult` takes that one reference or copy itself, so such a duplicate
+// stays an identity and the normalization's reference is the arm's.
+let recursive normalizedOnlyMarkers (scan: List(IrInstruction)) (instructions: List(IrInstruction)) (aliases: List(Int)) (kept: List(Int)) =
+    match scan with
+        | [] -> kept
+        | IrInstruction { instruction = RcDup(target, source, false, _mayBeEmpty) } :: rest ->
+            normalizedOnlyMarkers(rest)(instructions)(aliases)(if containsInt(source)(aliases) && readersOnlyNormalize(target)(instructions)(false)
+            then target :: kept
+            else kept)
+        | _instruction :: rest -> normalizedOnlyMarkers(rest)(instructions)(aliases)(kept)
+
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
 // type name, naming the structural dropper of a value whose release reaches past its own cell
 // (the marker is one instruction, so an aggregate owner's walk lives behind that label). A release
-// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate.
-let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
+// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate. A
+// duplicate in `kept` (`normalizedOnlyMarkers`) stays an identity.
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) (kept: List(Int)) =
     match instructions with
         | [] -> []
         | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
-            (if containsInt(source)(aliases) && !runtimeManaged
+            (if containsInt(source)(aliases) && !runtimeManaged && !containsInt(target)(kept)
             then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
         | (IrInstruction { instruction = RcDrop(source, markerTypeName, ownerSlot, runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
             (if ownerSlot == slot
             then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
             else
                 if !runtimeManaged && containsInt(source)(released) && containsInt(source)(aliases)
                 then instruction with instruction = RcDrop(source)(markerTypeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
-                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
-        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)(kept)
 
 let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
@@ -1146,7 +1293,9 @@ let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringStat
                         synthesized
                         |> markRuntimeTemps(aliases)
                         |> (given (marked: CoreLoweringState) ->
-                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
+                            marked with reversedInstructions = reverse([]
+                            |> normalizedOnlyMarkers(instructions)(instructions)(aliases)
+                            |> promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
 
 let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
     match sites with
@@ -1196,9 +1345,11 @@ let recursive storeMarkerIntoSlot (slot: Int) (marker: Int) (zeroTemp: Int) (ins
             else instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
         | instruction :: rest -> instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
 
-// Stage 0's `SettleHandedOverMarkerSlots` for arena cells: once the pattern owners are placed, a
-// marker handed to an owned slot that became a real retain is stored into it; one that stayed an
-// identity took no reference.
+// Stage 0's `SettleHandedOverMarkerSlots` for arena cells, run once the loop's retains are final
+// (behind the promotion of its parameter retains and its withdrawals, as stage 0 runs it last in
+// `LowerLambdaCoreFinalizeTcoOwnership`): a marker handed to an owned slot that is a real retain
+// by then is stored into it; one that stayed an identity, or was withdrawn to a borrow, took no
+// reference, and its slot stays zero.
 let recursive settleCellMarkerSlots (slots: List((Int, Int, Int))) (state: CoreLoweringState) =
     match slots with
         | [] -> withStateCellMarkerSlots([])(state)
@@ -1313,8 +1464,6 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
     |> (given (placed: List(PatternOwnerSite)) ->
         state
         |> promotePatternOwnerSites(placed)
-        |> (given (promoted: CoreLoweringState) ->
-            settleCellMarkerSlots(stateCellMarkerSlots(promoted))(promoted))
         |> splicePatternOwnerDups(placed)
         |> retainUnplacedAggregateMarkersOf(statePatternOwnerSites(state))(placed)
         |> (given (finalized: CoreLoweringState) -> withStatePatternOwnerSites([])(finalized)))
@@ -1323,11 +1472,15 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
 // a runtime-managed `Str` candidate.
 let tcoParameterPlaced (slot: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) = managedSlotResult(slot)(managedLists)(managedAdts)([]) || candidateStrManaged(slot)(candidates)
 
+// A retain marker whose value the lowering then took a reference or a reference-counted copy of
+// (a mixed join normalized the arm while the marker still looked unowned) stays an identity: the
+// normalization's own reference is the arm's, as stage 0's arm, which knows the placement up front,
+// stores the retain itself and normalizes nothing.
 let recursive promotedRetainTemps (sites: List((Int, Int, SemanticType))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match sites with
         | [] -> []
         | (duplicate, slot, semanticType) :: rest ->
-            if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates)
+            if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates) && readersOnlyNormalize(duplicate)(state.reversedInstructions)(false) == false
             then
                 (duplicate, semanticType
                 |> resolveType(state)
@@ -1832,6 +1985,107 @@ let withdrawBorrowedScrutineeRetains (parameters: List((Int, Int))) (state: Core
     |> withdrawScrutineeCells(stateBorrowedScrutineeCells(state))(parameters)
     |> withStateBorrowedScrutineeCells([])
 
+// Stage 0's `WithdrawLetCopiedCellTailDuplicates`, run beside the borrowed scrutinee withdrawal.
+let recursive managedAdtSlotsOf (managedAdts: List((Int, Int, SemanticType, Str))) =
+    match managedAdts with
+        | [] -> []
+        | (slot, _activeSlot, _semanticType, _typeName) :: rest -> slot :: managedAdtSlotsOf(rest)
+
+let withdrawLetCellTailDuplicatesOf (ownerSlots: List(Int)) (parameterSlots: List(Int)) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
+    state with reversedInstructions = withdrawLetCopiedCellTailDuplicates(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(parameterSlots)(managedAdtSlotsOf(managedAdts))(state.reversedInstructions)
+
+let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (sources: List(Int)) =
+    match instructions with
+        | [] -> sources
+        | IrInstruction { instruction = StoreLocal(stored, source) } :: rest ->
+            if stored == slot
+            then slotStoreSources(slot)(rest)(source :: sources)
+            else slotStoreSources(slot)(rest)(sources)
+        | _instruction :: rest -> slotStoreSources(slot)(rest)(sources)
+
+// How the value of `temp` was produced, read from the most recent instruction defining it: a
+// reference-counted retain or copy onto the reference-counted heap (2), a constant (1, the
+// no-match arm's or nil's placeholder), the
+// reload of a join slot (3, with the slot), or anything else (0).
+let recursive joinSourceKind (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> (0, -1)
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = CopyOutList(target, _source, _headCopy, runtimeManaged, _purpose) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = CopyOutArena(target, _source, _size, runtimeManaged, _purpose, _deferred) } :: rest ->
+            if target == temp
+            then
+                if runtimeManaged
+                then (2, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest ->
+            if target == temp
+            then
+                if value == 0
+                then (1, -1)
+                else (0, -1)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then (3, slot)
+            else joinSourceKind(temp)(rest)
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then (0, -1)
+            else joinSourceKind(temp)(rest)
+
+// `(all sources owned or neutral, any retain)` over the values stored into a join slot, nested
+// joins followed `depth` levels.
+let recursive joinStoresRetains (sources: List(Int)) (depth: Int) (instructions: List(IrInstruction)) (anyRetain: Bool) =
+    match sources with
+        | [] -> (true, anyRetain)
+        | source :: rest ->
+            match joinSourceKind(source)(instructions) with
+                | (2, _slot) -> joinStoresRetains(rest)(depth)(instructions)(true)
+                | (1, _slot) -> joinStoresRetains(rest)(depth)(instructions)(anyRetain)
+                | (3, slot) ->
+                    if depth > 0
+                    then
+                        match joinStoresRetains(slotStoreSources(slot)(instructions)([]))(depth - 1)(instructions)(false) with
+                            | (true, nestedRetain) -> joinStoresRetains(rest)(depth)(instructions)(anyRetain || nestedRetain)
+                            | (false, _nested) -> (false, anyRetain)
+                    else (false, anyRetain)
+                | _ -> (false, anyRetain)
+
+// Stage 0 settles a loop parameter's placement before its body is lowered, so the retain an exit
+// arm takes of a heap field of a reference-counted parameter (`| [] -> state.refs`) is
+// reference-counted when the arm stores it, and `ReachingArmsAllReferenceCounted` marks the join
+// reference-counted: the function returns an owned result, its closure says so, and the caller
+// takes it without a copy. This lowering places the parameter, and promotes that retain, only
+// here; a body result that is the reload of a join every reaching arm of which stores a promoted
+// retain (the no-match arm and nil store a constant) is marked the same way before the result's
+// finishing reads it.
+let markPromotedRetainJoin (bodyTemp: Int) (state: CoreLoweringState) =
+    if isRuntimeTemp(bodyTemp)(state)
+    then state
+    else
+        match joinSourceKind(bodyTemp)(state.reversedInstructions) with
+            | (3, slot) ->
+                match joinStoresRetains(slotStoreSources(slot)(state.reversedInstructions)([]))(3)(state.reversedInstructions)(false) with
+                    | (true, true) -> markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
+                    | _ -> state
+            | _ -> state
+
 let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
@@ -1846,8 +2100,14 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> finalizeAccessorResultRetains(managedLists)(managedAdts)(candidates)
+                    |> markPromotedRetainJoin(bodyTemp)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
+                    |> withdrawLetCellTailDuplicatesOf(state
+                    |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
+                    |> patternOwnerSiteSlots)(frame.parameterSlots)(managedAdts)
+                    |> (given (withdrawn: CoreLoweringState) ->
+                        settleCellMarkerSlots(stateCellMarkerSlots(withdrawn))(withdrawn))
                     |> finishTcoManagedPlacement(label)(state
                     |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
                     |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))

@@ -1111,7 +1111,7 @@ let pruneInstruction kind = IrInstruction(instruction = kind, location = None)
 let recursive pruneBindings (names: List(Str)) =
     match names with
         | [] -> []
-        | name :: rest -> CoreBinding(name = name, scheme = TypeScheme(quantified = [], body = SemInt, constraints = []), location = CoreLocal(0), ownedRead = false, patternFact = None, closedScheme = true) :: pruneBindings(rest)
+        | name :: rest -> CoreBinding(name = name, scheme = TypeScheme(quantified = [], body = SemInt, constraints = []), location = CoreLocal(0), ownedRead = false, patternFact = None, closedScheme = true, letBound = false) :: pruneBindings(rest)
 
 let recursive bindingNames (bindings: List(CoreBinding)) =
     match bindings with

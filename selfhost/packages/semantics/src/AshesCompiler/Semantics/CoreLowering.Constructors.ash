@@ -91,6 +91,29 @@ let isTupleType (semanticType: SemanticType) =
         | SemTuple(_elements) -> true
         | _ -> false
 
+// A field whose resolved type is a function: stage 0 asks a closure child for its runtime
+// representation only there (a type-parameter field takes it through the escaping-capture rule).
+let resolvedFunctionField (fieldType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(fieldType) with
+        | SemFunction(_parameter, _result, _row) -> true
+        | _ -> false
+
+// Stage 0's closure representation for a constructor argument that is a closure literal owning its
+// captures: a one-shot mark the lambda takes (see `stateRuntimeClosureRequest`).
+let requestRuntimeClosure (requested: Bool) (state: CoreLoweringState) =
+    if requested
+    then withStateRuntimeClosureRequest(true)(state)
+    else state
+
+// The closure request an argument set is spent once the argument is lowered, whether or not a
+// lambda took it.
+let clearRuntimeClosureRequest (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state } ->
+            if stateRuntimeClosureRequest(state)
+            then lowered with state = withStateRuntimeClosureRequest(false)(state)
+            else lowered
+
 // The request one constructor argument is lowered under, stage 0's
 // `LowerRuntimeManagedConstructorArgument` with `LowerConstructorArguments`' child
 // representations: the parent's flags minus the ADT and record ones, the ADT flag again when the
@@ -124,14 +147,28 @@ let requiresRuntimeManagedChildCopy (fieldType: SemanticType) (state: CoreLoweri
                 | facts -> runtimeManagedAdtLayout(facts)
         | _ -> false
 
+// Whether the argument reads a binding that still owns its reference-counted value. Stage 0 marks
+// the borrow of such an owner as a reference-counted result; this lowering leaves the borrowed
+// read unmarked and asks the binding instead.
+let readsLiveRuntimeOwner (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> true
+                | None -> false
+        | _ -> false
+
 // A runtime cell's child that is not already reference-counted (a list, tuple, or aggregate read
 // out of a pattern owner, or an arena value) is cloned into an owned graph, stage 0's deep copy
 // normalization in `LowerRuntimeManagedConstructorArgument`; the clone carries its own
-// reference, so no pattern-owner duplicate is taken on top of it.
-let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+// reference, so no pattern-owner duplicate is taken on top of it. The read of a live owner is
+// reference-counted already and is not cloned: the cell takes its reference through the
+// owned-child retain (`retainRuntimeCellChildren`), and a clone or reference taken here as well
+// would be a second reference nothing releases.
+let normalizeConstructorChildArgument (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if runtimeManaged && isRuntimeTemp(temp)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
+            if runtimeManaged && isRuntimeTemp(temp)(state) == false && readsLiveRuntimeOwner(argument)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
             then
                 match argumentCopyPlanOf(fieldType)(state) with
                     | Some(inlinePlan) ->
@@ -730,10 +767,12 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
         | (argument :: restArguments, fieldType :: restTypes) ->
             match state
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
+            |> requestRuntimeClosure(runtimeManaged && resolvedFunctionField(fieldType)(state) && isRuntimeRcOwningClosureExpression(argument)(state))
             |> lower(argument)
+            |> clearRuntimeClosureRequest
             |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
             |> ownPatternBoundStringChild(runtimeManaged)(argument)(fieldType)
-            |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
+            |> normalizeConstructorChildArgument(runtimeManaged)(argument)(fieldType)
             |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->

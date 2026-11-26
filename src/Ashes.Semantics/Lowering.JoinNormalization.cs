@@ -129,7 +129,14 @@ public sealed partial class Lowering
     private void NormalizeJoinArmStoreMovingTail(IrInst.StoreLocal store, TypeRef.TList list)
     {
         int ownedSlot = ConsChainTailOwnedSlot(store.Source);
-        ReplaceJoinArmStore(store, source => EmitRuntimeManagedTcoListDeepCopyByCopy(source, list.Element, shareReferenceCountedSuffix: true, moveSharedSuffix: ownedSlot != -2, takenOverSlot: ownedSlot));
+        List<IrInst> body = _inst;
+        ArmCellHeadSlot? headSlot = TakeArmCellHeadSlot(store.Source);
+        ReplaceJoinArmStore(store, source =>
+        {
+            int copied = EmitRuntimeManagedTcoListDeepCopyByCopy(source, list.Element, shareReferenceCountedSuffix: true, moveSharedSuffix: ownedSlot != -2, takenOverSlot: ownedSlot);
+            WriteArmCellHeadSlot(headSlot, store.Source, body);
+            return copied;
+        });
     }
 
     // An arm returning one of the function's own parameters as it is: a caller handing a fresh
@@ -1028,9 +1035,18 @@ public sealed partial class Lowering
     // Replaces the arm's store with a normalization of its value followed by the store of the
     // normalized value, emitted into a buffer and spliced where the store was.
     private void NormalizeJoinArmStore(IrInst.StoreLocal store, TypeRef type, bool freshValue = false)
-        => ReplaceJoinArmStore(store, source => freshValue
-            ? EmitOwnedResultOrCopy(source, type)
-            : EmitRuntimeManagedTcoDeepCopy(source, type));
+    {
+        List<IrInst> body = _inst;
+        ArmCellHeadSlot? headSlot = TakeArmCellHeadSlot(store.Source);
+        ReplaceJoinArmStore(store, source =>
+        {
+            int normalized = freshValue
+                ? EmitOwnedResultOrCopy(source, type)
+                : EmitRuntimeManagedTcoDeepCopy(source, type);
+            WriteArmCellHeadSlot(headSlot, store.Source, body);
+            return normalized;
+        });
+    }
 
     private void ReplaceJoinArmStore(IrInst.StoreLocal store, Func<int, int> normalize, bool runtimeManaged = true)
     {

@@ -30,6 +30,7 @@ export (
     value callRequestsArenaResult,
     value emitPlainCallCopyOut,
     value takenOverSettleBase,
+    value letCopyReleaseBase,
     value emitOwnFieldWalk,
     value resolvePendingTcoResets,
     value resolveLoweredPendingBlocks,
@@ -290,6 +291,51 @@ let keepTakenOverSettleRenamed (renames: List((Int, Int))) (resetId: Int) (state
 // call-result copy-out (found by its own reload instruction) the copy-out block ahead of the
 // reload, or, resolved to nothing, the removal of the store before it and of the reload itself,
 // every later read of the reload's temp renamed to the result.
+// The id range of the placeholders a `let` of a deferred call copy-out's reload leaves at its
+// scope exit, apart from the reset and settlement ids: the base plus the binding's slot.
+let letCopyReleaseBase = 4000000
+
+// Whether a deferred copy-out, its type now settled, copies its result onto the reference-counted
+// heap and no owned slot of the function takes the result over (a self call's result of the
+// contract's types is one).
+let copyOutResolvesToHeapCopy (copyOut: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    if copyOut.deferredOwned || containsUnresolvedLayout(copyOut.deferredType)(state) || isGeneralRcValueType(copyOut.deferredType)(state)
+    then false
+    else
+        match callCopyOutOf(copyOut.deferredType)(state) with
+            | Some(_copyOut) -> ordinaryRcPlacementAllowed(state)
+            | None -> false
+
+let recursive letReleaseCopyOut (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> None
+        | copyOut :: rest ->
+            if containsInt(slot)(copyOut.deferredLetReleaseSlots)
+            then Some(copyOut)
+            else letReleaseCopyOut(slot)(rest)
+
+// The release of a `let` binding of a deferred copy-out's reload that the copy-out resolved to a
+// copy onto the reference-counted heap: the binding owns that copy, released with the inline walk
+// stage 0's binding takes; nothing for any other resolution.
+let emitDeferredLetCopyRelease (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+    match letReleaseCopyOut(slot)(copyOuts) with
+        | Some(copyOut) ->
+            if copyOutResolvesToHeapCopy(copyOut)(state)
+            then
+                let resolved = resolveType(state)(copyOut.deferredType)
+                in
+                    match stateOwnedTypeNameOf(resolved)(state) with
+                        | Some(typeName) ->
+                            (state with currentSpan = None)
+                            |> withStateRuntimeOwners((slot, true) :: stateRuntimeOwners(state))
+                            |> withStateOwnerReleasePlans((slot, resolved, OwnedReleasePlan(deepUnique = false, constructorName = None, matchFieldTransfer = None)) :: stateOwnerReleasePlans(state))
+                            |> emitOwnedLetRelease(typeName)(slot)
+                            |> retireRuntimeOwner(slot)
+                            |> (given (released: CoreLoweringState) -> released with currentSpan = state.currentSpan)
+                        | None -> state
+            else state
+        | None -> state
+
 let recursive splicePendingBlocks (instructions: List(IrInstruction)) (resets: List(CoreTcoReset)) (copyOuts: List(CorePendingCallCopyOut)) (renames: List((Int, Int))) (state: CoreLoweringState) =
     match instructions with
         | [] -> state
@@ -308,16 +354,22 @@ let recursive splicePendingBlocks (instructions: List(IrInstruction)) (resets: L
                 | None ->
                     match instruction with
                         | IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } ->
-                            match lookupTcoReset(resetId)(resets) with
-                                | Some(reset) ->
-                                    state
-                                    |> emitResolvedTcoReset(reset)
-                                    |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
-                                | None ->
-                                    state
-                                    |> keepTakenOverSettleRenamed(renames)(resetId)
-                                    |> keepSplicedInstruction(renames)(instruction)
-                                    |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
+                            if resetId >= letCopyReleaseBase
+                            then
+                                state
+                                |> emitDeferredLetCopyRelease(resetId - letCopyReleaseBase)(copyOuts)
+                                |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
+                            else
+                                match lookupTcoReset(resetId)(resets) with
+                                    | Some(reset) ->
+                                        state
+                                        |> emitResolvedTcoReset(reset)
+                                        |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
+                                    | None ->
+                                        state
+                                        |> keepTakenOverSettleRenamed(renames)(resetId)
+                                        |> keepSplicedInstruction(renames)(instruction)
+                                        |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                         | _ ->
                             state
                             |> keepSplicedInstruction(renames)(instruction)

@@ -523,6 +523,7 @@ internal static class PerceusLifetimePlacement
         // liveness, so the drop lands after the last real use, never earlier.
         var aliasStores = new Dictionary<int, List<AliasStore>>();
         var viewAliases = new HashSet<int>();
+        var viewSlots = new HashSet<int>();
         int[] orderedRegion = [.. region.OrderBy(index => blocks[index].Start)];
         bool changed = true;
         while (changed)
@@ -533,12 +534,19 @@ internal static class PerceusLifetimePlacement
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
                 {
-                    changed |= PropagateAlias(instructions[i], i, block, aliases, viewAliases, aliasStores, arenaAdtCells);
+                    changed |= PropagateAlias(instructions[i], i, block, aliases, viewAliases, viewSlots, aliasStores, arenaAdtCells);
                 }
             }
         }
 
         return aliases;
+    }
+
+    // Records a view alias; true when it is new to either set.
+    private static bool AddViewAlias(HashSet<int> aliases, HashSet<int> viewAliases, int temp)
+    {
+        bool newView = viewAliases.Add(temp);
+        return aliases.Add(temp) || newView;
     }
 
     // Records a store of an alias into a slot; the store's index and block are what a later load
@@ -568,17 +576,33 @@ internal static class PerceusLifetimePlacement
         Block block,
         HashSet<int> aliases,
         HashSet<int> viewAliases,
+        HashSet<int> viewSlots,
         Dictionary<int, List<AliasStore>> aliasStores,
         HashSet<int> arenaAdtCells)
     {
         switch (instruction)
         {
+            // A view kept in a slot or read through a borrow is still a view: a `let` binding an
+            // `uncons` result, matched later, reads the pieces out of what the load gives back.
+            case IrInst.Borrow viewBorrow when viewAliases.Contains(viewBorrow.SourceTemp):
+                return AddViewAlias(aliases, viewAliases, viewBorrow.Target);
             case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
                 return aliases.Add(borrow.Target);
+            case IrInst.StoreLocal viewStore when viewAliases.Contains(viewStore.Source):
+                bool newViewSlot = viewSlots.Add(viewStore.Slot);
+                return AddAliasStore(aliasStores, new AliasStore(viewStore.Slot, index, block.Start, block.End)) || newViewSlot;
             case IrInst.StoreLocal store when aliases.Contains(store.Source):
                 return AddAliasStore(aliasStores, new AliasStore(store.Slot, index, block.Start, block.End));
+            case IrInst.LoadLocal viewLoad when viewSlots.Contains(viewLoad.Slot) && LoadSeesAliasStore(aliasStores, viewLoad.Slot, index, block):
+                return AddViewAlias(aliases, viewAliases, viewLoad.Target);
             case IrInst.LoadLocal load when LoadSeesAliasStore(aliasStores, load.Slot, index, block):
                 return aliases.Add(load.Target);
+            // A cell or arena record holding a view holds the backing's bytes: what is read back out
+            // of it is a view too.
+            case IrInst.StoreMemOffset viewCellStore when viewAliases.Contains(viewCellStore.Source):
+                return AddViewAlias(aliases, viewAliases, viewCellStore.BasePtr);
+            case IrInst.SetAdtField viewFieldStore when viewAliases.Contains(viewFieldStore.Source) && arenaAdtCells.Contains(viewFieldStore.Ptr):
+                return AddViewAlias(aliases, viewAliases, viewFieldStore.Ptr);
             case IrInst.StoreMemOffset cellStore when aliases.Contains(cellStore.Source):
                 return aliases.Add(cellStore.BasePtr);
             case IrInst.SetAdtField fieldStore when aliases.Contains(fieldStore.Source) && arenaAdtCells.Contains(fieldStore.Ptr):

@@ -47,6 +47,7 @@ export (
     type CoreTcoReset(..),
     type CorePendingCallCopyOut(..),
     type CoreSettleKind(..),
+    type CoreCallArgumentFrame(..),
     type CoreTakenOverSettle(..),
     type CoreSpecializationCandidate(..),
     type CoreTopLevelFunctionReference(..),
@@ -243,6 +244,11 @@ export (
     value stateHandlerArmOwnResult,
     value withStateHandlerArmOwnResult,
     value ordinaryRcPlacementAllowed,
+    value asyncIndependentRcPlacementAllowed,
+    value stateCoroutineFunctions,
+    value withStateCoroutineFunctions,
+    value stateMayRunInsideCoroutine,
+    value withStateMayRunInsideCoroutine,
     value escapingRcPlacementAllowed,
     value generalRcEnabled,
     value statePendingClosureNormalizers,
@@ -387,6 +393,8 @@ export (
     value withCallArgumentRetainFrame,
     value stateCallArgumentLabelStart,
     value stateCallArgumentFrameActive,
+    value stateCallArgumentFrame,
+    value stateCallArgumentFrameUnderBackEdge,
     value stateTcoParameterRetainSites,
     value withStateTcoParameterRetainSites,
     value stateArenaParameterCopies,
@@ -456,10 +464,15 @@ export (
     value withStateStackAllocateConstructor,
     value stateScrutineeTuple,
     value withStateScrutineeTuple,
+    value stateRuntimeClosureRequest,
+    value withStateRuntimeClosureRequest,
+    value takeRuntimeClosureRequest,
     value stateLinearSpecializationAccumulators,
     value withStateLinearSpecializationAccumulators,
     value stateRoutedSpecializationAccumulators,
     value withStateRoutedSpecializationAccumulators,
+    value stateRoutedSpecializationCallees,
+    value withStateRoutedSpecializationCallees,
     value stateSpecializingReuseLabel,
     value withStateSpecializingReuseLabel,
     value stateFullyReusingCallees,
@@ -745,9 +758,6 @@ type CoreTcoReset =
     // the ordinals of the successors that are a call's result reaching its slot (stage 0's
     // `ArenaSuccessorMayHoldPartOf`).
     | ownedDropFacts: List((Int, List(Int), List(Int)))
-    // Per owned drop, the ordinals of the successors that are no call's result and whose value can
-    // have been read from its slot: a join, an alias or a cell of this iteration naming its value.
-    | ownedDropPlainSuccessors: List((Int, List(Int)))
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
@@ -770,9 +780,26 @@ type CorePendingCallCopyOut =
     // slot of the function and the call's arena-result request is withdrawn.
     | deferredSelfCall: Bool
     | deferredOwned: Bool
+    // The slots of the `let` bindings of the reload that release a heap copy at their scope exit:
+    // each scope exit holds a placeholder (`letCopyReleaseBase` plus the slot) resolved with this
+    // copy-out once its type is known.
+    | deferredLetReleaseSlots: List(Int)
+    // How many of the loop's back edges were lowered before the call: a call no back edge follows
+    // in lowering order is never followed by one at run time.
+    | deferredBackEdgesBefore: Int
 
 // What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
 // result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
+// The call-argument frame of the call being lowered: none outside a call; an ordinary call's; or
+// that of a call nested in a loop's back-edge argument (`lowerItems(rest)(prepareGroup([...])(total))`),
+// whose argument's tuple owner duplicates the call releases as any call's, where the self-call's own
+// argument records none.
+type CoreCallArgumentFrame =
+    | NoCallArgumentFrame
+    | OrdinaryCallArgumentFrame
+    | BackEdgeNestedCallArgumentFrame
+    deriving {Eq}
+
 type CoreSettleKind =
     | ListRecordKind(SemanticType)
     | OwnFieldKind(Bool, List((Int, Bool, List((Int, SemanticType)))))
@@ -962,6 +989,9 @@ type CoreProgramState =
     // Stage 0's `_maFunctionsMayExecuteAsParallelWorker`: the top-level functions that may run on a
     // structured-parallelism worker thread.
     | parallelWorkerFunctions: MapTree(Str, Bool)
+    // Stage 0's `_maFunctionsMayExecuteInsideCoroutine`: the top-level functions that may run inside
+    // a coroutine, written in or reachable from an `async` body.
+    | coroutineFunctions: MapTree(Str, Bool)
     | entryRunsUnderLiveHandlerPost: Bool
     | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
@@ -1107,6 +1137,9 @@ type CoreFunctionState =
     // a worker frees its own heap when it exits, so a value of its is copied out, never shared. A
     // nested function takes its enclosing function's answer.
     | mayRunAsParallelWorker: Bool
+    // Stage 0's `MayExecuteInsideCoroutine` for the function being lowered; a nested function takes
+    // its enclosing function's answer.
+    | mayRunInsideCoroutine: Bool
     // Stage 0's `_loweringHandlerArmOwnResult`: an operation arm closure is being lowered, whose own
     // escaping result may reach the reference-counted heap under a live handler post, since the
     // perform site always asks for its arena form and releases the original.
@@ -1372,7 +1405,7 @@ type CoreTcoState =
     | callArgumentRecordRetains: List((Int, Int, SemanticType))
     | collectingCallArgumentRetains: Bool
     | callArgumentLabelStart: Int
-    | callArgumentFrameActive: Bool
+    | callArgumentFrame: CoreCallArgumentFrame
 
 type CoreReuseState =
     | reuseTransferredNames: List(Str)
@@ -1407,6 +1440,11 @@ type CoreReuseState =
     // A one-shot mark from `lowerMatch` that the tuple literal about to be lowered is the match's
     // scrutinee, which no consumer keeps: `lowerTuple` takes it and clears it.
     | scrutineeTuple: Bool
+    // Stage 0's `LoweredValueRuntimeRepresentation.Closure` request: a one-shot mark from a
+    // constructor argument that is a closure literal owning its captures (or a choice between such
+    // literals), placed on the reference-counted heap. An `if` hands it to each branch and takes it
+    // from its condition; `lowerLambda` takes it, so the lambda's body never sees it.
+    | runtimeClosureRequest: Bool
     // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
     // to a single-parameter specialization candidate, deep-copied once at loop entry so the
     // specialization may rewrite them in place. The only route by which a call whose accumulator
@@ -1415,6 +1453,10 @@ type CoreReuseState =
     // Stage 0's `_routedSpecializationAccumulators`: the accumulators of the function being
     // lowered, and of the lambdas nested in it, whose call was routed to a reuse specialization.
     | routedSpecializationAccumulators: List(Str)
+    // Stage 0's `LowerReuseSpecializedCall` context: the callees whose call the ordinary call path is
+    // lowering as a routed call to their reuse specialization, the specialization's closure bound
+    // under the callee's name.
+    | routedSpecializationCallees: List(Str)
     // Stage 0's `_specializingReuseLabel`: the label of the function that bound the linear
     // parameter while a specialization was being generated, so the reset-safety scan runs over the
     // body that actually rebuilds the accumulator; and its `_fullyReusingLabels`/
@@ -2290,17 +2332,41 @@ let withStateHandlerArmOwnResult value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with handlerArmOwnResult = value))
 
-// Stage 0's `AllowsOrdinaryRcPlacement`: the function being lowered cannot run while a one-shot
-// post is pending, so its values may be placed on the reference-counted heap.
-let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false
+let stateCoroutineFunctions (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.coroutineFunctions)
 
-// Stage 0's `AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult`, the gate of an escaping
-// result's placement.
-let escapingRcPlacementAllowed (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) || stateHandlerArmOwnResult(state)
+let withStateCoroutineFunctions value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with coroutineFunctions = value))
 
-// Stage 0's `GeneralRcEnabled` as far as the live-handler context decides it: the function may place
-// ordinary values on the reference-counted heap and no function of the program may run while a
-// one-shot post is pending.
+let stateMayRunInsideCoroutine (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.mayRunInsideCoroutine)
+
+let withStateMayRunInsideCoroutine value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with mayRunInsideCoroutine = value))
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement` (`!MayExecuteInsideCoroutine`) and its
+// `_inCoroutineBody`: a coroutine body keeps every value in the arena, its call results copied out
+// at their call boundary and its loop's arena reset at the loop head after a resume, so nothing it
+// holds across a suspension is reference-counted; so does every function that may run inside one.
+let asyncIndependentRcPlacementAllowed (state: CoreLoweringState) = stateCoroutineBody(state) == false && stateMayRunInsideCoroutine(state) == false
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement`, the pair every stage-0
+// placement reads together: the function being lowered is no coroutine body and cannot run while a
+// one-shot post is pending, so its values may be placed on the reference-counted heap.
+let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false && asyncIndependentRcPlacementAllowed(state)
+
+// Stage 0's `AllowsAsyncIndependentRcPlacement && (AllowsOrdinaryRcPlacement ||
+// _loweringHandlerArmOwnResult)`, the gate of an escaping result's placement.
+let escapingRcPlacementAllowed (state: CoreLoweringState) = asyncIndependentRcPlacementAllowed(state) && (stateUnderLiveHandlerPost(state) == false || stateHandlerArmOwnResult(state))
+
+// Stage 0's `GeneralRcEnabled` as far as the live-handler and coroutine contexts decide it: the
+// function is no coroutine body (its `!_inCoroutineBody` and `AllowsAsyncIndependentRcPlacement`
+// terms, through `ordinaryRcPlacementAllowed`), may place ordinary values on the reference-counted
+// heap, and no function of the program may run while a one-shot post is pending.
 let generalRcEnabled (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && programMayRunUnderLiveHandlerPost(state) == false
 
 let statePendingClosureNormalizers (state: CoreLoweringState) =
@@ -2984,9 +3050,13 @@ let stateCallArgumentLabelStart (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.callArgumentLabelStart)
 
-let stateCallArgumentFrameActive (state: CoreLoweringState) =
+let stateCallArgumentFrame (state: CoreLoweringState) =
     (let group = state.tcoState
-    in group.callArgumentFrameActive)
+    in group.callArgumentFrame)
+
+let stateCallArgumentFrameActive (state: CoreLoweringState) = stateCallArgumentFrame(state) != NoCallArgumentFrame
+
+let stateCallArgumentFrameUnderBackEdge (state: CoreLoweringState) = stateCallArgumentFrame(state) == BackEdgeNestedCallArgumentFrame
 
 let stateTcoParameterRetainSites (state: CoreLoweringState) =
     (let group = state.tcoState
@@ -3284,6 +3354,14 @@ let withStateRoutedSpecializationAccumulators value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with routedSpecializationAccumulators = value))
 
+let stateRoutedSpecializationCallees (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.routedSpecializationCallees)
+
+let withStateRoutedSpecializationCallees value (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with routedSpecializationCallees = value))
+
 let stateSpecializingReuseLabel (state: CoreLoweringState) =
     (let group = state.reuseState
     in group.specializingReuseLabel)
@@ -3315,6 +3393,19 @@ let stateScrutineeTuple (state: CoreLoweringState) =
 let withStateScrutineeTuple value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with scrutineeTuple = value))
+
+let stateRuntimeClosureRequest (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.runtimeClosureRequest)
+
+let withStateRuntimeClosureRequest value (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with runtimeClosureRequest = value))
+
+let takeRuntimeClosureRequest (state: CoreLoweringState) =
+    if stateRuntimeClosureRequest(state)
+    then withStateRuntimeClosureRequest(false)(state)
+    else state
 
 let withStateParallelWorkerFunctions value (state: CoreLoweringState) =
     (let group = state.programState

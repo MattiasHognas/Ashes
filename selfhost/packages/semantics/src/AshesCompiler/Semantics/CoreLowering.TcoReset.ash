@@ -63,6 +63,7 @@ export (
     value emitChildReferenceOrCopy,
     value insertClosureNormalizers,
     value emitPrunedClosure,
+    value emitPrunedClosureIn,
     value isFreshAggregateLiteral,
     value registerGeneralRcOwnedSlot,
     value saveGeneralRcOwnedPredecessor,
@@ -75,6 +76,8 @@ export (
     value typeMayContainArgumentType,
     value callResultMayContainArgumentType,
     value callResultMayContainAnyArgumentType,
+    value resultTypeMayHoldPartOf,
+    value closureNormalizerCopiesCaptures,
     value ownedSlotsOutside,
     value ownedSlotsOutsideResult,
     value typeAtIndex,
@@ -712,6 +715,7 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
             match (generalCopyPlanOf(named)(state), argumentCopyPlanOf(named)(state)) with
                 | (Some(NormalizerArgumentCopy(normalized)), _plan) -> NormalizerArgumentCopy(normalized)
                 | (_general, Some(ConstructorArgumentCopy(constructorPlan))) -> ConstructorArgumentCopy(constructorPlan)
+                | (_general, Some(SwitchArgumentCopy(plans))) -> SwitchArgumentCopy(plans)
                 | _ ->
                     state
                     |> shallowAdtCopySizeBytes(name)
@@ -1118,6 +1122,17 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
                         | (dropped, dropperLabel) -> synthesizeDeepCopyClosureNormalizer(closureLabel)(closureOrigin)(layout)(shared)(dropperLabel)(dropped)
                 | None -> withStatePendingClosureNormalizers((closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: statePendingClosureNormalizers(state))(state)
 
+// Whether the closure's environment normalizer copies or retains a capture: its deep-copy layout
+// is decided at the closure and names at least one capture. A layout decided at program
+// finalization covers scalar captures only.
+let closureNormalizerCopiesCaptures (captures: List(CoreBinding)) (state: CoreLoweringState) =
+    match captures with
+        | [] -> false
+        | _ ->
+            match deepCopyCaptureLayout(capturesSelfClosure(captures))(capturesTraitEvidence(captures))(captures)(0)(state) with
+                | Some((_copied :: _rest, _shared)) -> true
+                | _ -> false
+
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
     match functions with
         | [] -> [inserted]
@@ -1147,12 +1162,56 @@ let finishClosureResult parameterType bodyType finishedBody closure =
             in
                 success(closureTemp)(SemFunction(parameterType)(resultType)(None))(closureState)
 
-let emitPrunedClosure label origin captures stackAllocate parameterType bodyType finishedBody allocated =
+// Stage 0's `ClassifyLambdaClosureCaptures` for a runtime-managed closure, its normalized-parameter
+// half: the entry-normalized string parameter a capture moves into the environment has no scope
+// owner of its own, so the closure's dropper releases it from its environment word.
+let recursive runtimeClosureOwnedCaptures (captures: List(CoreBinding)) (index: Int) (state: CoreLoweringState) =
+    match captures with
+        | [] -> []
+        | CoreBinding { name = name } :: rest ->
+            if isNormalizedAlwaysReturnedStringParameterRead(ExprVar(name))(state)
+            then (index * 8, Ashes.Trait.Show.show(SemString), SemString) :: runtimeClosureOwnedCaptures(rest)(index + 1)(state)
+            else runtimeClosureOwnedCaptures(rest)(index + 1)(state)
+
+// Stage 0's `LowerLambdaCoreMakeClosure`: a runtime-managed closure that owns captures stores the
+// address of their dropper in its fourth word, which its release calls on the environment.
+let attachRuntimeClosureDropper (runtimeManaged: Bool) (captures: List(CoreBinding)) (closure: (CoreLoweringState, Int)) =
+    match closure with
+        | (closureState, closureTemp) ->
+            if runtimeManaged
+            then
+                match runtimeClosureOwnedCaptures(captures)(0)(closureState) with
+                    | [] -> closure
+                    | owned ->
+                        match synthesizeClosureDropper(owned)(closureState) with
+                            | (synthesized, dropperLabel) ->
+                                match freshTemp(synthesized) with
+                                    | FreshTemp { state = allocated, temp = dropperTemp } ->
+                                        (allocated
+                                        |> emit(LoadFuncAddr(dropperTemp)(dropperLabel))
+                                        |> emit(StoreMemOffset(closureTemp)(24)(dropperTemp)), closureTemp)
+            else closure
+
+// A runtime-managed closure is a reference the creation site holds: newly produced, so the
+// aggregate storing it takes it over rather than copying it.
+let markRuntimeClosure (runtimeManaged: Bool) (closureTemp: Int) (state: CoreLoweringState) =
+    if runtimeManaged
+    then markRuntimeTemp(closureTemp)(RuntimeNewlyProduced)(state)
+    else state
+
+let emitPrunedClosureIn (runtimeManaged: Bool) label origin captures stackAllocate parameterType bodyType finishedBody allocated =
     match allocated with
         | LoweredCoreValue { state = environmentState, error = Some(error) } -> failure(environmentState)(error)
         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
-            match emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)(environmentState) with
-                | (closureState, closureTemp) -> finishClosureResult(parameterType)(bodyType)(finishedBody)((recordClosureNormalizer(label)(captures)(origin)(closureState), closureTemp))
+            match environmentState
+            |> emitClosureIn(runtimeManaged)(label)(environmentTemp)(captureCount(captures))(stackAllocate)
+            |> attachRuntimeClosureDropper(runtimeManaged)(captures) with
+                | (closureState, closureTemp) ->
+                    finishClosureResult(parameterType)(bodyType)(finishedBody)((closureState
+                    |> markRuntimeClosure(runtimeManaged)(closureTemp)
+                    |> recordClosureNormalizer(label)(captures)(origin), closureTemp))
+
+let emitPrunedClosure label origin captures stackAllocate parameterType bodyType finishedBody allocated = emitPrunedClosureIn(false)(label)(origin)(captures)(stackAllocate)(parameterType)(bodyType)(finishedBody)(allocated)
 
 // Every owned child of the dying successor is read, deep-copied and stored into the copy; the
 // read temps come back with their types and field indices for the release that follows the
@@ -1313,7 +1372,7 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                         | Some(ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans))) ->
                             releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(construction)(state)
                         | _plan -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
-                | None -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
+                | None -> releaseVariantLiteralChildren(cellTemp)(named)(literal)(construction)(state)
         | (SemTuple(elements), ExprTuple(expressions)) ->
             if length(elements) == length(expressions)
             then releaseLiteralTupleElements(cellTemp)(0)(elements)(expressions)(construction)(state)
@@ -1328,6 +1387,16 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                     |> (given (headReleased: CoreLoweringState) ->
                         emitSourceChildRelease(tailTemp)(SemList(element))(Some(tail))(constructionWordOf(construction)(8)(headReleased))(headReleased))
         | _ -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
+// Stage 0's `TryEmitRuntimeManagedTcoLiteralChildrenRelease` for a constructor of a type with more
+// than one (`Some(span)`): the literal names its constructor, so the references the cell holds are
+// that constructor's owned fields, released one by one as a single constructor's are.
+and releaseVariantLiteralChildren (cellTemp: Int) (named: SemanticType) (literal: Expr) (construction: Maybe(Int)) (state: CoreLoweringState) =
+    match constructorApplicationOf(literal)([])(state) with
+        | Some((CoreConstructorLayout { name = constructorName, tagless = tagless }, arguments)) ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { children = children } ->
+                    releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedConstructorChildren(constructorName)(children))(arguments)(construction)(state)
+        | None -> emitGuardedSourceChildDrop(cellTemp)(named)(state)
 and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (arguments: List(Expr)) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match children with
         | [] -> state
@@ -2124,40 +2193,6 @@ let recursive resetArgumentAt (ordinal: Int) (arguments: List(TcoResetArgument))
             then Some(argument)
             else resetArgumentAt(ordinal)(rest)
 
-// Whether a successor at one of these ordinals is stored as it is: not handed on unchanged, of a
-// parameter on no heap of its own, of a type a reset does not leave alone.
-let recursive unnormalizedSuccessorAmong (ordinals: List(Int)) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    match ordinals with
-        | [] -> false
-        | ordinal :: rest ->
-            (match resetArgumentAt(ordinal)(arguments) with
-                | Some(argument) -> !argument.passesThrough && !resetArgumentIsManaged(argument) && !resultSurvivesReset(argument.argumentType)(state)
-                | None -> false) || unnormalizedSuccessorAmong(rest)(arguments)(state)
-
-let recursive plainSuccessorOrdinalsOf (slot: Int) (facts: List((Int, List(Int)))) =
-    match facts with
-        | [] -> []
-        | (candidate, ordinals) :: rest ->
-            if candidate == slot
-            then ordinals
-            else plainSuccessorOrdinalsOf(slot)(rest)
-
-// On a back edge that normalizes only the successors of parameters on the reference-counted heap,
-// the successor of a parameter on no heap of its own is stored as it is. One that is a join, an
-// alias or a cell of this iteration naming an iteration-local owner's value holds no reference of
-// its own to it, and the next iteration would read it after the owner's release: such an owner is
-// left unreleased, as an arena successor that may hold a part of an owned value leaves it.
-let recursive ownedDropsLeftByUnnormalizedSuccessors (drops: List((Int, Str))) (facts: List((Int, List(Int)))) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    match drops with
-        | [] -> []
-        | (slot, typeName) :: rest ->
-            if unnormalizedSuccessorAmong(plainSuccessorOrdinalsOf(slot)(facts))(arguments)(state)
-            then ownedDropsLeftByUnnormalizedSuccessors(rest)(facts)(arguments)(state)
-            else (slot, typeName) :: ownedDropsLeftByUnnormalizedSuccessors(rest)(facts)(arguments)(state)
-
-let emitOwnedDropsBesideUnnormalizedSuccessors (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    emitResolvedOwnedDrops(ownedDropsLeftByUnnormalizedSuccessors(reset.ownedDrops)(reset.ownedDropPlainSuccessors)(arguments)(state))(state)
-
 // Stage 0's `successorsOwnTheirParts` in `EmitGeneralRcBackEdgeDrops`: each successor is inline,
 // handed on unchanged, a loop parameter's part in a tail-modulo-cons loop, or a parameter
 // normalized onto the reference-counted heap on this path.
@@ -2496,7 +2531,7 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
-                    |> emitOwnedDropsBesideUnnormalizedSuccessors(reset)(arguments)
+                    |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitGuardedRuntimeManagedTcoRestore(reset)(arguments)(preRestoreSlot)
                     |> emitRuntimeManagedBackEdgeStores(stores)
@@ -3159,7 +3194,7 @@ let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: L
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
-                    |> emitOwnedDropsBesideUnnormalizedSuccessors(reset)(arguments)
+                    |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitRuntimeManagedBackEdgeStores(stores)
 

@@ -514,11 +514,22 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
     match prepareExitOwnFieldFlags(slots)(loop)(state) with
         | (flagged, exitOwnFieldFlags) -> emitTcoLoopEntryFlagged(label)(slots)(loop)(entrySpliceCount)(exitOwnFieldFlags)(flagged)
 
+// A list-only self-call shape places a parameter provisionally unless its type is named: stage 0's
+// provisional placement (`EvaluateTcoRcEligibility`) reads a self-call shape only for a list, and
+// decides a named parameter by its type alone (`tcoAdtSlotAdmitted` here).
+let listShapePlacesSlot (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) =
+    if isTcoListShape(shape)
+    then
+        match slotResolvedType(slot)(state.bindings)(state) with
+            | Some(SemNamed(_symbolId, _name, _arguments)) -> false
+            | _ -> true
+    else false
+
 // A loop parameter the provisional loop entry already places on the reference-counted heap: a
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> ordinaryRcPlacementAllowed(state) && (isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
+        | Some(shape) -> ordinaryRcPlacementAllowed(state) && (listShapePlacesSlot(shape)(slot)(state) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
@@ -1233,6 +1244,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
+            |> takeRuntimeClosureRequest
             |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
             |> noteLetBoundFunction("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)

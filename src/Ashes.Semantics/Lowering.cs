@@ -3514,6 +3514,11 @@ public sealed partial class Lowering
         Expr e,
         LoweredValueRequest request)
     {
+        if (BindViewedBuiltinArgument(e) is Expr.Let bound)
+        {
+            return LowerLet(bound, request);
+        }
+
         return e switch
         {
             Expr.IntLit lit => LowerInt(lit),
@@ -6673,6 +6678,15 @@ public sealed partial class Lowering
             _ => false,
         };
 
+    // A `let` binding a call the owner is handed (`let parts = Ashes.Text.unconsText(s)`), read by its
+    // body: the binding may name the owner's bytes, and whatever the body takes out of it (a later
+    // match of `parts`) reaches the result as a call's destructured result does.
+    private bool LetBindsCallOfOwner(Expr.Let let, string ownerName)
+        => Environment.GetEnvironmentVariable("GRC_NO_LETBOUNDVIEW") is null
+            && let.Value is Expr.Call
+            && FreeVars(let.Value, new HashSet<string>(StringComparer.Ordinal)).Contains(ownerName)
+            && FreeVars(let.Body, new HashSet<string>(StringComparer.Ordinal)).Contains(let.Name);
+
     // Whether this body can return something a callee read out of the binding's own bytes. A callee
     // is free to hand an argument's bytes back inside its result rather than copy them — a string
     // split, a byte range — so a result destructured from a call the binding was handed may name the
@@ -6688,7 +6702,8 @@ public sealed partial class Lowering
         switch (body)
         {
             case Expr.Let let:
-                return ResultMayViewCallArgument(let.Body, ownerName, depth + 1);
+                return LetBindsCallOfOwner(let, ownerName)
+                    || ResultMayViewCallArgument(let.Body, ownerName, depth + 1);
             case Expr.If conditional:
                 return ResultMayViewCallArgument(conditional.Then, ownerName, depth + 1)
                     || ResultMayViewCallArgument(conditional.Else, ownerName, depth + 1);
@@ -8947,6 +8962,8 @@ public sealed partial class Lowering
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         WithdrawBorrowedScrutineeRetains(tco);
+        WithdrawLetCopiedCellTailDuplicates(tco);
+        SettlePendingArmCellHeadWrites();
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
             tco,
@@ -15411,11 +15428,17 @@ public sealed partial class Lowering
     // reference-counted heap (a join of a fresh `None` beside a field it read) would hand over a
     // reference nothing releases, so the call asks for an arena result, which such a callee
     // deep-copies into the arena before releasing its own.
+    // A list result of a closure no label resolves follows the same rule: a list whose element the
+    // call copy-out cannot express (a tuple, a record) is kept as an arena value just the same, and a
+    // callee that built it on the reference-counted heap would hand over a list nothing releases. A
+    // known callee whose body is still being lowered (a non-tail self call) keeps its list result as
+    // before, so a recursive producer is not deep-copied once per level.
     private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, int argumentCount, TypeRef resultType, bool needsResultOwnership)
         => Environment.GetEnvironmentVariable("GRC_NO_UNKNOWNCALLEEARENA") is null
             && !needsResultOwnership
             && rootExpr is not Expr.Lambda
-            && Prune(resultType) is TypeRef.TNamedType
+            && (Prune(resultType) is TypeRef.TNamedType
+                || (Prune(resultType) is TypeRef.TList && !TryResolveKnownFunctionLabel(rootExpr, out _)))
             && !CanArenaReset(Prune(resultType))
             && !ContainsUnresolvedLayoutType(resultType, [])
             && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
@@ -18846,7 +18869,7 @@ public sealed partial class Lowering
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         RecordCallArgumentCellOwnerDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
-        KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
+        KeepResultCellDuplicatesOwned(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }

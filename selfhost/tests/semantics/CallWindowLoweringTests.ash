@@ -184,6 +184,20 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
     |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
+// A loop's non-tail self call lowered after the loop's last back edge (`collectSpine`'s call arm,
+// after the wrapper arm's back edge) keeps its result of the contract's types in an owned slot the
+// function releases, as stage 0's `LowerGeneralRcCallResult` does: an arena request the callee
+// does not honor would leave its reference-counted result unreleased.
+let loopExitSelfCallProgram = "type Node =\n    | NodeName(Str)\n    | NodeAt(Int, Node)\n    | NodeCall(Node, Node)\n\ntype Spine =\n    | root: Node\n    | arguments: List(Node)\n\nlet recursive collectSpine (expression: Node) =\n    match expression with\n        | NodeAt(_span, inner) -> collectSpine(inner)\n        | NodeCall(function, argument) ->\n            match collectSpine(function) with\n                | Spine { root = root, arguments = arguments } -> Spine(root = root, arguments = argument :: arguments)\n        | root -> Spine(root = root, arguments = [])\n\nmatch collectSpine(NodeAt(1)(NodeCall(NodeName(\"f\"))(NodeName(\"x\")))) with\n    | Spine { arguments = [] } -> Ashes.IO.print(\"none\")\n    | _ -> Ashes.IO.print(\"some\")"
+
+let expectLoopExitSelfCallResultOwned unit =
+    loopExitSelfCallProgram
+    |> dumpSource
+    |> functionLines("[SourceFunction from collectSpine]")
+    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.startsWith(line)("  general_rc_owned_absent_"))
+    |> Ashes.Collection.List.length
+    |> test.assertEqual(2)
+
 let constructorRecursiveProducerProgram = "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
 
 // A producer whose cons tail is its own saturated self call (`bang(head) :: stamp(tail)`) is
@@ -217,13 +231,41 @@ let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
 
 // The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
 // member of the enclosing recursive group, so nothing forces the spine onto the
-// reference-counted heap and the cell keeps the plain arena placement.
+// reference-counted heap and the cell keeps the plain arena placement. Its tail duplicate is a
+// parameter marker whose owned slot is zeroed ahead of the cell (temps 10 and 11), so the cell is
+// temp 12.
 let expectPlainConsTailStaysInTheArena unit =
     "let recursive prepend (value: Int) (rest: List(Int)) (extra: Int) =\n    if extra == 0\n    then value :: rest\n    else prepend(value)(rest)(extra - 1)\n\nmatch prepend(1)([2, 3])(0) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
     |> dumpSource
     |> liftedFunctionLines
-    |> expectInstruction("Alloc                 Target=10 SizeBytes=16")
-    |> expectNoInstructionText("Alloc                 Target=10 SizeBytes=16 RuntimeManaged")
+    |> expectInstruction("Alloc                 Target=12 SizeBytes=16")
+    |> expectNoInstructionText("Alloc                 Target=12 SizeBytes=16 RuntimeManaged")
+    |> (given (_) -> Unit)
+
+// A cons onto the loop's own recursive call whose head is a record pattern owner read off the list
+// being walked (`binder :: addUse(...)`) keeps the ordinary recursion rather than a
+// tail-modulo-constructor spine, as stage 0's `CanBuildRuntimeManagedCell` declines it: the owner has
+// no runtime representation until the loop's finalize places it.
+let patternOwnerHeadProgram = "type Binder =\n    | key: Int\n    | uses: List(Int)\n\nlet recursive addUse (key: Int) (use: Int) (binders: List(Binder)) =\n    match binders with\n        | [] -> []\n        | (Binder { key = candidate, uses = uses } as binder) :: rest ->\n            if candidate == key\n            then (binder with uses = use :: uses) :: rest\n            else binder :: addUse(key)(use)(rest)\n\nmatch addUse(1)(0)([Binder(key = 1, uses = []), Binder(key = 2, uses = [])]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
+
+let expectPatternOwnerHeadKeepsOrdinaryRecursion unit =
+    patternOwnerHeadProgram
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectNoInstructionText("tmc_first_")
+    |> (given (_) -> Unit)
+
+// A perform's adopted string consed onto a loop's accumulator (`perform Cap.get(Unit) :: acc`, a
+// self call's successor the back edge copies only under a pending one-shot post) is stored as an
+// arena copy and the adopted string released right away, as stage 0's
+// `CopyFreshStringHeadIntoArenaCell` does: the arena cell would otherwise be its only holder.
+let performHeadProgram = "capability Cap =\n    | get : Unit -> Str\n\nlet recursive collect (i: Int) (acc: List(Str)) =\n    if i == 0\n    then acc\n    else collect(i - 1)(perform Cap.get(Unit) :: acc)\n\nlet recursive count (xs: List(Str)) (n: Int) =\n    match xs with\n        | [] -> n\n        | _ :: rest -> count(rest)(n + 1)\n\nlet items (n: Int) =\n    count(handle collect(3)([Ashes.Text.fromInt(n)]) with\n        | Cap.get(u) ->\n            let x = resume(\"lit\")\n            in \"s\" :: x\n        | return(r) -> r)(0)\n\nAshes.IO.print(Ashes.Text.fromInt(items(1)))"
+
+let expectPerformHeadCopiedIntoArenaCell unit =
+    performHeadProgram
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectOperands("CopyOutArena")(" Purpose=IndependentClone")
     |> (given (_) -> Unit)
 
 // A recursive group member's tail call to its sibling is the fused self call: no returns bit,
@@ -473,11 +515,14 @@ let runCallWindowLoweringTests unit =
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
+    |> expectLoopExitSelfCallResultOwned
     |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
     |> expectProducerPublishesClosedSpineBeforeExitRelease
     |> expectInlinePatternFieldNeverRetained
     |> expectPatternTransfersUseTheirLexicalBinding
     |> expectPlainConsTailStaysInTheArena
+    |> expectPatternOwnerHeadKeepsOrdinaryRecursion
+    |> expectPerformHeadCopiedIntoArenaCell
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
     |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit

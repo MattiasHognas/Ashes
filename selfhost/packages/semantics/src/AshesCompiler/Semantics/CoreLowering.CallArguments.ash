@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.CoreLowering.Bindings
 import AshesCompiler.Semantics.CoreLowering.LoopPlacement
 import AshesCompiler.Semantics.CoreLowering.LoopFrames
 export (
+    value recordBorrowedCall,
     type CoreCallContext(..),
     type CoreConsumedArgument(..),
     type CoreCallStage(..),
@@ -47,6 +48,7 @@ export (
     value preparedReachOfSummary,
     value calleeReachSummary,
     value calleeFactsOf,
+    value concreteCopyCallName,
     value isOwnLabelCallee,
     value isSelfCallee,
     value calleeSchemeOf,
@@ -62,6 +64,7 @@ export (
     value loopParameterReadSlot,
     value patternBindingRootSlot,
     value loopParameterIsRuntimeManaged,
+    value loopParameterPlacedUnblocked,
     value argumentRootSlotOf,
     value isBorrowedRetainableParameterType,
     value rootPlacedAtBackEdge,
@@ -287,6 +290,13 @@ let calleeRcEligible (callee: Str) (state: CoreLoweringState) =
             |> lookupRcEligible(key)
         | None -> false
 
+// The name a call to a constrained function's concrete copy binds the copy's closure under: the
+// call site's slot and closure temp, then the source function's name after a `%` no source name
+// holds, so the call's facts are the source function's (stage 0's
+// `BindConstrainedSpecializationRoot`, whose slot carries the copy's label and whose label names
+// the source function).
+let concreteCopyCallName (slot: Int) (closureTemp: Int) (sourceName: Str) = "__core_concrete_call_" + Ashes.Text.fromInt(slot) + "_" + Ashes.Text.fromInt(closureTemp) + "%" + sourceName
+
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -303,7 +313,7 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 |> stateLetLambdaLabels
                                 |> lookupLetLambdaLabel(callee),
                                 parameters = parameters,
-                                ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
+                                ownership = provenParameterOwnership(calleeFactsName(callee))(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
                                 preparedReach = calleePreparedReach(callee)(parameters)(reach)(state),
                                 rcEligible = calleeRcEligible(callee)(state),
@@ -413,6 +423,8 @@ type CoreCallContext =
     | resultDiscarded: Bool
     // The spine's arguments, first applied first.
     | arguments: List(Expr)
+    // The call is itself an ordinary call's argument (the consumer request's `callArgument`).
+    | resultIsCallArgument: Bool
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -634,6 +646,29 @@ let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
                     match patternBindingRootSlot(name)(frame)(state) with
                         | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state)
                         | None -> false
+        | _ -> false
+
+// Stage 0's `IsRuntimeManagedTcoParamSlot` as a join arm reads it (`BranchJoinsRuntimeManagedResult`):
+// a list parameter, or a pattern binding taken out of one, is on the reference-counted heap only
+// when no sibling keeps the list in the arena, which stage 0's placement has already decided by
+// then (`FindBlockingSiblingForCandidate`) and stage 1's finalize decides later.
+let loopParameterPlacedUnblocked (name: Str) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) ->
+            match match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) -> Some(slot)
+                | None -> patternBindingRootSlot(name)(frame)(state) with
+                | Some(slot) ->
+                    if loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+                    then
+                        match slotResolvedType(slot)(state.bindings)(state) with
+                            | Some(resolved) ->
+                                match resolveType(state)(resolved) with
+                                    | SemList(_element) -> listSlotUnblocked(slot)(frame)(loop)(state)
+                                    | _ -> true
+                            | None -> true
+                    else false
+                | None -> false
         | _ -> false
 
 // Stage 0's `TryGetRuntimeManagedCallArgument` inside a TCO frame: an argument that reads a loop
@@ -1265,14 +1300,29 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
 // is not statically known and its type is read at run time, stage 0's `needsResultOwnership`.
 // Whether the last application reads the callee's returns bit, and whether its result will then
 // be normalized into an owned value on both of its branches: decided once per call, before the
-// argument's hand-off, since that hand-off depends on it.
+// argument's hand-off, since that hand-off depends on it. A coroutine body or a function that may run
+// inside one reads no bit (stage 0's `AllowsAsyncIndependentRcPlacement` term): its call results are
+// copied to the arena at their call boundary.
+// Stage 0's `GetOwnershipSummaryForCallRoot` answers nothing for a lone recursive binding's call to
+// itself inside its own body, so the call's result ownership is read at run time from the self
+// closure's returns bit: the result is copied out of the call window when it is still in the arena
+// and taken as owned when it is reference-counted, and as the argument of a further call it is
+// handed over to that call (with the callee closure's adoption bit) and released when not adopted.
+// Only a self call that is itself an ordinary call's argument reads the bit here: a self call in
+// tail position hands its result on as the function's own, and one stored in a constructor or
+// returned keeps the ownership the callee's predicted result gives it.
+let selfCallArgumentReadsResultBit (context: CoreCallContext) (state: CoreLoweringState) = context.resultIsCallArgument && selfCallReadsNoSummary(context.selfCallee)(state)
+
 let readsResultOwnershipAtRunTime (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     match context with
         | CoreCallContext { tailCall = true } -> (state, false, false)
         | CoreCallContext { facts = facts } ->
-            if arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
-            then resultOwnershipReadAtRunTime(context)(resultType)(state)
-            else (state, false, false)
+            if asyncIndependentRcPlacementAllowed(state) && arity == 1 && selfCallArgumentReadsResultBit(context)(state)
+            then (state, true, false)
+            else
+                if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
+                then resultOwnershipReadAtRunTime(context)(resultType)(state)
+                else (state, false, false)
 
 let emitResultOwnershipFlag (reads: Bool) (functionTemp: Int) (state: CoreLoweringState) =
     if reads
@@ -1342,9 +1392,15 @@ let calleeResultUnsettled (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringSt
         | Some(_runtimeManaged) -> false
         | None -> true
 
+// Stage 0's `RequestsArenaResultFromUnknownCallee`: a call through a closure no name resolves,
+// whose named or list result has no fixed copy-out and lies outside the contract, keeps that
+// result as an arena value, so it asks the callee for an arena result; a known callee whose body is
+// still being lowered asks only for a named result, so a recursive list producer is not
+// deep-copied once per level.
 let requestsArenaResultFromUnknownCallee (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
     match (readsResult, context.facts, context.appliedLambdaLabel, resolveType(state)(resultType)) with
         | (false, None, None, SemNamed(_symbolId, _name, _arguments) as named) -> !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
+        | (false, None, None, SemList(_element) as list) -> !resultSurvivesReset(list)(state) && !containsUnresolvedLayout(list)(state) && !hasCallCopyOut(list)(state) && !isGeneralRcValueType(list)(state) && canNormalizeResultIntoArena(list)(state)
         | (false, Some(_facts) as facts, None, SemNamed(_symbolId, _name, _arguments) as named) -> calleeResultUnsettled(facts)(state) && !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
         | _ -> false
 

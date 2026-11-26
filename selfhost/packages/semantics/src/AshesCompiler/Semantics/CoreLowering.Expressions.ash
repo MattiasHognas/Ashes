@@ -61,6 +61,7 @@ import AshesCompiler.Semantics.CoreLowering.RecordedTypes.recordedDeferredEvalua
 import AshesCompiler.Semantics.CoreLowering.RecordedTypes.shadowDictionaryGoalTypeText
 import AshesCompiler.Semantics.CoreLowering.Emit
 import AshesCompiler.Semantics.CoreLowering.Owners
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.CoreLowering.CopyPlans
 import AshesCompiler.Semantics.CoreLowering.TcoReset
 import AshesCompiler.Semantics.CoreLowering.Bindings
@@ -336,6 +337,16 @@ let recursive lastArgument (arguments: List(Expr)) =
 // whose callee's whole-program result reach keeps none of its parameters, so the value handed to
 // the specialization is freshly built here and aliased by nothing the specialization could
 // overwrite out from under.
+// Stage 0's `IsFreshOwnershipResultCall` reads the callee's ownership summary, which a lone
+// recursive binding's own call to itself does not have yet inside its body
+// (`GetOwnershipSummaryForCallRoot`, `selfCallReadsNoSummary`): such a call's result is never a
+// proven fresh accumulator, so the call it feeds stays on its ordinary path.
+let selfCallWithoutSummary (callee: Str) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) ->
+            length(stateRecursiveGroupNames(state)) == 1
+        | _ -> false
+
 let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringState) =
     match collectCallSpine(argument) with
         | CoreCallSpine { arguments = [] } -> false
@@ -345,7 +356,7 @@ let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringStat
                     match lookupLetLambdaNamed(callee)(state) with
                         | Some((recordedParameters, recordedBody)) ->
                             match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
-                                | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach)
+                                | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach) && !selfCallWithoutSummary(callee)(state)
                         | None -> false
                 | _ -> false
 
@@ -500,6 +511,16 @@ let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, 
             then Some(label)
             else lookupReuseSpecialization(key)(rest)
 
+// Stage 0's `LowerReuseSpecializedCall` applies the specialization's closure with no call window of
+// its own and keeps its result out of the contract's call-result handling: the routed call is
+// lowered with its callee named routed, which the call's window reads when it closes.
+let lowerRoutedSpecializationCall (callee: Str) lower (call: Expr) (state: CoreLoweringState) =
+    match state
+    |> withStateRoutedSpecializationCallees(callee :: stateRoutedSpecializationCallees(state))
+    |> lower(call) with
+        | LoweredCoreValue { state = callState } as lowered ->
+            lowered with state = withStateRoutedSpecializationCallees(stateRoutedSpecializationCallees(state))(callState)
+
 // A call routed to an already-generated specialization: its label takes a closure over the empty
 // environment (the generated body captures nothing — `inlinedReferencesResolveHere` is what proves
 // that at qualification), the closure goes in a local, and the ordinary call path applies the
@@ -532,7 +553,7 @@ let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: Se
                             |> emit(StoreLocal(slot)(closureTemp))
                             |> bindRoutedCallee(callee)(functionType)(slot)
                             |> (given (bound: CoreLoweringState) -> withStateSpecializingInProgress(callee :: stateSpecializingInProgress(bound))(bound))
-                            |> lower(specializedCallExpression(ExprVar(callee))(arguments)) with
+                            |> lowerRoutedSpecializationCall(callee)(lower)(specializedCallExpression(ExprVar(callee))(arguments)) with
                                 | LoweredCoreValue { state = callState, temp = temp, semanticType = semanticType, error = error } ->
                                     LoweredCoreValue(
                                         state = callState
@@ -666,7 +687,7 @@ let lowerCountedSpecializationCandidateCall (callee: Str) (arguments: List(Expr)
 // result over counted, the call is lowered outside the group's binding of the callee, with the
 // specialization scope and the routed accumulators taken back; the callee is still in progress
 // there, so the call takes the ordinary path.
-let continueReuseSpecializedCall (label: Str) (argumentCount: Int) (concrete: Bool) outerBindings (unrouted: CoreLoweringState) lower (call: Expr) (state: CoreLoweringState) =
+let continueReuseSpecializedCall (callee: Str) (label: Str) (argumentCount: Int) (concrete: Bool) outerBindings (unrouted: CoreLoweringState) lower (call: Expr) (state: CoreLoweringState) =
     if concrete && specializationHandsResultOverCounted(label)(argumentCount)(state)
     then
         state
@@ -676,7 +697,7 @@ let continueReuseSpecializedCall (label: Str) (argumentCount: Int) (concrete: Bo
         |> withStateSpecializingReuseLabel(stateSpecializingReuseLabel(unrouted))
         |> withStateRoutedSpecializationAccumulators(stateRoutedSpecializationAccumulators(unrouted))
         |> lower(call)
-    else lower(call)(state)
+    else lowerRoutedSpecializationCall(callee)(lower)(call)(state)
 
 let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) (concrete: Bool) (unrouted: CoreLoweringState) lower (state: CoreLoweringState) =
     (let label =
@@ -697,7 +718,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
                 |> withStateReuseSpecializations((cacheKey, label) :: stateReuseSpecializations(state)))
                 |> relabelReuseSpecialization(label)
                 |> pinSpecializationType(callee)(accumulatorType)(coreListLength(arguments))
-                |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
+                |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(callee)(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
 
@@ -1423,7 +1444,7 @@ let tryConstrainedGlobalCall name expression lower state =
                         | LoweredCoreValue { state = closureState, temp = temp, error = None } ->
                             match freshLocal(closureState) with
                                 | FreshLocal { state = allocated, local = slot } ->
-                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternFact = None, closedScheme = false)
+                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternFact = None, closedScheme = false, letBound = false)
                                     in
                                         allocated
                                         |> emit(StoreLocal(slot)(temp))
@@ -1586,7 +1607,12 @@ let concreteCopyAdmissible label (recursesAtItsType: Bool) original generated =
         | None -> false
         | Some(IrFunction { instructions = instructions }) -> !concreteRootReadsEnvironment(instructions)) && (recursesAtItsType || !concreteNewFunctionsReferenceSelf(label)(concreteFunctionsBoundary(original.functions))(generated.functions))
 
-let lowerConcreteCopyCall label functionType arguments lower state =
+// The call to a concrete copy, through the copy's closure bound under a fresh name for the call.
+// The name carries the copy's label and its source function's lambda chain, so the call reads the
+// facts of the copy it calls as a call by name does (stage 0's `BindConstrainedSpecializationRoot`):
+// without them a copy returning a reference-counted result was taken for an arena one and never
+// released.
+let lowerConcreteCopyCall (candidate: CoreConcreteCandidate) label functionType arguments lower state =
     match freshTemp(state) with
         | FreshTemp { state = environmentState, temp = environmentTemp } ->
             match environmentState
@@ -1595,10 +1621,15 @@ let lowerConcreteCopyCall label functionType arguments lower state =
                 | (closureState, closureTemp) ->
                     match freshLocal(closureState) with
                         | FreshLocal { state = slotState, local = slot } ->
-                            let name = "__core_concrete_call_" + Ashes.Text.fromInt(slot) + "_" + Ashes.Text.fromInt(closureTemp)
+                            let name = concreteCopyCallName(slot)(closureTemp)(candidate.name)
                             in
                                 slotState
                                 |> emit(StoreLocal(slot)(closureTemp))
+                                |> recordLetLambda(name)(candidate.source)
+                                |> (given (recorded: CoreLoweringState) ->
+                                    withStateLetLambdaLabels(recorded
+                                    |> stateLetLambdaLabels
+                                    |> Ashes.Collection.Map.setStr(name)(label))(recorded))
                                 |> addBinding(name)(emptyScheme(functionType))(CoreLocal(slot))
                                 |> lower(appendConstrainedArguments(ExprVar(name))(arguments))
                                 |> restoreLoweredBindings(state.bindings)
@@ -1638,7 +1669,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                                         |> recordConcreteCopy(candidate)(parameters)(Some(member.label))
                                     in
                                         (restored, restored
-                                        |> lowerConcreteCopyCall(member.label)(functionType)(arguments)(lower)
+                                        |> lowerConcreteCopyCall(candidate)(member.label)(functionType)(arguments)(lower)
                                         |> Some)
                                 else rejectedConcreteCopy(candidate)(parameters)(state)
                             | _ -> rejectedConcreteCopy(candidate)(parameters)(state)
@@ -1783,7 +1814,7 @@ let tryConcreteCandidateCall (candidate: CoreConcreteCandidate) (reference: Int)
                 |> lookupCoreConcreteCopy(candidate.identity)(parameters) with
                     | Some(Some(label)) ->
                         (observed, observed
-                        |> lowerConcreteCopyCall(label)(functionType)(arguments)(lower)
+                        |> lowerConcreteCopyCall(candidate)(label)(functionType)(arguments)(lower)
                         |> Some)
                     | Some(None) ->
                         declinedConcreteCopy(candidate)(reference)(functionType)(arguments)(lower)(concreteCopyDeclined(observed))(observed)
@@ -2520,18 +2551,6 @@ let recursive transformCoroutineFunction (label: Str) (captureCount: Int) (funct
                 match transformCoroutineFunction(label)(captureCount)(rest) with
                     | (transformed, stateStructSize) -> (function_ :: transformed, stateStructSize)
 
-// Stage 0's `RetainCoroutineCapture`: the task frame keeps its own reference to each captured value,
-// because the frame outlives the expression that created the task and that scope releases its
-// bindings. The closure is copied to its reference-counted form, whose environment normalizer
-// retains (or copies) every capture, and the task takes its captures from that copy.
-let frameOwnedClosure (closureTemp: Int) (captureCount: Int) (state: CoreLoweringState) =
-    if captureCount == 0
-    then (state, closureTemp)
-    else
-        match freshTemp(state) with
-            | FreshTemp { state = allocated, temp = copyTemp } ->
-                (emit(CopyOutClosure(copyTemp)(closureTemp)(true)(RcNormalization))(allocated), copyTemp)
-
 // Whether the lifted function `label` forks a child task.
 let recursive functionForks (label: Str) (functions: List(IrFunction)) =
     match functions with
@@ -2571,6 +2590,7 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
         match state
         |> clearConsumerRequest
         |> withStatePendingCoroutineBody(true)
+        |> withStateMayRunInsideCoroutine(true)
         |> lowerLambda("__async_unit")(if transparent
         then body
         else ExprCall(ExprVar("Ok"))(body)(false)(callArgumentsInline))(None)(false)(lower) with
@@ -2580,6 +2600,7 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
                     | SemFunction(_parameter, resultType, _row) ->
                         match loweredState
                         |> withStatePendingCoroutineBody(false)
+                        |> withStateMayRunInsideCoroutine(stateMayRunInsideCoroutine(state))
                         |> (given (typed) ->
                             if transparent
                             then (typed, SemNamed(0)("Task")([SemString, resultType]), None)
@@ -2590,14 +2611,12 @@ let lowerCoroutineTask transparent body lower (state: CoreLoweringState) =
                                 in
                                     match transformCoroutineFunction(label)(captureCount)(typedState.functions) with
                                         | (functions, stateStructSize) ->
-                                            match frameOwnedClosure(closureTemp)(captureCount)((typedState with functions = functions)) with
-                                                | (ownedState, frameClosure) ->
-                                                    match freshTemp(ownedState) with
-                                                        | FreshTemp { state = tempState, temp = taskTemp } ->
-                                                            tempState
-                                                            |> withCompletedTaskFrameDropper(None)
-                                                            |> emit(CreateTask(taskTemp)(frameClosure)(stateStructSize)(captureCount)(stateCompletedTaskFrameDropper(typedState))(false))
-                                                            |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
+                                            match freshTemp((typedState with functions = functions)) with
+                                                | FreshTemp { state = tempState, temp = taskTemp } ->
+                                                    tempState
+                                                    |> withCompletedTaskFrameDropper(None)
+                                                    |> emit(CreateTask(taskTemp)(closureTemp)(stateStructSize)(captureCount)(stateCompletedTaskFrameDropper(typedState))(false))
+                                                    |> scopeForkingTask(functionForks(label)(functions))(taskTemp)(taskType)
                     | _other -> failure(loweredState)(UnsupportedCoreLoweringExpression("async body")))
 
 let recursive typeHoldsJoinHandle (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -3029,10 +3048,22 @@ let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweri
 // even with the watermark moved past each cell, an arena cell stores its head raw while the back
 // edge is free to release the parameter graph that head was borrowed from. A head the cell cannot
 // own as a reference hands the cons back to the ordinary path, which recurses: correct, just not
-// stack-safe.
+// stack-safe. A head that reads a pattern owner needing a protective reference is one: stage 0
+// tracks such an owner with no runtime representation until the loop's finalize places it
+// (`TrackOwnedValue` from the pattern binding sites, runtimeManaged false), so its read is not a
+// reference-counted temp when `CanBuildRuntimeManagedCell` asks, and `binder :: addUse(...)` over a
+// part of the walked list keeps the ordinary recursion. A copy of the read onto the heap counts.
+// The cell it builds is an arena cell, as stage 0's is (its `LowerConsCell` asks the same
+// representation question): a reference-counted cell there would own the recursive call's result
+// that the function's owned call-result slot also releases. The arena cell holds the head's
+// duplicate in the arm cell head slot, released behind the join's copy (`reserveArmCellHeadSlot`).
+let unplacedPatternOwnerHead (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    isPatternOwnerRead(headExpression)(state) && !containsInt(headTemp)(statePatternOwnerCopyTemps(state)) && !isProducerCellHeadType(resolveType(state)(headType))
+
 let finishConsTmc (request: ConsumerRequest) (transfers: Bool) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (headExpression: Expr) (tailExpression: Expr) lower head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) -> finishConsTail((request with runtimeList = false))(transfers)(lower)(headExpression)(tailExpression)(head)
         | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
         | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } ->
             match duplicatePatternOwnerTemp(headExpression)(headTemp)(headState) with
@@ -4313,14 +4344,132 @@ let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) 
             then dispatched with expectedType = request.expectedType
             else dispatched
 
-// A `let?` is lowered as the match it means, under the whole request: its body stands where the
-// `let?` does, as stage 0's `LowerLetResult` lowers it.
+// Stage 0's `IsViewingBuiltinKind`: the builtins whose result views their first argument's bytes
+// (the uncons family's tail, a byte range, a text's bytes), with their arity.
+let viewingBuiltinArity (moduleName: Str) (memberName: Str) =
+    match (moduleName, memberName) with
+        | ("Ashes.Text", "uncons") -> 1
+        | ("Ashes.Text", "unconsText") -> 1
+        | ("Ashes.Byte", "subView") -> 3
+        | ("Ashes.Byte", "fromText") -> 1
+        | _ -> 0
+
+// The root of a call spine and its arguments, first argument first.
+let recursive viewedCallSpine (expression: Expr) (arguments: List(Expr)) =
+    match expression with
+        | ExprAt(_span, inner) -> viewedCallSpine(inner)(arguments)
+        | ExprNode(_node, inner) -> viewedCallSpine(inner)(arguments)
+        | ExprCall(function, argument, _sugar, _layout) -> viewedCallSpine(function)(argument :: arguments)
+        | root -> (root, arguments)
+
+// Stage 0's `ViewedBuiltinArgument`: the viewed argument of a saturated call to a viewing builtin,
+// when it is an expression that may produce a value of its own (not a name or a literal).
+let viewedBuiltinArgument (expression: Expr) =
+    match viewedCallSpine(expression)([]) with
+        | (ExprQualifiedVar(moduleName, memberName), first :: rest) ->
+            if viewingBuiltinArity(moduleName)(memberName) == length(first :: rest)
+            then
+                match unspanArgument(first) with
+                    | ExprVar(_name) -> None
+                    | ExprQualifiedVar(_module, _member) -> None
+                    | ExprString(_value) -> None
+                    | ExprInt(_value) -> None
+                    | _ -> Some(first)
+            else None
+        | _ -> None
+
+// The call spine with its argument at `index` (counted from the first) replaced, its wrappers kept.
+let recursive replaceSpineArgument (expression: Expr) (index: Int) (replacement: Expr) =
+    match expression with
+        | ExprAt(span, inner) ->
+            replacement
+            |> replaceSpineArgument(inner)(index)
+            |> ExprAt(span)
+        | ExprNode(node, inner) ->
+            replacement
+            |> replaceSpineArgument(inner)(index)
+            |> ExprNode(node)
+        | ExprCall(function, argument, sugar, layout) ->
+            match viewedCallSpine(function)([]) with
+                | (_root, earlier) ->
+                    if length(earlier) == index
+                    then ExprCall(function)(replacement)(sugar)(layout)
+                    else
+                        ExprCall(replaceSpineArgument(function)(index)(replacement))(argument)(sugar)(layout)
+        | other -> other
+
+let recursive viewedArgumentPosition (arguments: List(Expr)) (index: Int) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            match viewedBuiltinArgument(argument) with
+                | Some(viewed) -> Some((index, argument, viewed))
+                | None -> viewedArgumentPosition(rest)(index + 1)
+
+let bindViewedArgument (viewed: Expr) rebuild (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = named, temp = temp } ->
+            let name = "$viewed" + Ashes.Text.fromInt(temp)
+            in
+                Some((named, ExprVar(name)
+                |> rebuild
+                |> plainLet(name)(viewed)))
+
+let bindViewedCallArgument (expression: Expr) (state: CoreLoweringState) =
+    match viewedBuiltinArgument(expression) with
+        | Some(viewed) ->
+            bindViewedArgument(viewed)(given (named) -> replaceSpineArgument(expression)(0)(named))(state)
+        | None ->
+            match viewedCallSpine(expression)([]) with
+                | (_root, arguments) ->
+                    match viewedArgumentPosition(arguments)(0) with
+                        | Some((index, argument, viewed)) ->
+                            bindViewedArgument(viewed)(given (named) ->
+                                named
+                                |> replaceSpineArgument(argument)(0)
+                                |> replaceSpineArgument(expression)(index))(state)
+                        | None -> None
+
+// Stage 0's `BindViewedBuiltinArgument`: a viewing builtin's newly produced argument bound by an
+// anonymous `let` around the expression consuming the builtin's result (the match it is the
+// scrutinee of, the `let` it is the value of, the call it is an argument of, or the builtin call
+// itself anywhere else), so the let's scope owns it exactly as in the let-bound form. The name is
+// unique in the function by a fresh temp's number.
+let bindViewedBuiltinArgument (expression: Expr) (state: CoreLoweringState) =
+    if !generalRcEnabled(state)
+    then None
+    else
+        match expression with
+            | ExprMatch(value, cases, position) ->
+                match viewedBuiltinArgument(value) with
+                    | Some(viewed) ->
+                        bindViewedArgument(viewed)(given (named) ->
+                            ExprMatch(replaceSpineArgument(value)(0)(named))(cases)(position))(state)
+                    | None -> None
+            | ExprLet(name, value, body, [], annotation, requirements) ->
+                match viewedBuiltinArgument(value) with
+                    | Some(viewed) ->
+                        bindViewedArgument(viewed)(given (named) ->
+                            ExprLet(name)(replaceSpineArgument(value)(0)(named))(body)([])(annotation)(requirements))(state)
+                    | None -> None
+            | ExprCall(_function, _argument, _sugar, _layout) -> bindViewedCallArgument(expression)(state)
+            | _ -> None
+
+let bindsViewedBuiltinArgument (expression: Expr) (state: CoreLoweringState) =
+    match bindViewedBuiltinArgument(expression)(state) with
+        | Some(_bound) -> true
+        | None -> false
+
 let recursive lowerCore expression state =
     match (expression, state
     |> resolveLoopCallFlow
     |> consumerRequestOf) with
         | (ExprLetResult(name, value, body), _request) ->
             lowerCore(letResultMatch(name)(value)(body))(state)
+        | (_expression, _request) when bindsViewedBuiltinArgument(expression)(state) ->
+            match bindViewedBuiltinArgument(expression)(state) with
+                | Some((named, bound)) -> lowerCore(bound)(named)
+                | None -> lowerCoreDispatch(expression)(lowerCore)(state)
         | (_expression, request) ->
             match if isEmptyConsumerRequest(request)
             then request

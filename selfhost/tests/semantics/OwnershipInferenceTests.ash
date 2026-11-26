@@ -84,6 +84,27 @@ let testUnusedParameterIsBorrow unit =
         let isBorrow = isParamUsedOnlyAsBorrowRead(body)("x")
         in test.assertEqual(true)(isBorrow))
 
+// A parameter a `handle` reads (its body performs an operation with it) is consumed, as stage 0's
+// borrow walk fails closed on a handle: the handler may resume with it or keep it, so a caller
+// passing a fresh value hands it over instead of borrowing it and releasing nothing.
+let testParameterReadInsideHandleIsConsumed unit =
+    (let body =
+        ExprHandle(ExprCall(ExprQualifiedVar("Tag")("tag"))(ExprVar("s"))(false)(callArgumentsInline))([(Some("Tag"), "tag", [PatternVar("text")], ExprCall(ExprVar("resume"))(ExprVar("text"))(false)(callArgumentsInline))])
+    in
+        let isBorrow = isParamUsedOnlyAsBorrowRead(body)("s")
+        in test.assertEqual(false)(isBorrow))
+
+// A value a `handle` reads is a capture of the function, as stage 0's `FreeVarsVisitHandle` finds;
+// an arm's `resume` and its parameters are bound over the arm's body and are not.
+let testHandleReadsAreCaptures unit =
+    (let body =
+        ExprHandle(ExprCall(ExprQualifiedVar("Tag")("tag"))(ExprVar("limit"))(false)(callArgumentsInline))([(Some("Tag"), "tag", [PatternVar("text")], ExprCall(ExprVar("resume"))(ExprVar("text"))(false)(callArgumentsInline))])
+    in
+        body
+        |> computeCaptures
+        |> (given (captures) -> captures([]))
+        |> test.assertEqual(["limit"]))
+
 let testConsumedArithmeticParameter unit =
     (let body = ExprAdd(ExprVar("x"))(ExprInt(1))
     in
@@ -721,6 +742,8 @@ let runOwnershipInferenceTests unit =
     |> testBorrowReadResourceParameterThroughSpans
     |> testSuspendingTaskOwnsReadCapture
     |> testUnusedParameterIsBorrow
+    |> testParameterReadInsideHandleIsConsumed
+    |> testHandleReadsAreCaptures
     |> testConsumedArithmeticParameter
     |> testConsumedReturnedParameter
     |> testConsumedConstructorParameter
