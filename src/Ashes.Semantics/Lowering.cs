@@ -74,7 +74,7 @@ public sealed partial class Lowering
 
     // True only while lowering an operation arm closure's OWN top-level body (LowerHandleLowerArmClosures'
     // LowerExpr(armLambda, ...) call) — NOT while lowering any other function merely reachable from a
-    // live handler post (OPT-51). AllowsOrdinaryRcPlacement stays conservative for the latter (an
+    // live handler post. AllowsOrdinaryRcPlacement stays conservative for the latter (an
     // ordinary call has no adopt/release safety net at its result); this narrower flag lets ONLY the
     // arm's own escaping result reach the RC heap, because PlanPerformResultOwnership's perform-site
     // fix now unconditionally requests and releases the arena form of whatever the arm returns.
@@ -4309,7 +4309,7 @@ public sealed partial class Lowering
         // Every representation decision here answers the same question as the closure one below it.
         // A coroutine body given an RC escaping result while region-backed leaked it (#371) —
         // AllowsAsyncIndependentRcPlacement still guards that. AllowsOrdinaryRcPlacement stays
-        // required except for the arm closure's own body (_loweringHandlerArmOwnResult, OPT-51),
+        // required except for the arm closure's own body (_loweringHandlerArmOwnResult),
         // which alone has a perform-site adopt/release net an ordinary reachable call lacks.
         bool placementAllowsRuntimeRc = AllowsAsyncIndependentRcPlacement
             && (AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult);
@@ -8722,7 +8722,7 @@ public sealed partial class Lowering
             _ => false,
         };
 
-    // Stage 1 of the arena-aggregate ownership design (SELF_HOSTING.md): a callee that keeps a
+    // Stage 1 of the arena-aggregate ownership design: a callee that keeps a
     // parameter whole owns it.
     private static bool OwnsKeptParameters => Environment.GetEnvironmentVariable("GRC_OWN_KEPT") is not null;
 
@@ -10863,7 +10863,7 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        // Mirrors LowerEscapingResult's own gate (OPT-51): only the operation arm closure's own body
+        // Mirrors LowerEscapingResult's own gate: only the operation arm closure's own body
         // (_loweringHandlerArmOwnResult) may route through LowerEscapingResult without
         // AllowsOrdinaryRcPlacement — every other function reachable from a live handler post keeps
         // the plain LowerExpr fallback it always had, since LowerEscapingResult's WithEscapingConsumerOwnership
@@ -15220,12 +15220,12 @@ public sealed partial class Lowering
 
         // A resolved (Shallow/List) result is adopted by its own returns bit regardless of
         // AllowsOrdinaryRcPlacement, the same way EmitPerform's PlanPerformResultOwnership
-        // does for a handler arm's result (OPT-49a): adopting a value the callee already
+        // does for a handler arm's result: adopting a value the callee already
         // reports as freshly reference-counted needs no scope-based placement decision by
         // this function, so it stays safe even when this function may execute under a live
         // handler post (where ordinary, scope-tied placement is not). Excluding it here left
         // the callee's genuinely reference-counted result copied at ArenaCallBoundary instead
-        // of adopted, leaking the original once nothing released it (OPT-50).
+        // of adopted, leaking the original once nothing released it.
         TypeRef resultType = Prune(funType.Ret);
         bool needsResultOwnership = AllowsAsyncIndependentRcPlacement
             && i == collectedArgs.Count - 1
@@ -15867,7 +15867,7 @@ public sealed partial class Lowering
     // the automatic per-instruction dispatcher that populates _tempOwnershipFacts has no case for
     // LoadLocal/LoadEnv (see IsTrivialParameterFieldAccessorBody's own doc on borrowed reads), so
     // such a read's temp is untracked even when the binding it reads is genuinely RC; fall back to
-    // the binding's own OwnershipInfo — the same per-name fact OPT-27's let-ownership rules read
+    // the binding's own OwnershipInfo — the same per-name fact the let-ownership rules read
     // (TrackOwnedValue/LookupOwnedValue) — for DefinitelyRc there too. A self-recursive loop's own
     // parameter is excluded from both: its arena-vs-runtime-RC placement is settled only after this
     // call's surrounding tail self-call constrains it (the same timing TryGetRuntimeManagedCallArgument

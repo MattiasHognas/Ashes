@@ -255,7 +255,7 @@ public sealed partial class Lowering
     // never collide with a parameter name and never reach IsResultAliasMove (which maps real params only).
     private int _maReachToken;
 
-    // Recursion guard for over-application (CO-2d closure seeds): OverApplicationReach inlines a
+    // Recursion guard for over-application (closure seeds): OverApplicationReach inlines a
     // callee's body one level to see through a returned closure; a bounded depth caps any chain of
     // nested over-applications (each level poisons past the cap — the sound direction).
     private const int MaxOverAppDepth = 4;
@@ -5298,7 +5298,7 @@ public sealed partial class Lowering
             return UnknownCalleeReach(head, args, env, scope);
         }
 
-        // (CO-2d) Over-application: the callee returns a closure that is applied to the surplus
+        // Over-application: the callee returns a closure that is applied to the surplus
         // arguments, e.g. `(makeBuilder(x))(n)` where `makeBuilder`'s body reduces to a lambda behind
         // an if/match (so currying did not statically flatten it into one function). Model it by
         // inlining the callee's body one level, binding each surplus argument to the returned lambda's
@@ -5658,7 +5658,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        // (CO-2d) Over-application through a returned closure: `(makeBuilder(x))(n)` is a move iff the
+        // Over-application through a returned closure: `(makeBuilder(x))(n)` is a move iff the
         // over-application's symbolic result-reach is not poisoned and every argument position its
         // result may alias is itself a move. A closure capturing a fresh/moved value is admitted; one
         // capturing a retained value or a global is declined (poison / non-move argument).
@@ -5712,7 +5712,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// (CO-2d) Symbolic result-reach of an <b>over-applied</b> call to registered function
+    /// Symbolic result-reach of an <b>over-applied</b> call to registered function
     /// <paramref name="key"/> — one whose surplus arguments are applied to a closure the callee
     /// returns. Returns a reach over <c>"@i"</c> argument-position markers (with the callee's own
     /// parameters mapped to their argument markers, so capture of a parameter is tracked), plus a

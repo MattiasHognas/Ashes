@@ -4081,7 +4081,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>Records a just-published reuse token's variable-bound fields: field index →
-    /// (local slot, total references in the arm body). See the CO-23 guard fields in Lowering.cs.</summary>
+    /// (local slot, total references in the arm body). See the in-place-overwrite guard fields in Lowering.cs.</summary>
     private void RecordReuseTokenFieldBindings(int tokenTemp, Pattern pattern, Expr armBody)
     {
         if (pattern is not Pattern.Constructor ctorPattern)
