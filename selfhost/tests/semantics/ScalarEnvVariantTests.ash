@@ -3,7 +3,7 @@
 // variants: folding them would make a call to one run the other's body. These checks lower and
 // optimize such a program and assert the two call sites keep distinct targets.
 //
-// This is CG-20's reproduction. It used to fail because the memo was keyed by a string built from
+// This is a regression reproduction. It used to fail because the memo was keyed by a string built from
 // the callee's label and capture count: that key was released at the scope exit of
 // `getOrCreateScalarEnvVariant` while the returned memo still held it, the next key's allocation
 // reused the cell, and the second lookup answered with the first entry. The memo now holds the

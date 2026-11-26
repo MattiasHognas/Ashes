@@ -1,4 +1,4 @@
-// Unit tests for OPT-42's structural reuse-eligibility analysis
+// Unit tests for the structural reuse-eligibility analysis
 // (`AshesCompiler.Semantics.ReuseSpecialization`): the pure Expr/Pattern-shape predicates
 // CoreLowering.ash's match-arm and constructor-allocation hooks use to decide whether a dead
 // matched cell may become an arena/RC in-place-reuse token, and whether a same-name rebuild may

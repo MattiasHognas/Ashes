@@ -4,8 +4,7 @@
 // - This is a deliberately small subset of `src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`'s
 //   `LibraryImport` surface (the source of truth for every entry point the eventual backend
 //   needs): just enough to build, and verify a trivial function in, an LLVM module end to end.
-//   Extending this file toward the full surface is future self-hosting work (see
-//   docs/md/future/SELF_HOSTING.md's "LLVM code generation and runtime integration" checklist).
+//   Extending this file toward the full surface is future self-hosting work.
 // - Every binding names the bare `libLLVM.so`/`.dll` (no path prefix), resolved by the OS loader
 //   relative to the compiled executable's own directory: a Linux binary carries a `$ORIGIN`
 //   RUNPATH for exactly this, and Windows' default DLL search order already checks the
@@ -28,9 +27,8 @@
 //   values from llvm-c/Analysis.h are exposed as `verifier*Action`; pass
 //   `verifierReturnStatusAction` to get a value back rather than aborting the process or writing
 //   straight to stderr).
-// - Object emission only initializes the x86 target (linux-x64 first, per
-//   docs/md/future/SELF_HOSTING.md's own porting order — it "unblocks every later phase that only
-//   needs one working target"); AArch64/Windows initializers are future work. `createTargetMachine`
+// - Object emission only initializes the x86 target (linux-x64 first, which
+//   unblocks every later phase that only needs one working target); AArch64/Windows initializers are future work. `createTargetMachine`
 //   takes `cpu`/`features` as plain arguments rather than always calling `hostCpuName`/
 //   `hostCpuFeatures` itself, so a caller can still pass `""`/`""` for LLVM's generic settings
 //   (e.g. cross-compiling for a target that isn't the host).

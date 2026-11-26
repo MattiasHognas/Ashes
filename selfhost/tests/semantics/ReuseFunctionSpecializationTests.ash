@@ -1,4 +1,4 @@
-// Unit tests for OPT-42's `f$reuse` whole-function reuse specialization: the top-level candidate
+// Unit tests for the `f$reuse` whole-function reuse specialization: the top-level candidate
 // scan (`AshesCompiler.Semantics.ReuseFunctionSpecialization`) and the call-site qualification and
 // generation CoreLowering.ash hangs off it. A qualifying call lowers to a specialization of the
 // callee whose accumulator parameter is a linear reuse root, so the rebuild in its match arm

@@ -2407,7 +2407,7 @@ let recursive reuseCasesLeaveScrutineeDead (name: Str) (cases: List((Pattern, Ex
         | (_pattern, _body, Some(_guard)) :: _rest -> false
         | (_pattern, body, None) :: rest -> exprMentionsName(name)(body) == false && reuseCasesLeaveScrutineeDead(name)(rest)
 
-// The scrutinee's own bare-variable name, when the match qualifies for OPT-42 in-place reuse,
+// The scrutinee's own bare-variable name, when the match qualifies for in-place reuse,
 // stage 0's `TryGetRuntimeManagedReuseScrutinee`: a `let` binding still owning its
 // reference-counted value (`liveRuntimeOwnerSlot`), every arm guard-free and leaving the cell
 // dead, and the whole match an exhaustive, transfer-safe rebuild of one type
