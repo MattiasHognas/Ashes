@@ -85,5 +85,5 @@ natural — each velocity component is a sum of the four interactions that body 
 
 The previous formulation is kept as `n-body-list.ash`. It is no longer the benchmark entry, but it
 is the shape that exercises the arena/reference-counted list path — the whole-list deep clone
-across the fixed-watermark reset (changelog CO-32) and the amortized compaction (CO-35), which
+across the fixed-watermark reset and the amortized compaction, which
 before that arc grew 4.27 GB per 1e6 steps — so it stays runnable.

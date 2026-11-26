@@ -70,7 +70,7 @@ means (10,000: single timed run), GNU `time` peak RSS (~12 MB is the runtime's f
 Both original flaws are fixed. Resident memory is **constant-ish** (the working `BigInt`s
 themselves) at every `N` — down from `O(N^2)` (`N=1000` was 168 MB) after the fixed-watermark
 copy-out arc. Time dropped ~128x when `bignum_divmod` was rewritten from bit-by-bit binary long
-division to **Knuth Algorithm D in base 2^32** (changelog CO-33): `N=1000` went 3.46 s -> 0.029 s
+division to **Knuth Algorithm D in base 2^32**: `N=1000` went 3.46 s -> 0.029 s
 (0.017 s today), and the standard `N=10000` — formerly ~an hour of extrapolated runtime — now runs
 in 2.1 s.
 Remaining time growth is the schoolbook `mul` (Karatsuba unimplemented; nothing currently hits it

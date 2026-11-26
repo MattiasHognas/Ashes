@@ -110,7 +110,7 @@ candidate spelling (`|?>`, `|!>`, `->`, ...); it now dispatches on the raw bytes
 faster than the .NET pass, parse (which includes lexing) is close to parity, and lex is the one
 row left above 1.5x. `tests/regress_readline_loop_depth.ash` no longer crashes any phase because
 the header pass no longer builds the per-line list that triggered the stage-0 lifetime bug; that
-bug stays open on the checklist.
+bug stays open.
 
 | Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -193,15 +193,14 @@ What the first run says, beyond the raw ratios:
 - The lexer's 6.5x is the cleanest comparison: identical work, matching token counts.
 - The format row is not comparable yet: the 23 files the self-hosted formatter crashes on are the
   largest ones (the stdlib collections, the semantics package sources), so stage 1 renders 1.5 MB
-  where stage 0 renders 2.3 MB. The crash is tracked on the self-hosting checklist (formatter
-  corpus item).
+  where stage 0 renders 2.3 MB. The crash is still open.
 - The infer row is a coverage number, not a speed number: the seeded standard environment has no
   builtin value bindings yet (`Ashes.IO.print` and friends), so stage 1 accepts 35 of the 475
   import-free programs where stage 0 lowers 376. It becomes meaningful once the standard-library
-  environment is populated through module stitching (checklist: semantic foundations).
+  environment is populated through module stitching.
 - The single file every stage-1 phase crashes on is `tests/regress_readline_loop_depth.ash`, a
   15 KB `// stdin:` directive line that exposes a stage-0 lifetime bug in a tail-recursive loop
-  moving a large string from the list it consumes into its accumulator (checklist: ownership).
+  moving a large string from the list it consumes into its accumulator.
 
 ### 2026-09-04, milestone 2 batches 2 and 3 (RC runtime, copy-out, entry normalization)
 
