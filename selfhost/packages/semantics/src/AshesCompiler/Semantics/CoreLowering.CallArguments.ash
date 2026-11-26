@@ -1316,16 +1316,33 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
 // returned keeps the ownership the callee's predicted result gives it.
 let selfCallArgumentReadsResultBit (context: CoreCallContext) (state: CoreLoweringState) = context.resultIsCallArgument && selfCallReadsNoSummary(context.selfCallee)(state)
 
-let readsResultOwnershipAtRunTime (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    match context with
-        | CoreCallContext { tailCall = true } -> (state, false, false)
-        | CoreCallContext { facts = facts } ->
-            if asyncIndependentRcPlacementAllowed(state) && arity == 1 && selfCallArgumentReadsResultBit(context)(state)
-            then (state, true, false)
-            else
-                if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
-                then resultOwnershipReadAtRunTime(context)(resultType)(state)
-                else (state, false, false)
+// The result type the returns-bit decision reads: a self or group-member call whose own result
+// type is still open takes the type its consumer names (the cons holding it asks for
+// `List(head)`), the type stage 0's pruned arrow already carries at the call, so the call reads
+// the callee's returns bit and its window closes on that bit.
+let ownershipDecisionType (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    if context.selfCallee && containsUnresolvedLayout(resultType)(state)
+    then
+        match context.expectedResult with
+            | Some(expected) ->
+                if containsUnresolvedLayout(expected)(state)
+                then resultType
+                else expected
+            | None -> resultType
+    else resultType
+
+let readsResultOwnershipAtRunTime (context: CoreCallContext) (arity: Int) (openResultType: SemanticType) (state: CoreLoweringState) =
+    (let resultType = ownershipDecisionType(context)(openResultType)(state)
+    in
+        match context with
+            | CoreCallContext { tailCall = true } -> (state, false, false)
+            | CoreCallContext { facts = facts } ->
+                if asyncIndependentRcPlacementAllowed(state) && arity == 1 && selfCallArgumentReadsResultBit(context)(state)
+                then (state, true, false)
+                else
+                    if asyncIndependentRcPlacementAllowed(state) && arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false
+                    then resultOwnershipReadAtRunTime(context)(resultType)(state)
+                    else (state, false, false))
 
 let emitResultOwnershipFlag (reads: Bool) (functionTemp: Int) (state: CoreLoweringState) =
     if reads
