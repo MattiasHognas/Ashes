@@ -1318,14 +1318,15 @@ let selfCallArgumentReadsResultBit (context: CoreCallContext) (state: CoreLoweri
 
 // The result type the returns-bit decision reads: a self or group-member call whose own result
 // type is still open takes the type its consumer names (the cons holding it asks for
-// `List(head)`), the type stage 0's pruned arrow already carries at the call, so the call reads
-// the callee's returns bit and its window closes on that bit.
+// `List(head)`) when that type has a fixed copy-out, the type stage 0's pruned arrow already
+// carries at the call, so the call reads the callee's returns bit and its window closes on that
+// bit with the copy-out on the arena branch.
 let ownershipDecisionType (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     if context.selfCallee && containsUnresolvedLayout(resultType)(state)
     then
         match context.expectedResult with
             | Some(expected) ->
-                if containsUnresolvedLayout(expected)(state)
+                if containsUnresolvedLayout(expected)(state) || hasCallCopyOut(expected)(state) == false
                 then resultType
                 else expected
             | None -> resultType
