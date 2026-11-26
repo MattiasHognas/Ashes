@@ -120,13 +120,13 @@ compiler unless marked; each change gets a lowered-IR diff, the behaviour check 
 | 9 | `calleeResultUnsettled` | none: every differing site (22; corpus 237) is a self call, already callee-first | Closed |
 | 6 | `selfResultDeferred` | a deferred self call's scalar or general reference-counted result pinned; inside a loop body the general one keeps its deferral (21 sites; corpus 3) | Done (#1164) |
 | 7 | `siblingResultOpen` and the pinned and proven sibling results | a group member's scalar or general reference-counted result settled from the table (1,471 sibling and 659 group-member self sites); re-lowerings 2,635 to 2,418 | Done (#1164) |
-| 8c | a no-flag copy-out call result left in its window | copied out before the window is reset, as stage 0's `LowerCallCopyOutResult` does (47 sites, 31 in loop bodies; `e613dc1e`) | In review |
+| 8c | a group-member call's copy-out result left in its window (47 sites, 31 in loop bodies) | the call reads the callee's returns bit on the type its consumer names, as stage 0's pruned arrow does, and copies the result out on the arena branch (`LowerCallConditionalCopyOutResult`); an unconditional copy (`LowerCallCopyOutResult`) where no bit is read. Compiler sites left open 47 to 0 | In review |
 | 8c-async | the same in a coroutine body (corpus 42 sites, the `async_*` programs) | needs the copy's release across an await first | Later |
 | 8c-other | self and sibling copy-out and other-shape results keeping their request (copy-out 148 + 229, other 23 + 45; unknown closures 7 + 4) | stage 0's post-call copy-out per kind | Later |
 | 8d | about 2,500 heap results with no copy-out whose window stays open, as in stage 0 (`LowerUncoveredCallResultCopyOut`; about 370 in loop bodies) | a copy-plan rule beyond stage 0 | Not planned |
 | 8b | results closed only by the variables a generic body's single use settles (128; corpus 560) | the same pin, beyond stage 0 | Deferred |
-| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded parameter type needs it, its release on every exit checked first (9; corpus 9 in 8 programs) | Next |
-| 4 | `bodyEncounteredRequirementClosedScope` | scope types from the table at entry, no closed-scope re-lowering (2,323 re-lowerings, 55% of the lowering time with entry 10) | After 11 |
+| 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | decided on the parameter type the lambda's node records (9; corpus 6 programs change IR). A `\|?>` mapper call passes no ownership word, so a mapper normalized this way keeps its payload's reference: that call must hand the payload over first | Held |
+| 4 | `bodyEncounteredRequirementClosedScope` | scope types from the table at entry, no closed-scope re-lowering (2,323 re-lowerings, 55% of the lowering time with entry 10). 1,480 of them have no node in effect at entry (parameter lambdas of a `let`), and closing types at entry moves entry 11's decision on generic library bodies | Needs the declaration node |
 | 10 | `lowerFunctionBodyResolvingCalls`, `anyCallResultResolved` | none once 4 and 6 to 9 hold (95 re-lowerings left) | After 4 |
 
 Order: 8c, 11, 4, 10, then 8c-async and 8c-other; 8b and 8d go beyond stage 0 and wait.
