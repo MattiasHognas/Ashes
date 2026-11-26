@@ -1097,22 +1097,24 @@ let recursive innermostArrowResult (semanticType: SemanticType) (state: CoreLowe
         | other -> other
 
 // Step 8, entry 4: the type the table records for a scope binding open at entry, at the lambda's
-// own node: a parameter by the binding the node notes for its name, the recursive binding whose
-// body this is by the innermost result of the lambda's recorded arrow. None for any other binding
-// (a capture or an enclosing local the node does not note) and for a type the table leaves open.
+// own node: its direct parameter (local slot 1) by the binding the node notes for its name, the
+// recursive binding whose body this is by the innermost result of the lambda's recorded arrow.
+// None for any other binding (a capture, an earlier curried parameter, an enclosing local), for a
+// node that records no arrow, and for a type the table leaves open.
 let recordedScopeBindingType (binding: CoreBinding) (state: CoreLoweringState) =
     match binding.location with
         | CoreSelf(_label, _environmentSize) ->
             match state.currentNode with
                 | Some(node) ->
                     match recordedSettledTypeAt(node)(state) with
-                        | Some(recorded) ->
+                        | Some(SemFunction(_argument, result, _row)) ->
                             state
-                            |> innermostArrowResult(recorded)
+                            |> innermostArrowResult(result)
                             |> Some
-                        | None -> None
+                        | _ -> None
                 | None -> None
-        | _ -> recordedLambdaParameterType(binding.name)(state)
+        | CoreLocal(1) -> recordedLambdaParameterType(binding.name)(state)
+        | _ -> None
 
 let recursive closeScopeBindingsFromTable (bindings: List(CoreBinding)) (state: CoreLoweringState) =
     match bindings with
