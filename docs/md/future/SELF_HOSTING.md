@@ -122,6 +122,7 @@ node, or settled only (entry 8b).
 | 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
 | 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
 | 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
+| 8c | an unknown closure's result with a fixed copy-out (a string, a list of strings or scalars) | take it by the returns bit and normalize it after the call as stage 0 does (`CopyOutList` with the release), instead of the arena request | Later item (leak focus) | | 6 `List`, 1 `Unit` sites keep the request |
 | 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
 | 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
 | 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 14 / 215 / 2,786, 117 programs (258 of the unrecorded closed only by settled variables) | 250 / 975 / 97 |
@@ -137,7 +138,11 @@ result by the callee's returns bit left the list and its strings unreleased (7 a
 against stage 0's 1). The pin now leaves those calls alone (`56564990`), which covers all four corpus
 sites and leaves their IR as before; on the compiler body re-lowerings fall from 2,667 to 2,662
 and entry 10's sites from 353 to 348. An unknown closure's result becomes ownable only when the
-caller reads the callee's returns bit for every result shape, which is separate work.
+caller reads the callee's returns bit for every result shape. A general reference-counted result
+(a record or ADT outside the fixed copy-outs) already is, as in stage 0, which asks no arena for it:
+`05b82e35` takes it owned through the returns bit where its type is closed by the instantiation (7
+of the 11 compiler sites, four of them `LoweredCoreValue` lowering callbacks; three corpus programs). The copy-out kinds
+are entry 8c.
 
 Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
 closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
