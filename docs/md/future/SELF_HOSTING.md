@@ -82,6 +82,7 @@ Wrong output, found by the behaviour check under `ASHES_RC_POISON=1` in round 12
 | `mixed_tuple_join_taken_apart_into_constructor` segfaults | 1 | Not written |
 | A deep copy in a generic helper lowered before its type settles hands the caller's string over uncopied | 0 | Not written (stage 1 is right since step 8 entry 5) |
 | Regular expressions used by several `Ashes.Task.Parallel` workers at once crash or answer wrongly: the PCRE2 payload's `malloc` is a bump allocator over one region whose cursor is a plain global every thread shares | runtime, both | Not written; reproduction: `Ashes.Text.Regex.compile` and `isMatch` in a loop inside `Ashes.Task.Parallel.map` over eight elements |
+| Programs built by the self-hosted compiler are dynamically linked against `libc.so.6` as soon as they allocate (`malloc`, `free`, and LLVM's `memcpy`, `memset`, `bcmp`); the C# compiler emits the same programs fully static, which is the language's zero-dependency promise | 1 | Not written |
 
 Leaks, as known:
 
