@@ -1492,9 +1492,12 @@ let closeContractCallWindow (context: CoreCallContext) cursorSlot endSlot (stage
                                             closed
                                             |> success(resultTemp)(semanticType)
                                             |> closedCallStage(stage)(true)(false)
-                                // Stage 0's `LowerCallCopyOutResult`: a call that asked for an arena result holds the
-                                // callee's arena copy, copied out of the window before it is reset.
-                                | (Some(copyOut), false) when callRequestsArenaResult(temp)(allocated.reversedInstructions) ->
+                                // Stage 0's `LowerCallCopyOutResult`: a result with a copy-out and no returns flag is
+                                // copied out of the window before it is reset, whatever the call asked for (entry 8c).
+                                // A coroutine body, or a function that may run inside one, copies it out only when it
+                                // asked for an arena result: its other results stay in the arena until the copy's
+                                // release across an await exists.
+                                | (Some(copyOut), false) when callRequestsArenaResult(temp)(allocated.reversedInstructions) || asyncIndependentRcPlacementAllowed(allocated) ->
                                     match emitPlainCallCopyOut(copyOut)(temp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
                                         | (closed, resultTemp) ->
                                             closed
