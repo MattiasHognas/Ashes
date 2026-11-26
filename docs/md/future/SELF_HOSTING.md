@@ -121,34 +121,35 @@ node, or settled only (entry 8b).
 | 2 | `unprovenTraitGoalKey`, `openDictionaryGoalKey`, `pinProvenTraitGoal`, `pinProvenEqualityGoal` | an open goal is refused at its site | Done | | |
 | 3 | `activeEvidenceCoversOperator`, `traitPlanLacksActiveEvidence` | dispatch from the recorded operator instance | Done | | |
 | 5 | `lowerInternalDeepCopy` | the copy at the value's recorded type | Done | | |
-| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`) | In review | 25,747 / 4 / 5,643, 4 programs; after: 0 differ | 43,934 / 15 / 265; after: 0 differ |
+| 8 | `requestsArenaResult`, `containsUnresolvedLayout` | the call's result pinned to its recorded type closed by the body's own instantiation before the request (`b898495b`), except through an unknown closure (`56564990`) | In review | 25,747 / 4 / 5,643, 4 programs, all four through an unknown closure, so they keep the request | 43,934 / 15 / 265; after: 0 differ |
 | 8b | the same rule for a result closed only by the variables the program's uses settle | a generic body lowered once (`Collection.Map`, `Collection.List`), which stage 0 lowers with its variables open | Deferred, after entry 8's round | 560 sites would drop the request | 128 sites would drop the request |
 | 4 | `bodyEncounteredRequirementClosedScope` | recorded scope types from the start; reads parameters at entry, so it waits for 11 | Deferred | 0 / 8,839 / 0, 832 programs | 0 / 2,314 / 0 |
 | 6 | `selfResultDeferred` | the binding's recorded result layout decides the arena request | Deferred | 14 / 215 / 2,786, 117 programs (258 of the unrecorded closed only by settled variables) | 250 / 975 / 97 |
 | 7 | `siblingResultOpen`, `siblingResultPinned`, `deferredSelfResultNamedByConsumer`, `keepFirstSelfResultDeferral` | the group member's recorded result layout decides; the largest IR change | Deferred | 0 / 69 / 5, 36 programs | 0 / 1,851 / 51 |
-| 9 | `calleeResultUnsettled` | see below; not settled yet | Deferred | 37 / 236 / 0, 233 programs | 113 / 22 / 0 |
-| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs; after entry 8: 0 / 22 / 0, 19 programs | 0 / 353 / 0; after entry 8: 0 / 291 / 0 |
+| 9 | `calleeResultUnsettled` | none under callee-first order: every differing site is a cycle (see below) | Deferred | 37 / 237 / 0, 234 programs | 113 / 22 / 0 |
+| 10 | `lowerFunctionBodyResolvingCalls`, `lowerRecursiveBodyResolvingCalls`, `anyCallResultResolved` | none: with 6 to 9 every body is lowered once | Deferred | 0 / 502 / 0, 248 programs | 0 / 353 / 0; after entry 8: 0 / 348 / 0 |
 | 11 | `normalizesAlwaysReturnedParameter` and the parameter-to-result arena boundary | taken when the recorded type needs it, with the release on every exit first (eleven programs leaked without it) | Deferred | 32,838 / 8 / 9,005, 7 programs | 27,021 / 8 / 2,881 |
 
-Entry 8 changed the lowered IR of exactly the four corpus programs it names (`ir.tsv` of the two
-sweeps) and the compiler's 15 sites. Pinning a call's result also keeps an open call out of the
-body's unresolved results in a first lowering, so it removes most of entry 10: body re-lowerings
-fall from 9,341 to 8,890 on the corpus and from 2,667 to 2,605 on the compiler, and the re-lowerings
-entry 10 counts from 502 to 22 on the corpus and from 353 to 291 on the compiler; the IR of every
-other program is unchanged, so the re-lowerings removed were IR-neutral.
+Entry 8 first pinned every open call result, including calls through a closure no name resolves
+(`given (f) -> f(x)`). The round showed why stage 0 asks the arena there: the caller cannot own
+what an unknown callee returns, and stage 0 copies the result out after the call. Taking a list
+result by the callee's returns bit left the list and its strings unreleased (7 and 13 live cells
+against stage 0's 1). The pin now leaves those calls alone (`56564990`), which covers all four corpus
+sites and leaves their IR as before; on the compiler body re-lowerings fall from 2,667 to 2,662
+and entry 10's sites from 353 to 348. An unknown closure's result becomes ownable only when the
+caller reads the callee's returns bit for every result shape, which is separate work.
 
-Entry 9 needs a decision. `calleeResultUnsettled` asks a known callee whose body is not lowered yet
-for an arena result, because `compiledResultRuntimeManaged` reads `bodyRuntimeManagedByLabel`, the
-result placement each body ended with. The result-reach summaries cannot carry that fact: they
-record which parameters reach a result (provenance), not whether the body's result ends up
-reference-counted. Two replacements: (a) predict each body's result placement before lowering, a
-second ownership pass over the declarations with their recorded types, which no current pass
-does (`predictRuntimeManagedResult` covers passthrough parameters only); (b) lower bodies callee
-first, in dependency order, so a callee's fact exists when its caller is lowered, with the members
-of a recursive group, and a callee reached through a closure, staying unsettled. Stage 0 lowers
-bodies in declaration order and asks the arena of every callee it has not lowered yet
-(`CalleeResultUnsettled`), so (b) keeps its rule for cycles and removes only the forward
-references, while (a) goes beyond stage 0 everywhere.
+Entry 9, decided on 2026-11-26: callee-first lowering in dependency order, recursive groups and
+closures staying unsettled as stage 0's `CalleeResultUnsettled` leaves them. Measured with the
+reason each site now names (driver at `350b7717`): of the 237 corpus sites and the 22 compiler
+sites, 235 and 22 are a function's call to itself and 2 (`Text.Json`'s `parseValue` called from
+the `parseArr` nested in its own body) are a call into the body still being lowered. None is a
+forward reference to another top-level body: top-level scoping already lowers every callee
+before its callers (a binding is visible only to later declarations, and imported modules are
+stitched before their importers). So callee-first order changes nothing, the entry closes with
+no code under that decision, and lowering order, lambda and label numbering stay as they are.
+The fact a self call lacks is its own body's result placement, which only predicting it before
+lowering (the other option, beyond stage 0) could supply.
 
 Planned order: 8 and 9, then 6 and 7 with 10, then 11, then 4. Replacing the per-binding plan
 (`constrainedBindingPlan`) by the recorded schemes follows entry 3. Entries 6 to 9 mirror rules
