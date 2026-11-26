@@ -2359,18 +2359,18 @@ let transferBranchLetOwnerResult (branch: Expr) (temp: Int) (semanticType: Seman
                 | _ -> (state, temp)
 
 // An `if` branch's result as the join stores it: a pattern owner's duplicate, a reference of its
-// own to a `let` owner when the `if` is the function's result (`resultEscapes`), or the value as it
-// was lowered. An `if` whose value stays inside the function (a record field, an operand) stores
-// the plain read: the aggregate or operation that consumes it takes its own reference.
-let transferIfBranchResult (resultEscapes: Bool) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+// own to a `let` owner, or the value as it was lowered. Stage 0's `TransferOwnerBindingResult`
+// retains a returned owner wherever the `if` stands, since the owner's release follows the whole
+// `if`: the join's value may be stored in an arena record built after that release (`pendingRootSlot
+// = if runtimeArgument then None else rootSlot`, the record copied onto the reference-counted heap
+// as the result), which otherwise reads the freed owner, and the copied arena record's field
+// releases that reference once the copy holds its own (`releaseOwnedFieldsOfCopiedArenaRecord`).
+let transferIfBranchResult (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match transferBranchOwnerResult(branch)(temp)(state) with
         | (duplicated, duplicate) ->
             if duplicate != temp
             then (duplicated, duplicate)
-            else
-                if resultEscapes
-                then transferBranchLetOwnerResult(branch)(temp)(semanticType)(duplicated)
-                else (duplicated, temp)
+            else transferBranchLetOwnerResult(branch)(temp)(semanticType)(duplicated)
 
 // Stage 0's `MarkRuntimeManagedMatchResult` and `MarkUniformRuntimeManagedResult`: a join's
 // reloaded value is a reference-counted value when every branch stored one, and newly produced
