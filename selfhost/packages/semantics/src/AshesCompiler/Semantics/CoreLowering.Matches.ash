@@ -136,13 +136,6 @@ let transferLoopExitFieldResult (request: ConsumerRequest) (body: Expr) (temp: I
                                 |> emit(RcDup(duplicate)(temp)(false)(false))
                                 |> (given (marked: CoreLoweringState) -> withStateTcoParameterRetainSites((duplicate, slot, bodyType) :: stateTcoParameterRetainSites(marked))(marked)), duplicate)
 
-let recursive armOwnedSlots (owners: List(ArmOwner)) =
-    match owners with
-        | [] -> []
-        | ArmScrutineeOwner(slot, _typeName, _isList, _valueTemp, _scrutineeType) :: rest -> slot :: armOwnedSlots(rest)
-        | ArmHeapOwner(slot, _typeName) :: rest -> slot :: armOwnedSlots(rest)
-        | _owner :: rest -> armOwnedSlots(rest)
-
 // Whether an aggregate literal reads, at any depth of its tuple, record, list and constructor
 // children, a binding whose live runtime owner is one of the arm's own (stage 0's
 // `CollectBorrowedRuntimeOwners` with an owner of the arm's scope among them). A pattern owner
@@ -1063,6 +1056,13 @@ type ArmOwner =
     | ArmHeapOwner(Int, Str)
     | ArmScrutineeOwner(Int, Str, Bool, Int, SemanticType)
     | ArmPatternOwner(Int, SemanticType)
+
+let recursive armOwnedSlots (owners: List(ArmOwner)) =
+    match owners with
+        | [] -> []
+        | ArmScrutineeOwner(slot, _typeName, _isList, _valueTemp, _scrutineeType) :: rest -> slot :: armOwnedSlots(rest)
+        | ArmHeapOwner(slot, _typeName) :: rest -> slot :: armOwnedSlots(rest)
+        | _owner :: rest -> armOwnedSlots(rest)
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
