@@ -452,6 +452,10 @@ export (
     value withStateConcreteDepth,
     value stateConcreteDeclines,
     value withStateConcreteDeclines,
+    value stateAbstractElementTmcDeclines,
+    value stateTmcDeclines,
+    value recordTmcDecline,
+    value carryTmcDeclines,
     value stateReuseTransferredNames,
     value withStateReuseTransferredNames,
     value stateReuseEnabled,
@@ -1492,6 +1496,12 @@ type CoreReuseState =
     | concreteRegistry: CoreConcreteRegistry
     | concreteDepth: Int
     | concreteDeclines: Int
+    // Stage 0's `_abstractElementTmcDeclines`: tail-modulo-constructor cells declined because their
+    // element type was unresolved, so a top-level function whose lowering moved it is an element
+    // specialization candidate; and `_elementSpecializationTmcDeclines`, every declined cell, which a
+    // copy must leave unmoved to be kept.
+    | abstractElementTmcDeclines: Int
+    | tmcDeclines: Int
 
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
@@ -3305,6 +3315,28 @@ let stateConcreteDeclines (state: CoreLoweringState) =
 let withStateConcreteDeclines value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with concreteDeclines = value))
+
+let stateAbstractElementTmcDeclines (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.abstractElementTmcDeclines)
+
+let stateTmcDeclines (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in group.tmcDeclines)
+
+// The declined-cell counts of `source`, kept by `state` across a frame restore.
+let carryTmcDeclines (source: CoreLoweringState) (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with tmcDeclines = stateTmcDeclines(source), abstractElementTmcDeclines = stateAbstractElementTmcDeclines(source)))
+
+// Stage 0's `RecordTmcDecline`: one declined tail-modulo-constructor cell, counted as abstract when
+// its element type is still unresolved.
+let recordTmcDecline (abstractElement: Bool) (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in
+        state with reuseState = (group with tmcDeclines = group.tmcDeclines + 1, abstractElementTmcDeclines = (if abstractElement
+        then group.abstractElementTmcDeclines + 1
+        else group.abstractElementTmcDeclines)))
 
 let stateReuseTransferredNames (state: CoreLoweringState) =
     (let group = state.reuseState

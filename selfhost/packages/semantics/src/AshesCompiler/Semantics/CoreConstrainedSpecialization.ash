@@ -13,6 +13,7 @@ export (
     value registerCoreConcreteCandidate,
     value registerCoreRecordedConcreteCandidate,
     value registerCoreNestedConcreteCandidate,
+    value registerCoreElementConcreteCandidate,
     value coreConcreteOpenSchemes,
     value lookupCoreConcreteCandidate,
     value lookupCoreConcreteCopy,
@@ -48,6 +49,11 @@ type CoreConcreteCandidate =
     // other than its own name, with what it resolves to in the candidate's definition frame. None
     // when a name resolves to a recursive group's own member there, and for every other candidate.
     | inPlaceScope: Maybe(List(CoreDefinitionName))
+    // Stage 0's element specialization candidate: registered because its generic body declined a
+    // tail-modulo-constructor cell over an unresolved element type, not for a requirement. Its
+    // scheme answers no name in the schemes copies infer their calls against, and its copy is kept
+    // only when the copy declines no such cell itself.
+    | elementCopy: Bool
 
 // None is a proved rejection, distinct from an absent cache entry. An in-progress
 // copy is never published here: recursive calls must use the generated self binding.
@@ -81,7 +87,7 @@ let registeredOpenSchemes (name: Str) (scheme: TypeScheme) (open: MapTree(Str, M
 // The caller admits only top-level sources and keeps the pre-dictionary scheme.
 // A new declaration gets a distinct cache identity even when its spelling repeats.
 let registerCoreRecordedConcreteCandidate name source scheme bindingScheme arity bindingSlot isRecursive inPlaceScope (registry: CoreConcreteRegistry) =
-    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive, inPlaceScope = inPlaceScope)
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive, inPlaceScope = inPlaceScope, elementCopy = false)
     in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates), inferenceBindings = (name, scheme) :: registry.inferenceBindings, openSchemes = registeredOpenSchemes(name)(scheme)(registry.openSchemes))
 
 let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) = registerCoreRecordedConcreteCandidate(name)(source)(scheme)(scheme)(arity)(bindingSlot)(isRecursive)(None)(registry)
@@ -90,8 +96,15 @@ let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursi
 // reaches it only through the local binding the key names, never by name alone, and its scheme
 // does not join the schemes copies infer their calls against.
 let registerCoreNestedConcreteCandidate key name source scheme bindingScheme arity bindingSlot inPlaceScope (registry: CoreConcreteRegistry) =
-    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = false, inPlaceScope = inPlaceScope)
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = bindingScheme, arity = arity, bindingSlot = bindingSlot, isRecursive = false, inPlaceScope = inPlaceScope, elementCopy = false)
     in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(key)(candidate)(registry.candidates))
+
+// Stage 0's `RegisterElementSpecializationCandidate`: a top-level generic function whose lowering
+// declined a tail-modulo-constructor cell because the element type was still a type variable. A
+// call fixing that type routes to a copy lowered at the call's concrete types.
+let registerCoreElementConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) =
+    (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, bindingScheme = scheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive, inPlaceScope = None, elementCopy = true)
+    in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates))
 
 // The schemes of the current candidates that hold a free type variable, in the order a fold of
 // `candidates` lists them.
