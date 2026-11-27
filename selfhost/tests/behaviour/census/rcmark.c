@@ -23,6 +23,27 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+// A released block keeps its RC header: the release writes only the free-list link (the next
+// free block, or 0 at the list's end) over the prefix's second word. In a program built with
+// ASHES_RC_SITES=1 that word is the allocation site, a code address, in every block in use, so a
+// block whose word is 0 or a region address is free. sitesBuild says whether the dump is of such
+// a program: some block among the first million carries a code address.
+static int sitesBuild = -1;
+static int detectSites(const uint8_t *d, uint64_t len, uint64_t base) {
+    uint64_t o = 0, seen = 0;
+    while (o + 32 <= len && seen < 1000000) {
+        const uint64_t *w = (const uint64_t *)(d + o);
+        uint64_t bytes = w[0];
+        if (bytes < 32 || (bytes & 15) != 0) { o += 16; continue; }
+        if (w[1] != 0 && w[1] < base) return 1;
+        seen++; o += bytes;
+    }
+    return 0;
+}
+static int releasedBlock(uint64_t site, uint64_t base) {
+    return sitesBuild == 1 && (site == 0 || (site >= base && site < base + 0x40000000000ULL));
+}
+
 static const uint8_t *d;
 static uint64_t len, base, slots;
 static uint8_t *live, *marked, *inner;
@@ -62,6 +83,7 @@ static int plausible(const uint64_t *w, uint64_t o, uint64_t *bytesOut) {
     if (bytes == 0) return 0;
     if (bytes < 32 || (bytes & 15) != 0 || o + bytes > len + 4096) return -1;
     uint64_t count = w[2], size = w[3];
+    if (releasedBlock(w[1], base)) return 3;
     int liveCount = (count >= 1 && count < (1ULL << 32)) || count == (1ULL << 62);
     return liveCount && size <= bytes - 32 && size + 15 >= bytes - 32 ? 1 : 2;
 }
@@ -153,11 +175,13 @@ int main(int argc, char **argv) {
     slots = len / 16 + 1;
     live = calloc(slots / 8 + 1, 1); marked = calloc(slots / 8 + 1, 1); inner = calloc(slots / 8 + 1, 1);
     if (!live || !marked || !inner) { perror("rcmark: bitmaps"); return 1; }
-    uint64_t o = 0, bytes, cells = 0;
+    sitesBuild = detectSites(d, len, base);
+    uint64_t o = 0, bytes, cells = 0, released = 0;
     while (o + 32 <= len) {
         int kind = plausible((const uint64_t *)(d + o), o, &bytes);
         if (kind <= 0) { o += 16; continue; }
         if (kind == 1) { set(live, (o + 32) / 16); cells++; }
+        if (kind == 3) released++;
         o += bytes;
     }
     scanRoots(argv[2]);
@@ -184,6 +208,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "rcmark: %llu live cells, %llu reachable (%llu bytes), %llu unreachable (%llu bytes) of which %llu leak roots; %llu root bytes (%llu of them dead stack below a stack pointer, skipped), %llu root words, %llu cells reached directly from a root\n",
         (unsigned long long)cells, (unsigned long long)reached, (unsigned long long)reachedBytes, (unsigned long long)(cells - reached), (unsigned long long)lostBytes, (unsigned long long)leakRoots,
         (unsigned long long)rootBytes, (unsigned long long)deadStackBytes, (unsigned long long)rootWords, (unsigned long long)directMarks);
+    fprintf(stderr, "rcmark: %s; %llu released blocks skipped\n", sitesBuild ? "allocation sites recorded" : "no allocation sites, released blocks cannot be told from live ones", (unsigned long long)released);
     fprintf(stderr, "rcmark: U is a sure leak; R is an upper bound on what was still held at exit (the mark is conservative)\n");
     return 0;
 }
