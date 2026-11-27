@@ -734,7 +734,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 concreteDepth = 0,
                 concreteDeclines = 0,
                 abstractElementTmcDeclines = 0,
-                tmcDeclines = 0
+                tmcDeclines = 0,
+                abstractAccumulatorBackEdges = 0
             )
         ))
 

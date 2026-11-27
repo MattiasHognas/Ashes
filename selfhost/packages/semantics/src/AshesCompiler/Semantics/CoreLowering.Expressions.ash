@@ -3216,10 +3216,30 @@ let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingSche
 // A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
 // over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
 // at a concrete type then gets its own copy, as lowering's own constrained schemes do.
+// Whether any arrow of the type names a capability its caller must provide, which a copy lowered in
+// an isolated scope cannot see (the skip of stage 0's fold trigger).
+let recursive arrowNeedsCapability (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(argument, result, row) ->
+            (match row with
+                | Some(SemRow(_first :: _rest, _tail)) -> true
+                | _ -> false) || arrowNeedsCapability(argument) || arrowNeedsCapability(result)
+        | SemList(element) -> arrowNeedsCapability(element)
+        | SemTuple(elements) -> anyArrowNeedsCapability(elements)
+        | SemNamed(_symbolId, _name, arguments) -> anyArrowNeedsCapability(arguments)
+        | _ -> false
+and anyArrowNeedsCapability (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | first :: rest -> arrowNeedsCapability(first) || anyArrowNeedsCapability(rest)
+
+// A source whose own lowering threaded an accumulator of quantified type through a back edge
+// (`foldTriggered`, stage 0's `_abstractAccumulatorBackEdges`) registers the same way: its copy at
+// the accumulator's concrete type releases the predecessor accumulator, as a concrete fold does.
 // A source whose own lowering declined a cell over an unresolved element type (`elementTriggered`,
 // stage 0's `RegisterElementSpecializationCandidate`) registers as an element candidate when nothing
 // above registers it: a generic function with no requirements.
-let registerConcreteSource name value isRecursive (elementTriggered: Bool) state =
+let registerConcreteSource name value isRecursive (elementTriggered: Bool) (foldTriggered: Bool) state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
     else
@@ -3237,7 +3257,7 @@ let registerConcreteSource name value isRecursive (elementTriggered: Bool) state
                                 if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
                                 then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
                                 else
-                                    if elementTriggered && scheme.quantified != []
+                                    if scheme.quantified != [] && (elementTriggered || foldTriggered && !arrowNeedsCapability(scheme.body))
                                     then registerElementConcreteSource(name)(value)(scheme)(slot)(isRecursive)(state)
                                     else state
             | _ -> state
@@ -3927,7 +3947,7 @@ let openUnregisteredConstrainedRecursive name value annotation requirements lowe
 
 let openPossiblyConstrainedRecursive name value annotation requirements lower state =
     match openUnregisteredConstrainedRecursive(name)(value)(annotation)(requirements)(lower)(state) with
-        | LoweredCoreValue { state = opened, error = None } as result -> result with state = registerConcreteSource(name)(value)(true)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(opened)
+        | LoweredCoreValue { state = opened, error = None } as result -> result with state = registerConcreteSource(name)(value)(true)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(stateAbstractAccumulatorBackEdges(opened) != stateAbstractAccumulatorBackEdges(state))(opened)
         | failed -> failed
 
 let constrainedAliasBinding value (state: CoreLoweringState) =

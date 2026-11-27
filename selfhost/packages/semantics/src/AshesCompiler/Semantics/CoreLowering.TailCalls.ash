@@ -1475,6 +1475,35 @@ let frameWithExitCells (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
         | Some(current) -> frame with exitOwnFieldCells = current.exitOwnFieldCells
         | None -> frame
 
+// Stage 0's `RecordAbstractAccumulatorBackEdge`: each argument whose type is still a bare type
+// variable and that is not the parameter at its position handed on unchanged is an accumulator of
+// quantified type, which the generic body cannot release at the back edge.
+let recursive abstractAccumulatorArguments (arguments: List(Expr)) (names: List(Str)) (types: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, types) with
+        | (argument :: restArguments, argumentType :: restTypes) ->
+            let name =
+                match names with
+                    | first :: _rest -> Some(first)
+                    | [] -> None
+            in
+                let passesThrough =
+                    match (unspanArgument(argument), name) with
+                        | (ExprVar(read), Some(parameter)) -> read == parameter
+                        | _ -> false
+                in
+                    let counted =
+                        match resolveType(state)(argumentType) with
+                            | SemVariable(_id) ->
+                                if passesThrough
+                                then 0
+                                else 1
+                            | _ -> 0
+                    in
+                        counted + abstractAccumulatorArguments(restArguments)(match names with
+                            | _first :: rest -> rest
+                            | [] -> [])(restTypes)(state)
+        | _ -> 0
+
 let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) lower (state: CoreLoweringState) =
     match lookupBinding(loop.selfName)(state.bindings) with
         | None -> failure(state)(UnknownLoweringBinding(loop.selfName))
@@ -1490,4 +1519,6 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                                 | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
                                     argumentState
                                     |> markCallArgumentsMoved(spine)
+                                    |> (given (moved: CoreLoweringState) ->
+                                        recordAbstractAccumulatorBackEdges(abstractAccumulatorArguments(arguments)(loop.parameterNames)(argumentTypes)(moved))(moved))
                                     |> emitTailSelfCallBackEdge(frameWithExitCells(frame)(argumentState))(loop)(arguments)(temps)(argumentTypes)
