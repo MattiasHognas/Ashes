@@ -1869,7 +1869,7 @@ public sealed partial class Lowering
         {
             return null;
         }
-        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(arguments))
+        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(arguments, qualification.FunctionType))
         {
             ((int functionTemp, TypeRef functionType) function, IReadOnlyList<TraitConstraint> constraints) =
                 LowerTraitDictionaryCallRoot(rootExpression);

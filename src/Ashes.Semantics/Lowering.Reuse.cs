@@ -1459,8 +1459,9 @@ public sealed partial class Lowering
             && !IsActiveSourceFunction(targetFunction);
     }
 
-    private bool CannotAttemptHigherOrderReuse(IReadOnlyList<Expr> arguments)
+    private bool CannotAttemptHigherOrderReuse(IReadOnlyList<Expr> arguments, TypeRef? functionType)
     {
+        bool buildsList = BuildsListResult(functionType, arguments.Count);
         foreach (Expr argument in arguments)
         {
             if (ResolveSpecializableCalleeName(argument) is not { } name)
@@ -1476,12 +1477,55 @@ public sealed partial class Lowering
                     || _traitDictionaryFunctions.ContainsKey(name)
                     || binding is Binding.Scheme scheme && ValueTypeRemainsAbstract(scheme.S.Body)
                     || binding is Binding.EnvScheme environment
-                        && ValueTypeRemainsAbstract(environment.S.Body)))
+                        && ValueTypeRemainsAbstract(environment.S.Body)
+                    || buildsList && ReturnsUncopiableHeadValue(type)))
             {
                 return true;
             }
         }
         return false;
+    }
+
+    // Whether the specialized function's result after all of the call's arguments is a list.
+    private bool BuildsListResult(TypeRef? functionType, int argumentCount)
+    {
+        if (functionType is null)
+        {
+            return false;
+        }
+
+        TypeRef result = Prune(functionType);
+        for (int index = 0; index < argumentCount && result is TypeRef.TFun stage; index++)
+        {
+            result = Prune(stage.Ret);
+        }
+
+        return result is TypeRef.TList;
+    }
+
+    // A specialization building a list keeps a closure argument's results in cells it builds in the
+    // arena, asking each call for an arena result the callee deep-copies before releasing its own. A
+    // record or variant the arena deep copy cannot reproduce (one reaching a recursive type) is never
+    // asked for, so the callee's reference-counted result would stay in an arena cell nothing
+    // releases; a call passing such a function takes the ordinary path, whose list of a concrete
+    // element type holds owned heads.
+    private bool ReturnsUncopiableHeadValue(TypeRef functionType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_REUSESPECUNCOPIABLEHEAD") is not null)
+        {
+            return false;
+        }
+
+        TypeRef result = Prune(functionType);
+        while (result is TypeRef.TFun stage)
+        {
+            result = Prune(stage.Ret);
+        }
+
+        return result is TypeRef.TNamedType named
+            && !CanArenaReset(named)
+            && !ContainsUnresolvedLayoutType(named, [])
+            && !CanNormalizeRuntimeManagedResultIntoArena(named);
     }
 
     private bool IsActiveSourceFunction(string targetFunction)

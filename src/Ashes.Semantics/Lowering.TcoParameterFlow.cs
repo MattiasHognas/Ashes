@@ -426,7 +426,7 @@ public sealed partial class Lowering
             || arguments.Count == 0
             || !IsPersistentCollectionOperation(ResolveSpecializableCalleeName(root))
             || QualifyReuseSpecializationCall(root, arguments) is not { Accepted: true, FunctionType: { } functionType }
-            || CannotAttemptHigherOrderReuse(arguments)
+            || CannotAttemptHigherOrderReuse(arguments, functionType)
             || NthCurriedArgType(functionType, arguments.Count - 1) is not TypeRef.TNamedType accumulator)
         {
             return null;
