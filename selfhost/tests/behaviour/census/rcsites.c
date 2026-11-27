@@ -1,7 +1,8 @@
-// usage: rcsites <dump> <linkmap> [base-hex]
-// Reads rcwalk's lines ("<addr> <size> <shape> <site-hex>") on standard input and replaces the site
-// address with the function of the link map (lines "<start-hex> <size-hex> <name>") that contains
-// it, or "?" when none does: prints "<size> <shape> <function>".
+// usage: rcsites <linkmap>
+// Reads rcwalk's lines ("<addr> <size> <shape> <site-hex>") or rcmark's (the same with an R or U
+// column) on standard input and replaces the site address with the function of the link map
+// (lines "<start-hex> <size-hex> <name>") that contains it, or "?" when none does: prints
+// "<size> <shape> <function> <addr-hex> <R|U|->", "-" when the input had no reachability column.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,13 +29,13 @@ int main(int argc, char **argv) {
     }
     qsort(fns, nfns, sizeof(Fn), cmpfn);
     while (fgets(line, sizeof line, stdin)) {
-        unsigned long long addr, size, site; char shape[64];
-        if (sscanf(line, "%llx %llu %63s %llx", &addr, &size, shape, &site) != 4) continue;
+        unsigned long long addr, size, site; char shape[64], reach[4] = "-";
+        if (sscanf(line, "%llx %llu %63s %llx %3s", &addr, &size, shape, &site, reach) < 4) continue;
         const char *name = "?";
         size_t lo = 0, hi = nfns;
         while (lo < hi) { size_t mid = (lo + hi) / 2; if (fns[mid].start <= site) lo = mid + 1; else hi = mid; }
         if (lo > 0 && site < fns[lo - 1].start + fns[lo - 1].size) name = fns[lo - 1].name;
-        printf("%llu %s %s\n", size, shape, name);
+        printf("%llu %s %s %llx %s\n", size, shape, name, addr, reach);
     }
     return 0;
 }
