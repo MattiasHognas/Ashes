@@ -1045,10 +1045,17 @@ public sealed partial class Lowering
             && scopes.Any(scope => owners.Exists(owner => scope.Values.Any(scoped => ReferenceEquals(scoped, owner))));
 
     // The copy, kept in an owned slot the function releases at its exit (a loop releases the slot's
-    // earlier value at its back edge), handed on without a runtime-managed fact.
+    // earlier value at its back edge), handed on without a runtime-managed fact. Only a value of the
+    // contract's types, as a call result is (LowerGeneralRcCallResult): the function's return
+    // retains or normalizes such a value before its owned slots are released
+    // (FinishGeneralRcFunctionResult), so a copy that is also the function's result outlives the
+    // slot. Any other copy is handed on owned, as the consumer takes a fresh value.
     private int KeepArmResultCopyOwned(int copyTemp, TypeRef type)
     {
-        if (copyTemp < 0 || !GeneralRcEnabled || !IsRuntimeManagedResultTemp(copyTemp))
+        if (copyTemp < 0
+            || !GeneralRcEnabled
+            || !IsRuntimeManagedResultTemp(copyTemp)
+            || !IsGeneralRcValueType(Prune(type)))
         {
             return copyTemp;
         }

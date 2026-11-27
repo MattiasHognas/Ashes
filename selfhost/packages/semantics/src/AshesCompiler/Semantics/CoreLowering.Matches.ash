@@ -179,9 +179,12 @@ let recursive armResultOf (expression: Expr) =
 
 // Stage 0's `KeepArmResultCopyOwned`: the copy, kept in an owned slot the function releases at its
 // exit (a loop releases the slot's earlier value at its back edge), handed on without a
-// runtime-managed fact, as a call result is (`lowerGeneralRcCallResultTakingParts`).
+// runtime-managed fact, as a call result is (`lowerGeneralRcCallResultTakingParts`). Only a value of
+// the contract's types: the function's return retains or normalizes one before its owned slots are
+// released, so a copy that is also the function's result outlives the slot; any other copy is handed
+// on owned.
 let keepArmResultCopyOwned (copyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if generalRcEnabled(state) == false || isRuntimeTemp(copyTemp)(state) == false
+    if generalRcEnabled(state) == false || isRuntimeTemp(copyTemp)(state) == false || isGeneralRcValueType(semanticType)(state) == false
     then (state, copyTemp)
     else
         match freshLocal(state) with
