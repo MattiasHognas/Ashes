@@ -691,6 +691,14 @@ let recursive containsType (semanticType: SemanticType) (path: List(SemanticType
 // Stage 0's `IsGeneralRcAdmissible` over the synthesis environment: a resolved graph of inline
 // values, strings, byte buffers, big integers, lists, tuples and algebraic data types. A named
 // type already on the walk's path is taken as admissible, which lets a recursive type through.
+// Stage 0's `IsOpaqueHandleWord`, which `CanArenaReset` admits beside the scalars: a value of an
+// external type with no destructor is a foreign handle, one word that needs no release, so an
+// aggregate holding one is admitted and released like one of integers. A declared resource owns
+// what its handle names and is not admitted.
+let opaqueHandleWord (semanticType: SemanticType) (body: DropperBody) =
+    match typeGraphNode(semanticType)(body.graphIndex) with
+        | (node, graphIndex) -> (!node.directResource, (body with graphIndex = graphIndex))
+
 let recursive originalGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
     match semanticType with
         | SemString -> (true, body)
@@ -709,6 +717,7 @@ let recursive originalGeneralRcAdmissible (semanticType: SemanticType) (path: Li
                             | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> (false, queried)
                             | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (false, queried)
                             | (_constructors, HeapAdmissibilityFacts { children = children }) -> originalAllChildrenGeneralRcAdmissible(children)(semanticType :: path)(queried)
+        | SemOpaque(_name) -> opaqueHandleWord(semanticType)(body)
         | other -> (canArenaResetLayout(other), body)
 and originalAllGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (body: DropperBody) =
     match types with
@@ -843,6 +852,10 @@ let recursive searchDropperAdmissibility pending visited body =
                                             | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (Some(false), queried)
                                             | (_constructors, HeapAdmissibilityFacts { children = children }) ->
                                                 searchDropperAdmissibility(prependDropperAdmissibilityChildren(children)(rest))(withDropperAdmissibilityVisit(key)(semanticType)(visited))(queried)
+                | SemOpaque(_name) ->
+                    match opaqueHandleWord(semanticType)(body) with
+                        | (true, queried) -> searchDropperAdmissibility(rest)(visited)(queried)
+                        | (false, queried) -> (Some(false), queried)
                 | other ->
                     if canArenaResetLayout(other)
                     then searchDropperAdmissibility(rest)(visited)(body)
