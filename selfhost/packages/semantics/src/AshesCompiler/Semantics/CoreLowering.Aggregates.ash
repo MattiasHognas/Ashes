@@ -1935,6 +1935,17 @@ let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) 
                                                     copied
                                                     |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
                                                     |> success(copiedTemp)(semanticType)
+                                // A tuple head with heap elements (`(n, item) :: acc`) is deep-copied
+                                // the same way, stage 0's `EmitRuntimeManagedTcoDeepCopy` for any
+                                // element `CanRuntimeManageTcoListElement` admits.
+                                | TupleArgumentCopy(_elements) as plan ->
+                                    match freshTemp(state) with
+                                        | FreshTemp { state = burned, temp = _unused } ->
+                                            match emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(burned) with
+                                                | (copied, copiedTemp) ->
+                                                    copied
+                                                    |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                                    |> success(copiedTemp)(semanticType)
                                 | _ -> reserveUnusedHeadTemp(lowered)
                         else reserveUnusedHeadTemp(lowered)
             else lowered
