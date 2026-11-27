@@ -179,6 +179,7 @@ export (
     value canRuntimeManageGenericCopyAdtApplication,
     value canRuntimeManageFreshHeapChildAdtApplication,
     value isMaterializableStringChildRead,
+    value isReferenceCountedOwnerPartRead,
     value allFreshOwnedChildren,
     value isFreshRuntimeManageableRecordTree,
     value isRuntimeRcOwningClosureExpression,

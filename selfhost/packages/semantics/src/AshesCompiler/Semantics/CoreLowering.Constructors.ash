@@ -185,11 +185,19 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (argument: Expr) (f
         | _ -> lowered
 
 // Stage 0's string branch of `LowerRuntimeManagedConstructorArgument`: a borrowed string a
-// runtime cell stores is copied into an owned string the cell releases with itself.
+// runtime cell stores is copied into an owned string the cell releases with itself. A part aliased
+// to its reference-counted scrutinee is a reference-counted read in stage 0
+// (`IsRuntimeManagedResultTemp`), so it is not copied: the cell retains it with its other owned
+// children (`retainRuntimeCellChildren`).
+let isOwnerPartArgument (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) -> isReferenceCountedOwnerPartRead(name)(state)
+        | _ -> false
+
 let materializeStringChildArgument (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if runtimeManaged && resolveType(state)(fieldType) == SemString && isRuntimeTemp(temp)(state) == false && isMaterializableStringChildRead(argument)(state)
+            if runtimeManaged && resolveType(state)(fieldType) == SemString && isRuntimeTemp(temp)(state) == false && isMaterializableStringChildRead(argument)(state) && !isOwnerPartArgument(argument)(state)
             then
                 match freshTemp(state) with
                     | FreshTemp { state = copyState, temp = copyTemp } ->
