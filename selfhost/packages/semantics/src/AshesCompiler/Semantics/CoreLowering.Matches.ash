@@ -2332,6 +2332,24 @@ let emitDeferredLetReleasePlaceholder (valueTemp: Int) (ownerSlot: Int) (bodyTem
         |> emit(TcoResetPending(letCopyReleaseBase + ownerSlot)([])([ownerSlot]))
     else state
 
+// The body's own releases of a viewed owner (a back edge's, say) name no slot either once its
+// scope-exit release is pinned behind the copy, as every release of a stage 0 owner marked
+// `ResultMayViewValue` does: an owner whose releases were left half named would have the named
+// one moved to its last read by placement, ahead of the pinned one, and released twice.
+let unnameOwnerRelease (ownerSlot: Int) (instruction: IrInstruction) =
+    match instruction with
+        | IrInstruction { instruction = RcDrop(source, typeName, slot, runtimeManaged, mayBeEmpty, dropper), location = location } ->
+            if slot == ownerSlot
+            then IrInstruction(instruction = RcDrop(source)(typeName)(-1)(runtimeManaged)(mayBeEmpty)(dropper), location = location)
+            else instruction
+        | _ -> instruction
+
+let pinOwnerReleases (pinsRelease: Bool) (ownerSlot: Int) (state: CoreLoweringState) =
+    if pinsRelease
+    then
+        state with reversedInstructions = Ashes.Collection.List.map(unnameOwnerRelease(ownerSlot))(state.reversedInstructions)
+    else state
+
 // The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
 // every analysis of the body still reads `body`.
 let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindings state =
@@ -2364,6 +2382,7 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                                             then retireRuntimeOwner(ownerSlot)(viewState)
                                             else viewState)
                                             |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
+                                            |> pinOwnerReleases(pinsRelease)(ownerSlot)
                                             |> closeOwnedLetBracketPinned(pinsRelease)(if keepsOwner
                                             then None
                                             else letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
