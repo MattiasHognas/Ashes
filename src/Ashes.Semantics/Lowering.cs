@@ -4160,6 +4160,7 @@ public sealed partial class Lowering
 
         int depth0Before = _depth0LambdaCount;
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
+        int abstractAccumulatorBackEdgesBefore = _abstractAccumulatorBackEdges;
 
         int firstDemand = _traitDemands.Count;
         PushTraitConstraintScope();
@@ -4187,7 +4188,7 @@ public sealed partial class Lowering
             firstDemand);
 
         LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
-        RegisterElementSpecializationCandidate(let.Name, let, let.Value, scheme, abstractElementTmcDeclinesBefore);
+        RegisterElementSpecializationCandidate(let.Name, let, let.Value, scheme, abstractElementTmcDeclinesBefore, abstractAccumulatorBackEdgesBefore);
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
@@ -6889,6 +6890,7 @@ public sealed partial class Lowering
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
+        int abstractAccumulatorBackEdgesBefore = _abstractAccumulatorBackEdges;
         PushTraitConstraintScope();
         (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
             runtimeBinding,
@@ -6918,7 +6920,8 @@ public sealed partial class Lowering
         RegisterRecursiveElementSpecializationCandidate(
             letRecursive,
             usesTraitDictionary,
-            abstractElementTmcDeclinesBefore);
+            abstractElementTmcDeclinesBefore,
+            abstractAccumulatorBackEdgesBefore);
         return new SequentialBindingFrame(
             SequentialBindingKind.Recursive,
             letRecursive.Name,
@@ -13580,6 +13583,7 @@ public sealed partial class Lowering
         IReadOnlyList<OwnershipInfo> iterationOwnedDrops,
         (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
+        RecordAbstractAccumulatorBackEdge(newArgTypes, facts.PassThrough);
         var resetInfo = new PendingTcoReset(
             tco,
             newArgTemps,
