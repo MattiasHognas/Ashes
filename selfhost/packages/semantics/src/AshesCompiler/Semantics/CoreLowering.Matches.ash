@@ -2191,6 +2191,14 @@ let capturesScopeViews (resultType: SemanticType) (state: CoreLoweringState) =
 // whose body may return something a callee read out of it.
 let ownerViewedByResult (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (state: CoreLoweringState) = runtimeOwnerStateOf(ownerSlot)(state) == Some(true) && typeCarriesTextBytes([])(valueType)(state) && resultMayViewCallArgument(name)(0)(body)
 
+// Stage 0's `OwnsReferenceCountedScopeResult`: a scope result holding a reference of its own, a value
+// just produced on the reference-counted heap, is replaced by its arena copy, so the copy's source is
+// released once it is copied.
+let releaseCopiedScopeResult (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if isFreshRuntimeTemp(resultTemp)(state)
+    then emitOwnedValueRelease(emit)(resultTemp)(resultType)(state)
+    else state
+
 // Stage 0's `MaterializeScopeResultViews`: such a binding's result is materialized before the
 // binding is released. A result the arena deep copy reproduces is copied into the arena; one of the
 // contract's types is copied onto the reference-counted heap when it is still in the arena and
@@ -2213,7 +2221,7 @@ let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType)
             if canNormalizeResultIntoArena(resultType)(state)
             then
                 match emitArenaResultDeepCopy(resultTemp)(resultType)(state) with
-                    | (copied, copyTemp) -> (copied, copyTemp, false, true)
+                    | (copied, copyTemp) -> (releaseCopiedScopeResult(resultTemp)(resultType)(copied), copyTemp, false, true)
             else
                 if isGeneralRcValueType(resultType)(state)
                 then
