@@ -1454,7 +1454,7 @@ let consumerRequestOf (state: CoreLoweringState) = state.consumerRequest
 // Whether a request asks for nothing at all, which is what most expressions are lowered under.
 let isEmptyConsumerRequest (request: ConsumerRequest) =
     match request with
-        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None, recordFieldCell = false } -> true
+        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None, recordFieldCell = false, armResultOwners = [] } -> true
         | _ -> false
 
 // Replacing a request that asks for nothing with another such request leaves the state as it is.

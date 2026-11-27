@@ -354,6 +354,8 @@ export (
     value ownedSlotsOf,
     value ownedSlotsOfActiveFunction,
     value lowerInGeneralRcBranch,
+    value enterGeneralRcBranch,
+    value leaveGeneralRcBranch,
     value recordGeneralRcSlotBranches,
     value slotsSharingIteration,
     value statePendingOwnerPlan,
@@ -558,6 +560,11 @@ type ConsumerRequest =
     // comes from the callee's result reaching it, not from a consumer that owns the value, so a
     // constructor built there borrows a pattern owner's read rather than taking a duplicate of it.
     | callArgument: Bool
+    // The owner slots of the match arms whose result the expression stands as (stage 0's
+    // `_armResultBranchScopes`): it reaches the arm body's `let` bodies, `if` branches and nested
+    // `match` arms, which copy an arena aggregate built from those owners' parts before the arm
+    // releases them.
+    | armResultOwners: List(Int)
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -587,7 +594,8 @@ let emptyConsumerRequest =
         recordFieldCell = false,
         escapingArgumentCell = false,
         chainTailCell = false,
-        callArgument = false
+        callArgument = false,
+        armResultOwners = []
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop

@@ -910,11 +910,18 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
         EnterGeneralRcBranch(endLabel, i);
+        List<Expr> registeredArmResultBranches = [];
+        if (ArmResultCopyCandidate(savedTailPos, request) && _ownershipScopes.Count > 0)
+        {
+            RegisterArmResultBranches(cases[i].Body, _ownershipScopes.Peek(), registeredArmResultBranches);
+        }
+
         var (bodyTemp, bodyType) = LowerMatchArmExpressionWithReuseContext(
             cases[i].Body,
             reuseContext.TokensBefore,
             normalizeStaticStringArms,
             request);
+        UnregisterArmResultBranches(registeredArmResultBranches);
         LeaveGeneralRcBranch();
         foreach (string name in reuseContext.AddedLinearNames)
         {
@@ -934,7 +941,7 @@ public sealed partial class Lowering
         }
         bodyTemp = NormalizeParameterPassthroughBranch(cases[i].Body, bodyTemp);
         bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp, savedTailPos, matchArm: true);
-        bodyTemp = NormalizeArmResultBorrowingArmOwner(cases[i].Body, bodyTemp, bodyType, savedTailPos, request);
+        bodyTemp = NormalizeArmResultBorrowingArmOwner(cases[i].Body, bodyTemp, bodyType, savedTailPos, request, endLabel, i);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         IrInst.StoreLocal armStore = (IrInst.StoreLocal)_inst[^1];
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
@@ -963,23 +970,150 @@ public sealed partial class Lowering
     // result is copied onto the reference-counted heap first, with references of its own to every
     // reference-counted part, as an `if` branch borrowing a live owner is
     // (NormalizeBranchResultBorrowingRuntimeOwner). A transferring or tail arm retains the parts
-    // itself.
-    private int NormalizeArmResultBorrowingArmOwner(Expr body, int bodyTemp, TypeRef bodyType, bool tailPosition, LoweredValueRequest request)
+    // itself. An arm whose result is an `if` or a nested `match` decides the same per branch, against
+    // the owners of every enclosing arm it stands as the result of. The copy is kept in an owned slot
+    // released at the function's exit, as a call result is (LowerGeneralRcCallResult), so the
+    // consuming call or let leaves nothing behind.
+    private static bool ArmResultOwnerCopyEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_ARMRESULTOWNERCOPY") is null;
+
+    // The result-position branches of the arms being lowered (through `let` bodies, `if` branches
+    // and nested `match` arms), each with the scopes of the arms whose result it is.
+    private readonly Dictionary<Expr, List<Dictionary<string, OwnershipInfo>>> _armResultBranchScopes =
+        new(ReferenceEqualityComparer.Instance);
+
+    private static bool ArmResultCopyCandidate(bool tailPosition, LoweredValueRequest request)
+        => ArmResultOwnerCopyEnabled && !tailPosition && !request.TransfersRuntimeManagedChildren;
+
+    // Registers the branches standing as the arm body's result under the arm's scope, appending
+    // each one registered to `registered` for the unregistration after the arm.
+    private void RegisterArmResultBranches(Expr body, Dictionary<string, OwnershipInfo> armScope, List<Expr> registered)
     {
-        if (Environment.GetEnvironmentVariable("GRC_NO_ARMRESULTOWNERCOPY") is not null
-            || tailPosition
-            || request.TransfersRuntimeManagedChildren
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        switch (result)
+        {
+            case Expr.If conditional:
+                RegisterArmResultBranch(conditional.Then, armScope, registered);
+                RegisterArmResultBranch(conditional.Else, armScope, registered);
+                break;
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    RegisterArmResultBranch(matchCase.Body, armScope, registered);
+                }
+
+                break;
+        }
+    }
+
+    private void RegisterArmResultBranch(Expr branch, Dictionary<string, OwnershipInfo> armScope, List<Expr> registered)
+    {
+        if (!_armResultBranchScopes.TryGetValue(branch, out List<Dictionary<string, OwnershipInfo>>? scopes))
+        {
+            scopes = [];
+            _armResultBranchScopes[branch] = scopes;
+        }
+
+        scopes.Add(armScope);
+        registered.Add(branch);
+        RegisterArmResultBranches(branch, armScope, registered);
+    }
+
+    private void UnregisterArmResultBranches(List<Expr> registered)
+    {
+        foreach (Expr branch in registered)
+        {
+            if (_armResultBranchScopes.TryGetValue(branch, out List<Dictionary<string, OwnershipInfo>>? scopes))
+            {
+                scopes.RemoveAt(scopes.Count - 1);
+                if (scopes.Count == 0)
+                {
+                    _armResultBranchScopes.Remove(branch);
+                }
+            }
+        }
+    }
+
+    // Whether the aggregate a branch or arm returns borrows an owner of one of the given scopes.
+    private bool BorrowsOwnerOfScopes(Expr result, IEnumerable<Dictionary<string, OwnershipInfo>> scopes)
+        => CollectBorrowedRuntimeOwners(result) is { Count: > 0 } owners
+            && scopes.Any(scope => owners.Exists(owner => scope.Values.Any(scoped => ReferenceEquals(scoped, owner))));
+
+    // The copy, kept in an owned slot the function releases at its exit (a loop releases the slot's
+    // earlier value at its back edge), handed on without a runtime-managed fact.
+    private int KeepArmResultCopyOwned(int copyTemp, TypeRef type)
+    {
+        if (copyTemp < 0 || !GeneralRcEnabled || !IsRuntimeManagedResultTemp(copyTemp))
+        {
+            return copyTemp;
+        }
+
+        int ownedSlot = NewLocal();
+        int predecessorSlot = SaveGeneralRcOwnedPredecessor(ownedSlot);
+        Emit(new IrInst.StoreLocal(ownedSlot, copyTemp));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(type));
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(type), owned.Binders, ownedSlot);
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
+        return resultTemp;
+    }
+
+    // The arm form: the arm's own scope, and the scopes of the arms whose result this arm's match is.
+    private int NormalizeArmResultBorrowingArmOwner(Expr body, int bodyTemp, TypeRef bodyType, bool tailPosition, LoweredValueRequest request, string endLabel, int arm)
+    {
+        if (!ArmResultCopyCandidate(tailPosition, request)
             || IsRuntimeManagedResultTemp(bodyTemp)
             || CanArenaReset(Prune(bodyType))
-            || _ownershipScopes.Count == 0
-            || CollectBorrowedRuntimeOwners(body) is not { Count: > 0 } owners)
+            || _ownershipScopes.Count == 0)
         {
             return bodyTemp;
         }
 
-        Dictionary<string, OwnershipInfo> armScope = _ownershipScopes.Peek();
-        bool borrowsArmOwner = owners.Exists(owner => armScope.Values.Any(scoped => ReferenceEquals(scoped, owner)));
-        return borrowsArmOwner ? NormalizeBranchResultBorrowingRuntimeOwner(bodyTemp) : bodyTemp;
+        List<Dictionary<string, OwnershipInfo>> scopes = [_ownershipScopes.Peek()];
+        if (_armResultBranchScopes.TryGetValue(body, out List<Dictionary<string, OwnershipInfo>>? outer))
+        {
+            scopes.AddRange(outer);
+        }
+
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        if (!BorrowsOwnerOfScopes(result, scopes))
+        {
+            return bodyTemp;
+        }
+
+        int copyTemp = NormalizeBranchResultBorrowingRuntimeOwner(bodyTemp);
+        EnterGeneralRcBranch(endLabel, arm);
+        int keptTemp = KeepArmResultCopyOwned(copyTemp, bodyType);
+        LeaveGeneralRcBranch();
+        return keptTemp;
+    }
+
+    // The `if` branch form: a branch standing as an arm's result that returns an arena aggregate
+    // borrowing that arm's owners is copied and kept the same way.
+    private int NormalizeIfBranchBorrowingArmOwner(Expr branch, Expr result, int branchTemp)
+    {
+        if (!ArmResultOwnerCopyEnabled
+            || IsRuntimeManagedResultTemp(branchTemp)
+            || !_armResultBranchScopes.TryGetValue(branch, out List<Dictionary<string, OwnershipInfo>>? scopes)
+            || !_tempOwnershipFacts.TryGetValue(branchTemp, out LoweredTempOwnershipFact? fact)
+            || fact.Type is not { } type
+            || CanArenaReset(Prune(type))
+            || !BorrowsOwnerOfScopes(result, scopes))
+        {
+            return branchTemp;
+        }
+
+        return KeepArmResultCopyOwned(NormalizeBranchResultBorrowingRuntimeOwner(branchTemp), type);
     }
 
     private (int Temp, TypeRef Type) LowerMatchArmExpressionWithReuseContext(
