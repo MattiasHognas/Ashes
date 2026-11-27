@@ -13,7 +13,9 @@ public sealed partial class Lowering
     /// A top-level generic function whose own lowering declined at least one tail-modulo-constructor cons
     /// because the cell's element type was still a type variable. A call that fixes that type can route to
     /// a copy of the function lowered at the call's concrete types, where the same cons passes the
-    /// reference-counted cell gate the generic body could not.
+    /// reference-counted cell gate the generic body could not. A function one of whose loops threads an
+    /// accumulator of quantified type (a fold) is one too: the generic body cannot release the
+    /// predecessor accumulator at the back edge, which a copy at the accumulator's concrete type does.
     /// </summary>
     private sealed record ElementSpecializationCandidate(
         string Name,
@@ -35,6 +37,12 @@ public sealed partial class Lowering
     // Counts tail-modulo-constructor conses declined because their element type was unresolved; a
     // top-level function whose lowering moved it is an element specialization candidate.
     private int _abstractElementTmcDeclines;
+
+    // Counts tail self-call back edges that hand a loop parameter of a still-unresolved type a
+    // successor other than the parameter itself: an accumulator the generic body threads without a
+    // layout, so its predecessor is never released. A top-level function whose lowering moved it
+    // is a fold specialization candidate.
+    private int _abstractAccumulatorBackEdges;
 
     private int _elementSpecializationDepth;
 
@@ -78,6 +86,41 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool FoldSpecializationEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_FOLDSPECIALIZATION") is null;
+
+    // A back edge of the loop being lowered: each parameter whose successor is not the parameter
+    // itself and whose type is still a bare type variable is an accumulator of quantified type.
+    private void RecordAbstractAccumulatorBackEdge(TypeRef[] argumentTypes, bool[] passThrough)
+    {
+        if (!FoldSpecializationEnabled)
+        {
+            return;
+        }
+
+        for (int index = 0; index < argumentTypes.Length; index++)
+        {
+            if (index < passThrough.Length && !passThrough[index] && Prune(argumentTypes[index]) is TypeRef.TVar)
+            {
+                _abstractAccumulatorBackEdges++;
+            }
+        }
+    }
+
+    // Whether any arrow of the type names a capability its caller must provide: a fold of that kind
+    // resolves its operations through the handler or provider in scope at the call, which a copy
+    // lowered in an isolated scope cannot see.
+    private bool ArrowNeedsCapability(TypeRef type) => Prune(type) switch
+    {
+        TypeRef.TFun function => (function.Row is { } row && Prune(row) is TypeRef.TRow { Capabilities.Count: > 0 })
+            || ArrowNeedsCapability(function.Arg)
+            || ArrowNeedsCapability(function.Ret),
+        TypeRef.TList list => ArrowNeedsCapability(list.Element),
+        TypeRef.TTuple tuple => tuple.Elements.Any(ArrowNeedsCapability),
+        TypeRef.TNamedType named => named.TypeArgs.Any(ArrowNeedsCapability),
+        _ => false,
+    };
+
     private void RecordTmcDecline(LoweredValue head)
     {
         _elementSpecializationTmcDeclines++;
@@ -97,7 +140,8 @@ public sealed partial class Lowering
         Expr binder,
         Expr value,
         TypeScheme scheme,
-        int declinesBeforeValue)
+        int declinesBeforeValue,
+        int accumulatorBackEdgesBefore)
     {
         if (binder is Expr.Let let)
         {
@@ -112,7 +156,8 @@ public sealed partial class Lowering
 
         if (!_configuration.EnableElementSpecialization
             || _lambdaDepth != 0
-            || _abstractElementTmcDeclines == declinesBeforeValue
+            || (_abstractElementTmcDeclines == declinesBeforeValue && _abstractAccumulatorBackEdges == accumulatorBackEdgesBefore)
+            || (_abstractElementTmcDeclines == declinesBeforeValue && (_dictFunctions.ContainsKey(name) || ArrowNeedsCapability(scheme.Body)))
             || value is not Expr.Lambda lambda
             || scheme.Quantified.Count == 0
             || scheme.Constraints.Count > 0
@@ -134,7 +179,8 @@ public sealed partial class Lowering
     private void RegisterRecursiveElementSpecializationCandidate(
         Expr.LetRecursive binder,
         bool usesTraitDictionary,
-        int declinesBeforeValue)
+        int declinesBeforeValue,
+        int accumulatorBackEdgesBefore)
     {
         RegisterConstrainedSpecializationCandidate(
             binder.Name,
@@ -157,7 +203,8 @@ public sealed partial class Lowering
                 binder,
                 binder.Value,
                 reference.Scheme,
-                declinesBeforeValue);
+                declinesBeforeValue,
+                accumulatorBackEdgesBefore);
         }
     }
 
