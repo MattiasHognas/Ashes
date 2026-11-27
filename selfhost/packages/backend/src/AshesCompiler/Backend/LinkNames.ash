@@ -1,6 +1,8 @@
 // The companion of the link map: one line per IR function of a program, naming where the
 // function came from, so a code label in the link map can be traced back to source. Each line is
 // `<label>\t<origin kind>\t<source function name>\t<parent label>`, with `-` for a missing field,
+// where a compiler-owned function without a source function (a normalizer, a dropper) names its
+// owner instead, the type it copies or drops,
 // in the program's function order with the entry function first.
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrOrigins
@@ -9,11 +11,14 @@ export (
     value linkNamesText,
 )
 
-let sourceNameText (source: Maybe(SourceFunctionOrigin)) =
+let sourceNameText (source: Maybe(SourceFunctionOrigin)) (owner: Maybe(CompilerFunctionOwner)) =
     match source with
         | Some(SourceFunctionOrigin { functionQualifiedName = Some(qualified) }) when qualified != "" -> qualified
         | Some(SourceFunctionOrigin { functionSourceName = name }) when name != "" -> name
-        | _ -> "-"
+        | _ ->
+            match owner with
+                | Some(CompilerFunctionOwner { ownerName = name }) when name != "" -> name
+                | _ -> "-"
 
 let parentLabelText (parent: Maybe(Str)) =
     match parent with
@@ -23,7 +28,7 @@ let parentLabelText (parent: Maybe(Str)) =
 let linkNamesLine (function_: IrFunction) =
     match function_ with
         | IrFunction { label = label, origin = None } -> label + "\t-\t-\t-\n"
-        | IrFunction { label = label, origin = Some(IrFunctionOrigin { originKind = kind, sourceOrigin = source, parentGeneratedLabel = parent }) } -> label + "\t" + Ashes.Trait.Show.show(kind) + "\t" + sourceNameText(source) + "\t" + parentLabelText(parent) + "\n"
+        | IrFunction { label = label, origin = Some(IrFunctionOrigin { originKind = kind, sourceOrigin = source, parentGeneratedLabel = parent, compilerOwner = owner }) } -> label + "\t" + Ashes.Trait.Show.show(kind) + "\t" + sourceNameText(source)(owner) + "\t" + parentLabelText(parent) + "\n"
 
 let recursive linkNamesLines (functions: List(IrFunction)) (acc: List(Str)) =
     match functions with
