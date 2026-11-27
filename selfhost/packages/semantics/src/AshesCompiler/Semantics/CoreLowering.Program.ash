@@ -390,7 +390,8 @@ let openUnregisteredArenaTopLevelLet name value annotation requirements remainin
 
 let openArenaBracketedTopLevelLet name value annotation requirements remainingBody escapeBody tailForwarded environment outerBindings stackClosure pending state =
     match openUnregisteredArenaTopLevelLet(name)(value)(annotation)(requirements)(remainingBody)(escapeBody)(tailForwarded)(environment)(outerBindings)(stackClosure)(pending)(state) with
-        | OpenedTopLevelChain { chainState = opened, chainError = None } as result -> result with chainState = registerConcreteSource(name)(value)(false)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(stateAbstractAccumulatorBackEdges(opened) != stateAbstractAccumulatorBackEdges(state))(opened)
+        | OpenedTopLevelChain { chainState = opened, chainError = None } as result ->
+            result with chainState = registerConcreteSource(name)(value)(false)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(releasableAccumulatorSince(stateAbstractAccumulatorBackEdges(state))(opened))(opened)
         | failed -> failed
 
 let recursive closePendingTopLevelItems (pending: List(PendingTopLevelClose)) (lowered: LoweredCoreValue) =

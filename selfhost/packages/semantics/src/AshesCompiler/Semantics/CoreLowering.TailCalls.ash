@@ -1491,18 +1491,18 @@ let recursive abstractAccumulatorArguments (arguments: List(Expr)) (names: List(
                         | (ExprVar(read), Some(parameter)) -> read == parameter
                         | _ -> false
                 in
-                    let counted =
+                    let rest =
+                        abstractAccumulatorArguments(restArguments)(match names with
+                            | _first :: tail -> tail
+                            | [] -> [])(restTypes)(state)
+                    in
                         match resolveType(state)(argumentType) with
                             | SemVariable(_id) ->
                                 if passesThrough
-                                then 0
-                                else 1
-                            | _ -> 0
-                    in
-                        counted + abstractAccumulatorArguments(restArguments)(match names with
-                            | _first :: rest -> rest
-                            | [] -> [])(restTypes)(state)
-        | _ -> 0
+                                then rest
+                                else argumentType :: rest
+                            | _ -> rest
+        | _ -> []
 
 let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) lower (state: CoreLoweringState) =
     match lookupBinding(loop.selfName)(state.bindings) with
@@ -1520,5 +1520,5 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                                     argumentState
                                     |> markCallArgumentsMoved(spine)
                                     |> (given (moved: CoreLoweringState) ->
-                                        recordAbstractAccumulatorBackEdges(abstractAccumulatorArguments(arguments)(loop.parameterNames)(argumentTypes)(moved))(moved))
+                                        recordAbstractAccumulatorTypes(abstractAccumulatorArguments(arguments)(loop.parameterNames)(argumentTypes)(moved))(moved))
                                     |> emitTailSelfCallBackEdge(frameWithExitCells(frame)(argumentState))(loop)(arguments)(temps)(argumentTypes)

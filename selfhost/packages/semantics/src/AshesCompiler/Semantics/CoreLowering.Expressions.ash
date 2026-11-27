@@ -89,6 +89,7 @@ export (
     value recordCoverageOpenSchemes,
     value replaceConstrainedScheme,
     value registerConcreteSource,
+    value releasableAccumulatorSince,
     value recordCoverageOperatorConstrainedNames,
     value constrainedBindingPlan,
     value lowerConstrainedBindingValue,
@@ -3223,6 +3224,23 @@ and anyArrowNeedsCapability (types: List(SemanticType)) =
         | [] -> false
         | first :: rest -> arrowNeedsCapability(first) || anyArrowNeedsCapability(rest)
 
+// Stage 0's `RecordedReleasableAccumulatorSince`: of the accumulator types the newest `count` back
+// edges recorded, one is still unresolved or settled on a type with references to release. One that
+// settled on a copy type (a counter inferred after its back edge) needs no release, and a copy of
+// its function would only repeat the body.
+let recursive releasableAccumulatorIn (types: List(SemanticType)) (count: Int) (state: CoreLoweringState) =
+    if count <= 0
+    then false
+    else
+        match types with
+            | [] -> false
+            | semanticType :: rest ->
+                (let resolved = resolveType(state)(semanticType)
+                in containsUnresolvedLayout(resolved)(state) || !resultSurvivesReset(resolved)(state)) || releasableAccumulatorIn(rest)(count - 1)(state)
+
+let releasableAccumulatorSince (before: Int) (state: CoreLoweringState) =
+    releasableAccumulatorIn(stateAbstractAccumulatorTypes(state))(stateAbstractAccumulatorBackEdges(state) - before)(state)
+
 // A source whose own lowering threaded an accumulator of quantified type through a back edge
 // (`foldTriggered`, stage 0's `_abstractAccumulatorBackEdges`) registers the same way: its copy at
 // the accumulator's concrete type releases the predecessor accumulator, as a concrete fold does.
@@ -3937,7 +3955,8 @@ let openUnregisteredConstrainedRecursive name value annotation requirements lowe
 
 let openPossiblyConstrainedRecursive name value annotation requirements lower state =
     match openUnregisteredConstrainedRecursive(name)(value)(annotation)(requirements)(lower)(state) with
-        | LoweredCoreValue { state = opened, error = None } as result -> result with state = registerConcreteSource(name)(value)(true)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(stateAbstractAccumulatorBackEdges(opened) != stateAbstractAccumulatorBackEdges(state))(opened)
+        | LoweredCoreValue { state = opened, error = None } as result ->
+            result with state = registerConcreteSource(name)(value)(true)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(releasableAccumulatorSince(stateAbstractAccumulatorBackEdges(state))(opened))(opened)
         | failed -> failed
 
 let constrainedAliasBinding value (state: CoreLoweringState) =

@@ -455,7 +455,8 @@ export (
     value recordTmcDecline,
     value carryTmcDeclines,
     value stateAbstractAccumulatorBackEdges,
-    value recordAbstractAccumulatorBackEdges,
+    value recordAbstractAccumulatorTypes,
+    value stateAbstractAccumulatorTypes,
     value stateReuseTransferredNames,
     value withStateReuseTransferredNames,
     value stateReuseEnabled,
@@ -1496,9 +1497,11 @@ type CoreReuseState =
     // copy must leave unmoved to be kept.
     | abstractElementTmcDeclines: Int
     | tmcDeclines: Int
-    // Stage 0's `_abstractAccumulatorBackEdges`: back edges handing a loop parameter of a still
-    // unresolved type a successor other than the parameter itself, an accumulator of quantified type.
+    // Stage 0's `_abstractAccumulatorTypes`: the types of the loop parameters back edges hand a
+    // successor other than the parameter itself while the type is still unresolved, newest first,
+    // beside their count.
     | abstractAccumulatorBackEdges: Int
+    | abstractAccumulatorTypes: List(SemanticType)
 
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
@@ -3321,9 +3324,13 @@ let stateAbstractAccumulatorBackEdges (state: CoreLoweringState) =
     (let group = state.reuseState
     in group.abstractAccumulatorBackEdges)
 
-let recordAbstractAccumulatorBackEdges (count: Int) (state: CoreLoweringState) =
+let stateAbstractAccumulatorTypes (state: CoreLoweringState) =
     (let group = state.reuseState
-    in state with reuseState = (group with abstractAccumulatorBackEdges = group.abstractAccumulatorBackEdges + count))
+    in group.abstractAccumulatorTypes)
+
+let recordAbstractAccumulatorTypes (types: List(SemanticType)) (state: CoreLoweringState) =
+    (let group = state.reuseState
+    in state with reuseState = (group with abstractAccumulatorBackEdges = group.abstractAccumulatorBackEdges + Ashes.Collection.List.length(types), abstractAccumulatorTypes = append(types)(group.abstractAccumulatorTypes)))
 
 let stateTmcDeclines (state: CoreLoweringState) =
     (let group = state.reuseState
@@ -3332,7 +3339,7 @@ let stateTmcDeclines (state: CoreLoweringState) =
 // The declined-cell counts of `source`, kept by `state` across a frame restore.
 let carryTmcDeclines (source: CoreLoweringState) (state: CoreLoweringState) =
     (let group = state.reuseState
-    in state with reuseState = (group with tmcDeclines = stateTmcDeclines(source), abstractElementTmcDeclines = stateAbstractElementTmcDeclines(source), abstractAccumulatorBackEdges = stateAbstractAccumulatorBackEdges(source)))
+    in state with reuseState = (group with tmcDeclines = stateTmcDeclines(source), abstractElementTmcDeclines = stateAbstractElementTmcDeclines(source), abstractAccumulatorBackEdges = stateAbstractAccumulatorBackEdges(source), abstractAccumulatorTypes = stateAbstractAccumulatorTypes(source)))
 
 // Stage 0's `RecordTmcDecline`: one declined tail-modulo-constructor cell, counted as abstract when
 // its element type is still unresolved.
