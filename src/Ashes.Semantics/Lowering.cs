@@ -4160,7 +4160,7 @@ public sealed partial class Lowering
 
         int depth0Before = _depth0LambdaCount;
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
-        int abstractAccumulatorBackEdgesBefore = _abstractAccumulatorBackEdges;
+        int abstractAccumulatorBackEdgesBefore = AbstractAccumulatorBackEdgeCount;
 
         int firstDemand = _traitDemands.Count;
         PushTraitConstraintScope();
@@ -6890,7 +6890,7 @@ public sealed partial class Lowering
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
         int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
-        int abstractAccumulatorBackEdgesBefore = _abstractAccumulatorBackEdges;
+        int abstractAccumulatorBackEdgesBefore = AbstractAccumulatorBackEdgeCount;
         PushTraitConstraintScope();
         (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
             runtimeBinding,

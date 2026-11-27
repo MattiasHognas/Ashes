@@ -38,11 +38,34 @@ public sealed partial class Lowering
     // top-level function whose lowering moved it is an element specialization candidate.
     private int _abstractElementTmcDeclines;
 
-    // Counts tail self-call back edges that hand a loop parameter of a still-unresolved type a
-    // successor other than the parameter itself: an accumulator the generic body threads without a
-    // layout, so its predecessor is never released. A top-level function whose lowering moved it
-    // is a fold specialization candidate.
-    private int _abstractAccumulatorBackEdges;
+    // The types of the loop parameters tail self-call back edges hand a successor other than the
+    // parameter itself while the type is still unresolved: an accumulator the generic body threads
+    // without a layout, so its predecessor is never released. A top-level function whose lowering
+    // recorded one that is still unresolved, or that settled on a type with references to release,
+    // is a fold specialization candidate; one that settled on a copy type (a counter inferred late)
+    // needs no release, and a copy of it would only repeat the body.
+    private readonly List<TypeRef> _abstractAccumulatorTypes = [];
+
+    private int AbstractAccumulatorBackEdgeCount => _abstractAccumulatorTypes.Count;
+
+    private static bool SettledAccumulatorRuleEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_SETTLEDACCUMULATOR") is null;
+
+    // Whether a back edge lowered since the given count threads an accumulator a copy at concrete
+    // types could release.
+    private bool RecordedReleasableAccumulatorSince(int before)
+    {
+        for (int index = before; index < _abstractAccumulatorTypes.Count; index++)
+        {
+            TypeRef type = Prune(_abstractAccumulatorTypes[index]);
+            if (!SettledAccumulatorRuleEnabled || ValueTypeRemainsAbstract(type) || !CanArenaReset(type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private int _elementSpecializationDepth;
 
@@ -102,7 +125,7 @@ public sealed partial class Lowering
         {
             if (index < passThrough.Length && !passThrough[index] && Prune(argumentTypes[index]) is TypeRef.TVar)
             {
-                _abstractAccumulatorBackEdges++;
+                _abstractAccumulatorTypes.Add(argumentTypes[index]);
             }
         }
     }
@@ -156,7 +179,7 @@ public sealed partial class Lowering
 
         if (!_configuration.EnableElementSpecialization
             || _lambdaDepth != 0
-            || (_abstractElementTmcDeclines == declinesBeforeValue && _abstractAccumulatorBackEdges == accumulatorBackEdgesBefore)
+            || (_abstractElementTmcDeclines == declinesBeforeValue && !RecordedReleasableAccumulatorSince(accumulatorBackEdgesBefore))
             || (_abstractElementTmcDeclines == declinesBeforeValue && (_dictFunctions.ContainsKey(name) || ArrowNeedsCapability(scheme.Body)))
             || value is not Expr.Lambda lambda
             || scheme.Quantified.Count == 0
