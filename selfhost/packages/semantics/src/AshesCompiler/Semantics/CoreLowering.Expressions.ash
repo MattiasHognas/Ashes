@@ -2493,20 +2493,30 @@ let asyncTaskTypeOf (resultType: SemanticType) (state: CoreLoweringState) =
                 | (boundState, None) -> (boundState, SemNamed(0)("Task")([SemString, valueType]), None)
 
 // Stage 0's `LowerAsyncTask` for a body with no `await`: a task already completed with
-// `Ok(body)`, of type `Task(Str, a)`.
+// `Ok(body)`, of type `Task(Str, a)`. The body is lowered as the coroutine body it is, one that
+// completes without suspending (stage 0's `_inCoroutineBody` and `MayExecuteInsideCoroutine` set
+// around it): lowered as ordinary code, a call inside it takes the reference-counted result path
+// and leaves a counted allocation per task that no owner releases.
 let lowerCompletedAsyncTask body lower (state: CoreLoweringState) =
     match state
     |> clearConsumerRequest
+    |> withStateCoroutineBody(true)
+    |> withStateMayRunInsideCoroutine(true)
     |> lower(callArgumentsInline
     |> ExprCall(ExprVar("Ok"))(body)(false)
     |> taskCall("fromResult")) with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = loweredState, temp = temp, semanticType = taskType, error = None } ->
-            match freshType(loweredState) with
-                | FreshType { state = typeState, semanticType = valueType } ->
-                    match bindType(taskType)(SemNamed(0)("Task")([SemString, valueType]))(typeState) with
-                        | (failedState, Some(error)) -> failure(failedState)(error)
-                        | (boundState, None) -> success(temp)(taskType)(boundState)
+        | LoweredCoreValue { state = bodyState, temp = temp, semanticType = taskType, error = None } ->
+            let loweredState =
+                bodyState
+                |> withStateCoroutineBody(stateCoroutineBody(state))
+                |> withStateMayRunInsideCoroutine(stateMayRunInsideCoroutine(state))
+            in
+                match freshType(loweredState) with
+                    | FreshType { state = typeState, semanticType = valueType } ->
+                        match bindType(taskType)(SemNamed(0)("Task")([SemString, valueType]))(typeState) with
+                            | (failedState, Some(error)) -> failure(failedState)(error)
+                            | (boundState, None) -> success(temp)(taskType)(boundState)
 
 // The environment size of the closure made for the lifted function `label`, in words.
 let recursive closureCaptureCount (label: Str) (instructions: List(IrInstruction)) =
