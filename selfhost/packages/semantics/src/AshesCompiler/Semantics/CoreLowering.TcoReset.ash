@@ -1485,19 +1485,20 @@ let recursive constructorLayoutWithTag (tag: Int) (layouts: List(CoreConstructor
 
 // The owned children of the constructor with `tag`, by field index and type, and the successor's
 // field expressions when it is a literal of that very constructor (stage 0's
-// `ConstructorFieldExpressions`).
+// `ConstructorFieldExpressions`). `constructorApplicationOf` answers only a saturated application,
+// so its arguments are the constructor's fields, positional ones included.
 let variantChildrenAndFields (named: SemanticType) (tag: Int) (expression: Expr) (state: CoreLoweringState) =
     match resolveType(state)(named) with
         | SemNamed(_symbolId, name, _arguments) as resolved ->
             match state
             |> stateConstructorsOfType(name)
             |> constructorLayoutWithTag(tag) with
-                | Some(CoreConstructorLayout { name = constructorName, fieldNames = fieldNames }) ->
+                | Some(CoreConstructorLayout { name = constructorName }) ->
                     match heapFactsOf(resolved)(state) with
                         | HeapLayoutFacts { children = children } ->
                             (ownedConstructorChildren(constructorName)(children), match constructorApplicationOf(unspanArgument(expression))([])(state) with
                                 | Some((CoreConstructorLayout { name = literalName }, arguments)) ->
-                                    if literalName == constructorName && length(arguments) == length(fieldNames)
+                                    if literalName == constructorName
                                     then Some(arguments)
                                     else None
                                 | None -> None)
