@@ -324,6 +324,33 @@ internal sealed record TcoParamStructuralFacts(
     bool FreshOrHandedOnListRebuild = false);
 
 /// <summary>
+/// A parameter the function moves exactly once on every path: it returns the value, passes it at an
+/// adoptable position of a known function (itself and its recursive siblings included), or passes it
+/// to an intermediate curried stage of a closure it does not know. A value such a hand-over gives
+/// back (the result of the call) is held to the same rule, so the function never keeps, borrows,
+/// duplicates or drops anything it took over. A known callee may be applied partially only in the
+/// function's result position, and over-applied only through its saturated prefix.
+/// </summary>
+/// <param name="Parameter">The parameter's name.</param>
+/// <param name="Ordinal">The parameter's position in the function's flattened curried parameters.</param>
+/// <param name="ClosureParameterRoutes">
+/// The ordinals of this function's own parameters holding a closure the value, or a value given
+/// back for it, is handed to at an intermediate stage, directly or through a callee's routes. A
+/// caller picking the owned mode checks that the argument it passes at each of these positions is a
+/// function whose stage takes over a handed argument.
+/// </param>
+/// <param name="CapturedClosureRoutes">
+/// The names of captured values (free variables of the function) holding such a closure. A function
+/// defined inside another resolves these against the enclosing function's parameters when that
+/// function calls it, so a top-level function normally has none.
+/// </param>
+internal sealed record ParameterAdoptionFacts(
+    string Parameter,
+    int Ordinal,
+    IReadOnlyList<int> ClosureParameterRoutes,
+    IReadOnlyList<string> CapturedClosureRoutes);
+
+/// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge
 /// between today's move/reuse analyses and the owned and borrowed environments used by RC Perceus.
 /// <paramref name="MayExecuteUnderLiveHandlerPost"/> is the conservative call-graph effect consumed
@@ -345,6 +372,28 @@ internal sealed record FunctionOwnershipSummary(
     IReadOnlyList<TcoParamStructuralFacts> TcoParamFacts,
     IReadOnlyList<PatternBindingOwnershipFact> PatternBindingOwnership)
 {
+    /// <summary>
+    /// The parameters this function moves exactly once on every path (see
+    /// <see cref="ParameterAdoptionFacts"/>), in parameter order. The analysis is structural: it holds
+    /// parameters of any type, and only one whose type is a type variable is an adopting parameter of
+    /// the generic-parameter contract (see <c>Lowering.GetGenericAdoptingParameters</c>).
+    /// </summary>
+    public IReadOnlyList<ParameterAdoptionFacts> AdoptableParameters { get; init; } = [];
+
+    /// <summary>The adoption facts of the parameter at <paramref name="ordinal"/>, if it is adoptable.</summary>
+    public ParameterAdoptionFacts? GetAdoptableParameter(int ordinal)
+    {
+        foreach (ParameterAdoptionFacts facts in AdoptableParameters)
+        {
+            if (facts.Ordinal == ordinal)
+            {
+                return facts;
+            }
+        }
+
+        return null;
+    }
+
     public IReadOnlyDictionary<string, int> ResultReach => ResultReachFacts.ParameterReach;
 
     public bool ResultPoisoned => ResultReachFacts.Poisoned;

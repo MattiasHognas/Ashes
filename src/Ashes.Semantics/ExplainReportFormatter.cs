@@ -188,7 +188,23 @@ internal static class ExplainReportFormatter
                 }
             }
 
+            AppendAdoptingParameters(lines, report);
             lines.Add(string.Empty);
+        }
+    }
+
+    private static void AppendAdoptingParameters(List<string> lines, OwnershipFunctionReport report)
+    {
+        if (report.AdoptingParameters.Count == 0)
+        {
+            return;
+        }
+
+        lines.Add("  Adopting");
+        foreach ((string parameter, IReadOnlyList<string> routes) in report.AdoptingParameters)
+        {
+            lines.Add($"    {parameter}");
+            lines.Add($"      through: {(routes.Count == 0 ? "(none)" : string.Join(", ", routes))}");
         }
     }
 

@@ -337,6 +337,7 @@ public sealed partial class Lowering
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.provenance", ComputeFunctionResultProvenanceFixpoint);
         _maAnalyzed = true;
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.inspect-only", ComputeOpenWorldInspectOnlyParams);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.adoption", ComputeAdoptableParameters);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.summaries", BuildOwnershipSummaries);
     }
 
@@ -376,6 +377,8 @@ public sealed partial class Lowering
         _maCallCensusCauses.Clear();
         _ownershipFactConsumptions.Clear();
         _patternBindingOwnershipDecisions.Clear();
+        _maAdoption.Clear();
+        _genericAdoptionBindingTypes.Clear();
     }
 
     private Expr StripOrSelf(Expr value)
@@ -1160,7 +1163,10 @@ public sealed partial class Lowering
             _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
             provenance,
             tcoParamFacts,
-            patternBindingOwnership);
+            patternBindingOwnership)
+        {
+            AdoptableParameters = GetAdoptableParameterFacts(function, info.Params),
+        };
     }
 
     // Splits the converged reach into the published contract: the may-alias set and the whole reach it

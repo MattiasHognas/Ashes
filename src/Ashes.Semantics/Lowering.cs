@@ -4234,6 +4234,7 @@ public sealed partial class Lowering
             binding.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(binding.Name));
         TypeScheme scheme = GeneralizeBindingType(Prune(valueType), schemeRequirements);
+        RecordGenericAdoptionBindingType(GetRegisteredFunctionKey(binding), valueType);
         scheme = FinishBindingDemands(binding, valueType, scheme, firstDemand);
         RegisterTraitDictionarySchemeForLet(binding, scheme);
         RecordInferredTraitBindingElaboration(
@@ -7396,7 +7397,7 @@ public sealed partial class Lowering
         ImmutableSortedDictionary<string, Binding> selfScope = _scopes.Pop();
         TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
         TypeScheme sourceScheme = RecursiveSourceScheme(selfScope[letRecursive.Name], recursiveScheme);
-        RegisterRecursiveDemandScheme(letRecursive.Value, recursiveScheme);
+        RegisterRecursiveBindingSchemes(letRecursive, recursiveScheme, schemeType);
         RecordInferredTraitBindingElaboration(
             letRecursive,
             sourceScheme,

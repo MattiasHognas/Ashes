@@ -237,6 +237,115 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void A_generic_walker_adopts_its_accumulator_through_its_folder()
+    {
+        var request = new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Ownership });
+        CompilationExplainReport report = Report("""
+            type Tree =
+                | Leaf
+                | Branch(Tree, Int, Tree)
+
+            let recursive walk folder acc tree =
+                match tree with
+                    | Leaf -> acc
+                    | Branch(left, key, right) ->
+                        let afterLeft = walk(folder)(acc)(left)
+                        in
+                            let afterNode = folder(afterLeft)(key)
+                            in walk(folder)(afterNode)(right)
+
+            let foldTree folder state =
+                (let recursive go acc tree =
+                    match tree with
+                        | Leaf -> acc
+                        | Branch(left, key, right) ->
+                            let afterLeft = go(acc)(left)
+                            in go(folder(afterLeft)(key))(right)
+                in go(state))
+
+            let step (total: Int) (key: Int) = total + key
+
+            let tree = Branch(Leaf, 1, Leaf)
+
+            Ashes.IO.print(Ashes.Text.fromInt(walk(step)(0)(tree) + foldTree(step)(0)(tree)))
+            """, request);
+
+        report.Ownership.Where(function => function.AdoptingParameters.Count > 0).Select(ReportedName).ShouldBe(["foldTree", "go", "walk"]);
+        ShouldAdopt(report, "walk", "acc", "folder");
+        ShouldAdopt(report, "foldTree", "state", "folder");
+        ShouldAdopt(report, "go", "acc", "folder (captured)");
+        FindOwnership(report, "step")
+            .AdoptingParameters.ShouldBeEmpty();
+        string.Join('\n', ExplainReportFormatter.Format(report, request)).ShouldContain("""
+              Adopting
+                acc
+                  through: folder
+            """.Replace("\r", string.Empty, StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void A_generic_parameter_dropped_on_a_path_or_moved_twice_does_not_adopt()
+    {
+        CompilationExplainReport report = Report("""
+            type Tree =
+                | Leaf
+                | Branch(Tree, Int, Tree)
+
+            let choose (flag: Bool) first second =
+                match flag with
+                    | true -> first
+                    | false -> second
+
+            let recursive walkTwice folder acc tree =
+                match tree with
+                    | Leaf -> acc
+                    | Branch(left, key, right) ->
+                        let afterLeft = walkTwice(folder)(acc)(left)
+                        in walkTwice(folder)(folder(afterLeft)(afterLeft)(key))(right)
+
+            let recursive walkDrop folder acc tree =
+                match tree with
+                    | Leaf -> acc
+                    | Branch(left, key, right) ->
+                        let _ = walkDrop(folder)(acc)(left)
+                        in walkDrop(folder)(folder(acc)(key))(right)
+
+            let step (total: Int) (key: Int) = total + key
+
+            let step3 (total: Int) (other: Int) (key: Int) = total + other + key
+
+            let tree = Branch(Leaf, 1, Leaf)
+
+            Ashes.IO.print(Ashes.Text.fromInt(choose(true)(1)(2) + walkTwice(step3)(0)(tree) + walkDrop(step)(0)(tree)))
+            """, new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Ownership }));
+
+        foreach (string name in new[] { "choose", "walkTwice", "walkDrop" })
+        {
+            FindOwnership(report, name)
+                .AdoptingParameters.ShouldBeEmpty();
+        }
+    }
+
+    private static void ShouldAdopt(
+        CompilationExplainReport report,
+        string function,
+        string parameter,
+        string route)
+    {
+        (string Parameter, IReadOnlyList<string> Routes) adopting = FindOwnership(report, function)
+            .AdoptingParameters
+            .ShouldHaveSingleItem();
+        adopting.Parameter.ShouldBe(parameter);
+        adopting.Routes.ShouldBe([route]);
+    }
+
+    private static OwnershipFunctionReport FindOwnership(CompilationExplainReport report, string function)
+        => report.Ownership.Single(candidate => string.Equals(ReportedName(candidate), function, StringComparison.Ordinal));
+
+    private static string ReportedName(OwnershipFunctionReport function)
+        => string.IsNullOrEmpty(function.Origin.QualifiedName) ? function.Function : function.Origin.QualifiedName;
+
+    [Test]
     public void Rc_counts_describe_the_ir_it_was_handed_not_the_one_lowering_emitted()
     {
         // The optimizer removes some of this program's drops (the producer's reference-counted

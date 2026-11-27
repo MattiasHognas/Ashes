@@ -139,7 +139,15 @@ internal static class IrExplainReporter
                 record.ResultAliases,
                 record.ResultFresh,
                 record.ResultPoisoned,
-                record.CapturedValues));
+                record.CapturedValues)
+            {
+                AdoptingParameters = [.. record.AdoptingParameters.Select(facts => (
+                    facts.Parameter,
+                    (IReadOnlyList<string>)[
+                        .. facts.ClosureParameterRoutes.Select(ordinal => record.Parameters[ordinal]),
+                        .. facts.CapturedClosureRoutes.Select(captured => $"{captured} (captured)"),
+                    ]))],
+            });
         }
 
         return reports;

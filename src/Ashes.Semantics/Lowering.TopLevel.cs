@@ -739,6 +739,7 @@ public sealed partial class Lowering
                 GetSpan(group.Bindings[i].Value),
                 suppressDiagnostics: SuppressSourceConstraintDiagnostics(group.Bindings[i].Name));
             schemes[i] = GeneralizeBindingType(Prune(schemeType), requirements);
+            RecordGenericAdoptionBindingType(new FuncKey(GetCanonicalBinder(group), i), schemeType);
             RegisterRecursiveDemandScheme(group.Bindings[i].Value, schemes[i]);
             if (usesTraitDictionary[i])
             {

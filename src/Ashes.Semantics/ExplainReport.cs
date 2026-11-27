@@ -113,7 +113,14 @@ internal sealed record OwnershipFunctionReport(
     IReadOnlyList<string> ResultAliases,
     bool ResultFresh,
     bool ResultPoisoned,
-    IReadOnlyList<string> CapturedValues);
+    IReadOnlyList<string> CapturedValues)
+{
+    /// <summary>
+    /// The adopting parameters, each with the closures it is handed to: parameter names, and captured
+    /// values marked as such.
+    /// </summary>
+    public IReadOnlyList<(string Parameter, IReadOnlyList<string> Routes)> AdoptingParameters { get; init; } = [];
+}
 
 /// <summary>One parameter's ownership within <see cref="OwnershipFunctionReport"/>.</summary>
 internal sealed record OwnershipParameterReport(

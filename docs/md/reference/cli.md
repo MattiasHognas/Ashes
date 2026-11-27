@@ -879,7 +879,7 @@ ashes compile app.ash --explain memory:Map.set
 
 | Kind | Reports |
 |------|---------|
-| `ownership` | The inferred contracts: per-parameter borrowed or consumed, move safety, uniqueness, which parameters the result may alias, whether the result is fresh, and captured values. |
+| `ownership` | The inferred contracts: per-parameter borrowed or consumed, move safety, uniqueness, which parameters the result may alias, whether the result is fresh, captured values, and the adopting parameters of a generic function (a type-variable parameter moved exactly once on every path) with the closure parameters or captured values each is handed to. |
 | `rc` | The Perceus operations in the final semantic IR — dups, drops, uniqueness checks, allocations, reused allocations, reuse tokens, and copies. Functions with no such operations are omitted. |
 | `reuse` | In-place-reuse decisions: whether a specialization was generated, the candidate, the outcome, and a stable reason code with the source location of the site. |
 | `traits` | Hidden immutable dictionary parameters and the concrete implementation selected for each resolved trait requirement. |

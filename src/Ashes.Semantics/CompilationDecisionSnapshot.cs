@@ -69,7 +69,15 @@ internal sealed record FunctionOwnershipRecord(
     IReadOnlyList<string> ResultAliases,
     bool ResultFresh,
     bool ResultPoisoned,
-    bool MayExecuteUnderLiveHandlerPost);
+    bool MayExecuteUnderLiveHandlerPost)
+{
+    /// <summary>
+    /// The adopting parameters of the generic-parameter contract: the adoptable parameters whose type
+    /// is a type variable, each with the parameters and captured values holding the closures it is
+    /// handed to.
+    /// </summary>
+    public IReadOnlyList<ParameterAdoptionFacts> AdoptingParameters { get; init; } = [];
+}
 
 /// <summary>
 /// One pattern-extracted reference's classification and the placement it received, with the binder
@@ -227,7 +235,10 @@ public sealed partial class Lowering
                 [.. summary.Parameters.Where(summary.ResultReaches)],
                 summary.ResultFresh,
                 summary.ResultPoisoned,
-                summary.MayExecuteUnderLiveHandlerPost));
+                summary.MayExecuteUnderLiveHandlerPost)
+            {
+                AdoptingParameters = GetGenericAdoptingParameters(summary),
+            });
         }
 
         var patternBindings = new List<PatternBindingRecord>();
