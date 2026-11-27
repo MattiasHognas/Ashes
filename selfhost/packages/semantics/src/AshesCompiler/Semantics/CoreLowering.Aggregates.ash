@@ -1885,6 +1885,31 @@ let normalizeRuntimeManagedBytesHead (request: ConsumerRequest) (head: Expr) (lo
             else lowered
         | _ -> lowered
 
+let recursive releaseNormalizedHeadTupleElementDuplicates (tupleTemp: Int) (index: Int) (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> state
+        | elementType :: rest ->
+            match constructionWordSource(tupleTemp)(8 * index)(state.reversedInstructions) with
+                | Some(element) ->
+                    if isDuplicateMarker(element)(state.reversedInstructions) && !containsInt(element)(stateReleasedPatternOwnerDuplicates(state))
+                    then
+                        state
+                        |> emit(RcDrop(element)(patternOwnerTypeName(resolveType(state)(elementType))(state))(-1)(false)(false)(None))
+                        |> withStateReleasedPatternOwnerDuplicates(element :: stateReleasedPatternOwnerDuplicates(state))
+                        |> releaseNormalizedHeadTupleElementDuplicates(tupleTemp)(index + 1)(rest)
+                    else releaseNormalizedHeadTupleElementDuplicates(tupleTemp)(index + 1)(rest)(state)
+                | None -> releaseNormalizedHeadTupleElementDuplicates(tupleTemp)(index + 1)(rest)(state)
+
+// Stage 0's `ReleaseNormalizedHeadTupleDuplicates`: an arena tuple literal built as the head of a
+// reference-counted cell holds the duplicates its pattern owners took for its elements, and the
+// cell stores the head's copy instead, which takes references of its own. The arena tuple is
+// garbage from then on, so each duplicate it holds is released by a marker promoted together with
+// the duplicate, and recorded so no later copy releases it again.
+let releaseNormalizedHeadTupleDuplicates (tupleTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    match (resolveType(state)(headType), definitionOfTemp(tupleTemp)(state.reversedInstructions)) with
+        | (SemTuple(elements), Some(Alloc(_cell, _sizeBytes, false))) -> releaseNormalizedHeadTupleElementDuplicates(tupleTemp)(0)(elements)(state)
+        | _ -> state
+
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
@@ -1945,6 +1970,7 @@ let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) 
                                                 | (copied, copiedTemp) ->
                                                     copied
                                                     |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                                    |> releaseNormalizedHeadTupleDuplicates(temp)(resolved)
                                                     |> success(copiedTemp)(semanticType)
                                 | _ -> reserveUnusedHeadTemp(lowered)
                         else reserveUnusedHeadTemp(lowered)
