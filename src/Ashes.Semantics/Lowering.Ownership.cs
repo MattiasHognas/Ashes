@@ -476,13 +476,23 @@ public sealed partial class Lowering
         }
 
         int ownedSlot = NewLocal();
+        int predecessorSlot = AliasOwnerPredecessorEnabled ? SaveGeneralRcOwnedPredecessor(ownedSlot) : -1;
         Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
         if (AliasOwnerReachRuleEnabled)
         {
-            _generalRcOwnedSlots[^1] = owned with { AliasTemp = aliasTemp };
+            owned = owned with { AliasTemp = aliasTemp };
+            _generalRcOwnedSlots[^1] = owned;
         }
+
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(ownerType), owned.Binders, ownedSlot);
     }
+
+    // Inside a loop the alias owner's slot is stored once per iteration: the reference an earlier
+    // iteration's alias kept moves to a predecessor slot, which the back edge releases once no
+    // successor can reach it, instead of being overwritten unreleased.
+    private static bool AliasOwnerPredecessorEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERPREDECESSOR") is null;
 
     // A reference-counted value the lowering produced or took a reference to, rather than a
     // borrowed read of a slot someone else releases.
