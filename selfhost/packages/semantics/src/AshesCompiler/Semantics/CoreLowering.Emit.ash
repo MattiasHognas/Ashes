@@ -732,7 +732,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 fullyReusingCallees = [],
                 concreteRegistry = emptyCoreConcreteRegistry(Unit),
                 concreteDepth = 0,
-                concreteDeclines = 0
+                concreteDeclines = 0,
+                abstractElementTmcDeclines = 0,
+                tmcDeclines = 0
             )
         ))
 

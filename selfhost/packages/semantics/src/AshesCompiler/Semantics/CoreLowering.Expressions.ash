@@ -1471,7 +1471,7 @@ let concreteCopyInferenceBindings (registry: CoreConcreteRegistry) =
     Ashes.Collection.Map.foldLeft(given (bindings) ->
         given (key) ->
             given (candidate: CoreConcreteCandidate) ->
-                if key == candidate.name
+                if key == candidate.name && !candidate.elementCopy
                 then (candidate.name, candidate.scheme) :: bindings
                 else bindings)([])(registry.candidates)
 
@@ -1602,6 +1602,10 @@ let recursive concreteNewFunctionsReferenceSelf label boundary functions =
 // the copy recursing at that type, so a self call that is not a tail call does not decline it.
 let candidateSchemeRecorded (candidate: CoreConcreteCandidate) = candidate.scheme != candidate.bindingScheme
 
+// Stage 0's evidence that an element copy bought something: the copy declines no
+// tail-modulo-constructor cell, where the generic body declined one over its unresolved element.
+let elementCopyDeclinesNoCell (candidate: CoreConcreteCandidate) original generated = !candidate.elementCopy || stateTmcDeclines(generated) == stateTmcDeclines(original)
+
 let concreteCopyAdmissible label (recursesAtItsType: Bool) original generated =
     stateConcreteDeclines(generated) == stateConcreteDeclines(original) && (match functionWithLabel(label)(generated.functions) with
         | None -> false
@@ -1661,7 +1665,7 @@ let generateConcreteCopy (candidate: CoreConcreteCandidate) (reference: Int) par
                     | (pinned, None) ->
                         match openPreparedRecursiveGroup([(candidate.name, candidate.source)])(lower)([])((prepared with state = pinned)) with
                             | LoweredCoreValue { state = generated, error = None } ->
-                                if concreteCopyAdmissible(member.label)(candidateSchemeRecorded(candidate))(state)(generated)
+                                if concreteCopyAdmissible(member.label)(candidateSchemeRecorded(candidate))(state)(generated) && elementCopyDeclinesNoCell(candidate)(state)(generated)
                                 then
                                     let restored =
                                         generated
@@ -3063,8 +3067,10 @@ let unplacedPatternOwnerHead (headExpression: Expr) (headTemp: Int) (headType: S
 let finishConsTmc (request: ConsumerRequest) (transfers: Bool) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (headExpression: Expr) (tailExpression: Expr) lower head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) -> finishConsTail((request with runtimeList = false))(transfers)(lower)(headExpression)(tailExpression)(head)
-        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when unplacedPatternOwnerHead(headExpression)(headTemp)(headType)(headState) ->
+            finishConsTail((request with runtimeList = false))(transfers)(lower)(headExpression)(tailExpression)((head with state = recordTmcDecline(containsUnresolvedLayout(headType)(headState))(headState)))
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false ->
+            finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)((head with state = recordTmcDecline(containsUnresolvedLayout(headType)(headState))(headState)))
         | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } ->
             match duplicatePatternOwnerTemp(headExpression)(headTemp)(headState) with
                 | (duplicatedState, duplicatedHead) ->
@@ -3164,7 +3170,8 @@ let recursive concreteSourceMentionsCandidate names registry =
         | [] -> false
         | name :: rest ->
             match lookupCoreConcreteCandidate(name)(registry) with
-                | Some(_candidate) -> true
+                | Some(CoreConcreteCandidate { elementCopy = false }) -> true
+                | Some(_element) -> concreteSourceMentionsCandidate(rest)(registry)
                 | None -> concreteSourceMentionsCandidate(rest)(registry)
 
 // Stage 0's `BodyPerformsProvidedParameterizedCapability`: the value names an operation of a
@@ -3182,6 +3189,13 @@ let recursive performsProvidedParameterizedCapability (value: Expr) (providers: 
 // concrete call site so the `both` splits in the copy see a concrete result type and fork.
 let isParallelSpecializable (name: Str) = name == "Ashes_Task_Parallel_mapGrained" || name == "Ashes_Task_Parallel_reduceGrained"
 
+let registerElementConcreteSource name value (scheme: TypeScheme) slot isRecursive state =
+    match lambdaParameterChain(value)([]) with
+        | (parameters, _body) ->
+            withStateConcreteRegistry(state
+            |> stateConcreteRegistry
+            |> registerCoreElementConcreteCandidate(name)(value)(scheme)(length(parameters))(slot)(isRecursive))(state)
+
 let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingScheme: TypeScheme) slot isRecursive inPlaceScope state =
     match lambdaParameterChain(value)([]) with
         | (parameters, _body) ->
@@ -3192,7 +3206,10 @@ let registerConcreteCandidateScheme name value (scheme: TypeScheme) (bindingSche
 // A binding lowering keeps monomorphic, whose recorded scheme the standalone inference generalized
 // over an operator trait lowering holds monomorphic, registers with the recorded scheme: each call
 // at a concrete type then gets its own copy, as lowering's own constrained schemes do.
-let registerConcreteSource name value isRecursive state =
+// A source whose own lowering declined a cell over an unresolved element type (`elementTriggered`,
+// stage 0's `RegisterElementSpecializationCandidate`) registers as an element candidate when nothing
+// above registers it: a generic function with no requirements.
+let registerConcreteSource name value isRecursive (elementTriggered: Bool) state =
     if stateConcreteDepth(state) != 0 || !inProgramEntryFrame(state)
     then state
     else
@@ -3209,7 +3226,10 @@ let registerConcreteSource name value isRecursive state =
                             | None ->
                                 if concreteSourceMentionsCandidate(collectFree(value)([name])([]))(stateConcreteRegistry(state)) || performsProvidedParameterizedCapability(value)(stateStaticProviders(state)) || isParallelSpecializable(name)
                                 then registerConcreteCandidateScheme(name)(value)(scheme)(scheme)(slot)(isRecursive)(None)(state)
-                                else state
+                                else
+                                    if elementTriggered && scheme.quantified != []
+                                    then registerElementConcreteSource(name)(value)(scheme)(slot)(isRecursive)(state)
+                                    else state
             | _ -> state
 
 // The recorded scheme of a `let` below top level whose lambda value the standalone inference
@@ -3897,7 +3917,7 @@ let openUnregisteredConstrainedRecursive name value annotation requirements lowe
 
 let openPossiblyConstrainedRecursive name value annotation requirements lower state =
     match openUnregisteredConstrainedRecursive(name)(value)(annotation)(requirements)(lower)(state) with
-        | LoweredCoreValue { state = opened, error = None } as result -> result with state = registerConcreteSource(name)(value)(true)(opened)
+        | LoweredCoreValue { state = opened, error = None } as result -> result with state = registerConcreteSource(name)(value)(true)(stateAbstractElementTmcDeclines(opened) != stateAbstractElementTmcDeclines(state))(opened)
         | failed -> failed
 
 let constrainedAliasBinding value (state: CoreLoweringState) =

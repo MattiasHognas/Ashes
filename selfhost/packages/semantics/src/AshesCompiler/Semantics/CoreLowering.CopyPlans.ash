@@ -93,6 +93,7 @@ let restoreOuterFrame outer bodyState =
             |> restoreHeapQueryContexts(bodyState)
             |> withStateConcreteRegistry(stateConcreteRegistry(bodyState))
             |> withStateConcreteDeclines(stateConcreteDeclines(bodyState))
+            |> carryTmcDeclines(bodyState)
             |> (given (current: CoreLoweringState) -> current with functions = functions)
             |> (given (current: CoreLoweringState) -> withStateRuntimeNormalizedArgumentLabels(normalizedLabels)(current))
             |> (given (current: CoreLoweringState) -> current with nextLambdaId = nextLambdaId)
