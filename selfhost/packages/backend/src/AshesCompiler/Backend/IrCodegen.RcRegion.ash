@@ -461,7 +461,7 @@ let emitSiteRecordingAlloc module_ context builder i64 ptrType (runtime: RcRegio
                     in
                         let returnAddressType = functionType(ptrType)([i32])(1u32)(false)
                         in
-                            let returnAddress = addFunction(module_)("llvm.returnaddress")(returnAddressType)
+                            let returnAddress = addFunction(module_)("llvm.returnaddress.p0")(returnAddressType)
                             in
                                 let _ = addFunctionEnumAttribute(context)(function_)("noinline")
                                 in
