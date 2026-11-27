@@ -2797,9 +2797,211 @@ let recursive soleConstructorFieldTypes (typeName: Str) (arguments: List(Semanti
                 |> Some)(count + 1)(state)
             else soleConstructorFieldTypes(typeName)(arguments)(rest)(found)(count)(state)
 
+let recursive addDistinctCells (cells: List(Int)) (found: List(Int)) =
+    match cells with
+        | [] -> found
+        | cell :: rest ->
+            if containsInt(cell)(found)
+            then addDistinctCells(rest)(found)
+            else addDistinctCells(rest)(cell :: found)
+
+// Stage 0's `CollectArenaRecordsOfJoin`: the arena records a value is, through locals and borrows;
+// `None` when a store is anything other than an arena record or the placeholder a back edge or a
+// match without an arm stores.
+let recursive arenaRecordsOfJoin (temp: Int) (budget: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    if budget == 0
+    then None
+    else
+        match definitionOfTemp(temp)(state.reversedInstructions) with
+            | Some(AllocAdt(_target, _tag, fieldCount, false, _tagless)) ->
+                if fieldCount > 0
+                then Some([temp])
+                else None
+            | Some(Borrow(_target, source)) -> arenaRecordsOfJoin(source)(budget - 1)(forward)(state)
+            | Some(LoadLocal(_target, slot)) -> arenaRecordsOfSlotStores(slot)(budget - 1)(forward)(forward)(None)(state)
+            | _ -> None
+and arenaRecordsOfSlotStores (slot: Int) (budget: Int) (instructions: List(IrInstruction)) (forward: List(IrInstruction)) (found: Maybe(List(Int))) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot != slot || isBackEdgePlaceholder(definitionOfTemp(source)(state.reversedInstructions))
+            then arenaRecordsOfSlotStores(slot)(budget)(rest)(forward)(found)(state)
+            else
+                match arenaRecordsOfJoin(source)(budget)(forward)(state) with
+                    | None -> None
+                    | Some(cells) ->
+                        arenaRecordsOfSlotStores(slot)(budget)(rest)(forward)((match found with
+                            | Some(existing) -> existing
+                            | None -> [])
+                        |> addDistinctCells(cells)
+                        |> Some)(state)
+        | _ :: rest -> arenaRecordsOfSlotStores(slot)(budget)(rest)(forward)(found)(state)
+
+let isFieldRead (temp: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(GetAdtField(_target, _ptr, _index, _tagless)) -> true
+        | _ -> false
+
+// Stage 0's `ReadsFieldsOfRecord`: whether a record cell stores a field read out of another record.
+let recursive readsFieldsOfRecord (candidate: Int) (instructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SetAdtField(ptr, _index, source, _tagless) } :: rest -> ptr == candidate && isFieldRead(source)(state) || readsFieldsOfRecord(candidate)(rest)(state)
+        | _ :: rest -> readsFieldsOfRecord(candidate)(rest)(state)
+
+let recursive storesIntoSlot (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot == slot
+            then source :: storesIntoSlot(slot)(rest)
+            else storesIntoSlot(slot)(rest)
+        | _ :: rest -> storesIntoSlot(slot)(rest)
+
+// Stage 0's `StoredRecordOf`: the arena record a `let` slot was stored from once, or nothing.
+let storedRecordOf (slot: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match storesIntoSlot(slot)(forward) with
+        | source :: [] ->
+            match definitionOfTemp(source)(state.reversedInstructions) with
+                | Some(AllocAdt(_target, _tag, fieldCount, false, _tagless)) ->
+                    if fieldCount > 0
+                    then Some(source)
+                    else None
+                | _ -> None
+        | _ -> None
+
+// The let-bound record a field read reads from, through a borrow: `None` when it is no such record.
+let readRecordOrigin (from: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match match definitionOfTemp(from)(state.reversedInstructions) with
+        | Some(Borrow(_target, borrowed)) -> definitionOfTemp(borrowed)(state.reversedInstructions)
+        | definition -> definition with
+        | Some(LoadLocal(_target, slot)) -> storedRecordOf(slot)(forward)(state)
+        | _ -> None
+
+// The records the join cells read their fields from; `None` when one reads a field of anything else.
+let recursive joinFieldOrigins (cells: List(Int)) (instructions: List(IrInstruction)) (forward: List(IrInstruction)) (origins: List(Int)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> Some(origins)
+        | IrInstruction { instruction = SetAdtField(ptr, _index, source, _tagless) } :: rest ->
+            if containsInt(ptr)(cells)
+            then
+                match definitionOfTemp(source)(state.reversedInstructions) with
+                    | Some(GetAdtField(_target, from, _fieldIndex, _fieldTagless)) ->
+                        match readRecordOrigin(from)(forward)(state) with
+                            | Some(origin) ->
+                                joinFieldOrigins(cells)(rest)(forward)(addDistinctCells([origin])(origins))(state)
+                            | None -> None
+                    | _ -> joinFieldOrigins(cells)(rest)(forward)(origins)(state)
+            else joinFieldOrigins(cells)(rest)(forward)(origins)(state)
+        | _ :: rest -> joinFieldOrigins(cells)(rest)(forward)(origins)(state)
+
+let recursive indexDefining (temp: Int) (instructions: List(IrInstruction)) (index: Int) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then index
+            else indexDefining(temp)(rest)(index + 1)
+
+let recursive labelsBetween (low: Int) (high: Int) (instructions: List(IrInstruction)) (index: Int) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = Label(name) } :: rest ->
+            if index > low && index <= high
+            then name :: labelsBetween(low)(high)(rest)(index + 1)
+            else labelsBetween(low)(high)(rest)(index + 1)
+        | _ :: rest -> labelsBetween(low)(high)(rest)(index + 1)
+
+let recursive containsLabelName (name: Str) (labels: List(Str)) =
+    match labels with
+        | [] -> false
+        | candidate :: rest -> candidate == name || containsLabelName(name)(rest)
+
+let recursive jumpsIntoBefore (limit: Int) (labels: List(Str)) (instructions: List(IrInstruction)) (index: Int) =
+    if index >= limit
+    then false
+    else
+        match instructions with
+            | [] -> false
+            | IrInstruction { instruction = Jump(target) } :: rest -> containsLabelName(target)(labels) || jumpsIntoBefore(limit)(labels)(rest)(index + 1)
+            | IrInstruction { instruction = JumpIfFalse(_condition, target) } :: rest -> containsLabelName(target)(labels) || jumpsIntoBefore(limit)(labels)(rest)(index + 1)
+            | _ :: rest -> jumpsIntoBefore(limit)(labels)(rest)(index + 1)
+
+let recursive lastDefinitionIndex (cells: List(Int)) (forward: List(IrInstruction)) (last: Int) =
+    match cells with
+        | [] -> last
+        | cell :: rest ->
+            let index = indexDefining(cell)(forward)(0)
+            in
+                lastDefinitionIndex(rest)(forward)(if index > last
+                then index
+                else last)
+
+// Stage 0's `DefinedOnEveryPathTo`: the record is defined before every arm of the join, no branch
+// taken before its definition landing between the definition and the last arm.
+let definedOnEveryPathTo (record: Int) (cells: List(Int)) (forward: List(IrInstruction)) =
+    (let definition = indexDefining(record)(forward)(0)
+    in
+        let last = lastDefinitionIndex(cells)(forward)(-1)
+        in
+            definition >= 0 && last >= definition && !jumpsIntoBefore(definition)(labelsBetween(definition)(last)(forward)(0))(forward)(0))
+
+// Stage 0's `TryLetBoundRecordBehindJoin`: a join whose arms are all records built from one
+// let-bound arena record, or fresh records that read nothing of it; the let-bound record is the one
+// whose retained fields no arm's copy takes over.
+let letBoundRecordBehindJoin (cells: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match joinFieldOrigins(cells)(forward)(forward)([])(state) with
+        | Some(origin :: []) ->
+            if !containsInt(origin)(cells) && definedOnEveryPathTo(origin)(cells)(forward)
+            then Some(origin)
+            else None
+        | _ -> None
+
+let recursive cellsNotReadingFields (cells: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match cells with
+        | [] -> []
+        | cell :: rest ->
+            if readsFieldsOfRecord(cell)(forward)(state)
+            then cellsNotReadingFields(rest)(forward)(state)
+            else cell :: cellsNotReadingFields(rest)(forward)(state)
+
+// Stage 0's `TryArenaRecordWithRawUpdates`: a result joining one arena record with arena record
+// updates of it, or arms built from one let-bound record; the record whose fields to release.
+let arenaRecordWithUpdates (bodyTemp: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match arenaRecordsOfJoin(bodyTemp)(8)(forward)(state) with
+        | None -> None
+        | Some(cells) ->
+            match letBoundRecordBehindJoin(cells)(forward)(state) with
+                | Some(record) -> Some(record)
+                | None ->
+                    match cellsNotReadingFields(cells)(forward)(state) with
+                        | fresh :: [] ->
+                            if length(cells) > 1
+                            then Some(fresh)
+                            else None
+                        | _ -> None
+
+// With updates in the join, the reference the record took is released through the value stored
+// into it, since the record itself may already be released as the scope's owner.
+let recursive releaseStoredRecordFields (cell: Int) (fieldTypes: List(SemanticType)) (instructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> state
+        | IrInstruction { instruction = SetAdtField(ptr, index, source, _tagless) } :: rest ->
+            if ptr == cell && index < length(fieldTypes) && !resultSurvivesReset(nthElementType(index)(fieldTypes))(state) && holdsOwnReference(source)(state)
+            then
+                state
+                |> emitOwnedValueChildDrop(source)(nthElementType(index)(fieldTypes))
+                |> releaseStoredRecordFields(cell)(fieldTypes)(rest)
+            else releaseStoredRecordFields(cell)(fieldTypes)(rest)(state)
+        | _ :: rest -> releaseStoredRecordFields(cell)(fieldTypes)(rest)(state)
+
 // Stage 0's `ReleaseOwnedFieldsOfCopiedArenaRecord`: the same move for an arena record of one
 // constructor. A field joining retains no owned slot releases with arena nullary values moves into
-// the reference-counted copy; a field any arm of which is borrowed keeps the copy's retain.
+// the reference-counted copy; a field any arm of which is borrowed keeps the copy's retain. A result
+// that joins the record with updates of it (or arms built from one let-bound record) releases the
+// record's own references through the values stored into it (stage 0's join move).
 let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(bodyType) with
         | SemNamed(_symbolId, name, arguments) ->
@@ -2808,7 +3010,12 @@ let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticTyp
                     let cell = soleArenaRecordCellOf(bodyTemp)(state)
                     in
                         if cell < 0
-                        then state
+                        then
+                            let forward = reverse(state.reversedInstructions)
+                            in
+                                match arenaRecordWithUpdates(bodyTemp)(forward)(state) with
+                                    | Some(record) -> releaseStoredRecordFields(record)(fieldTypes)(forward)(state)
+                                    | None -> state
                         else
                             releaseRecordFieldsAt(bodyTemp)(ownedRecordFieldIndices(cell)(fieldTypes)(reverse(state.reversedInstructions))(state))(state)
                 | None -> state
