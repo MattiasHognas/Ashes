@@ -1727,14 +1727,15 @@ let recursive tempStoredInSlot (temp: Int) (instructions: List(IrInstruction)) =
 // are final and the duplicate is a runtime retain, as a constructor's arena cell does with a marker.
 // The duplicate is read from the cell's own tail store: the retain a transferring cell takes of its
 // tail (`retainConsTail`) is made after the cell's parts are duplicated, so it is the stored value,
-// not the duplicated tail.
+// not the duplicated tail. Stage 0's ambient tail flag reaches the cons as `consTailPosition`:
+// dispatch clears `tailPosition` at a cons.
 let keepArmCellTailMarkerOwned (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None } ->
             match storedCellTail(cellTemp)(state.reversedInstructions) with
                 | None -> lowered
                 | Some(marker) ->
-                    if generalRcEnabled(state) && request.tailPosition && request.callArgument == false && request.lateCopiedCellParts == false && request.recordFieldCell == false && (match request.transferSlot with
+                    if generalRcEnabled(state) && (request.tailPosition || request.consTailPosition) && request.callArgument == false && request.lateCopiedCellParts == false && request.recordFieldCell == false && (match request.transferSlot with
                         | Some(_slot) -> false
                         | None -> true) && (match stateTcoLoop(state) with
                         | Some(_loop) -> true
