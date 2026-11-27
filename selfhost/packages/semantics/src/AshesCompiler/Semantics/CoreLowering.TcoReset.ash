@@ -1475,8 +1475,84 @@ let backEdgeAdtCopyPlanOf (semanticType: SemanticType) (expression: Expr) (state
                 | _ -> NormalizerArgumentCopy(named)
         | (plan, _fields) -> plan
 
+// The field expressions of `expression` when it applies the constructor named `constructorName`
+// (stage 0's `ConstructorFieldExpressions`); `None` for any other expression.
+let constructorFieldExpressionsFor (constructorName: Str) (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(unspanArgument(expression))([])(state) with
+        | Some((CoreConstructorLayout { name = applied }, arguments)) ->
+            if applied == constructorName
+            then Some(arguments)
+            else None
+        | None -> None
+
+let recursive backEdgeSwitchCasesOf (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> (state, [])
+        | CoreConstructorLayout { tag = tag } :: rest ->
+            match freshLabel("rc_normalize_adt")(state) with
+                | FreshLabel { state = labelled, label = label } ->
+                    match backEdgeSwitchCasesOf(rest)(labelled) with
+                        | (casesState, cases) -> (casesState, IrSwitchCase(tag = tag, label = label) :: cases)
+
+// One branch per constructor of stage 0's `EmitRuntimeManagedTcoAdtDeepCopy` with
+// `releaseSourceChildren`: the cell copies out, its owned children copy after it, and the dying
+// successor's references to them are released, paired with the successor's field expressions only
+// in the branch of the constructor it applies.
+let recursive emitBackEdgeSwitchBranches (sourceTemp: Int) (resultSlot: Int) (endLabel: Str) (expression: Expr) (children: List(HeapLayoutChild)) (cases: List(IrSwitchCase)) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match (cases, layouts) with
+        | (IrSwitchCase { label = label } :: caseRest, (CoreConstructorLayout { name = constructorName, tagless = tagless } as layout) :: layoutRest) ->
+            match state
+            |> unlocatedInstruction(Label(label))
+            |> freshTemp with
+                | FreshTemp { state = allocated, temp = copyTemp } ->
+                    match allocated
+                    |> unlocatedInstruction(CopyOutArena(copyTemp)(sourceTemp)(layoutAllocationSizeBytes(layout))(true)(RcNormalization)(None))
+                    |> emitBackEdgeChildCopies(sourceTemp)(copyTemp)(tagless)(ownedConstructorChildren(constructorName)(children))([]) with
+                        | (copied, read) ->
+                            copied
+                            |> releaseBackEdgeSourceChildren(sourceTemp)(read)(constructorFieldExpressionsFor(constructorName)(expression)(copied))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> unlocatedInstruction(StoreLocal(resultSlot)(copyTemp))
+                            |> unlocatedInstruction(Jump(endLabel))
+                            |> emitBackEdgeSwitchBranches(sourceTemp)(resultSlot)(endLabel)(expression)(children)(caseRest)(layoutRest)
+        | _ -> state
+
+// Stage 0's back-edge copy of an arena successor of a type with several constructors
+// (`EmitRuntimeManagedTcoAdtDeepCopy` with `releaseSourceChildren`, which `SuccessorOwnsItsChildren`
+// grants a type that needs no normalizer): the tag selects the constructor branch, each storing its
+// copy into a shared slot. Stage 0 burns two temps ahead of the walk, as for one constructor.
+let emitTcoBackEdgeSwitchCopy (sourceTemp: Int) (semanticType: SemanticType) (expression: Expr) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            match (heapFactsOf(named)(state), stateConstructorsOfType(name)(state), freshTempRun(2)(state)) with
+                | (HeapLayoutFacts { children = children }, layouts, FreshTemp { state = burned }) ->
+                    match freshLocal(burned) with
+                        | FreshLocal { state = slotState, local = resultSlot } ->
+                            match freshTemp(slotState) with
+                                | FreshTemp { state = tagState, temp = tagTemp } ->
+                                    match tagState
+                                    |> unlocatedInstruction(GetAdtTag(tagTemp)(sourceTemp))
+                                    |> backEdgeSwitchCasesOf(layouts) with
+                                        | (casesState, cases) ->
+                                            match freshLabel("rc_normalize_adt_end")(casesState) with
+                                                | FreshLabel { state = endState, label = endLabel } ->
+                                                    match endState
+                                                    |> unlocatedInstruction(cases
+                                                    |> firstSwitchLabel
+                                                    |> SwitchTag(tagTemp)(cases))
+                                                    |> emitBackEdgeSwitchBranches(sourceTemp)(resultSlot)(endLabel)(expression)(children)(cases)(layouts)
+                                                    |> unlocatedInstruction(Label(endLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                            resultState
+                                                            |> unlocatedInstruction(LoadLocal(resultTemp)(resultSlot))
+                                                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                                                            |> (given (loaded: CoreLoweringState) -> (loaded, resultTemp))
+        | _ -> unlocatedDeepCopy(sourceTemp)(plan)(state)
+
 let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
+        | SwitchArgumentCopy(_constructorPlans) as plan -> emitTcoBackEdgeSwitchCopy(sourceTemp)(semanticType)(expression)(plan)(state)
         | ConstructorArgumentCopy((_tag, sizeBytes, tagless, _childPlans)) ->
             match freshTempRun(3)(state) with
                 | FreshTemp { state = allocated, temp = firstTemp } ->
