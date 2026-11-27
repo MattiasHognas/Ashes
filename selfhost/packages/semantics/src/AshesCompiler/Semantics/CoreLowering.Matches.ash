@@ -2069,37 +2069,27 @@ let capturesScopeViews (resultType: SemanticType) (state: CoreLoweringState) =
 // whose body may return something a callee read out of it.
 let ownerViewedByResult (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (state: CoreLoweringState) = runtimeOwnerStateOf(ownerSlot)(state) == Some(true) && typeCarriesTextBytes([])(valueType)(state) && resultMayViewCallArgument(name)(0)(body)
 
-// Stage 0's `OwnsReferenceCountedScopeResult`: a scope result holding a reference of its own, a value
-// just produced on the reference-counted heap, is replaced by its arena copy, so the copy's source is
-// released once it is copied.
-let releaseCopiedScopeResult (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if isFreshRuntimeTemp(resultTemp)(state)
-    then emitOwnedValueRelease(emit)(resultTemp)(resultType)(state)
-    else state
-
 // Stage 0's `MaterializeScopeResultViews`: such a binding's result is materialized before the
 // binding is released. A result the arena deep copy reproduces is copied into the arena; one of the
 // contract's types is copied onto the reference-counted heap when it is still in the arena and
 // retained when it is already reference-counted, holding no view, and the scope's result is then a
 // value just produced, owned by whoever takes it (stage 0's `NormalizeViewingResultBeforeBackings`);
 // for anything else the binding is kept alive rather than released, a leak being the safe side of
-// a view left pointing into freed memory. A result of the contract's types that is already
-// reference-counted needs nothing: its string and bytes children were retained or copied when it was
-// built. A reference-counted result of any other type is copied like an arena one, since its
-// children were stored as they are. Returns the state, the result temp, whether the binding's
-// release is withheld, and whether its release stays at the scope exit, after the copy, rather
-// than moving to the binding's last read.
+// a view left pointing into freed memory. A result already on the reference-counted heap needs
+// nothing: its parts were retained or copied where they were stored. Returns the state, the result
+// temp, whether the binding's release is withheld, and whether it stays at the scope exit, after
+// the copy, rather than moving to the binding's last read: only a copy needs the owner alive.
 let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if !ownerViewedByResult(name)(body)(valueType)(ownerSlot)(state)
     then (state, resultTemp, false, false)
     else
-        if !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isGeneralRcValueType(resultType)(state) && isRuntimeTemp(resultTemp)(state)
-        then (state, resultTemp, false, true)
+        if !(typeCarriesTextBytes([])(resultType)(state) || capturesScopeViews(resultType)(state)) || isRuntimeTemp(resultTemp)(state)
+        then (state, resultTemp, false, false)
         else
             if canNormalizeResultIntoArena(resultType)(state)
             then
                 match emitArenaResultDeepCopy(resultTemp)(resultType)(state) with
-                    | (copied, copyTemp) -> (releaseCopiedScopeResult(resultTemp)(resultType)(copied), copyTemp, false, true)
+                    | (copied, copyTemp) -> (copied, copyTemp, false, true)
             else
                 if isGeneralRcValueType(resultType)(state)
                 then
