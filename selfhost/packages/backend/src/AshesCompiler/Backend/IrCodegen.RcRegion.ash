@@ -20,6 +20,7 @@ export (
     value rcReleaseFunction,
     value emitIsReferenceCountedIn,
     value emitLiveCellsCount,
+    value emitSiteAttributedCall,
 )
 
 type RcRegionRuntime =
@@ -32,6 +33,9 @@ type RcRegionRuntime =
     | freeFn: LLVMValueRef
     | poisonReleaseFn: Maybe(LLVMValueRef)
     | liveCellsGlobal: Maybe(LLVMValueRef)
+    // With ASHES_RC_SITES=1, the function a copy routine (a normalizer, a copy-out helper) was
+    // called from, 0 outside one: an allocation inside the routine records it beside its own site.
+    | siteCallerGlobal: Maybe(LLVMValueRef)
     // Whether each thread bumps its own stretch of the range (a program with worker threads).
     | perThread: Bool
 
@@ -448,6 +452,39 @@ let allocationSitesRequested unit =
         | Ok(Some("1")) -> true
         | _ -> false
 
+// The site word of an allocation inside a copy routine: the routine's own site in the high 32 bits
+// and the function that called the routine in the low 32, so the census can name the caller. Both
+// are code addresses of a Linux executable, below 4 GiB; outside a routine the word is the site.
+let attributeSiteToCaller builder i64 (runtime: RcRegionRuntime) site =
+    match runtime.siteCallerGlobal with
+        | None -> site
+        | Some(global) ->
+            let caller = buildLoad(builder)(i64)(global)("rc_site_copy_caller")
+            in
+                let packed =
+                    buildOr(builder)(buildShl(builder)(site)(regionConst(i64)(32))("rc_site_high"))(caller)("rc_site_packed")
+                in
+                    buildSelect(builder)(buildICmp(builder)(intPredicateNe)(caller)(regionConst(i64)(0))("rc_site_in_copy"))(packed)(site)("rc_site_attributed")
+
+// A call to a copy routine from `caller`: with ASHES_RC_SITES=1 the routine's allocations name
+// `caller` (`attributeSiteToCaller`), unless an outer routine already set its own caller, which
+// is restored after the call. `emitCall` builds the call itself.
+let emitSiteAttributedCall builder i64 (runtime: RcRegionRuntime) caller emitCall =
+    match runtime.siteCallerGlobal with
+        | None -> emitCall(Unit)
+        | Some(global) ->
+            let saved = buildLoad(builder)(i64)(global)("rc_site_saved_caller")
+            in
+                let own = buildPtrToInt(builder)(caller)(i64)("rc_site_own_caller")
+                in
+                    let _ =
+                        buildStore(builder)(buildSelect(builder)(buildICmp(builder)(intPredicateEq)(saved)(regionConst(i64)(0))("rc_site_outermost"))(own)(saved)("rc_site_caller_word"))(global)
+                    in
+                        let result = emitCall(Unit)
+                        in
+                            let _ = buildStore(builder)(saved)(global)
+                            in result
+
 let emitSiteRecordingAlloc module_ context builder i64 ptrType (runtime: RcRegionRuntime) (inner: LLVMValueRef) mallocType =
     (let function_ = runtime.allocFn
     in
@@ -477,7 +514,9 @@ let emitSiteRecordingAlloc module_ context builder i64 ptrType (runtime: RcRegio
                                                     let _ = positionBuilderAtEnd(builder)(recordBlock)
                                                     in
                                                         let site =
-                                                            buildPtrToInt(builder)(buildCall(builder)(returnAddressType)(returnAddress)([constInt(i32)(0u64)(false)])(1u32)("rc_site_caller"))(i64)("rc_site_word")
+                                                            "rc_site_word"
+                                                            |> buildPtrToInt(builder)(buildCall(builder)(returnAddressType)(returnAddress)([constInt(i32)(0u64)(false)])(1u32)("rc_site_return"))(i64)
+                                                            |> attributeSiteToCaller(builder)(i64)(runtime)
                                                         in
                                                             let _ =
                                                                 "rc_site_slot"
@@ -520,6 +559,12 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
             liveCellsGlobal = if leakCheck
             then
                 "__ashes_rc_live"
+                |> zeroWordGlobal(module_)(i64)
+                |> Some
+            else None,
+            siteCallerGlobal = if allocationSitesRequested(Unit)
+            then
+                "__ashes_rc_site_caller"
                 |> zeroWordGlobal(module_)(i64)
                 |> Some
             else None,

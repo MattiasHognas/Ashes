@@ -1039,9 +1039,11 @@ let codegenInstructionKind cx builder kind state =
                         // is one call into the module-level helpers `IrCodegen.Arena` defines; the
                         // purpose operand does not change the copy.
                                         | CopyOutArena(destTemp, srcTemp, staticSizeBytes, runtimeManaged, _purpose, _semanticType) ->
-                                            (bindTemp(destTemp)(emitCopyOutArena(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
+                                            (bindTemp(destTemp)(emitSiteAttributedCall(builder)(i64)(externals.rcRegion)(function_)(given (_) ->
+                                                emitCopyOutArena(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))))(tempEnv), terminated)
                                         | CopyOutList(destTemp, srcTemp, headCopy, runtimeManaged, _purpose) ->
-                                            (bindTemp(destTemp)(emitCopyOutList(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp)))(tempEnv), terminated)
+                                            (bindTemp(destTemp)(emitSiteAttributedCall(builder)(i64)(externals.rcRegion)(function_)(given (_) ->
+                                                emitCopyOutList(builder)(i64)(arena)(lookupTemp(cx)(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))))(tempEnv), terminated)
                         // The rest of the copy family lives in `IrCodegen.Copy`: the closure copy
                         // (whose runtime-managed form dispatches to the program's `$env_normalize`
                         // functions by code address), the TCO accumulator's single-cell copy, and
@@ -1348,11 +1350,17 @@ let codegenInstructionKind cx builder kind state =
                                                 then constInt(i64)(0u64)(false)
                                                 else lookupTemp(cx)(flagTemp)(tempEnv)
                                             in
-                                                let result =
+                                                let emitCall unit =
                                                     buildCall(builder)(closureFunctionType)(lookupIndexedStr(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
                                                         "t" + Ashes.Text.fromInt(target)
                                                     )
-                                                in (bindTemp(target)(result)(tempEnv), terminated)
+                                                in
+                                                    let result =
+                                                    // A normalizer's allocations name the function that asked for the copy.
+                                                        if Ashes.Text.startsWith(funcLabel)("__rcnorm_")
+                                                        then emitSiteAttributedCall(builder)(i64)(externals.rcRegion)(function_)(emitCall)
+                                                        else emitCall(Unit)
+                                                    in (bindTemp(target)(result)(tempEnv), terminated)
                                         | LoadEnv(target, index) ->
                                             (bindTemp(target)(emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexedInt(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | LoadArgumentOwnership(target) ->

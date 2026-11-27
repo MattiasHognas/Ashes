@@ -2,7 +2,10 @@
 // Reads rcwalk's lines ("<addr> <size> <shape> <site-hex>") or rcmark's (the same with an R or U
 // column) on standard input and replaces the site address with the function of the link map
 // (lines "<start-hex> <size-hex> <name>") that contains it, or "?" when none does: prints
-// "<size> <shape> <function> <addr-hex> <R|U|->", "-" when the input had no reachability column.
+// "<size> <shape> <function> <addr-hex> <R|U|L|-> <via>", "-" when the input had no reachability
+// column. A cell a copy routine (a normalizer, a copy-out helper) allocated in a program built
+// with ASHES_RC_SITES=1 is named by the function that called the routine, and <via> names the
+// routine; <via> is "-" for every other cell.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +17,12 @@ static Fn *fns; static size_t nfns, capfns;
 static int cmpfn(const void *a, const void *b) {
     const Fn *x = a, *y = b;
     return x->start < y->start ? -1 : x->start > y->start;
+}
+
+static const char *resolve(uint64_t site) {
+    size_t lo = 0, hi = nfns;
+    while (lo < hi) { size_t mid = (lo + hi) / 2; if (fns[mid].start <= site) lo = mid + 1; else hi = mid; }
+    return lo > 0 && site < fns[lo - 1].start + fns[lo - 1].size ? fns[lo - 1].name : "?";
 }
 
 int main(int argc, char **argv) {
@@ -31,11 +40,11 @@ int main(int argc, char **argv) {
     while (fgets(line, sizeof line, stdin)) {
         unsigned long long addr, size, site; char shape[64], reach[4] = "-";
         if (sscanf(line, "%llx %llu %63s %llx %3s", &addr, &size, shape, &site, reach) < 4) continue;
-        const char *name = "?";
-        size_t lo = 0, hi = nfns;
-        while (lo < hi) { size_t mid = (lo + hi) / 2; if (fns[mid].start <= site) lo = mid + 1; else hi = mid; }
-        if (lo > 0 && site < fns[lo - 1].start + fns[lo - 1].size) name = fns[lo - 1].name;
-        printf("%llu %s %s %llx %s\n", size, shape, name, addr, reach);
+        // A copy routine's allocation packs the routine's own site above the calling function.
+        const char *name, *via = "-";
+        if ((site >> 48) != 0) { name = resolve(site & 0xffffffffULL); via = resolve(site >> 32); }
+        else name = resolve(site);
+        printf("%llu %s %s %llx %s %s\n", size, shape, name, addr, reach, via);
     }
     return 0;
 }
