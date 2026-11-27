@@ -341,6 +341,17 @@ let argumentCellRequestForwards (expression: Expr) =
         | ExprCons(_head, _tail) -> true
         | _ -> false
 
+// An arm's owners reach the forms its result stands in: a `let` body, an `if` branch and a nested
+// `match` arm (stage 0's `RegisterArmResultBranches`), through their spans.
+let recursive armResultOwnersForward (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> armResultOwnersForward(inner)
+        | ExprNode(_node, inner) -> armResultOwnersForward(inner)
+        | ExprLet(_, _, _, _, _, _) -> true
+        | ExprIf(_, _, _) -> true
+        | ExprMatch(_, _, _) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -371,7 +382,10 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         recordFieldCell = argumentCellRequestForwards(expression) && request.recordFieldCell,
         escapingArgumentCell = argumentCellRequestForwards(expression) && request.escapingArgumentCell,
         chainTailCell = argumentCellRequestForwards(expression) && request.chainTailCell,
-        callArgument = transferRequestForwards(expression) && request.callArgument
+        callArgument = transferRequestForwards(expression) && request.callArgument,
+        armResultOwners = if armResultOwnersForward(expression)
+        then request.armResultOwners
+        else []
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =

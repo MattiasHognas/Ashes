@@ -7760,6 +7760,15 @@ public sealed partial class Lowering
             return NormalizeBranchResultBorrowingRuntimeOwner(branchTemp);
         }
 
+        if (!matchArm)
+        {
+            int armOwnerCopy = NormalizeIfBranchBorrowingArmOwner(branch, result, branchTemp);
+            if (armOwnerCopy != branchTemp)
+            {
+                return armOwnerCopy;
+            }
+        }
+
         return TransferDirectRuntimeManagedMatchResult(branch, branchTemp, matchArm, tailPosition);
     }
 

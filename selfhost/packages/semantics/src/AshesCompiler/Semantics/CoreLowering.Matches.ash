@@ -136,6 +136,90 @@ let transferLoopExitFieldResult (request: ConsumerRequest) (body: Expr) (temp: I
                                 |> emit(RcDup(duplicate)(temp)(false)(false))
                                 |> (given (marked: CoreLoweringState) -> withStateTcoParameterRetainSites((duplicate, slot, bodyType) :: stateTcoParameterRetainSites(marked))(marked)), duplicate)
 
+let recursive armOwnedSlots (owners: List(ArmOwner)) =
+    match owners with
+        | [] -> []
+        | ArmScrutineeOwner(slot, _typeName, _isList, _valueTemp, _scrutineeType) :: rest -> slot :: armOwnedSlots(rest)
+        | ArmHeapOwner(slot, _typeName) :: rest -> slot :: armOwnedSlots(rest)
+        | _owner :: rest -> armOwnedSlots(rest)
+
+// Whether an aggregate literal reads, at any depth of its tuple, record, list and constructor
+// children, a binding whose live runtime owner is one of the arm's own (stage 0's
+// `CollectBorrowedRuntimeOwners` with an owner of the arm's scope among them). A pattern owner
+// is not one (stage 0's collector skips a Perceus pattern owner).
+let recursive readsArmOwnerPart (expression: Expr) (slots: List(Int)) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprTuple(elements) -> anyReadsArmOwnerPart(elements)(slots)(state)
+        | ExprRecord(_name, fields, _isMultiline) -> anyFieldReadsArmOwnerPart(fields)(slots)(state)
+        | ExprList(elements, _isMultiline) -> anyReadsArmOwnerPart(elements)(slots)(state)
+        | ExprCons(head, tail) -> readsArmOwnerPart(head)(slots)(state) || readsArmOwnerPart(tail)(slots)(state)
+        | ExprVar(name) -> readOfArmOwner(name)(slots)(state)
+        | ExprQualifiedVar(owner, _field) -> readOfArmOwner(owner)(slots)(state)
+        | other ->
+            match constructorApplicationOf(other)([])(state) with
+                | Some((_layout, arguments)) -> anyReadsArmOwnerPart(arguments)(slots)(state)
+                | None -> false
+and anyReadsArmOwnerPart (expressions: List(Expr)) (slots: List(Int)) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyReadsArmOwnerPart(rest)(slots)(state)
+and anyFieldReadsArmOwnerPart (fields: List((Str, Expr))) (slots: List(Int)) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (_field, expression) :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyFieldReadsArmOwnerPart(rest)(slots)(state)
+and readOfArmOwner (name: Str) (slots: List(Int)) (state: CoreLoweringState) =
+    if state
+    |> patternOwnerBinding(name)
+    |> patternOwnerFlag
+    then false
+    else
+        match liveRuntimeOwnerSlot(name)(state) with
+            | Some(slot) -> containsInt(slot)(slots)
+            | None -> false
+
+let recursive armResultOf (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> armResultOf(inner)
+        | ExprNode(_node, inner) -> armResultOf(inner)
+        | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> armResultOf(body)
+        | other -> other
+
+// Stage 0's `KeepArmResultCopyOwned`: the copy, kept in an owned slot the function releases at its
+// exit (a loop releases the slot's earlier value at its back edge), handed on without a
+// runtime-managed fact, as a call result is (`lowerGeneralRcCallResultTakingParts`).
+let keepArmResultCopyOwned (copyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if generalRcEnabled(state) == false || isRuntimeTemp(copyTemp)(state) == false
+    then (state, copyTemp)
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = slottedOwned, local = ownedSlot } ->
+                match saveGeneralRcOwnedPredecessor(ownedSlot)(slottedOwned) with
+                    | (slotted, predecessorSlot) ->
+                        match slotted
+                        |> emit(StoreLocal(ownedSlot)(copyTemp))
+                        |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                        |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
+                        |> freshTemp with
+                            | FreshTemp { state = loaded, temp = resultTemp } ->
+                                (emit(LoadLocal(resultTemp)(ownedSlot))(loaded), resultTemp)
+
+// Whether a branch or arm result outside a transferring or tail context is an arena aggregate
+// built from parts of one of `slots`' owners.
+let copiesArmOwnerParts (request: ConsumerRequest) (result: Expr) (temp: Int) (resultType: SemanticType) (slots: List(Int)) (state: CoreLoweringState) =
+    match slots with
+        | [] -> false
+        | _slots ->
+            !request.tailPosition && !request.transfersRuntimeManagedChildren && !isRuntimeTemp(temp)(state) && !resultSurvivesReset(resolveType(state)(resultType))(state) && isPassthroughNormalizableParameterType(resultType)(state) && readsArmOwnerPart(armResultOf(result))(slots)(state)
+
+// Stage 0's `NormalizeIfBranchBorrowingArmOwner`: an `if` branch standing as an arm's result that
+// returns an arena aggregate borrowing that arm's owners is copied and kept the same way.
+let normalizeIfBranchBorrowingArmOwner (request: ConsumerRequest) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if copiesArmOwnerParts(request)(branch)(temp)(semanticType)(request.armResultOwners)(state)
+    then
+        match emitOwnedPassthroughCopy(temp)(semanticType)(state) with
+            | (copied, copyTemp) -> keepArmResultCopyOwned(copyTemp)(semanticType)(copied)
+    else (state, temp)
+
 // An `if` branch's result as the join stores it (`transferIfBranchResult`), or, at the loop's
 // exit, a heap field of a loop parameter with a reference of its own.
 let transferIfBranchOrExitField (request: ConsumerRequest) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -143,7 +227,12 @@ let transferIfBranchOrExitField (request: ConsumerRequest) (branch: Expr) (temp:
         | (transferred, branchTemp) ->
             if branchTemp != temp
             then (transferred, branchTemp)
-            else transferLoopExitFieldResult(request)(branch)(temp)(semanticType)(transferred)
+            else
+                match transferLoopExitFieldResult(request)(branch)(temp)(semanticType)(transferred) with
+                    | (retained, retainedTemp) ->
+                        if retainedTemp != temp
+                        then (retained, retainedTemp)
+                        else normalizeIfBranchBorrowingArmOwner(request)(branch)(temp)(semanticType)(retained)
 
 let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower plan =
     match plan with
@@ -1294,62 +1383,33 @@ let retainsSuccessorJoinLetOwner (body: Expr) (outerBindings: List(CoreBinding))
                 | None -> true
         | _ -> false
 
-let recursive armOwnedSlots (owners: List(ArmOwner)) =
-    match owners with
-        | [] -> []
-        | ArmScrutineeOwner(slot, _typeName, _isList, _valueTemp, _scrutineeType) :: rest -> slot :: armOwnedSlots(rest)
-        | ArmHeapOwner(slot, _typeName) :: rest -> slot :: armOwnedSlots(rest)
-        | _owner :: rest -> armOwnedSlots(rest)
-
-// Whether an aggregate literal reads, at any depth of its tuple, record, list and constructor
-// children, a binding whose live runtime owner is one of the arm's own (stage 0's
-// `CollectBorrowedRuntimeOwners` with an owner of the arm's scope among them). A pattern owner
-// is not one (stage 0's collector skips a Perceus pattern owner).
-let recursive readsArmOwnerPart (expression: Expr) (slots: List(Int)) (state: CoreLoweringState) =
-    match unspanArgument(expression) with
-        | ExprTuple(elements) -> anyReadsArmOwnerPart(elements)(slots)(state)
-        | ExprRecord(_name, fields, _isMultiline) -> anyFieldReadsArmOwnerPart(fields)(slots)(state)
-        | ExprList(elements, _isMultiline) -> anyReadsArmOwnerPart(elements)(slots)(state)
-        | ExprCons(head, tail) -> readsArmOwnerPart(head)(slots)(state) || readsArmOwnerPart(tail)(slots)(state)
-        | ExprVar(name) -> readOfArmOwner(name)(slots)(state)
-        | ExprQualifiedVar(owner, _field) -> readOfArmOwner(owner)(slots)(state)
-        | other ->
-            match constructorApplicationOf(other)([])(state) with
-                | Some((_layout, arguments)) -> anyReadsArmOwnerPart(arguments)(slots)(state)
-                | None -> false
-and anyReadsArmOwnerPart (expressions: List(Expr)) (slots: List(Int)) (state: CoreLoweringState) =
-    match expressions with
-        | [] -> false
-        | expression :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyReadsArmOwnerPart(rest)(slots)(state)
-and anyFieldReadsArmOwnerPart (fields: List((Str, Expr))) (slots: List(Int)) (state: CoreLoweringState) =
-    match fields with
-        | [] -> false
-        | (_field, expression) :: rest -> readsArmOwnerPart(expression)(slots)(state) || anyFieldReadsArmOwnerPart(rest)(slots)(state)
-and readOfArmOwner (name: Str) (slots: List(Int)) (state: CoreLoweringState) =
-    if state
-    |> patternOwnerBinding(name)
-    |> patternOwnerFlag
-    then false
-    else
-        match liveRuntimeOwnerSlot(name)(state) with
-            | Some(slot) -> containsInt(slot)(slots)
-            | None -> false
-
 // Stage 0's `NormalizeArmResultBorrowingArmOwner`: an arm whose result is an arena aggregate built
 // from parts of a reference-counted owner the arm releases at its exit (`| (moduleName, local) ->
 // Qualified(moduleName)(local)` over a fresh tuple, the match an argument of a call) copies the
-// result onto the reference-counted heap with references of its own first. A transferring or tail
-// arm retains the parts itself.
-let normalizeArmResultBorrowingArmOwner (request: ConsumerRequest) (body: Expr) (temp: Int) (bodyType: SemanticType) (owners: List(ArmOwner)) (state: CoreLoweringState) =
-    if request.tailPosition || request.transfersRuntimeManagedChildren || isRuntimeTemp(temp)(state) || resultSurvivesReset(resolveType(state)(bodyType))(state) || !isPassthroughNormalizableParameterType(bodyType)(state)
-    then (state, temp)
+// result onto the reference-counted heap with references of its own first, against its own owners
+// and those of the arms whose result its match is; the copy is kept in an owned slot inside the
+// arm's branch. A transferring or tail arm retains the parts itself.
+let normalizeArmResultBorrowingArmOwner (request: ConsumerRequest) (body: Expr) (endLabel: Str) (armLabel: Str) (temp: Int) (bodyType: SemanticType) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+    if copiesArmOwnerParts(request)(body)(temp)(bodyType)(append(armOwnedSlots(owners))(request.armResultOwners))(state)
+    then
+        match state
+        |> emitOwnedPassthroughCopy(temp)(bodyType)
+        |> (given (copied: (CoreLoweringState, Int)) ->
+            match copied with
+                | (copiedState, copyTemp) ->
+                    copiedState
+                    |> enterGeneralRcBranch(endLabel)(armLabel)
+                    |> keepArmResultCopyOwned(copyTemp)(bodyType)) with
+            | (kept, keptTemp) -> (leaveGeneralRcBranch(kept), keptTemp)
+    else (state, temp)
+
+// The request an arm's body lowers under: a candidate arm (not transferring, not in tail position)
+// hands its owners, with the ones it inherited, to the forms its result stands in.
+let armBodyRequest (request: ConsumerRequest) (owners: List(ArmOwner)) =
+    if request.tailPosition || request.transfersRuntimeManagedChildren
+    then request with armResultOwners = []
     else
-        match armOwnedSlots(owners) with
-            | [] -> (state, temp)
-            | slots ->
-                if readsArmOwnerPart(body)(slots)(state)
-                then emitOwnedPassthroughCopy(temp)(bodyType)(state)
-                else (state, temp)
+        request with armResultOwners = append(armOwnedSlots(owners))(request.armResultOwners)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
 // owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
@@ -1378,7 +1438,7 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
         | LoweredCoreValue { state = bodyState, error = None } ->
             match bodyState
-            |> withConsumerRequest(request)
+            |> withConsumerRequest(armBodyRequest(request)(owners))
             |> lowerInGeneralRcBranch(endLabel)(armLabel)(lowerMatchArmBody(body)(normalizeStaticStrings)(lower)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = bodyType, error = None } ->
@@ -1389,7 +1449,7 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
                                 | (normalizedState, normalizedTemp) ->
                                     match transferArmResult(request)(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
                                         | (armState, armTemp) ->
-                                            match normalizeArmResultBorrowingArmOwner(request)(body)(armTemp)(bodyType)(owners)(armState) with
+                                            match normalizeArmResultBorrowingArmOwner(request)(body)(endLabel)(armLabel)(armTemp)(bodyType)(owners)(armState) with
                                                 | (transferredState, resultTemp) ->
                                                     match transferredState
                                                     |> emit(StoreLocal(resultSlot)(resultTemp))
@@ -1684,7 +1744,7 @@ let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: Co
 // representation to. Starting from an empty request dropped the representation the enclosing
 // position had already asked for — a tuple an escaping result wants reference-counted lost its
 // request, and with it the retain its elements needed.
-let inheritedLetValueRequest (state: CoreLoweringState) = consumerRequestOf(state) with expectedType = None, argumentSite = None, transfersRuntimeManagedChildren = false, tailPosition = false, tailCall = false, consTailPosition = false
+let inheritedLetValueRequest (state: CoreLoweringState) = consumerRequestOf(state) with expectedType = None, argumentSite = None, transfersRuntimeManagedChildren = false, tailPosition = false, tailCall = false, consTailPosition = false, armResultOwners = []
 
 // The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
 // `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
