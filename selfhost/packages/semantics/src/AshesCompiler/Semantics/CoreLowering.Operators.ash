@@ -923,6 +923,8 @@ let recursive emitOrderingTagTests (tagTemp: Int) (accumulatorTemp: Int) (tags: 
                     |> emit(OrInt(tagConstTemp + 2)(accumulatorTemp)(tagConstTemp + 1))
                     |> emitOrderingTagTests(tagTemp)(tagConstTemp + 2)(rest)
 
+// The predicate reads only the `Ordering`'s tag, so a value the call newly produced on the
+// reference-counted heap is released once the tag is read (stage 0's `ReleaseConsumedOwnedOperand`).
 let emitOrderingPredicate (orderingTemp: Int) (names: List(Str)) (state: CoreLoweringState) =
     match orderingPredicateTags(names)(state) with
         | None -> failure(state)(UnknownLoweringBinding("Ordering"))
@@ -932,6 +934,7 @@ let emitOrderingPredicate (orderingTemp: Int) (names: List(Str)) (state: CoreLow
                     match tempState
                     |> emit(LoadConstBool(falseTemp)(false))
                     |> emit(GetAdtTag(falseTemp + 1)(orderingTemp))
+                    |> releaseConsumedOperandOf("Ordering")(orderingTemp)
                     |> emitOrderingTagTests(falseTemp + 1)(falseTemp)(tags) with
                         | (resultState, resultTemp) -> success(resultTemp)(SemBool)(resultState)
 
