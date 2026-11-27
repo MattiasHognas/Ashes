@@ -2748,13 +2748,45 @@ delegate to its payload representation. Wrapping never creates an RC cell, and u
 loads a tag or field.
 
 The closure packed word reserves bit 63 for runtime-managed result ownership,
-bit 62 for RC-argument adoption, and the low 62 bits for environment size.
+bit 62 for RC-argument adoption, bit 61 for a reference-counted closure, bit 60
+for a result owned under the general contract, bit 59 for a curried stage that
+takes over a handed argument, and the low 59 bits for environment size.
 Closure code uses the internal `(env, arg, owns_arg) -> value` ABI. When
 `owns_arg` is set, a normalizing direct-parameter entry adopts the transferred
 RC root. A caller retains the root when it must keep its own reference, while a
 fresh result can transfer its existing reference. Otherwise the entry
 defensively copies an arena graph. Curried parameters already captured in an
-environment do not advertise direct-argument adoption.
+environment do not advertise direct-argument adoption through bit 62: a partial
+application can be called more than once, and a stage closure that released an
+adopted capture would release it once per call.
+
+A generic function cannot release a value of a type variable: it has no layout
+and no dropper for it. It can still own such a value, provided every path moves
+it exactly once — returns it, or hands it to a call that takes it over. A
+function whose type-variable parameter is used that way on every path is an
+*adopting* function for that parameter, recorded in its ownership summary. Its
+adoption is a mode the caller picks per call, so a caller that cannot prove the
+value will be taken over keeps the borrowed protocol above:
+
+- The caller that knows the argument's concrete type passes it with bit 0 of the
+  ownership word set, skips its own release after the call, and takes the
+  result over as owned (a reference-counted result as it is, an arena one
+  copied out). A caller that still needs the value retains it first. It picks
+  the owned mode only when every closure the function hands the value to is an
+  argument it knows takes it over (a function whose stage carries bit 59).
+- The curried stage receiving the parameter records the mode in the
+  environment it builds; the body reads it there. In the owned mode a self call
+  passes the value on owned, a returned value is owned, the final stage of an
+  unknown callee is not asked for an arena result, and an intermediate stage of
+  an unknown callee receives the value with bit 0 set when its closure carries
+  bit 59. In the borrowed mode the body behaves as before.
+- A stage carrying bit 59 captures the argument and records the hand-over in the
+  environment of the next stage; the stages after it copy the record with their
+  captures. The final stage, which knows the capture's concrete type, releases
+  the adopted capture once, after its result has been normalized to hold
+  references of its own. Only a saturated chain of calls through such stages
+  passes bit 0 to them, so each stage closure that holds a record is called
+  once.
 
 A fresh reference handed over for the callee's result to keep is settled after the call. An adopting
 callee owns it outright; otherwise the caller releases it, consulting the callee's result-ownership
